@@ -2,3 +2,4 @@ title: Auth
 icon: i-lucide-shield-check
 order: 30
 category: Access
+related: [env, connections]

@@ -9,7 +9,7 @@ icon: i-lucide-shield-check
 
 `access()` resolves access when an Agent Invocation starts. It can admit or reject chat messages from Channels, and it can narrow the [Workspace](/docs/workspace) to a Workspace Scope before other Capabilities use it. It adds no model-facing tools.
 
-The Workspace primitive page covers application code. This page covers how an Agent receives a scoped Workspace.
+The [Workspace server API](/docs/workspace/server-api) covers application code. This page covers how an Agent receives a scoped Workspace.
 
 ## Configure access
 

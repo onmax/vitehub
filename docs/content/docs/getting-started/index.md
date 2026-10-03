@@ -75,4 +75,4 @@ with a response you can inspect before adding another feature.
 - Read [Installation](/docs/getting-started/installation) to start with the framework distribution or choose a direct owner package for advanced composition.
 - Follow the longer [Server Primitives tutorial](/blog/server-primitives).
 - Follow the longer [Agents tutorial](/blog/agents).
-- Open [Concepts](/docs/concepts) when you need the full runtime model.
+- Open [Concepts](/docs/getting-started/concepts) when you need the full runtime model.

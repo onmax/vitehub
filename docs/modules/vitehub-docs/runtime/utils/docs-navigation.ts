@@ -19,7 +19,7 @@ export type DocsCatalogGroup = {
   sections: DocsSection[];
 };
 
-/** The section that owns the sidebar on `/docs` and on pages outside every section. */
+/** The section whose pages fill the Start row of the catalog. */
 export const docsRootSectionId = "getting-started";
 
 function isDocsCategory(value: string | null): value is DocsCategory {
@@ -42,13 +42,13 @@ export function getUncategorizedDocsSections(sections: DocsSection[]) {
   return sections.filter(section => !isDocsCategory(section.category));
 }
 
+/** The section that owns a docs path. `/docs` and unknown paths have no section; the sidebar shows the product index. */
 export function getDocsSectionForPath(sections: DocsSection[], path: string) {
   const normalizedPath = normalizeDocsPath(path);
-  const owner = sections.find(section =>
-    normalizedPath === normalizeDocsPath(section.path) || normalizedPath.startsWith(`${normalizeDocsPath(section.path)}/`),
-  );
 
-  return owner || sections.find(section => section.id === docsRootSectionId) || null;
+  return sections.find(section =>
+    normalizedPath === normalizeDocsPath(section.path) || normalizedPath.startsWith(`${normalizeDocsPath(section.path)}/`),
+  ) || null;
 }
 
 export type DocsSidebarGroup = {
@@ -88,4 +88,36 @@ export function getDocsSectionSelectItems(sections: DocsSection[]): DocsSectionS
       to: section.path,
     })),
   ]);
+}
+
+/** Sections listed under Related in a section's sidebar, in the order `.navigation.yml` declares them. */
+export function getDocsRelatedSections(sections: DocsSection[], section: DocsSection) {
+  return section.related
+    .map(id => sections.find(candidate => candidate.id === id))
+    .filter((candidate): candidate is DocsSection => Boolean(candidate) && candidate?.id !== section.id);
+}
+
+/** Categories whose section Overview renders as a product landing page without the sidebar. */
+export const docsLandingCategories: readonly DocsCategory[] = ["Data", "Compute", "Access", "Delivery", "Files", "Agents"];
+const docsLandingCategorySet = new Set<string>(docsLandingCategories);
+
+/** Sections whose Overview stays a regular docs page even though their category is a product category. */
+const docsPageOverviewSections = new Set(["ui"]);
+
+/** True for `/docs` and for the Overview of every product section. These pages have a hero and no sidebar. */
+export function isDocsLandingPath(sections: DocsSection[], path: string) {
+  const normalizedPath = normalizeDocsPath(path);
+  if (normalizedPath === "/docs") return true;
+
+  const section = getDocsSectionForPath(sections, normalizedPath);
+  if (!section || normalizedPath !== normalizeDocsPath(section.path)) return false;
+
+  return !docsPageOverviewSections.has(section.id)
+    && section.category !== null
+    && docsLandingCategorySet.has(section.category);
+}
+
+/** Pages of a product section other than its Overview, in sidebar order. The landing page lists them as cards. */
+export function getDocsSectionSubpages(section: DocsSection) {
+  return section.pages.filter(page => page.navigation !== false && page.id !== "index");
 }

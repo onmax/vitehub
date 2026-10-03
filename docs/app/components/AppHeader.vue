@@ -1,13 +1,14 @@
 <script setup lang="ts">
 const route = useRoute();
+// On docs routes the brand opens the product catalog, like a docs site logo. Elsewhere it opens the home page.
 const isDocsRoute = computed(() => route.path.startsWith("/docs"));
 const isSupportMatrix = computed(
   () => route.path.replace(/\/+$/, "") === "/docs/frameworks-hosts/support-matrix",
 );
 
+// Agents is one product in the docs catalog and the sidebar select, so the header links only to site areas.
 const navLinks = [
   { label: "Docs", to: "/docs" },
-  { label: "Agents", to: "/docs/agents" },
   { label: "Examples", to: "/examples" },
   { label: "Blog", to: "/blog" },
 ];
@@ -20,6 +21,10 @@ const mobileLinks = [
 // The docs drawer already lists the docs product pages.
 const docsMobileLinks = mobileLinks.filter((link) => !link.to.startsWith("/docs"));
 
+function isActiveLink(to: string) {
+  return route.path === to || route.path.startsWith(`${to}/`);
+}
+
 // Touch screens get taller header icon buttons. The 44px header and a 320px row still fit.
 const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:justify-center";
 </script>
@@ -28,7 +33,9 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
   <div class="sticky top-0 z-50">
     <UHeader
       :ui="{
-        container: isDocsRoute && !isSupportMatrix ? 'max-w-(--vh-docs-width) mx-auto' : undefined,
+        // Docs pages pin the sidebar to the left edge, so the docs header spans the full width.
+        container: isDocsRoute && !isSupportMatrix ? 'max-w-none' : undefined,
+        left: 'gap-6',
         right: 'pointer-coarse:gap-0.5',
         toggle: touchIconButton,
       }"
@@ -40,7 +47,7 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
           ignore-non-keyboard-focus
           :ui="{ content: 'h-auto max-w-64 whitespace-normal px-3 py-2 text-left leading-5' }"
         >
-          <ULink to="/" class="vh-brand" aria-label="ViteHub alpha">
+          <ULink :to="isDocsRoute ? '/docs' : '/'" class="vh-brand" aria-label="ViteHub alpha">
             <span class="vh-brand-mark" aria-hidden="true">
               <img src="/vitehub-mark.svg" alt="" class="h-4 w-[1.125rem]" />
             </span>
@@ -50,36 +57,40 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
             </span>
           </ULink>
         </UTooltip>
+
+        <nav class="hidden items-center gap-1 lg:flex" aria-label="Primary">
+          <UButton
+            v-for="link in navLinks"
+            :key="link.to"
+            :to="link.to"
+            :label="link.label"
+            :active="isActiveLink(link.to)"
+            color="neutral"
+            variant="ghost"
+            active-variant="soft"
+            size="sm"
+          />
+        </nav>
       </template>
 
-      <nav class="flex items-center gap-1" aria-label="Primary">
-        <UButton
-          v-for="link in navLinks"
-          :key="link.to"
-          :to="link.to"
-          :label="link.label"
-          color="neutral"
-          variant="ghost"
-          size="sm"
-        />
-      </nav>
-
       <template #right>
+        <UContentSearchButton
+          :collapsed="false"
+          :kbds="['meta', 'K']"
+          :ui="{
+            base: 'hidden h-8 min-w-44 rounded-md border-0 bg-elevated/60 px-2.5 text-sm text-muted hover:bg-elevated hover:text-highlighted lg:inline-flex',
+            trailing: 'ms-auto flex items-center gap-0.5',
+          }"
+        />
         <UContentSearchButton
           collapsed
           :kbds="[]"
           :ui="{
-            base: '!w-8 shrink-0 justify-center rounded-md border-0 !p-1.5 text-default hover:bg-elevated pointer-coarse:!h-10 pointer-coarse:!w-9',
+            base: '!w-8 shrink-0 justify-center rounded-md border-0 !p-1.5 text-default hover:bg-elevated pointer-coarse:!h-10 pointer-coarse:!w-9 lg:hidden',
             label: 'sr-only',
             trailing: 'hidden',
           }"
         />
-        <ClientOnly>
-          <UColorModeButton :class="touchIconButton" />
-          <template #fallback>
-            <div :class="['size-8 animate-pulse bg-muted', touchIconButton]" />
-          </template>
-        </ClientOnly>
         <UButton
           to="https://github.com/vite-hub/vitehub"
           target="_blank"
@@ -89,6 +100,12 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
           aria-label="ViteHub on GitHub"
           :class="touchIconButton"
         />
+        <ClientOnly>
+          <UColorModeButton :class="touchIconButton" />
+          <template #fallback>
+            <div :class="['size-8 animate-pulse bg-muted', touchIconButton]" />
+          </template>
+        </ClientOnly>
       </template>
 
       <template #body>

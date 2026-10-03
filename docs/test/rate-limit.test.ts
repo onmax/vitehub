@@ -8,6 +8,18 @@ function read(relativePath: string): string {
   return readFileSync(resolve(docsRoot, relativePath), "utf8")
 }
 
+const primitivePages = [
+  "rate-limit/index.md",
+  "rate-limit/get-started.md",
+  "rate-limit/server-api.md",
+  "rate-limit/hosts.md",
+  "rate-limit/limits-and-errors.md",
+]
+
+function readPrimitive(): string {
+  return primitivePages.map(read).join("\n")
+}
+
 function routeExists(route: string): boolean {
   const relativePath = route.replace(/^\/docs\/?/, "").replace(/\/$/, "")
   return existsSync(resolve(docsRoot, `${relativePath}.md`))
@@ -16,7 +28,7 @@ function routeExists(route: string): boolean {
 
 describe("Rate Limit documentation", () => {
   it("teaches the canonical first success and owner-package escape hatch", () => {
-    const primitive = read("rate-limit/index.md")
+    const primitive = readPrimitive()
 
     expect(primitive).toContain('vitehub({ preset: "node", rateLimit: true })')
     expect(primitive).toContain("import { requireRateLimit } from 'vite-hub/rate-limit'")
@@ -29,7 +41,7 @@ describe("Rate Limit documentation", () => {
   })
 
   it("keeps guarantees, identity, and backend limitations explicit", () => {
-    const primitive = read("rate-limit/index.md")
+    const primitive = readPrimitive()
 
     expect(primitive).toMatch(/memory.*local Vite development/is)
     expect(primitive).toContain("Cloudflare native enforcement is best-effort")
@@ -70,7 +82,7 @@ describe("Rate Limit documentation", () => {
   })
 
   it("keeps the new task routes resolvable", () => {
-    for (const relativePath of ["rate-limit/index.md", "rate-limit/agent-capability.md"]) {
+    for (const relativePath of [...primitivePages, "rate-limit/agent-capability.md"]) {
       const routes = [...read(relativePath).matchAll(/\]\((\/docs(?:\/[^)#\s]*)?)(?:#[^)]+)?\)/g)]
         .map(match => match[1]!)
 

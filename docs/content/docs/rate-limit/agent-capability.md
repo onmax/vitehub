@@ -2,7 +2,7 @@
 title: Rate Limit capability
 description: Consume a Rate Limiter before an Agent Invocation starts.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-gauge
 ---
 
@@ -144,5 +144,5 @@ For local tests, use a dedicated memory driver instance. For Cloudflare, resolve
 
 - [Rate Limit primitive](/docs/rate-limit)
 - [Agent invocations](/docs/agents/invocations)
-- [Auth Users and Agent Invokers](/docs/concepts/auth-users-and-agent-invokers)
+- [Auth Users and Agent Invokers](/docs/getting-started/concepts/auth-users-and-agent-invokers)
 - [Official capabilities](/docs/agents/capabilities/official)

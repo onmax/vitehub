@@ -328,7 +328,7 @@ export default defineNuxtConfig({
 
 Do not use `robots.txt` as access control. A crawler can ignore it, and a disallowed URL may still be listed without its contents.
 
-Read [Auth](/docs/auth#authorize-access-routes) for sign-in redirects and the complete callback contract.
+Read [Auth](/docs/auth/server-api#authorize-access-routes) for sign-in redirects and the complete callback contract.
 
 ## Know what the Console stores
 

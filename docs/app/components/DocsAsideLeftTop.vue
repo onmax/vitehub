@@ -40,14 +40,16 @@ function itemIcon(item: DocsSectionSelectItem) {
       :items="items"
       value-key="value"
       :search-input="false"
-      :icon="currentSection ? sidebarSectionIcon(currentSection) : undefined"
+      :icon="currentSection ? sidebarSectionIcon(currentSection) : 'i-ph-squares-four-light'"
       trailing-icon="i-ph-caret-down-light"
-      placeholder="Choose a product"
+      placeholder="All products"
       aria-label="Documentation product"
       class="vh-docs-product-select"
       :ui="{
-        base: 'h-10 rounded-none border-0 border-b border-default bg-default ps-5 pe-4 text-sm font-semibold text-highlighted ring-0 hover:bg-muted/30 focus-visible:ring-0',
+        base: 'w-full h-10 rounded-none border-0 border-b border-default bg-default ps-11 pe-10 text-sm font-semibold text-highlighted ring-0 hover:bg-muted/30 focus-visible:ring-0',
+        leading: 'ps-5',
         leadingIcon: 'size-4 text-muted',
+        trailing: 'pe-4',
         trailingIcon: 'size-4 text-muted',
         content: 'rounded-md',
         label: 'px-2 pt-2 pb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-dimmed',

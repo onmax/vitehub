@@ -40,6 +40,20 @@ const primitiveCapabilities = {
   "workspace-shell": "workspace",
 } satisfies Record<string, string>;
 
+/** Concept and AI resource pages that moved into the Start section as groups. */
+const startGroups = {
+  "ai-resources": ["agent-instructions-skills", "markdown-pages", "mcp-server"],
+  "concepts": [
+    "auth-users-and-agent-invokers",
+    "definitions-and-discovery",
+    "runtime-context",
+    "runtime-helpers-and-stable-imports",
+    "runtime-policy-approvals-and-traces",
+    "vite-integrations-and-provider-output",
+    "workspace-and-sources",
+  ],
+} satisfies Record<string, string[]>;
+
 /** Capability pages that have no primitive and moved under the Agents section. */
 const agentCapabilities = {
   "access": "access",
@@ -69,6 +83,8 @@ const agentCapabilities = {
 
 export const docsPageRedirects = {
   "/docs/agents/evlog": "/docs/agents/observability",
+  "/docs/ai-resources": "/docs/getting-started/ai-resources",
+  "/docs/concepts": "/docs/getting-started/concepts",
   "/docs/capabilities": "/docs/agents/capabilities",
   "/docs/concepts/agent-invocations": "/docs/agents/invocations",
   "/docs/concepts/bash": "/docs/workspace/agent-capability",
@@ -84,7 +100,51 @@ export const docsPageRedirects = {
   ...Object.fromEntries(movedServerPrimitives.map(id => [`/docs/server-primitives/${id}`, `/docs/${id}`])),
   ...Object.fromEntries(Object.entries(primitiveCapabilities).map(([id, section]) => [`/docs/capabilities/${id}`, `/docs/${section}/agent-capability`])),
   ...Object.fromEntries(Object.entries(agentCapabilities).map(([id, page]) => [`/docs/capabilities/${id}`, `/docs/agents/capabilities/${page}`])),
+  ...Object.fromEntries(Object.entries(startGroups).flatMap(([dir, pages]) => pages.map(page => [`/docs/${dir}/${page}`, `/docs/getting-started/${dir}/${page}`]))),
 } satisfies Record<string, string>;
+
+/** Fragments that moved with the Blob page split. The old overview redirect keeps the hash. */
+export const docsLegacyFragmentRedirects = {
+  "/docs/blob": {
+    "quick-start": "/docs/blob/get-started",
+    install: "/docs/blob/get-started",
+    configure: "/docs/blob/get-started",
+    "start-using-it": "/docs/blob/get-started",
+    "public-imports": "/docs/blob/server-api",
+    "store-configuration": "/docs/blob/configure",
+    "protect-served-objects": "/docs/blob/configure",
+    "provider-options": "/docs/blob/configure",
+    "local-filesystem": "/docs/blob/configure",
+    "cloudflare-r2": "/docs/blob/configure",
+    "vercel-blob": "/docs/blob/configure",
+    "netlify-blobs": "/docs/blob/configure",
+    "s3-and-s3-compatible-providers": "/docs/blob/configure",
+    "google-cloud-storage": "/docs/blob/configure",
+    "azure-blob-storage": "/docs/blob/configure",
+    "supabase-storage": "/docs/blob/configure",
+    uploadthing: "/docs/blob/configure",
+    "google-drive": "/docs/blob/configure",
+    onedrive: "/docs/blob/configure",
+    dropbox: "/docs/blob/configure",
+    box: "/docs/blob/configure",
+    "use-it-at-runtime": "/docs/blob/server-api",
+    "serve-blob-backed-assets": "/docs/blob/configure",
+    "runtime-helper": "/docs/blob/server-api",
+    "write-options": "/docs/blob/server-api",
+    "upload-files": "/docs/blob/server-api",
+    "multipart-uploads": "/docs/blob/server-api",
+    "signed-requests": "/docs/blob/server-api",
+    "ensureblob-blob-options": "/docs/blob/server-api",
+    "provider-output": "/docs/blob/hosts",
+    "read-and-write-blobs-during-development": "/docs/blob/hosts",
+    "production-checks": "/docs/blob/server-api",
+    "cloudflare-r2-bucket": "/docs/blob/hosts",
+    "s3-compatible-object-storage": "/docs/blob/hosts",
+    "minio-object-storage": "/docs/blob/hosts",
+    "connect-blob-to-agents": "/docs/blob/agent-capability",
+    "next-steps": "/docs/blob",
+  },
+} satisfies Record<string, Record<string, string>>;
 
 function rawMarkdownPath(path: string) {
   return `/raw${path}.md`;

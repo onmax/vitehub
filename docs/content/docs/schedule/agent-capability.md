@@ -2,13 +2,13 @@
 title: Schedule capability
 description: Declare Agent Schedules or let an Agent manage Runtime Schedules through one cronjob tool.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-calendar-clock
 ---
 
 `schedule()` has two forms. With `schedules`, it declares fixed Agent Schedules as Capability metadata and adds no tool. With `mode`, it gives the Agent one `cronjob` tool for Runtime Schedules.
 The `cronjob` tool calls the Runtime Schedule client of the configured [Schedule primitive](/docs/schedule).
-The Schedule primitive page covers application code. This page covers the Agent tool.
+The [Schedule server API](/docs/schedule/server-api) covers application code. This page covers the Agent tool.
 
 ## Configure schedules
 
@@ -106,7 +106,7 @@ The `cronjob` tool accepts an optional IANA `timeZone` on create and edit. Sched
 - `policy` applies only to mutating operations: `create`, `edit`, `pause`, `resume`, `run`, and `delete`. Read operations always run.
 - `policy` accepts `'allow'`, `'require-approval'`, `'deny'`, `'retryable-failure'`, or a function that receives `{ name, input }` and returns one of these values.
 - Without `policy`, mutations run when the Agent calls them.
-- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. See [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces).
+- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. See [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces).
 
 ## Driver support
 

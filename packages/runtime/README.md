@@ -186,8 +186,8 @@ Do not import from `src`, `dist`, or ViteHub's `_internal` paths.
 
 ## Go deeper
 
-- [Runtime Context](https://vitehub.dev/docs/concepts/runtime-context)
-- [Runtime policy, approvals, and traces](https://vitehub.dev/docs/concepts/runtime-policy-approvals-and-traces)
+- [Runtime Context](https://vitehub.dev/docs/getting-started/concepts/runtime-context)
+- [Runtime policy, approvals, and traces](https://vitehub.dev/docs/getting-started/concepts/runtime-policy-approvals-and-traces)
 - [Runtime events](https://vitehub.dev/docs/reference/runtime-events)
 - [Stable import paths](https://vitehub.dev/docs/reference/import-paths)
 - [Node Runtime diagnostics](https://vitehub.dev/docs/agents/capabilities/diagnostics)

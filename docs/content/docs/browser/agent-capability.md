@@ -2,13 +2,13 @@
 title: Browser capability
 description: Give a Provider Agent the agent-browser CLI, a headless Chromium, and the official browser Skill.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-monitor
 ---
 
 `browser()` gives a Provider Agent the `agent-browser` CLI, Chromium, and the official browser Skill. The Agent runs the CLI through the provider's native shell. The Capability adds no model-facing tools.
 
-The [Browser primitive](/docs/browser) covers Browser Sessions that trusted application code owns. This page covers the browser runtime for a Provider Agent.
+The [Browser server API](/docs/browser/server-api) covers Browser Sessions that trusted application code owns. This page covers the browser runtime for a Provider Agent.
 
 ## Configure the browser
 
