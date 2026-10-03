@@ -280,9 +280,11 @@ const selectedCancel = computed(() => {
     cancelRequested: boolean;
     id: string;
     notEnforcedBy?: string;
+    terminal: boolean;
   } = {
     cancelRequested: Boolean(stringValue(summary?.cancelRequestedAt)),
     id: invocation.id,
+    terminal: invocation.status !== "pending" && invocation.status !== "running",
   };
   if (notEnforcedBy) cancel.notEnforcedBy = notEnforcedBy;
   return cancel;

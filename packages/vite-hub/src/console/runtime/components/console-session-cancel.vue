@@ -8,6 +8,7 @@ const props = defineProps<{
   cancelRequested: boolean;
   id: string;
   notEnforcedBy?: string;
+  terminal: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -17,13 +18,15 @@ const emit = defineEmits<{
 const pending = ref(false);
 const error = ref<string>();
 const notEnforcedBy = ref<string>();
+const terminalNotice = ref<string>();
 const notice = computed(() => {
+  if (props.terminal) return terminalNotice.value;
   const driver = notEnforcedBy.value ?? (props.cancelRequested ? props.notEnforcedBy : undefined);
   if (driver) return `Cancel requested, not enforced by ${driver}`;
   return props.cancelRequested ? "Cancellation requested; completion not confirmed" : undefined;
 });
 const label = computed(() =>
-  props.cancelRequested ? "Cancel requested" : "Cancel session",
+  props.terminal ? "Abort stale execution" : props.cancelRequested ? "Cancel requested" : "Cancel session",
 );
 
 watch(
@@ -31,11 +34,12 @@ watch(
   () => {
     error.value = undefined;
     notEnforcedBy.value = undefined;
+    terminalNotice.value = undefined;
   },
 );
 
 async function cancelInvocation(): Promise<void> {
-  if (pending.value || props.cancelRequested) return;
+  if (pending.value || (!props.terminal && props.cancelRequested)) return;
   const { id } = props;
   pending.value = true;
   error.value = undefined;
@@ -43,6 +47,13 @@ async function cancelInvocation(): Promise<void> {
     const result = await cancelConsoleInvocation(props.apiBase, id);
     if (props.id !== id) return;
     notEnforcedBy.value = result.notEnforcedBy;
+    if (result.outcome === "terminal") {
+      terminalNotice.value = result.delivery === "local"
+        ? result.notEnforcedBy
+          ? `Local abort requested, not enforced by ${result.notEnforcedBy}`
+          : "Local abort requested; completion not confirmed"
+        : "Journal is terminal; no local execution received an abort";
+    }
     emit("cancelled", id);
   } catch (value) {
     if (props.id === id) {
@@ -71,7 +82,7 @@ async function cancelInvocation(): Promise<void> {
       variant="ghost"
       size="xs"
       :loading="pending"
-      :disabled="pending || cancelRequested"
+      :disabled="pending || (!terminal && cancelRequested)"
       :aria-label="label"
       @click="cancelInvocation"
     />

@@ -2194,9 +2194,9 @@ describe("Agent invocation console", () => {
       await vi.waitFor(async () => {
         await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
       }, { timeout: 4_000 })
-      await expect(invocationHandler(detailEvent(running.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 409 })
+      await expect(invocationHandler(detailEvent(running.id, { action: "cancel" }))).resolves.toMatchObject({ outcome: "terminal", status: "completed" })
       await expect(getConsoleInvocationDetail(detailEvent(running.id))).resolves.toMatchObject({
-        invocation: { actions: { cancel: { available: false }, delete: { available: true }, rerun: { available: false, reason: expect.any(String) } } },
+        invocation: { actions: { cancel: { available: true }, delete: { available: true }, rerun: { available: true, prompt: "Compile the digest." } } },
       })
       await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).resolves.toEqual({ id: running.id, outcome: "deleted" })
       await expect(definition.invocations?.getSummary(running.id)).resolves.toBeUndefined()
@@ -2207,24 +2207,51 @@ describe("Agent invocation console", () => {
     }
   })
 
-  it.each(["completed", "failed", "cancelled"] as const)("keeps the custom Driver warning when Console cancellation sees a %s journal", async status => {
+  it.each(["completed", "failed", "cancelled"] as const)("aborts a stale local custom execution with a %s journal through Console", async status => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-terminal-abort-"))
     const backing = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store: backing })
-    const id = "terminal-custom-abort"
-    const timestamp = new Date().toISOString()
-    await backing.create({ agentName: "support", createdAt: timestamp, id, observations: [], status, traceId: "trace", updatedAt: timestamp })
-    vi.spyOn(invocations, "cancel").mockResolvedValue({ delivery: "local", id, notEnforcedBy: "run", outcome: "terminal", status })
-    const definition = defineAgent({ driver: { run: () => "Done" }, invocations, name: "support" })
-    const method = "POST"
-    const url = `http://localhost/api/_vitehub/console/invocations/${id}`
-    const request = { headers: new Headers({ host: "localhost" }), method, node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } }, req: { json: async () => ({ action: "cancel" }), method, url } } satisfies ConsoleRequestEvent
+    let release: (value: string) => void = () => {}
+    let signal: AbortSignal | undefined
+    let ended = false
+    const definition = defineAgent({ driver: { run: async ({ input }) => {
+      signal = input.abortSignal
+      const result = await new Promise<string>(resolve => { release = resolve })
+      ended = true
+      return result
+    } }, invocations, name: "support" })
+    const request = (id: string, body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = `http://localhost/api/_vitehub/console/invocations/${id}`
+      return { headers: new Headers({ host: "localhost" }), method, node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } }, req: { ...(body === undefined ? {} : { json: async () => body }), method, url } }
+    }
     try {
       installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: true, projectRoot: root })
       installConsoleInvocations(root, invocations)
-      await expect(invocationHandler(request)).rejects.toMatchObject({ statusCode: 409, statusMessage: `Invocation journal is ${status}; local abort requested, not enforced by run.` })
+      const { id } = await agentInvocationsHandler({
+        context: { params: { agent: "support" } }, method: "POST",
+        req: { json: async () => ({ prompt: "Work until released." }), method: "POST", url: "http://localhost/api/_vitehub/console/agents/support/invocations" },
+      })
+      await vi.waitFor(() => expect(signal).toBeDefined())
+      // A replacement owner writes a terminal state while the original handler still runs.
+      await backing.update(id, { status, timestamp: new Date().toISOString() })
+      const terminalRecord = await backing.get(id)
+      installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: false, projectRoot: root })
+      expect((await getConsoleInvocationDetail(request(id))).invocation).not.toHaveProperty("actions")
+      await expect(invocationHandler(request(id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 403 })
+      expect(signal?.aborted).toBe(false)
+      installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: true, projectRoot: root })
+      await expect(getConsoleInvocationDetail(request(id))).resolves.toMatchObject({
+        invocation: { status, actions: { cancel: { available: true } } },
+      })
+      await expect(invocationHandler(request(id, { action: "cancel" }))).resolves.toEqual({ delivery: "local", id, notEnforcedBy: "run", outcome: "terminal", status })
+      expect(signal?.aborted).toBe(true)
+      expect(ended).toBe(false)
+      expect(await backing.get(id)).toEqual(terminalRecord)
+      release("done")
+      await vi.waitFor(() => expect(ended).toBe(true))
     }
-    finally { await rm(root, { force: true, recursive: true }) }
+    finally { release("done"); await rm(root, { force: true, recursive: true }) }
   })
 
   it("rejects disabled Agents, unknown profiles, and unsupported fields", async () => {

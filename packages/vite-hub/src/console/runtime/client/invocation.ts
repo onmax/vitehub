@@ -5,6 +5,7 @@ import { requestConsole } from "./request.ts"
 import { encodeAgentRouteParam } from "../console-route.ts"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 
+import type { AgentInvocationCancelResult } from "@vite-hub/agent"
 import type { FileUIPart } from "ai"
 import type { ConsoleAgentInvocationInput } from "../rpc.ts"
 
@@ -48,11 +49,13 @@ export async function startConsoleAgentInvocation(
 
 const cancelResultSchema = v.object({
   notEnforcedBy: v.optional(v.string()),
-  outcome: v.literal("requested"),
+  delivery: v.optional(v.picklist(["local", "journal"])),
+  outcome: v.picklist(["requested", "terminal"]),
+  status: v.optional(v.picklist(["pending", "running", "cancelled", "completed", "failed"])),
 })
 
-/** Cancel one pending or running invocation. `notEnforcedBy` names a Driver that does not stop on abort. */
-export async function cancelConsoleInvocation(base: string, id: string): Promise<{ notEnforcedBy?: string, outcome: "requested" }> {
+/** Request an abort, including for a stale local execution with a terminal journal. */
+export async function cancelConsoleInvocation(base: string, id: string): Promise<Pick<AgentInvocationCancelResult, "delivery" | "notEnforcedBy" | "status"> & { outcome: "requested" | "terminal" }> {
   const response = await requestConsole(`${base}/${encodeURIComponent(id)}`, { body: { action: "cancel" }, method: "POST" })
   const result = v.safeParse(cancelResultSchema, response)
   if (!result.success) throw viteHubErrorDiagnostics.VITE_HUB_R0102({ message: "The invocation cancel response was not valid." })

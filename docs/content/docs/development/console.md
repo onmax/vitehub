@@ -313,7 +313,7 @@ A pending or running session shows **Cancel session** in its header when the Con
 
 The Console calls `invocations.cancel(id)` on the Agent's journal. A run in the same process stops at once. A run in another process reads the request at its next claim renewal, within 10 seconds. When the Driver cannot stop the run, the header shows `Cancel requested, not enforced by <driver>`. The session stays running until the Driver returns. See [Cancel an invocation](/docs/agents/invocations#cancel-an-invocation) for each Driver.
 
-A finished session returns status 409. A journal that did not keep the request returns status 503.
+A finished session shows **Abort stale execution**. This sends an abort signal to any execution still registered in the Console process without changing the terminal journal. The result reports local delivery and any Driver that cannot enforce abort. If no local execution receives the signal, the header says so. A journal that did not keep a pending or running request returns status 503.
 
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:
 

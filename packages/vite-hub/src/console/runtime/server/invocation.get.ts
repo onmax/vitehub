@@ -44,7 +44,6 @@ function observationCursor(observations: readonly TraceEventLogEntry[], count = 
 }
 
 const cancelActionSchema = v.strictObject({ action: v.literal("cancel") })
-const activeStatuses: ReadonlySet<AgentInvocationSummary["status"]> = new Set(["pending", "running"])
 
 const deleteActionSchema = v.strictObject({ action: v.literal("delete") })
 const terminalStatuses: ReadonlySet<AgentInvocationSummary["status"]> = new Set(["cancelled", "completed", "failed"])
@@ -74,7 +73,7 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
     ? { available: false, reason: "invoker-profile-unavailable" }
     : input
   return {
-    cancel: { available: activeStatuses.has(invocation.status) },
+    cancel: { available: true },
     delete: getConsoleInvocations().supportsDelete
       ? { available: terminalStatuses.has(invocation.status) }
       : { available: false, reason: "store-delete-unavailable" },
@@ -103,7 +102,7 @@ async function deleteConsoleInvocationAction(event: ConsoleRequestEvent, body: u
   return { id, outcome }
 }
 
-/** Cancel one pending or running invocation after the Console checks invoke access for its Agent. */
+/** Request an abort for an invocation, including a stale local execution, after the Console checks invoke access for its Agent. */
 async function cancelConsoleInvocationAction(event: ConsoleRequestEvent, body: unknown): Promise<AgentInvocationCancelResult> {
   assertConsoleRequest(event, ["POST"])
   const id = requestedInvocationId(event)
@@ -114,9 +113,6 @@ async function cancelConsoleInvocationAction(event: ConsoleRequestEvent, body: u
   if (!summary.agentName || !getConsoleAgentDefinition(summary.agentName)) throw actionError(403, "Cancelling this invocation requires Console invoke access for its Agent.")
   const result = await invocations.cancel(id)
   if (result.outcome === "not-found") throw notFound()
-  if (result.outcome === "terminal") throw actionError(409, result.notEnforcedBy
-    ? `Invocation journal is ${result.status ?? "terminal"}; local abort requested, not enforced by ${result.notEnforcedBy}.`
-    : "Only pending or running invocations can be cancelled.")
   if (result.outcome === "unavailable") throw actionError(503, "The invocation journal did not record the cancel request.")
   return result
 }
@@ -137,7 +133,7 @@ export async function deleteConsoleInvocation(event: ConsoleRequestEvent): Promi
   return deleteConsoleInvocationAction(event, await readInvocationAction(event))
 }
 
-/** Cancel one pending or running invocation after the Console checks invoke access for its Agent. */
+/** Request an abort for an invocation, including a stale local execution, after the Console checks invoke access for its Agent. */
 export async function cancelConsoleInvocation(event: ConsoleRequestEvent): Promise<AgentInvocationCancelResult> {
   return cancelConsoleInvocationAction(event, await readInvocationAction(event))
 }
