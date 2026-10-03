@@ -1,3 +1,5 @@
+import * as v from "valibot"
+
 import type { EnvValueSchema } from "../types.ts"
 
 export interface RuntimeEnvEntry {
@@ -21,8 +23,20 @@ export interface RuntimeLiteralEntry {
   value: unknown
 }
 
+const recordSchema = v.object({})
+const envEntrySchema = v.object({
+  required: v.boolean(),
+  secret: v.boolean(),
+  source: v.object({ kind: v.literal("env"), name: v.string() }),
+})
+const providerEntrySchema = v.object({
+  required: v.boolean(),
+  secret: v.boolean(),
+  source: v.object({ key: v.string(), kind: v.literal("provider"), provider: v.string() }),
+})
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
+  return v.is(recordSchema, value) && !Array.isArray(value)
 }
 
 export function isRuntimeLiteralEntry(value: unknown): value is RuntimeLiteralEntry {
@@ -32,20 +46,13 @@ export function isRuntimeLiteralEntry(value: unknown): value is RuntimeLiteralEn
 export function isRuntimeEnvEntry(value: unknown): value is RuntimeEnvEntry {
   return isRecord(value)
     && isRecord(value.source)
-    && value.source.kind === "env"
-    && typeof value.source.name === "string"
-    && typeof value.required === "boolean"
-    && typeof value.secret === "boolean"
+    && v.is(envEntrySchema, value)
 }
 
 export function isRuntimeProviderEntry(value: unknown): value is RuntimeProviderEntry {
   return isRecord(value)
     && isRecord(value.source)
-    && value.source.kind === "provider"
-    && typeof value.source.key === "string"
-    && typeof value.source.provider === "string"
-    && typeof value.required === "boolean"
-    && typeof value.secret === "boolean"
+    && v.is(providerEntrySchema, value)
 }
 
 export type RuntimeRegistryEntry = RuntimeLiteralEntry | RuntimeEnvEntry | RuntimeProviderEntry
