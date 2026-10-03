@@ -409,34 +409,34 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     await assertGitObjectStore(join(gitQuarantine, "objects"))
     // Object-store metadata can borrow objects from outside the checkout through alternates.
     await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
-    await mkdir(gitMetadata)
-    await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
-    // Leave HEAD behind. `git init` must create a fresh regular HEAD rather than
-    // retaining a callback-created symlink or stale symbolic reference.
+    // Build replacement metadata outside every callback-controlled path. Install
+    // the completed directory with one rename, which cannot follow a .git symlink.
+    const replacement = await mkdtemp(`${checkout}.git.replacement-`)
+    try {
+      await exec("git", ["-C", replacement, "init", "-q", "--template="], commandOptions)
+      const replacementGit = join(replacement, ".git")
+      await rm(join(replacementGit, "objects"), { force: true, recursive: true })
+      await rename(join(gitQuarantine, "objects"), join(replacementGit, "objects"))
+      await mkdir(join(replacementGit, "info"), { recursive: true })
+      await writeFile(join(replacementGit, "info/exclude"), "")
+      for (const [key, value] of [
+        ["core.repositoryformatversion", "1"],
+        ["remote.origin.url", `https://github.com/${repository}.git`],
+        ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+        ["remote.origin.promisor", "true"],
+        ["remote.origin.partialclonefilter", "blob:none"],
+      ] as const) await exec("git", ["-C", replacement, "config", key, value], commandOptions)
+      await rename(replacementGit, gitMetadata)
+    }
+    finally {
+      await rm(replacement, { force: true, recursive: true })
+    }
   }
   finally {
     await rm(gitQuarantine, { force: true, recursive: true })
   }
   await quarantine(join(checkout, ".vitehub"))
   await quarantine(`${checkout}.meta.json`)
-  await exec("git", ["-C", checkout, "init", "-q", "--template="], commandOptions)
-  await mkdir(join(checkout, ".git/info"), { recursive: true })
-  await writeFile(join(checkout, ".git/info/exclude"), "")
-  for (const [key, value] of [
-    ["core.repositoryformatversion", "1"],
-    ["remote.origin.url", `https://github.com/${repository}.git`],
-    ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
-    ["remote.origin.promisor", "true"],
-    ["remote.origin.partialclonefilter", "blob:none"],
-  ] as const) await exec("git", ["-C", checkout, "config", key, value], commandOptions)
-  // Drop refs and reflogs left by the previous repository before fetching the new head.
-  // Keeping them would let provider-created refs or stale origin refs influence later Git work.
-  for (const path of [".git/refs", ".git/logs", ".git/packed-refs"]) {
-    await rm(join(checkout, path), { force: true, recursive: true })
-  }
-  await mkdir(join(checkout, ".git/refs/heads"), { recursive: true })
-  await mkdir(join(checkout, ".git/refs/remotes"), { recursive: true })
-  await mkdir(join(checkout, ".git/refs/tags"), { recursive: true })
 }
 
 export function createGitHubHost(options: GitHubHostOptions): GitHubHost {

@@ -348,6 +348,55 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   expect(await readFile(join(firstPath, 'node_modules/marker'), 'utf8')).toBe('warm')
 }, 30_000)
 
+it('builds pooled Git metadata outside a checkout before installing it atomically', async () => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const outside = join(root, 'outside')
+  await mkdir(outside)
+  await writeFile(join(outside, 'marker'), 'untouched')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: pool },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let checkout = ''
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
+  const bin = join(root, 'bin')
+  await mkdir(bin)
+  const realGit = (await exec('which', ['git'])).stdout.trim()
+  const commandLog = join(root, 'commands.jsonl')
+  // Inject the background-process race at the first reset Git command. The
+  // completed metadata must not be installed through this replacement symlink.
+  await writeFile(join(bin, 'git'), `#!${process.execPath}
+const { spawnSync } = require('node:child_process');
+const { appendFileSync, rmSync, symlinkSync } = require('node:fs');
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify(args) + '\\n');
+if (args.includes('init')) {
+  rmSync(${JSON.stringify(join(checkout, '.git'))}, { recursive: true, force: true });
+  symlinkSync(${JSON.stringify(outside)}, ${JSON.stringify(join(checkout, '.git'))});
+}
+const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`, { mode: 0o755 })
+  vi.stubEnv('PATH', `${bin}:${process.env.PATH}`)
+  await expect(host.withPullRequestCheckout(pullRequest, async () => {
+    throw new Error('must not run')
+  })).rejects.toThrow()
+  const commands: string[][] = (await readFile(commandLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
+  expect(commands.some(args => args.includes('init'))).toBe(true)
+  for (const args of commands) expect(args[1]).toMatch(/\.git\.replacement-/)
+  expect(await readdir(outside)).toEqual(['marker'])
+  expect(await readFile(join(outside, 'marker'), 'utf8')).toBe('untouched')
+  expect(await readdir(pool)).toEqual([])
+}, 30_000)
+
 it('clears initialized submodules when a pooled checkout changes its gitlink', async () => {
   const root = await mkdtemp(join(tmpdir(), 'vitehub-checkout-submodule-'))
   roots.push(root)
