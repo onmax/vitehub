@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { gunzipSync } from "node:zlib";
 import { maxSatisfying, minVersion, rcompare, valid, validRange } from "semver";
 
 import type {
@@ -396,12 +395,12 @@ export async function provisionToolchain(
     const { name, pin, version } = packageManager;
     await installEntry(target, packageKey, async () => {
       const metadata = await packageVersionMetadata(name, version, signal);
-      const archive = await download(metadata.tarball, `${name}@${version}`, signal, bytes => {
+      const archive = await download(metadata.tarball, `${name}@${version}`, signal, async bytes => {
         const actual = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
         if (actual !== metadata.integrity) {
           throw boxErrorDiagnostics.BOX_R0153({ message: `[vitehub] ${name}@${version} integrity mismatch: expected ${metadata.integrity}, received ${actual}.` });
         }
-        if (pin.integrity) verifyPackageManagerHash(pin, name, bytes);
+        if (pin.integrity) await verifyPackageManagerHash(pin, name, bytes);
       });
       return {
         archive,
@@ -524,10 +523,10 @@ export function installScript(options: {
   return `${lines.join("\n")}\n`;
 }
 
-function verifyPackageManagerHash(pin: BoxToolchainPackageManagerPin, name: string, tarball: Uint8Array) {
+async function verifyPackageManagerHash(pin: BoxToolchainPackageManagerPin, name: string, tarball: Uint8Array) {
   const [algorithm = "", expected = ""] = pin.integrity?.split(".") ?? [];
   // Corepack hashes the yarn.js bundle for Yarn 2+, and the registry tarball otherwise.
-  const contents = name === "@yarnpkg/cli-dist" ? tarEntry(tarball, "bin/yarn.js") : tarball;
+  const contents = name === "@yarnpkg/cli-dist" ? await tarEntry(tarball, "bin/yarn.js") : tarball;
   const actual = contents ? createHash(algorithm).update(contents).digest("hex") : undefined;
   if (actual !== expected) {
     throw boxErrorDiagnostics.BOX_R0153({ message: `[vitehub] ${pin.name}@${pin.version} does not match the ${algorithm} hash from ${pin.source}: expected ${expected}, received ${actual ?? "<missing>"}.` });
@@ -535,8 +534,9 @@ function verifyPackageManagerHash(pin: BoxToolchainPackageManagerPin, name: stri
 }
 
 /** Read one regular file from a gzipped npm package tarball. */
-function tarEntry(gzipped: Uint8Array, path: string): Uint8Array | undefined {
-  const bytes = gunzipSync(gzipped);
+async function tarEntry(gzipped: Uint8Array, path: string): Promise<Uint8Array | undefined> {
+  const stream = new Blob([Uint8Array.from(gzipped)]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
   const decoder = new TextDecoder();
   const field = (offset: number, length: number) => decoder.decode(bytes.subarray(offset, offset + length)).replace(/\0.*$/s, "");
   let longName: string | undefined;
@@ -560,7 +560,7 @@ function tarEntry(gzipped: Uint8Array, path: string): Uint8Array | undefined {
   }
 }
 
-async function download(url: string, label: string, signal: AbortSignal | undefined, verify: (bytes: Uint8Array) => void) {
+async function download(url: string, label: string, signal: AbortSignal | undefined, verify: (bytes: Uint8Array) => void | Promise<void>) {
   // Concurrent sessions in one process share a download. The cache lock covers other processes.
   let pending = downloads.get(url);
   if (!pending) {
@@ -570,7 +570,7 @@ async function download(url: string, label: string, signal: AbortSignal | undefi
     void pending.then(() => downloads.delete(url), () => downloads.delete(url));
   }
   const bytes = await abortable(pending, signal);
-  verify(bytes);
+  await verify(bytes);
   return bytes;
 }
 

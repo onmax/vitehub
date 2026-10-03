@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 
 export const fixtureNodeVersion = "22.1.0";
 export const fixturePnpmVersion = "10.2.0";
+export const fixtureYarnVersion = "4.1.0";
 
 /** The platform suffix that the Box toolchain detects on this test host. */
 export function hostPlatformSuffix() {
@@ -49,8 +50,14 @@ export async function startToolchainFixture(options: {
   await writeFile(join(pnpmDirectory, "bin", "pnpm.cjs"), `echo ${fixturePnpmVersion}\n`);
   await writeFile(join(pnpmDirectory, "bin", "pnpx.cjs"), "echo pnpx\n");
   await execFileAsync("tar", ["-czf", join(root, "pnpm.tgz"), "-C", join(root, "pnpm"), "package"]);
+  const yarnDirectory = join(root, "yarn", "package");
+  const yarnScript = `echo ${fixtureYarnVersion}\n`;
+  await mkdir(join(yarnDirectory, "bin"), { recursive: true });
+  await writeFile(join(yarnDirectory, "bin", "yarn.js"), yarnScript);
+  await execFileAsync("tar", ["-czf", join(root, "yarn.tgz"), "-C", join(root, "yarn"), "package"]);
   const nodeBytes = await readFile(join(root, nodeArchive));
   const pnpmBytes = await readFile(join(root, "pnpm.tgz"));
+  const yarnBytes = await readFile(join(root, "yarn.tgz"));
   const nodeChecksum = options.nodeChecksum ?? createHash("sha256").update(nodeBytes).digest("hex");
   const pnpmIntegrity = options.pnpmIntegrity ?? `sha512-${createHash("sha512").update(pnpmBytes).digest("base64")}`;
   const requests: string[] = [];
@@ -81,6 +88,15 @@ export async function startToolchainFixture(options: {
       return send(JSON.stringify({ versions: { "9.0.0": {}, [fixturePnpmVersion]: {}, "11.0.0": {} } }), "application/json");
     }
     if (path === `/registry/pnpm/-/pnpm-${fixturePnpmVersion}.tgz`) return send(pnpmBytes);
+    if (path === `/registry/@yarnpkg%2Fcli-dist/${fixtureYarnVersion}`) {
+      return send(JSON.stringify({
+        bin: { yarn: "bin/yarn.js", yarnpkg: "bin/yarn.js" },
+        dist: { integrity: `sha512-${createHash("sha512").update(yarnBytes).digest("base64")}`, tarball: `${base}/registry/yarn.tgz` },
+        name: "@yarnpkg/cli-dist",
+        version: fixtureYarnVersion,
+      }), "application/json");
+    }
+    if (path === "/registry/yarn.tgz") return send(yarnBytes);
     response.writeHead(404);
     response.end();
   });
@@ -94,6 +110,7 @@ export async function startToolchainFixture(options: {
     },
     nodeArchive,
     pnpmSha512Hex: createHash("sha512").update(pnpmBytes).digest("hex"),
+    yarnSha512Hex: createHash("sha512").update(yarnScript).digest("hex"),
     requests,
     root,
     count(path: string) {

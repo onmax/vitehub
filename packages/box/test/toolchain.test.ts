@@ -20,6 +20,7 @@ import { createTrustedHostRuntime } from "../src/internal/trusted-host.ts";
 import {
   fixtureNodeVersion,
   fixturePnpmVersion,
+  fixtureYarnVersion,
   hostPlatformSuffix,
   startToolchainFixture,
   writeExecutable,
@@ -242,6 +243,25 @@ describe("trusted-host toolchain", () => {
       toolchain: { packageManager: false },
     }, {});
     await expect(box.open()).rejects.toMatchObject({ code: "BOX_R0153", message: expect.stringContaining("checksum mismatch") });
+  });
+
+  it("verifies the Yarn bundle hash before publishing its toolchain", async () => {
+    const { yarnSha512Hex } = await useFixture();
+    const root = await temporaryRoot();
+    const cwd = join(root, "project");
+    const runtime = createTrustedHostRuntime({ stateRoot: join(root, "state") });
+    await writeProject(cwd, { ".node-version": fixtureNodeVersion, "package.json": { packageManager: `yarn@${fixtureYarnVersion}+sha512.${yarnSha512Hex}` } });
+    const box = await resolveBox({ cwd, runtime, toolchain: "project" }, {});
+    const session = await box.open();
+    try {
+      expect((await session.exec("yarn", ["--version"])).stdout.trim()).toBe(fixtureYarnVersion);
+    }
+    finally {
+      await session.close();
+    }
+    await writeProject(cwd, { "package.json": { packageManager: `yarn@${fixtureYarnVersion}+sha512.${"0".repeat(128)}` } });
+    const invalid = await resolveBox({ cwd, runtime, toolchain: "project" }, {});
+    await expect(invalid.open()).rejects.toMatchObject({ code: "BOX_R0153", message: expect.stringContaining("package.json#packageManager") });
   });
 
   it("verifies registry integrity and the packageManager hash", async () => {

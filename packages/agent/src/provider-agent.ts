@@ -1217,7 +1217,7 @@ function providerToolchainCommandsFor(options: ProviderAgentAdapterOptions): Rea
     for (const command of ["pnpm", "pnpx", "yarn", "yarnpkg"]) commands.add(command)
     return commands
   }
-  if (packageManager && packageManager !== "project" && packageManager !== false) {
+  if (packageManager) {
     const name = packageManager.split("@", 1)[0]
     if (name === "pnpm") for (const command of ["pnpm", "pnpx"]) commands.add(command)
     if (name === "yarn") for (const command of ["yarn", "yarnpkg"]) commands.add(command)
