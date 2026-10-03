@@ -10,7 +10,7 @@ export async function stopChild(child, graceMs = 500) {
       new Promise(resolve => { timer = setTimeout(resolve, graceMs) }),
     ])
     // The process group can outlive its leader, so also stop surviving descendants.
-    if (child.exitCode === null && child.signalCode === null) signalChild(child, "SIGKILL")
+    signalChild(child, "SIGKILL")
     await closed
   }
   finally {
