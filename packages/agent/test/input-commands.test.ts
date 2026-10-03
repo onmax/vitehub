@@ -222,6 +222,30 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("bounds recursive stages after channel-skipped commands through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const rewrite = (next: string): InputCommand["call"] => ({ context }) => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      if (mode === "replacement") return next
+      const prompt = `/skip ${next}`
+      if (mode === "mutation") context.input.set({ prompt })
+      else return { prompt }
+    }
+    const capability = inputCommands({
+      commands: {
+        skip: { channels: ["other"], call() { throw new Error("Skipped command ran") } },
+        a: { call: rewrite("/b") },
+        b: { call: rewrite("/a") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/skip /a" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
   it.each(["replacement", "result", "mutation"] as const)("bounds mixed same-command recursive expansion through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

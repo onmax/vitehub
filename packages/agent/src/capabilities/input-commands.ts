@@ -515,7 +515,11 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             const ownGrowth = nextOwnRuns > previousOwnRuns && !creditedGrowth.has(budgetCommand)
             // Only record transitions into rewritten command tokens. Unchanged
             // siblings can move when a replacement changes the prompt length.
-            const nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
+            let nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
+            // Channel-skipped tokens must not hide the next executable rewrite.
+            while (nextInvocation && !commandAllowsCurrentChannel(commands[nextInvocation.name]!, context as AgentCapabilityRuntimeContext)) {
+              nextInvocation = findInputCommandInvocation(text, trigger, commands, nextInvocation.end)
+            }
             let changedRange = budgetReplacementRange
             if (nextInvocation && nextInvocation.name !== budgetCommand && !changedRange) {
               let start = 0
@@ -558,7 +562,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               && nextInvocation.start < changedRange.end
               && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
             let cycleDetected = false
-            if (introducesNextInvocation) {
+            if (introducesNextInvocation && nextInvocation) {
               if (!transitionLineage.length) transitionLineage.push(budgetCommand)
               const transition = `${budgetCommand}->${nextInvocation.name}`
               const transitionWasBlocked = blockedTransitions.has(transition)
