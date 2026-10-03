@@ -1,5 +1,6 @@
 export async function stopChild(child, graceMs = 500) {
   const exited = child.exitCode !== null || child.signalCode !== null
+  if (exited) return
   const closed = exited ? Promise.resolve() : new Promise(resolve => child.once("close", resolve))
   signalChild(child, "SIGTERM")
   let timer
@@ -9,7 +10,7 @@ export async function stopChild(child, graceMs = 500) {
       new Promise(resolve => { timer = setTimeout(resolve, graceMs) }),
     ])
     // The process group can outlive its leader, so also stop surviving descendants.
-    signalChild(child, "SIGKILL")
+    if (child.exitCode === null && child.signalCode === null) signalChild(child, "SIGKILL")
     await closed
   }
   finally {
@@ -37,7 +38,13 @@ export function manageChild(...initialChildren) {
   let cleanup
   let interrupted = false
   const stop = () => {
-    cleanup ??= Promise.all([...children].map(child => stopChild(child))).finally(() => {
+    cleanup ??= (async () => {
+      while (children.size) {
+        const snapshot = [...children]
+        await Promise.all(snapshot.map(child => stopChild(child)))
+        if (![...children].some(child => !snapshot.includes(child))) break
+      }
+    })().finally(() => {
       process.off("SIGINT", onSignal)
       process.off("SIGTERM", onSignal)
     })
