@@ -676,11 +676,13 @@ export function findDefaultExportCall(source: string, names: string[], options: 
           index = skipQuoted(value, index) - 1
           continue
         }
-        if (isIdentifierChar(value[index])) {
+        if (isIdentifierCharAt(value, index)) {
           const start = index
-          while (isIdentifierChar(value[index + 1])) index += 1
+          let end = index
+          while (end < value.length && isIdentifierCharAt(value, end)) end += identifierCodePoint(value, end)?.length ?? 1
+          index = end - 1
           const previous = previousCodeIndex(value, start - 1, controlFlowRegexes)
-          if (value.slice(start, index + 1) === "extends" && value[previous] !== ".") {
+          if (value.slice(start, end) === "extends" && value[previous] !== ".") {
             // `infer R extends Constraint` constrains the inferred name; it
             // does not begin another conditional branch.
             if (/\binfer\s+[\p{ID_Start}_$][\p{ID_Continue}$]*\s*$/u.test(value.slice(0, start))) continue
@@ -731,7 +733,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.
       if (/(?:\||&|\^)\s*(?:true|false|null|undefined|\d+(?:\.\d+)?|["'`])/.test(value)) return false
-      if (/\b(?!(?:as|satisfies)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
+      if (/\b(?!(?:as|satisfies|extends)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
       return true
     }
     const firstArgument = stripBoundaryComments(call.arguments[0] || "")
