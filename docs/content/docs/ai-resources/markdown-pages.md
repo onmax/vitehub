@@ -59,7 +59,7 @@ Start with the compact index, select one raw page, and keep its URL with the sup
 
 Add a second page only when the first page links to a required concept or reference.
 This keeps the task context small and makes documentation drift easier to find.
-For a smaller index, use `https://vitehub.dev/llms/agents.txt` or `https://vitehub.dev/llms/server-primitives.txt`.
+Use the links in `https://vitehub.dev/llms.txt` to select a focused product or reference page.
 
 ## Paste context into another tool
 
