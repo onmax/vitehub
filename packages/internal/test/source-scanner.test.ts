@@ -98,6 +98,7 @@ describe("source scanner", () => {
     "as true extends true ? Options<string, unknown> : never",
     "as true extends true ? readonly Other<string, unknown>[] : never",
     "as true extends true ? keyof Other<string, unknown> : never",
+    "as true extends true ? ScheduleDefinitionInput : keyof (Options<string, unknown>)",
     'as true extends true ? ScheduleDefinitionInput : `${Extract<"a" | "b", string>}`',
     'as `${Extract<"a" | "b", string>}`',
     "as false extends true ? never : Options<string, unknown>",

@@ -750,7 +750,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.
       if (/(?:\||&|\^)\s*(?:true|false|null|undefined|\d+(?:\.\d+)?|["'`])/.test(value)) return false
-      if (/\b(?!(?:as|satisfies|extends|is)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
+      if (/\b(?!(?:as|satisfies|extends|is|keyof|readonly|typeof)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
       return true
     }
     const firstArgument = stripBoundaryComments(call.arguments[0] || "")
