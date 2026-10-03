@@ -122,9 +122,7 @@ The Connection adds its credentials after `hooks.request`, so hooks never see th
 
 ```ts [server/connections/billing.ts]
 access: {
-  agents: {
-    support: { read: true, write: ['fetch'] },
-  },
+  'agent:support': { read: true, write: ['fetch'] },
 },
 ```
 
