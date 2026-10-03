@@ -113,11 +113,15 @@ function joinServedBlobUrl(...parts: string[]): string {
   return path ? `${base}/${path}` : base
 }
 
+function encodeServedBlobPath(pathname: string): string {
+  return pathname.split("/").map(segment => encodeURIComponent(segment)).join("/")
+}
+
 async function withServedBlobUrl(name: string, object: BlobObject): Promise<BlobObject> {
   const config = await getBlobRuntimeConfig()
   const serve = config && typeof config === "object" ? config.serve : undefined
   if (!serve || serve.store !== name) return object
-  return { ...object, url: joinServedBlobUrl(serve.publicBaseUrl || "/", serve.route, object.pathname) }
+  return { ...object, url: joinServedBlobUrl(serve.publicBaseUrl || "/", serve.route, encodeServedBlobPath(object.pathname)) }
 }
 
 async function resolveStorage(name = "default") {
