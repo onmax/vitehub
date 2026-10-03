@@ -506,15 +506,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (moduleImport !== undefined) reExports.set(name, moduleImport)
   }
 
-  function assignmentOperator(index: number): boolean {
-    if (tokens[index] === "=" && (["=", ">"].includes(tokens[index + 1]) || tokens[index - 1] === "=")) return false
+  function assignmentOperator(index: number, sequence = tokens): boolean {
+    if (sequence[index] === "=" && (["=", ">"].includes(sequence[index + 1]) || sequence[index - 1] === "=")) return false
     const operators = [
       ["="],
       ["+", "="], ["-", "="], ["*", "="], ["*", "*", "="], ["/", "="], ["%", "="],
       ["&", "="], ["&", "&", "="], ["|", "="], ["|", "|", "="], ["^", "="],
       ["?", "?", "="], ["<", "<", "="], [">", ">", "="], [">", ">", ">", "="],
     ]
-    return operators.some(operator => operator.every((token, offset) => tokens[index + offset] === token))
+    return operators.some(operator => operator.every((token, offset) => sequence[index + offset] === token))
   }
 
   function assignmentInitializer(index: number): number | undefined {
@@ -1289,7 +1289,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && !expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
         && !reassignedGlobalConversions.has(name)
         && ![tokens, references].some(sequence => sequence.some((token, cursor) =>
-          token === name && ["=", "+", "-"].includes(sequence[cursor + 1] ?? "")
+          token === name && (assignmentOperator(cursor + 1, sequence) || ["+", "-"].includes(sequence[cursor + 1] ?? ""))
           && ![".", "?"].includes(sequence[cursor - 1] ?? "")))
     }
     const hiddenCode = references.some((token, index) =>

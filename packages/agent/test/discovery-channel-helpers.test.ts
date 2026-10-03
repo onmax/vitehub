@@ -780,6 +780,26 @@ it.each([
   })).rejects.toThrow("opaque Channel")
 })
 
+it.each(["String", "Number", "Boolean"].flatMap(name =>
+  ["&&=", "||=", "??=", "*=", "/=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", ">>>="].map(operator => ({ name, operator })),
+))("rejects global conversion assignments inside templates: $name $operator", async ({ name, operator }) => {
+  await expect(discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts";
+const replacement = () => getPortal().capabilities = [{ workspace: {} }];
+const ignored = \`\${${name} ${operator} replacement}\${${name}("id")}\`;
+export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it.each(["&&=", "||=", "??="])("rejects reassigned global conversions before templates: %s", async operator => {
+  await expect(discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts";
+String ${operator} () => getPortal().capabilities = [{ workspace: {} }];
+const ignored = \`\${String("id")}\`;
+export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it.each([
   'const input = {}; input.String = value;',
   'const globals = globalThis; globals.other = value;',
