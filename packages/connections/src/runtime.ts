@@ -648,6 +648,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return undefined
     }
     if (decision === "approve") {
+      if (context.options.rejectApprovals) {
+        await recordDenied(context.name, context.actor, providerRequest.action, context.options)
+        throw new ConnectionError("denied", `Connection "${context.name}" requires immediate access for ${providerRequest.action}. Set approve: false on the actor's access rule.`, {
+          details: { action: providerRequest.action, connection: context.name },
+        })
+      }
       await requireConnected(context.name)
       const current = await (await getStore()).secrets.read(tokenKey(context.name))
       const token = current ? parseToken(current.value, context.name) : undefined

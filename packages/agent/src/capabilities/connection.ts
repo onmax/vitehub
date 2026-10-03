@@ -16,10 +16,11 @@ export interface AgentConnectionClient {
 
 interface AgentConnectionClientOptions {
   actor: string
+  rejectApprovals?: boolean
   invocationId?: string
 }
 
-export function useAgentConnectionClient(context: AgentCapabilityContext, name: string, capability: string): AgentConnectionClient {
+export function useAgentConnectionClient(context: AgentCapabilityContext, name: string, capability: string, options: { rejectApprovals?: boolean } = {}): AgentConnectionClient {
   const handle = primitiveHandle(context, "connections")
   if (!handle) {
     throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() uses Connection "${name}", so it requires Connections. Set vitehub({ connections: true }).` })
@@ -34,6 +35,7 @@ export function useAgentConnectionClient(context: AgentCapabilityContext, name: 
   }
   const invocationId = optionalString(context.context.get(agentInvocationTraceIdContextKey))
   const clientOptions: AgentConnectionClientOptions = {
+    ...options,
     actor: `agent:${context.agentIdentity?.name ?? "agent"}`,
     ...(invocationId ? { invocationId } : {}),
   }

@@ -75,9 +75,9 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
   if (!isHttpTransportConfig(transport) || transport.authProvider) {
     throw agentDiagnostics.AGENT_R0082({ message: `[vitehub] mcp({ servers }) server "${server}" uses a connection, so it requires an http or sse transport config without authProvider.` })
   }
-  const connection = useAgentConnectionClient(context, name.output, "mcp")
+  const connection = useAgentConnectionClient(context, name.output, "mcp", { rejectApprovals: true })
   const fetch: typeof globalThis.fetch = async (input, init) => {
-    // Normalize Request and URL inputs before persisting a replayable Connection fetch.
+    // MCP needs each response in this session; durable approval replay cannot resume it.
     const target = new Request(input, init)
     const body = target.method === "GET" || target.method === "HEAD" ? undefined : await target.text()
     return connection.fetch(target.url, {

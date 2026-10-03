@@ -94,13 +94,11 @@ The MCP transport uses the native Connection `fetch` client. GET and HEAD reques
 
 ```ts [server/connections/docs.ts]
 access: {
-  agents: {
-    support: { read: true, write: ['fetch'] },
-  },
+  'agent:support': { read: true, write: ['fetch'], approve: false },
 },
 ```
 
-ViteHub checks access before the tool runs. A denied request fails with `CONNECTION_DENIED`. A write that requires approval creates a durable Connection approval and fails with `CONNECTION_APPROVAL_REQUIRED` until an administrator approves it.
+ViteHub checks access before the tool runs. A denied request fails with `CONNECTION_DENIED`. MCP needs protocol responses in the active session, so its Connection client rejects writes that require approval with `CONNECTION_DENIED` before creating an approval. Set `approve: false` on the Agent access rule; durable approval replay cannot resume MCP discovery or tool calls.
 
 ## Executor through `mcp()`
 
@@ -119,7 +117,7 @@ mcp({
 })
 ```
 
-Allow the transport in the Connection with `agents: { support: { read: true, write: ['fetch'] } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/server-primitives/connections#api-key-connections) with a personal Executor API key.
+Allow the transport in the Connection with `access: { 'agent:support': { read: true, write: ['fetch'], approve: false } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/server-primitives/connections#api-key-connections) with a personal Executor API key.
 
 Without Connections, you can also send an Executor API key from Server Env in a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
 
