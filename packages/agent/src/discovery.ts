@@ -1325,6 +1325,27 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       return { name, parameters: cursor, parameterClose: close, bodyOpen: close + 1, bodyClose }
     }
     const uncalledFunctionBodies: { start: number; end: number }[] = []
+    // An arrow expression created inside an interpolation is not invoked by
+    // evaluating the template. Ignore calls in its body, just like function
+    // expressions, while retaining immediately invoked arrows.
+    for (let arrow = 0; arrow + 1 < references.length; arrow++) {
+      if (references[arrow] !== "=" || references[arrow + 1] !== ">") continue
+      const start = arrow + 2
+      let end = start
+      if (references[start] === "{") {
+        end = referenceClosings.get(start) ?? start
+      } else {
+        let depth = 0
+        for (; end < references.length; end++) {
+          const token = references[end]!
+          if (depth === 0 && ([";", ",", ")", "]", "}"].includes(token) || referenceLineBreaks.has(end))) break
+          if (["(", "[", "{"].includes(token)) depth++
+          else if ([")", "]", "}"].includes(token)) depth--
+        }
+        end--
+      }
+      if (end >= start && references[end + 1] !== "(") uncalledFunctionBodies.push({ start, end })
+    }
     const functionExpressionCall = (index: number) => {
       for (let cursor = Math.max(0, index - 3); cursor <= index; cursor++) {
         const expression = functionExpression(cursor)
@@ -1490,7 +1511,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const call = memberCallEnd(member.end - 1, index)
       if (tokens[call] !== "(") continue
       const target = call + 1
-      if (!globalThisReceiver(target) || tokens[target + 1] !== ",") continue
+      let targetEnd = target
+      let depth = 0
+      for (; targetEnd < tokens.length; targetEnd++) {
+        const token = tokens[targetEnd]!
+        if (depth === 0 && token === ",") break
+        if (["(", "[", "{"].includes(token)) depth++
+        else if ([")", "]", "}"].includes(token)) depth--
+      }
+      if (!globalThisReceiver(target) || tokens[targetEnd] !== ",") continue
       // Bulk writes can replace any of the built-in conversion helpers without
       // exposing a direct member assignment.
       // Keep all conversions opaque because the source object may contain

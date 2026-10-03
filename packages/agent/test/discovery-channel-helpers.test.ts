@@ -1057,8 +1057,21 @@ it.each(["!", "as object", "satisfies object"])("follows asserted global aliases
   })).rejects.toThrow("opaque Channel")
 })
 
+it("rejects conversion replacements through asserted defineProperty targets", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; Object.defineProperty((globalThis as object), "String", { value: () => portal.capabilities = [] }); const ignored = \`${"${String(input.id)}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it("ignores named function expressions in template interpolations", async () => {
   const definition = await discover(`${imports} import portal from "../../portal.ts"; const ignored = \`\${function portal() {}}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it("ignores calls in uncalled arrow bodies in template interpolations", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; const ignored = \`${"${() => format()}"}\`; export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
   })
   expect(definition?.workspace).toBeUndefined()
