@@ -9,7 +9,7 @@ import { encodeProviderOutputAliases } from "@vite-hub/internal/build/esbuild"
 import { removeProviderOutputArtifactDir, retainProviderOutputAliases, retainProviderOutputSources } from "@vite-hub/internal/build/provider-output-sources"
 import { getViteMode } from "@vite-hub/internal/build/mode"
 import { createRuntimeRegistryContents } from "@vite-hub/internal/definition-catalog"
-import { collectViteHubProviderImportAliases, createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, prepareViteHubProviderSources, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { collectViteHubProviderImportAliases, prepareViteHubProviderSources, createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 
@@ -50,7 +50,7 @@ const generatedNitroRuntimeRegistry = ".vitehub/nitro/schedule/runtime-registry.
 const generatedNitroStaticRegistry = ".vitehub/nitro/schedule/static-registry.js"
 const generatedNitroCloudflareModule = "./.vitehub/nitro/schedule/module.mjs"
 const generatedNitroDevHandlerDirectory = ".vitehub/nitro/schedule/dev-handlers"
-const mergeNoExternal = createNoExternalAddition(schedulePackageName)
+const noExternalAddition = createNoExternalAddition(schedulePackageName)
 
 export interface ScheduleProcessRuntimeOptions {
   concurrency?: number
@@ -652,7 +652,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
         return
       }
       return {
-        resolve: { noExternal: mergeNoExternal(config.resolve?.noExternal) },
+        resolve: { noExternal: noExternalAddition(config.resolve?.noExternal) },
       }
     },
     async handleHotUpdate(context) {

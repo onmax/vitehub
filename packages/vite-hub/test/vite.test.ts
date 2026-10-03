@@ -583,6 +583,7 @@ describe("vitehub", () => {
       "vite-hub/public-url",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
+      "@vite-hub/connections/types-cleanup",
       "@vite-hub/email/optional-peer-resolver",
       "@vite-hub/kv/optional-peers",
       "@vite-hub/source/vite",
@@ -605,6 +606,7 @@ describe("vitehub", () => {
       workspace: true,
     }))).toEqual([
       "@vite-hub/markdown-template/vite",
+      "vite-hub/agent-channel-env",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
       "vite-hub/public-url",
@@ -652,6 +654,7 @@ describe("vitehub", () => {
       },
       runtimeCapabilityImports: {
         blob: "vite-hub/_internal/blob",
+        connections: false,
         console: false,
         db: "vite-hub/database/drizzle",
         email: "vite-hub/email/server",

@@ -3209,7 +3209,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             },
           }],
           providerOutput: [
-            ...(options?.runtime === "deno" && hasHostedAgentDefinitions(rootDir, serverDirs)
+            ...(options !== false && options?.runtime === "deno" && hasHostedAgentDefinitions(rootDir, serverDirs)
               ? [{ description: "Generated Deno Agent server", owner: "agent", path: join(rootDir, ".vitehub", "agent", "deno-server.ts") }]
               : []),
             ...(hasHostedAgentDefinitions(rootDir, serverDirs) && resolveAgentHosting(resolved) === "netlify"
