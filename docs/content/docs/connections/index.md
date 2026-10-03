@@ -51,8 +51,11 @@ Each provider declares the API origins that may receive its credential. `google(
 
 A request to any other origin fails with `CONNECTIONS_ORIGIN_NOT_ALLOWED`, and ViteHub records the attempt as denied. The credential is not sent.
 
+This catalog skeleton declares the CRM origin. Its empty `methods` map exposes no callable CRM operations. Add the provider's API method paths before calling its operations.
+
 #code
 ```ts [server/connections/crm.ts]
+import { useServerEnv } from '#vitehub/env/server'
 import { defineConnection, type ConnectionProvider } from 'vite-hub/connections'
 
 const crm: ConnectionProvider = {
