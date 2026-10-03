@@ -61,13 +61,13 @@ const entries = computed<ConsoleSectionEntry[]>(() =>
 const selectedDefinition = computed(() =>
   definitions.value.find((definition) => definition.name === selectedName.value),
 );
+const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
 const canRunSelected = computed(() =>
-  Boolean(props.scheduleRunBase && selectedDefinition.value?.runnable),
+  Boolean(props.scheduleRunBase && (selectedDefinition.value?.runnable || selectedRecord.value?.runnable)),
 );
 const selectedRun = computed(() =>
   selectedName.value ? scheduleRuns.value[selectedName.value] : undefined,
 );
-const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
 const selectedEntry = computed(() => entries.value.find((entry) => entry.id === selectedName.value));
 
 function errorMessage(value: unknown): string | undefined {

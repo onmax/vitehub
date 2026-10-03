@@ -73,6 +73,7 @@ it("returns succeeded Schedule runs and consistent run history", async () => {
     .resolves.toMatchObject({ run: { scheduleId: "nightly-digest", status: "succeeded" } })
   const history = await playgroundRequest("/api/_vitehub/console/definitions?section=schedules")
   expect(history).toMatchObject({ records: expect.arrayContaining([
+    expect.objectContaining({ id: "definition:nightly-digest", runnable: true }),
     expect.objectContaining({
       id: "runtime:sched_console_reindex",
       cells: expect.objectContaining({ lastRun: expect.stringContaining("succeeded at") }),
@@ -83,6 +84,17 @@ it("returns succeeded Schedule runs and consistent run history", async () => {
       ]),
     }),
   ]) })
+})
+
+it("creates distinct IDs for simultaneous new chats", async () => {
+  const endpoint = "/api/_vitehub/console/agents/interface-engineer/invocations"
+  const [first, second] = await Promise.all([
+    playgroundRequest(endpoint, { prompt: "First" }),
+    playgroundRequest(endpoint, { prompt: "Second" }),
+  ])
+  expect(first).toMatchObject({ id: expect.any(String) })
+  expect(second).toMatchObject({ id: expect.any(String) })
+  expect((first as { id: string }).id).not.toBe((second as { id: string }).id)
 })
 
 it.each(["reindex-console", "sched_console_reindex", "unknown-schedule"])("rejects non-runnable Schedule %j", async (name) => {

@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { randomUUID } from "node:crypto"
 import * as v from "valibot"
 
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
@@ -192,6 +193,7 @@ const scheduleRecords = [
       { label: "Runs", value: "Use `vitehub schedule runs nightly-digest` to list runs that this runtime recorded." },
     ],
     id: "definition:nightly-digest",
+    runnable: true,
   },
   {
     cells: { enabled: "-", kind: "Target", lastRun: "-", nextRun: "-", schedule: "reindex-console", target: "reindex-console", timing: "-" },
@@ -513,7 +515,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     const inputMessages = images.length
       ? [{ id: "user-1", role: "user", parts: [...(prompt ? [{ type: "text", text: prompt }] : []), ...images] }]
       : undefined
-    const id = `ainv_console_${Date.now().toString(36)}`
+    const id = `ainv_console_${randomUUID()}`
     const now = new Date().toISOString()
     store.create({
       agentName,
