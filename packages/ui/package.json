@@ -61,8 +61,8 @@
     "nostics": "catalog:runtime",
     "@vueuse/core": "catalog:ui",
     "katex": "^0.17.0",
-    "@json-render/vue": "0.20.0",
-    "@json-render/core": "0.20.0"
+    "@json-render/vue": "0.21.0",
+    "@json-render/core": "0.21.0"
   },
   "devDependencies": {
     "@nuxt/ui": "catalog:nuxt",

@@ -204,8 +204,8 @@ catalogs:
       specifier: ^1.8.0
       version: 1.8.0
     nostics:
-      specifier: 1.2.0
-      version: 1.2.0
+      specifier: 1.3.0
+      version: 1.3.0
     ocache:
       specifier: ^0.3.0
       version: 0.3.0
@@ -445,9 +445,9 @@ overrides:
 packageExtensionsChecksum: sha256-pz55lQlIjTQPMQabQqX4BU7iLItd/t6YD6/SNMt/XKQ=
 
 patchedDependencies:
-  '@netlify/blobs@11.0.3':
-    hash: 080eab189ec6d51230bc7cc6b59633aa7944fa3e9a9992a4eb59ab413bb55223
-    path: patches/@netlify__blobs@11.0.3.patch
+  '@netlify/blobs@11.1.3':
+    hash: 0442d5aa3103362ea084742770306552a43b2047322742af4e5ce9782a3ba6b8
+    path: patches/@netlify__blobs@11.1.3.patch
   '@pierre/trees@1.0.0-beta.6':
     hash: 9514e905b6e4cd1bc58382bfba42af1b69f3386a5ca40b6241e91aa47b05061d
     path: patches/@pierre__trees@1.0.0-beta.6.patch
@@ -757,7 +757,7 @@ importers:
         version: 0.27.7
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       proper-lockfile:
         specifier: 'catalog:'
         version: 4.1.2
@@ -889,7 +889,7 @@ importers:
         version: 1.4.2
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.3
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
@@ -980,7 +980,7 @@ importers:
         version: 1.8.2
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1007,11 +1007,11 @@ importers:
         specifier: workspace:*
         version: link:../internal
       '@vite-hub/netlify-blobs-runtime':
-        specifier: npm:@netlify/blobs@11.0.3
-        version: '@netlify/blobs@11.0.3(patch_hash=080eab189ec6d51230bc7cc6b59633aa7944fa3e9a9992a4eb59ab413bb55223)'
+        specifier: npm:@netlify/blobs@11.1.3
+        version: '@netlify/blobs@11.1.3(patch_hash=0442d5aa3103362ea084742770306552a43b2047322742af4e5ce9782a3ba6b8)'
       files-sdk:
         specifier: catalog:storage
-        version: 2.6.2(9a27d7823421e290387064db8f4aa75b)
+        version: 2.6.2(52accd522384632c2224aa4db717673c)
       ofetch:
         specifier: catalog:unjs
         version: 1.5.1
@@ -1054,7 +1054,7 @@ importers:
         version: link:../runtime
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       semver:
         specifier: ^7.8.5
         version: 7.8.5
@@ -1109,7 +1109,7 @@ importers:
         version: 0.27.7
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.3
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.27.7)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
@@ -1140,7 +1140,7 @@ importers:
     dependencies:
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1174,7 +1174,7 @@ importers:
         version: link:../runtime
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       nuxt:
         specifier: catalog:nuxt-compat
         version: 4.5.2(79c7dfa71881a9a5172f2401b7b069ae)
@@ -1211,7 +1211,7 @@ importers:
         version: link:../runtime
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1260,7 +1260,7 @@ importers:
         version: 2.0.1-rc.33(crossws@0.4.12(srvx@1.0.5))(ocache@0.3.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
     devDependencies:
       '@types/node':
         specifier: catalog:tooling
@@ -1297,7 +1297,7 @@ importers:
         version: 2.0.1-rc.33(crossws@0.4.12(srvx@1.0.5))(ocache@0.3.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1368,7 +1368,7 @@ importers:
         version: 0.28.2
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       valibot:
         specifier: catalog:runtime
         version: 1.5.0(typescript@6.0.3)
@@ -1405,7 +1405,7 @@ importers:
         version: link:../runtime
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       valibot:
         specifier: catalog:runtime
         version: 1.5.0(typescript@6.0.3)
@@ -1476,7 +1476,7 @@ importers:
         version: 2.0.1-rc.33(crossws@0.4.12(srvx@1.0.5))(ocache@0.3.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1522,7 +1522,7 @@ importers:
         version: 2.0.5
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       unstorage:
         specifier: catalog:storage
         version: 2.0.0-alpha.10
@@ -1581,7 +1581,7 @@ importers:
         version: 0.7.0(katex@0.17.0)(shiki@4.5.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.3
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
@@ -1630,7 +1630,7 @@ importers:
         version: 2.0.1-rc.33(crossws@0.4.12(srvx@1.0.5))(ocache@0.3.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1692,7 +1692,7 @@ importers:
         version: 2.0.1-rc.33(crossws@0.4.12(srvx@1.0.5))(ocache@0.3.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       valibot:
         specifier: catalog:runtime
         version: 1.5.0(typescript@6.0.3)
@@ -1784,7 +1784,7 @@ importers:
         version: 17.0.6
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1833,7 +1833,7 @@ importers:
     dependencies:
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
     devDependencies:
       '@types/node':
         specifier: catalog:tooling
@@ -1876,7 +1876,7 @@ importers:
         version: 1.8.2
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -1953,7 +1953,7 @@ importers:
         version: 0.28.2
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.3
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
@@ -2006,7 +2006,7 @@ importers:
         version: 3.6.0
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       sh-syntax:
         specifier: catalog:shell
         version: 0.7.0
@@ -2043,7 +2043,7 @@ importers:
         version: 1.8.2
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       ofetch:
         specifier: catalog:unjs
         version: 1.5.1
@@ -2106,11 +2106,11 @@ importers:
         specifier: catalog:ui
         version: 1.2.2
       '@json-render/core':
-        specifier: 0.20.0
-        version: 0.20.0(zod@4.6.5)
+        specifier: 0.21.0
+        version: 0.21.0(zod@4.6.5)
       '@json-render/vue':
-        specifier: 0.20.0
-        version: 0.20.0(vue@3.5.43(typescript@6.0.3))(zod@4.6.5)
+        specifier: 0.21.0
+        version: 0.21.0(vue@3.5.43(typescript@6.0.3))(zod@4.6.5)
       '@nuxt/kit':
         specifier: 4.5.2
         version: 4.5.2(magic-string@1.4.2)(magicast@0.5.5)(oxc-parser@0.150.0)(rolldown@1.2.12)(unplugin@3.4.0(@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1))(esbuild@0.28.2)(rolldown@1.2.12)(rollup@4.64.0))
@@ -2125,7 +2125,7 @@ importers:
         version: 0.17.0
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       vite:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.3
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
@@ -2357,7 +2357,7 @@ importers:
         version: 3.0.260903-beta(patch_hash=e755d40c7b68a5a47e937a85112ebd7b955521d973a26f16115c8161a302962b)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       ocache:
         specifier: catalog:runtime
         version: 0.3.0
@@ -2463,7 +2463,7 @@ importers:
         version: 2.0.1-rc.33(crossws@0.4.12(srvx@1.0.5))(ocache@0.3.0)
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       pathe:
         specifier: catalog:unjs
         version: 2.0.3
@@ -2561,7 +2561,7 @@ importers:
         version: 2.0.1
       nostics:
         specifier: catalog:runtime
-        version: 1.2.0
+        version: 1.3.0
       ofetch:
         specifier: catalog:unjs
         version: 1.5.1
@@ -5287,13 +5287,13 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@json-render/core@0.20.0':
-    resolution: {integrity: sha512-cXAXn7h3QaylefQgh85AEGPuVq4C8SJ3k9JqigWLJhaBSozF1Fmsrm43DP16RmkqNiVgj5pBRdmB48lEO5qlow==}
+  '@json-render/core@0.21.0':
+    resolution: {integrity: sha512-vysEbTjO1y8mEgAsp0tztRyaWCkNsBrG8MhAqbndGK3qmMXjMRdCNtk21+AQRNKdRelFGVAwBgtUNW8tfjQlsw==}
     peerDependencies:
       zod: ^4.0.0
 
-  '@json-render/vue@0.20.0':
-    resolution: {integrity: sha512-vASy4ygzrv/h2yxwiEUkX/HomYcJ30T3oYL1LMknvAdNu4bwljDHEkx0tLxvYiogmwDQfT9nfFI5UzpbpHtVEQ==}
+  '@json-render/vue@0.21.0':
+    resolution: {integrity: sha512-6tG6A5mYX4QP2lvh51R/Y83dTUWVHK0RTxK0YN5bRNpj2QrN3Qy/yDD/XNtjlAGdWeHjhLsuEILJVEM1VMWcQw==}
     peerDependencies:
       vue: 3.5.43
       zod: ^4.0.0
@@ -5640,16 +5640,16 @@ packages:
     resolution: {integrity: sha512-4sdKQCHkA3Q0fFbjuX2y/dQUFqbkeu11fv7I0V2xD1hNK4TddJKYkvjxNRGDUAQVr7/ZeC7yfv4QXR8PG5xN3g==}
     engines: {node: ^14.16.0 || >=16.0.0}
 
-  '@netlify/blobs@11.0.3':
-    resolution: {integrity: sha512-Z8IXQtQC8BQjm76i1bN+l12TTyKQ/s1R92Ajhou7+fpP0KSxnJ65QzLEb5WuFuFutn8ORrcd4mlF8A2xhw8dzA==}
+  '@netlify/blobs@11.1.3':
+    resolution: {integrity: sha512-epr7eGb13LugY+0WUDl91dYmypOfbrJ6MYf07M3Zoey5WBYRD2rqDrOhDskfAlEaJ2MoWGaPWrVxltIxfI5LoQ==}
     engines: {node: '>=22.12.0'}
 
   '@netlify/dev-utils@4.4.3':
     resolution: {integrity: sha512-VkMD8YACshR6pHgoub6nikkI+SQVdhjVvLsOK2ZSpN2wMlDHdsD8uRjESfzv/yYfq5jlsGskfx1cf1FUurWt9A==}
     engines: {node: ^18.14.0 || >=20}
 
-  '@netlify/dev-utils@6.0.1':
-    resolution: {integrity: sha512-q5g70dO3q/M/XTBQz7uIECJxVlJoS8UBlzpjf22DV6q61UzXa8EONTPXPmvisrFcUi1I3AUKplPcHGQYZZj+Vw==}
+  '@netlify/dev-utils@6.0.3':
+    resolution: {integrity: sha512-p+M9a8mI0H0rRohY7Z4TkblvJMwsl5nfNKzmmhz1XBgSLBoDcgwf1TroHvM0TyK5sRiD8LViXe1wuJbzYlilUQ==}
     engines: {node: '>=22.12.0'}
 
   '@netlify/otel@6.0.6':
@@ -8344,7 +8344,7 @@ packages:
     resolution: {integrity: sha512-V6Mnml8v09QALx6K0elJ7o9K/MkVDtW3t6L+7Ou/JcWtb3xwId2AH4FeOceySd2JaO87IMw4+6vSZxLm34LPbw==}
 
   '@t3tools/contracts@https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@cb8ae81c8433fb25acbcb82884ecd9a2e365de25':
-    resolution: {tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@cb8ae81c8433fb25acbcb82884ecd9a2e365de25}
+    resolution: {integrity: sha512-tw4EgP32ylx2t/cyUlF3lGISrVh2vUSP0HIsKwBeNiMcyLGOeCdxBWXhWRYZDmYS2kR5y91B/6EGRRcwemtYNA==, tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@cb8ae81c8433fb25acbcb82884ecd9a2e365de25}
     version: 0.0.45
     peerDependencies:
       effect: 4.0.0-rc.115
@@ -18761,13 +18761,13 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@json-render/core@0.20.0(zod@4.6.5)':
+  '@json-render/core@0.21.0(zod@4.6.5)':
     dependencies:
       zod: 4.6.5
 
-  '@json-render/vue@0.20.0(vue@3.5.43(typescript@6.0.3))(zod@4.6.5)':
+  '@json-render/vue@0.21.0(vue@3.5.43(typescript@6.0.3))(zod@4.6.5)':
     dependencies:
-      '@json-render/core': 0.20.0(zod@4.6.5)
+      '@json-render/core': 0.21.0(zod@4.6.5)
       vue: 3.5.43(typescript@6.0.3)
       zod: 4.6.5
 
@@ -19099,9 +19099,9 @@ snapshots:
       - supports-color
     optional: true
 
-  '@netlify/blobs@11.0.3(patch_hash=080eab189ec6d51230bc7cc6b59633aa7944fa3e9a9992a4eb59ab413bb55223)':
+  '@netlify/blobs@11.1.3(patch_hash=0442d5aa3103362ea084742770306552a43b2047322742af4e5ce9782a3ba6b8)':
     dependencies:
-      '@netlify/dev-utils': 6.0.1
+      '@netlify/dev-utils': 6.0.3
       '@netlify/otel': 7.0.4
       '@netlify/runtime-utils': 3.0.0
     transitivePeerDependencies:
@@ -19126,7 +19126,7 @@ snapshots:
       write-file-atomic: 5.0.1
     optional: true
 
-  '@netlify/dev-utils@6.0.1':
+  '@netlify/dev-utils@6.0.3':
     dependencies:
       '@whatwg-node/server': 0.11.0
       ansis: 4.4.0
@@ -27735,7 +27735,7 @@ snapshots:
     dependencies:
       filename-reserved-regex: 4.0.1
 
-  files-sdk@2.6.2(9a27d7823421e290387064db8f4aa75b):
+  files-sdk@2.6.2(52accd522384632c2224aa4db717673c):
     dependencies:
       aws4fetch: 1.0.20
       commander: 15.0.0
@@ -27758,7 +27758,7 @@ snapshots:
       '@microsoft/microsoft-graph-client': 3.0.7(@azure/identity@4.13.3)
       '@modelcontextprotocol/sdk': 1.32.0(@cfworker/json-schema@4.1.1)(zod@4.6.5)
       '@nestjs/common': 11.1.19(reflect-metadata@0.2.2)(rxjs@7.8.2)
-      '@netlify/blobs': 11.0.3(patch_hash=080eab189ec6d51230bc7cc6b59633aa7944fa3e9a9992a4eb59ab413bb55223)
+      '@netlify/blobs': 11.1.3(patch_hash=0442d5aa3103362ea084742770306552a43b2047322742af4e5ce9782a3ba6b8)
       '@opentelemetry/api': 1.9.1
       '@supabase/storage-js': 2.117.2
       '@vercel/blob': 2.8.0(patch_hash=015566b186d9cff0cbb8b65329ee62915fc585ee6aa848ecd8d81ab91dd44b25)
