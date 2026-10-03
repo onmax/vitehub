@@ -153,8 +153,8 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
       inspect: () => {
         if (resolvedOptions() === false) return
         const runtime = runtimeConfig
-        const rootDir = resolve(resolved?.root ?? process.cwd())
-        const provisionState = readProvisionStateSync(databaseRoot())
+        const rootDir = resolved?.root ?? process.cwd()
+        const provisionState = readProvisionStateSync(rootDir)
         return {
           definitions: [{
             kind: "database",

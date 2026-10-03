@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest"
 import {
   consoleBuiltinSectionIds,
   consoleSectionDetails,
+  consoleSectionRouteName,
   isConsoleConnectionsEnabled,
   prioritizeConsoleSectionIds,
   readLastConsoleSection,
@@ -111,9 +112,11 @@ describe("Console section routes", () => {
 
     expect([...routedSections].sort()).toEqual([...consoleBuiltinSectionIds].sort())
     for (const section of consoleBuiltinSectionIds) {
+      expect(consoleSectionDetails[section].routeName).toBe(consoleSectionRouteName(section))
       expect(client).toContain(`name: "${consoleSectionDetails[section].routeName}"`)
     }
     expect(client).toContain("subscribeConsoleNavigation(sectionsBase, addContributedRoutes)")
     expect(client).toContain("const name = consoleSectionRouteName(section)")
+    expect(client).toContain('return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" }')
   })
 })

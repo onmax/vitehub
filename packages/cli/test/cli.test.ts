@@ -341,6 +341,26 @@ describe("ViteHub CLI", () => {
     expect(stderr.output()).toBe("")
   })
 
+  it("reserves the inspect namespace for built-in commands", async () => {
+    const stdout = stream()
+    const stderr = stream()
+    const run = vi.fn(() => 0)
+
+    const exitCode = await runViteHubCli({
+      args: ["inspect", "definitions"],
+      cwd: "/repo",
+      loadConfig: async () => ({
+        plugins: [{ vitehub: { cli: { namespaces: [{ features: [{ name: "definitions", run }], name: "inspect" }] } } }],
+        root: "/repo",
+      }),
+      stderr,
+      stdout,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it("runs runtime namespaces without loading the project config", async () => {
     const stdout = stream()
     const stderr = stream()

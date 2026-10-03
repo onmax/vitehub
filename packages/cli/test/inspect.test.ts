@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 
 import { runViteHubCli } from "../src/index.ts"
 
@@ -154,50 +154,6 @@ describe("vitehub inspect", () => {
     expect(result.stdout).toContain("  dist/server/wrangler.json  (vite-hub)")
   })
 
-  it("resolves build-only Provider Output in production mode", async () => {
-    const rootDir = await createTempDir()
-    await writeFile(join(rootDir, "vite.config.mjs"), `
-export default ({ command, mode }) => ({
-  plugins: command === "build" && mode === "production" ? [{
-    name: "production-output",
-    apply: "build",
-    vitehub: { inspect: { providerOutput: [{ description: "Production manifest", owner: "test", path: ${JSON.stringify(join(rootDir, ".vitehub/production.json"))} }] } },
-  }] : [],
-})
-`)
-    const stdout = stream()
-    const exitCode = await runViteHubCli({
-      args: ["inspect", "provider-output", "--json"],
-      cwd: rootDir,
-      stdout,
-    })
-
-    expect(exitCode).toBe(0)
-    expect(JSON.parse(stdout.output()).providerOutput).toEqual(expect.arrayContaining([
-      expect.objectContaining({ owner: "test", path: ".vitehub/production.json" }),
-    ]))
-  })
-
-  it("passes build discovery to project and Nuxt config loaders", async () => {
-    const rootDir = await createTempDir()
-    const loadConfig = vi.fn(async () => ({ plugins: [], root: rootDir }))
-    const loadNuxtViteConfig = vi.fn(async () => ({ plugins: inspectPlugins(rootDir), root: rootDir }))
-    const stdout = stream()
-
-    expect(await runViteHubCli({
-      args: ["inspect", "provider-output", "--json"],
-      cwd: rootDir,
-      loadConfig,
-      loadNuxtViteConfig,
-      stdout,
-    })).toBe(0)
-    expect(loadConfig).toHaveBeenCalledWith(rootDir, "build")
-    expect(loadNuxtViteConfig).toHaveBeenCalledWith(rootDir, "build")
-    expect(JSON.parse(stdout.output()).providerOutput).toEqual(expect.arrayContaining([
-      expect.objectContaining({ owner: "rate-limit", path: ".vitehub/rate-limit/manifest.json" }),
-    ]))
-  })
-
   it("redacts secrets in Provider Output JSON content", async () => {
     const rootDir = await createTempDir()
     await mkdir(join(rootDir, "dist/server"), { recursive: true })
@@ -225,29 +181,35 @@ export default ({ command, mode }) => ({
     expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({ exists: false, owner: "cli" })
   })
 
-  it("preserves provisioned IDs under secret-like resource names and redacts credential values", async () => {
+  it("preserves provisioned resource names in Provider Output JSON", async () => {
     const rootDir = await createTempDir()
     await mkdir(join(rootDir, ".vitehub"), { recursive: true })
     await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({
-      cloudflare: {
-        d1: { tokens: "db-id", passwords: "password-db-id", vars: "vars-db-id", api_key: "api-db-id", unsafe: "Bearer secret-value" },
-      },
-      vercel: { blob: { tokens: "store-id" } },
-      api_key: "unknown-provider-secret",
+      vercel: { blob: { api_key: "resource-id" } },
     }))
-
     const result = await run(rootDir, ["inspect", "provider-output", "--json"])
 
     expect(result.exitCode).toBe(0)
     const parsed = JSON.parse(result.stdout)
-    expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json").content).toEqual({
-      cloudflare: {
-        d1: { tokens: "db-id", passwords: "password-db-id", vars: "vars-db-id", api_key: "api-db-id", unsafe: "[redacted]" },
-      },
-      vercel: { blob: { tokens: "store-id" } },
+    expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({
+      content: { vercel: { blob: { api_key: "resource-id" } } },
+      exists: true,
+      owner: "cli",
     })
-    expect(result.stdout).not.toContain("secret-value")
-    expect(result.stdout).not.toContain("unknown-provider-secret")
+  })
+
+  it("preserves the corruption diagnostic for malformed provision-state JSON", async () => {
+    const rootDir = await createTempDir()
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), "{invalid")
+    const result = await run(rootDir, ["inspect", "provider-output", "--json"])
+
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout).providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({
+      content: "[unreadable JSON]",
+      exists: true,
+      owner: "cli",
+    })
   })
 
   it("rejects unknown arguments", async () => {

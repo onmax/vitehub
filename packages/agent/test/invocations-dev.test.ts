@@ -1,8 +1,8 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, describe, expect, it, vi } from "vitest"
 import { ensureWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 const modelGenerate = vi.hoisted(() => vi.fn())
 const registry = vi.hoisted((): Record<string, () => Promise<unknown>> => ({}))
@@ -20,12 +20,13 @@ vi.mock("../src/internal/ai-sdk-runtime.ts", () => ({
   }),
 }))
 
-import { defineAgent, runAgent } from "../src/index.ts"
+import { agentInvocationId, defineAgent, runAgent } from "../src/index.ts"
 import { agentInvocationsDevHeader, agentInvocationsDevRuntimeRoute, agentInvocationsDevTokenServerHeader } from "../src/invocations-dev.ts"
 import { handleAgentInvocationsDevRequest } from "../src/runtime/invocations-dev.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
+
 import { hubAgent } from "../src/vite.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "../src/internal/runtime-type.ts"
 
 import type { AgentInvocations } from "../src/index.ts"
 
@@ -82,6 +83,73 @@ describe("Agent Invocations Nitro dev handler", () => {
     finally {
       await rm(root, { recursive: true, force: true })
     }
+  })
+
+  it("does not cancel a match when another journal lookup fails", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = new Date().toISOString()
+    await store.create({ createdAt: timestamp, id: "healthy-id", observations: [], status: "completed", traceId: "healthy", updatedAt: timestamp })
+    const healthy = defineAgentInvocations({ store })
+    const owning = { ...healthy, cancel: vi.fn(async (id: string) => ({ id, outcome: "terminal" as const, status: "completed" as const })) }
+    const failing = { ...healthy, getSummary: vi.fn(async () => { throw new Error("Unavailable journal") }) }
+    registry.first = async () => ({ default: defineAgent({ invocations: failing, driver: { run: () => "done" } }) })
+    registry.second = async () => ({ default: defineAgent({ invocations: owning, driver: { run: () => "done" } }) })
+    const response = await handleAgentInvocationsDevRequest(devRequest({ id: "healthy-id", operation: "cancel" }))
+    expect(response.status).toBe(500)
+    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("Unavailable journal") } })
+    expect(owning.cancel).not.toHaveBeenCalled()
+    expect((await healthy.getSummary("healthy-id"))?.cancelRequestedAt).toBeUndefined()
+  })
+
+  it.each(["first", "second"] as const)("does not cancel when the %s journal cannot be read to establish uniqueness", async unreadablePosition => {
+    const firstStore = createMemoryAgentInvocationStore()
+    const secondStore = createMemoryAgentInvocationStore()
+    const first = defineAgentInvocations({ store: firstStore })
+    const second = defineAgentInvocations({ store: secondStore })
+    const unreadable = { ...second, getSummary: vi.fn(async () => { throw new Error("Unavailable journal") }) }
+    const id = await agentInvocationId("unreadable-duplicate-journals", "digest")
+    const timestamp = new Date().toISOString()
+    await firstStore.create({ createdAt: timestamp, id, observations: [], status: "running", traceId: "first", updatedAt: timestamp })
+    await secondStore.create({ createdAt: timestamp, id, observations: [], status: "running", traceId: "second", updatedAt: timestamp })
+    registry.first = async () => ({ default: defineAgent({ invocations: unreadablePosition === "first" ? unreadable : first, driver: { run: () => "done" } }) })
+    registry.second = async () => ({ default: defineAgent({ invocations: unreadablePosition === "first" ? first : unreadable, driver: { run: () => "done" } }) })
+    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    expect(response.status).toBe(500)
+    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("Unavailable journal") } })
+    expect((await first.getSummary(id))?.cancelRequestedAt).toBeUndefined()
+    expect((await second.getSummary(id))?.cancelRequestedAt).toBeUndefined()
+  })
+
+  it.each([["completed", "running"], ["running", "completed"], ["running", "running"]] as const)("rejects duplicate IDs across %s and %s journals before changing either", async (firstStatus, secondStatus) => {
+    const firstStore = createMemoryAgentInvocationStore()
+    const secondStore = createMemoryAgentInvocationStore()
+    const first = defineAgentInvocations({ store: firstStore })
+    const second = defineAgentInvocations({ store: secondStore })
+    const id = await agentInvocationId("duplicate-journals", "digest")
+    const timestamp = new Date().toISOString()
+    await firstStore.create({ createdAt: timestamp, id, observations: [], status: firstStatus, traceId: "first", updatedAt: timestamp })
+    await secondStore.create({ createdAt: timestamp, id, observations: [], status: secondStatus, traceId: "second", updatedAt: timestamp })
+    registry.first = async () => ({ default: defineAgent({ invocations: first, driver: { run: () => "done" } }) })
+    registry.second = async () => ({ default: defineAgent({ invocations: second, driver: { run: () => "done" } }) })
+    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("multiple Agent invocation journals") } })
+    expect((await first.getSummary(id))?.cancelRequestedAt).toBeUndefined()
+    expect((await second.getSummary(id))?.cancelRequestedAt).toBeUndefined()
+  })
+
+  it("deduplicates one journal shared by registry entries", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = new Date().toISOString()
+    const id = await agentInvocationId("shared-journal", "digest")
+    await store.create({ createdAt: timestamp, id, observations: [], status: "running", traceId: "shared", updatedAt: timestamp })
+    const invocations = defineAgentInvocations({ store })
+    registry.first = async () => ({ default: defineAgent({ invocations, driver: { run: () => "done" } }) })
+    registry.second = async () => ({ default: defineAgent({ invocations, driver: { run: () => "done" } }) })
+    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id, outcome: "requested" })
+    expect((await invocations.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String))
   })
 
   it("cancels a running Invocation through the application registry", async () => {

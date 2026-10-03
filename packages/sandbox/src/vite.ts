@@ -1,4 +1,4 @@
-import { createNoExternalMerger, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from '@vite-hub/internal/build/vite'
+import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveViteHubProjectRoot } from '@vite-hub/internal/build/vite'
 import { getHostingProvider } from '@vite-hub/internal/hosting'
 import { isPlainObject, isPlainRecord } from '@vite-hub/internal/object'
 import { realpath } from 'node:fs/promises'
@@ -202,7 +202,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
   const integrationOptions = internalOptions
     ? publicSandboxOptions(internalOptions)
     : internalOptions
-  const mergeSandboxNoExternal = createNoExternalMerger('@vite-hub/sandbox')
+  const mergeSandboxNoExternal = createNoExternalAddition('@vite-hub/sandbox')
   let generatedAliases: AliasMap = {}
   let generatedFiles: string[] = []
   let watchFiles: string[] = []
@@ -212,6 +212,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
   let rawConfig: Record<string, unknown> = {}
   let rawEnv: ConfigEnv = { command: 'serve', mode: 'development' }
   let resolvedConfig: ResolvedConfig | undefined
+  let sandboxEnabled = integrationOptions !== false
   let selectedProvider: SandboxHostingProvider | undefined
   let earlyNitroTarget: Record<string, unknown> | undefined
   let earlyNitroSnapshot: Record<string, unknown> | undefined
@@ -317,7 +318,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
     enforce: 'pre',
     nitro: { name: '@vite-hub/sandbox/provider-runtime', setup: sandboxNitroModule },
     vitehub: {
-      inspect: () => (rawConfig.sandbox ?? integrationOptions) === false ? undefined : ({
+      inspect: () => sandboxEnabled ? ({
         definitions: [{
           kind: 'sandbox',
           label: 'Sandboxes',
@@ -326,13 +327,14 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
             return inspectSandboxDefinitions({ projectRoot: resolveViteHubProjectRoot(sandboxRoot), rootDir: sandboxRoot })
           },
         }],
-      }),
+      }) : undefined,
     },
     async config(config, env) {
       // SAFETY: Vite's config hook provides the mutable record stored for later Sandbox preparation.
       rawConfig = config as Record<string, unknown>
       rawEnv = env
       const prepared = await prepareCurrentSandboxRuntime(false)
+      sandboxEnabled = rawConfig.sandbox !== false && integrationOptions !== false
       generatedAliases = prepared.aliases
       generatedFiles = prepared.files
       watchFiles = prepared.watchFiles
@@ -370,6 +372,7 @@ export function hubSandbox(options?: SandboxPublicOptions): SandboxVitePlugin {
     async configResolved(config) {
       resolvedConfig = config
       const prepared = await refreshSandboxRuntime()
+      sandboxEnabled = rawConfig.sandbox !== false && integrationOptions !== false
       selectedProvider = prepared.provider
       const composed = await composeCloudflareSandbox(config, prepared, true)
       if (!composed && composedCloudflareEarly && earlyNitroTarget && earlyNitroSnapshot) {

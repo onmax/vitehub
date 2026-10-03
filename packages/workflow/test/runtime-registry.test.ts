@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { WorkflowDefinition } from "../src/types.ts"
 import { createWorkflow } from "../src/runtime/client.ts"
-import { loadWorkflowDefinition, resetWorkflowRuntime, setWorkflowRuntimeRegistry } from "../src/runtime/state.ts"
+import { getInlineWorkflowDefinitions, loadWorkflowDefinition, resetWorkflowRuntime, setWorkflowRuntimeRegistry } from "../src/runtime/state.ts"
 
 afterEach(resetWorkflowRuntime)
 
@@ -131,5 +131,19 @@ describe("Workflow registry replacement", () => {
     await expect(sharedLoad).resolves.toBe(definition)
     await expect(loadWorkflowDefinition("report")).resolves.toBe(definition)
     expect(loader).toHaveBeenCalledOnce()
+  })
+
+  it("clears inline definitions when a module loader rejects", async () => {
+    const definition = { handler: async () => "inline" }
+    const failure = new Error("load failed")
+    setWorkflowRuntimeRegistry({
+      report: () => {
+        createWorkflow("report", definition.handler)
+        return Promise.reject(failure)
+      },
+    })
+
+    await expect(loadWorkflowDefinition("report")).rejects.toBe(failure)
+    expect(getInlineWorkflowDefinitions().size).toBe(0)
   })
 })

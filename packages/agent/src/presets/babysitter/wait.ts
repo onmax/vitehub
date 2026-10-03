@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import type { GitHubEvidence, PullRequestWait, Snapshot } from "../../server/github-inbox.ts";
 import type { GitHubRequiredCheckState } from "../../server/github-required-checks.ts";
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../../internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const pending = new Set(["queued", "in_progress", "pending", "waiting", "requested", "rerequested", "created"]);

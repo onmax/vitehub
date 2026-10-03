@@ -2,9 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
-import { isRuntimeRecord } from "../../internal/runtime-type.ts"
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
 import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";

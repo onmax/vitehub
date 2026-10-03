@@ -307,6 +307,14 @@ const body = {
 History must contain valid ViteHub Messages with `user` or `assistant` roles and unique IDs. Parts must be `text`, `file`, `image`, or `audio`. The Console preserves message metadata and appends the new prompt as a user Message. It rejects malformed Messages, `system` or `tool` roles, and other parts before starting the Agent. This includes tool calls, tool results, and approval parts nested in user or assistant Messages. Omit `messages` for a prompt-only invocation. Each request creates a new invocation; history does not resume a previous runtime session.
 
 
+### Cancel a running session
+
+A pending or running session shows **Cancel session** in its header when the Console has invoke access for the session's Agent. The action uses the same `invoke` permission as starting an Agent Invocation. Without it, the button is hidden and the `vitehub:console:invocation` operation rejects `POST { action: 'cancel' }` with status 403.
+
+The Console calls `invocations.cancel(id)` on the Agent's journal. A run in the same process stops at once. A run in another process reads the request at its next claim renewal, within 10 seconds. When the Driver cannot stop the run, the header shows `Cancel requested, not enforced by <driver>`. The session stays running until the Driver returns. See [Cancel an invocation](/docs/agents/invocations#cancel-an-invocation) for each Driver.
+
+A finished session shows **Abort stale execution**. This sends an abort signal to any execution still registered in the Console process without changing the terminal journal. The result reports local delivery and any Driver that cannot enforce abort. If no local execution receives the signal, the header says so. A journal that did not keep a pending or running request returns status 503.
+
 Nuxt does not need an SEO module for the `X-Robots-Tag` default. If the app already uses `@nuxtjs/robots` or `@nuxtjs/seo`, add route metadata so its robots and sitemap modules also know that Console pages are not indexable:
 
 ```ts [nuxt.config.ts]

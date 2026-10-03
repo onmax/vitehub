@@ -38,7 +38,7 @@ import { removeAgentEvaliteConfig, resolveAgentEvalOptions, writeAgentEvaliteCon
 import { resolveProviderRuntimePackages } from "./internal/provider-runtime-packages.ts"
 import { isPortableAgentWorkflowCapability } from "./internal/final-channel-output.ts"
 import { agentRouteUsesParam, defaultAgentChatRoute, normalizeAgentRoute } from "./internal/routes.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "./internal/runtime-type.ts"
 import { readColocatedAgentInstructions } from "./vite/colocated-agent-instructions.ts"
 import { readColocatedAgentSkills, resolveColocatedAgentSkillsRoot } from "./vite/colocated-agent-skills.ts"
 
@@ -95,6 +95,8 @@ async function parseTypeScript(): Promise<(source: string) => ReturnType<typeof 
 }
 
 const agentPackageName = "@vite-hub/agent"
+const agentProcessHostDrainRoute = "/api/_vitehub/host/drain"
+const agentProcessHostHealthRoute = "/api/_vitehub/host/health"
 const mergeNoExternal = createNoExternalAddition(agentPackageName, "@t3tools/provider-runtime")
 const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"
@@ -103,8 +105,6 @@ const generatedAgentWebhookRouteHandler = "agent/chat-webhook-route.ts"
 const generatedAgentPreparationPlugin = "agent/preparation-plugin.ts"
 const generatedAgentPreparationHandler = "agent/preparation-route.ts"
 const generatedAgentWebhookQueuePlugin = "agent/webhook-queue-plugin.ts"
-const agentProcessHostDrainRoute = "/api/_vitehub/host/drain"
-const agentProcessHostHealthRoute = "/api/_vitehub/host/health"
 const generatedAgentProcessHosts = "agent/process-hosts.ts"
 const generatedAgentProcessHostsPlugin = "agent/process-hosts-plugin.ts"
 const generatedAgentProcessHostsDrain = "agent/process-hosts-drain.ts"
@@ -3205,10 +3205,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       },
       inspect: () => {
         if (agent === false) return
+        const options = normalizeAgentOptions(agent)
         const rootDir = resolve(resolved?.root ?? process.cwd())
-        const normalized = normalizeAgentOptions(agent)
-        const hostedAgents = Boolean(normalized && hasHostedAgentDefinitions(rootDir, serverDirs))
-        const denoHostedAgents = hostedAgents && normalized !== false && normalized?.runtime === "deno"
         return {
           definitions: [{
             kind: "agent",
@@ -3219,16 +3217,12 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             },
           }],
           providerOutput: [
-            ...(denoHostedAgents ? [{
-              description: "Generated Deno Agent server",
-              owner: "agent",
-              path: resolve(resolveViteHubGeneratedRoot(resolved ?? { root: rootDir }), generatedAgentDenoServer),
-            }] : []),
-            ...(hostedAgents && !denoHostedAgents && resolveAgentHosting(resolved) === "netlify" ? [{
-                description: "Generated Netlify Agent function",
-                owner: "agent",
-                path: resolve(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`),
-            }] : []),
+            ...(options !== false && options?.runtime === "deno" && hasHostedAgentDefinitions(rootDir, serverDirs)
+              ? [{ description: "Generated Deno Agent server", owner: "agent", path: join(rootDir, ".vitehub", "agent", "deno-server.ts") }]
+              : []),
+            ...(options !== false && options?.runtime !== "deno" && hasHostedAgentDefinitions(rootDir, serverDirs) && resolveAgentHosting(resolved) === "netlify"
+              ? [{ description: "Generated Netlify Agent function", owner: "agent", path: join(createDefaultNetlifyOutputRoot(rootDir), "functions", `${netlifyAgentFunctionName}.mjs`) }]
+              : []),
           ],
         }
       },
@@ -3318,7 +3312,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       ]
       // `vitehub agent invocations cancel` runs in the Nitro runtime, so it reaches the application's journals.
       // The handler exists only for the Development Server.
-      const devNitroHandlers = resolved && !denoOutput && nitroContext && environment?.command === "serve"
+      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
       const nitro = installCloudflareState

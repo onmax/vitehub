@@ -21,7 +21,7 @@ function isCallableRepresentation(value: unknown): boolean {
   }
 }
 
-/** Parses JavaScript runtime representation categories at Env boundaries. */
+/** Parses JavaScript runtime representation categories at Workspace boundaries. */
 export function hasRuntimeType<TType extends keyof RuntimeTypeMap>(
   value: unknown,
   expected: TType,
@@ -46,8 +46,4 @@ export function hasRuntimeType<TType extends keyof RuntimeTypeMap>(
     case "symbol": return isPrimitive && tag === "[object Symbol]"
   }
   throw runtimeErrorDiagnostics.RUNTIME_R0008({ message: `Unsupported runtime type: ${expected}` })
-}
-
-export function isRuntimeRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && hasRuntimeType(value, "object") && !Array.isArray(value)
 }

@@ -1,8 +1,9 @@
-import { safeParse, object, literal, pipe, string, trim, nonEmpty } from "valibot"
 import agentRegistry from "#vitehub/agent/registry"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
+
+import * as v from "valibot"
 
 import { getAgentFromRegistry } from "../index.ts"
 import { agentInvocationsDevGuard, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
@@ -15,11 +16,15 @@ function failure(message: string, status: number): Response {
   return Response.json({ error: { message: redactInspectionText(message) } }, { status })
 }
 
-const requestBodySchema = object({ id: pipe(string(), trim(), nonEmpty()), operation: literal("cancel") })
+const cancelRequestSchema = v.object({
+  id: v.pipe(v.string(), v.trim(), v.nonEmpty()),
+  operation: v.literal("cancel"),
+})
 
 async function readBody(request: Request): Promise<AgentInvocationsDevRequestBody | undefined> {
-  const result = safeParse(requestBodySchema, await request.json().catch(() => undefined))
-  return result.success ? result.output : undefined
+  const value: unknown = await request.json().catch(() => undefined)
+  const parsed = v.safeParse(cancelRequestSchema, value)
+  return parsed.success ? parsed.output : undefined
 }
 
 /**
@@ -41,13 +46,23 @@ async function registeredInvocationJournals(): Promise<AgentInvocations[]> {
   return [...journals]
 }
 
+class InvocationJournalAmbiguityError extends Error {}
+
 async function cancelInJournals(journals: readonly AgentInvocations[], id: string): Promise<AgentInvocationCancelResult> {
-  let result: AgentInvocationCancelResult = { id, outcome: "not-found" }
+  const matches: AgentInvocations[] = []
+  let failure: unknown
   for (const journal of journals) {
-    result = await journal.cancel(id)
-    if (result.outcome !== "not-found") return result
+    try {
+      if (await journal.getSummary(id)) matches.push(journal)
+    }
+    catch (error) { failure ??= error }
   }
-  return result
+  if (matches.length > 1) {
+    throw new InvocationJournalAmbiguityError("The ID matches multiple Agent invocation journals. Cancel through the intended Agent's invocations.cancel(id).")
+  }
+  if (failure) throw failure
+  if (matches[0]) return await matches[0].cancel(id)
+  return { id, outcome: "not-found" }
 }
 
 /**
@@ -74,6 +89,6 @@ export async function handleAgentInvocationsDevRequest(request: Request, options
     return Response.json(await cancelInJournals(journals, body.id))
   }
   catch (error) {
-    return failure(`Agent Invocation cancel failed: ${error instanceof Error ? error.message : String(error)}`, 500)
+    return failure(`Agent Invocation cancel failed: ${error instanceof Error ? error.message : String(error)}`, error instanceof InvocationJournalAmbiguityError ? 409 : 500)
   }
 }

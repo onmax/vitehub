@@ -262,6 +262,8 @@ export default defineAgent({
 
 The callback receives prepared input, messages, tools, Workspace access, invocation context, and the resolved Actor as both `actor` and `invoker`. A custom run callback may call a model internally, but ViteHub treats that execution and usage as application-owned behavior.
 
+ViteHub cannot stop a custom run callback. When a user cancels the Invocation, `input.abortSignal` aborts, and the cancel result reports `notEnforcedBy: 'run'`. Pass the signal to your own I/O, or throw `input.abortSignal.reason`, to stop early. Model-backed and provider-backed Drivers stop on cancel. See [Cancel an invocation](/docs/agents/invocations#cancel-an-invocation).
+
 Read [Instructions](/docs/agents/instructions) for model-facing behavior and [Workspace context](/docs/agents/workspace-context) for files and writeback.
 
 ## Use an ask Driver

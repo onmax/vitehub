@@ -31,7 +31,7 @@ function markRunnableSchedules(records: readonly ConsoleRecord[]): ConsoleRecord
   const runnable = getConsoleSchedules()
   return records.map(record => record.cells.kind === "Definition" && record.cells.schedule && Object.hasOwn(runnable, record.cells.schedule)
     ? { ...record, runnable: true }
-    : { ...record, runnable: undefined })
+    : record)
 }
 
 export default async function consoleDefinitionsHandler(event: ConsoleRequestEvent): Promise<ConsoleSectionContent & {
@@ -54,7 +54,7 @@ export default async function consoleDefinitionsHandler(event: ConsoleRequestEve
     }
   }
   const reader = readers && Object.hasOwn(readers, section) ? readers[section] : undefined
-  if (!reader || content.kind !== "record-table") return { ...content, section }
-  const records = mergeRecords(content.records, await readRuntimeRecords(reader))
+  if (content.kind !== "record-table") return { ...content, section }
+  const records = reader ? mergeRecords(content.records, await readRuntimeRecords(reader)) : content.records
   return { kind: "record-table", records: section === "schedules" ? markRunnableSchedules(records) : records, section }
 }

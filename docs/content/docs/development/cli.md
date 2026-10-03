@@ -57,7 +57,7 @@ Available namespaces:
 | `vitehub agent eval` | Opt-in tooling | Agent Package | Run discovered Agent Evals through ViteHub defaults. |
 | `vitehub agent info` | Available | Agent Package | Inspect resolved Agent metadata through a running Vite Development Server. |
 | `vitehub agent dev` | Available | Agent Package | Talk to a discovered Agent through a running Vite Development Server. |
-| `vitehub agent invocations` | Available | Agent Package | List, inspect, follow, cancel, or remove records in the application's Agent Invocation journal. |
+| `vitehub agent invocations` | Available | Agent Package | List, inspect, follow, or cancel records in the application's Agent Invocation journal. |
 | `vitehub blob list` | Available | Blob Package | List blobs of a Blob store, one page at a time. |
 | `vitehub blob head` | Available | Blob Package | Show the metadata of one blob. |
 | `vitehub blob get` | Available | Blob Package | Download one blob to a file or to stdout, byte for byte. |
@@ -427,6 +427,33 @@ Execution authority is a resolution-time snapshot of filesystem, network, enviro
 Use `--json` for the structured inspection contract at `config.driver.executionAuthority`, and `--url` when Vite is not listening on `http://localhost:5173`.
 When multiple Agents are discovered, `--agent` is required.
 `agent info` reads resolved runtime metadata from the guarded Agent Dev Loop endpoint exposed by `hubAgent()`.
+
+## Cancel an Agent Invocation
+
+Start the app's Vite + Nitro Development Server, then cancel one pending or running Agent Invocation by its journal id.
+
+```bash [Terminal]
+pnpm vitehub agent invocations cancel ainv_0123
+pnpm vitehub agent invocations cancel ainv_0123 --json
+```
+
+```txt [Output]
+ainv_0123 cancel requested, not enforced by run
+```
+
+`hubAgent()` adds a guarded `/__vitehub/agent/invocations/dev` endpoint to the Vite Development Server. The endpoint forwards the request into the Nitro dev environment. There, the Agent Definitions and their `invocations` journals are the same objects that run the application's Invocations, so the cancel reaches the running Invocation with any store, including `createMemoryAgentInvocationStore()`. The endpoint accepts only local hosts and same-origin requests. Use `--url`, `--server`, or `VITEHUB_DEV_SERVER_URL` when Vite is not listening on `http://localhost:5173`, and `--timeout` to change the request timeout.
+
+Nuxt runs Nitro outside the Vite process, and plain Vite has no Nitro. On these hosts the endpoint returns `501`, and the command prints the reason and exits with status 1.
+
+| Output | Meaning | Exit status |
+| --- | --- | --- |
+| `cancel requested` | A run in the Nitro runtime received an aborted signal. Its final journal state confirms whether it stopped. | 0 |
+| `cancel request recorded; execution stop is unconfirmed` | The journal retained the request for a current or future owner. A crashed owner cannot observe it until execution recovery. | 0 |
+| `cancel requested, not enforced by <driver>` | The Driver cannot enforce an abort request. Delivery does not confirm that its execution owner received the request. | 0 |
+| `already <status>` | The Invocation already finished. | 0 for `cancelled`; 1 for `completed` or `failed` |
+| `not found` | The journal has no Invocation with this id. | 1 |
+
+`--json` prints the `AgentInvocationCancelResult` from `invocations.cancel(id)`. The command is development-only. In a deployed app, call `invocations.cancel(id)` from your own authorized server route.
 
 ## Talk to an Agent during development
 

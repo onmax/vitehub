@@ -5,8 +5,7 @@ import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts
 import { agentLayerMetadata, createConfiguredAgentDefinition, rememberAgentLayerOptions, resolveAgentLayerOptions } from "./agent-layers.ts"
 import { readDiscoveredAgentName } from "./internal/discovered-agent-name.ts"
 import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
-import { asUnknownBoundary, hasRuntimeType, isRuntimeObject } from "@vite-hub/runtime/internal/runtime-type"
-import { isCallableMember, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType, isCallableMember, isRuntimeObject, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { Diagnostic } from "nostics"
 import agentRegistry from "#vitehub/agent/registry"
 import { acquireAgentCapacity, configureAgentCapacity, inspectAgentCapacity } from "./internal/agent-capacity.ts"
@@ -1129,8 +1128,7 @@ async function runAgentAsWorkflow<
   }
   // Preparation failures happen before a provider run can create its journal.
   const recordPreparationFailure = async (error: unknown) => {
-    await ensureActivity()
-    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    const status = invocationFailureWasCancelled(error, input.abortSignal) || invocationFailureWasCancelled(error, replayJournal?.abortSignal) ? "cancelled" : "failed"
     await activity?.update(status, error)
     if (!hasAgentDefinition(agent)) return
     const preservesDeliveryRun = isAgentChannelDeliveryWorkflowBinding(input.context?.[agentChannelDeliveryWorkflowContextKey])
@@ -1314,13 +1312,27 @@ async function runAgentAsWorkflow<
   }
   let run: AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   if (replayJournal) {
-    if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
-      throw new Error("Could not persist the Workflow dispatch intent.")
+    // A replay can be cancelled after reserving the journal but before the
+    // provider accepts the Workflow run. Observe the durable request before
+    // handing the claim to the provider.
+    try {
+      await replayJournal.watchCancellation(invocationCancellationDriver(agent))
+      replayJournal.abortSignal.throwIfAborted()
+      if (!await replayJournal.prepareWorkflowDispatch({ name: workflowName, provider: (workflowConfig && workflowConfig.provider) || "unknown" })) {
+        throw new Error("Could not persist the Workflow dispatch intent.")
+      }
+      payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
+      if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
     }
-    payload.invocationClaimToken = await replayJournal.handoffClaim({ workflowDispatch: true })
-    if (!payload.invocationClaimToken) throw new Error("Could not transfer the Invocation execution claim.")
+    catch (error) {
+      await recordPreparationFailure(error)
+      throw error
+    }
   }
   try {
+    // Storage handoff can yield after cancellation was requested. Check the
+    // journal signal at the last possible point before accepting the run.
+    replayJournal?.abortSignal.throwIfAborted()
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     run = await workflowRuntimeState.runWithWorkflowRuntimeEvent(workflowEvent, () => handle.run(
       payload,
@@ -1328,8 +1340,10 @@ async function runAgentAsWorkflow<
     )) as AgentWorkflowRun<AgentWorkflowOutput<TOutput>>
   }
   catch (error) {
-    await activity?.update(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
-    const ambiguous = Boolean(replayJournal && (workflowConfig && workflowConfig.provider) === "vercel" && inputHandedOff) || isAmbiguousAgentWorkflowStartFailure(error)
+    const status = invocationFailureWasCancelled(error, input.abortSignal) || invocationFailureWasCancelled(error, replayJournal?.abortSignal) ? "cancelled" : "failed"
+    await activity?.update(status, error)
+    const ambiguous = Boolean(replayJournal && (workflowConfig && workflowConfig.provider) === "vercel" && inputHandedOff)
+      || isAmbiguousAgentWorkflowStartFailure(error)
     const failedRunId = !options.fresh && context.run?.runId
       ? context.run.runId
       : workflowRunId || (ambiguous ? undefined : createTraceId())
@@ -1342,7 +1356,7 @@ async function runAgentAsWorkflow<
           ...context,
           run: { ...context.run, runId: failedRunId },
         }, { agentName: agentInvocationName(agent, context), deferClaim: ambiguous, terminalTakeover: true })
-        if (!ambiguous) await invocationJournal?.finish("failed", error)
+        if (!ambiguous) await invocationJournal?.finish(status, error)
       }
     }
     throw error
@@ -4419,7 +4433,9 @@ async function createAgentInvocationContext<
         throw agentDiagnostics.AGENT_R0711({ message: "[vitehub] Provider Agent timeout must be no greater than 2,147,483,647 milliseconds." })
       }
       const timeoutSignal = AbortSignal.timeout(input.timeout)
+      const callerAbortSignal = agentInvocationCallerAbortSignal(input)
       input = { ...input, abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, timeoutSignal]) : timeoutSignal }
+      markAgentInvocationCallerAbortSignal(input, callerAbortSignal)
     }
     const resolveReadiness = async () => {
       if (driverKind !== "provider" || !definition?.status) return undefined
@@ -6919,6 +6935,7 @@ async function executeAgentInvocationWithCapacityLease<
   try {
     const adapterContext = toAgentAdapterRunContext(invocation)
     if (options.kind === "run" && !options.renderOutput) adapterContext.nativeStructuredOutput = false
+    await invocationJournal?.watchCancellation(invocationCancellationDriver(definition))
     invocation.input.abortSignal?.throwIfAborted()
     invocationJournal?.driverStarted()
     if (customRun) {
@@ -7905,7 +7922,10 @@ function invocationCancellationDriver(definition: unknown): AgentInvocationCance
   const internal = definition as { [baseAgentDriver]?: unknown, [baseAgentDriverKind]?: AgentDriverKind } | undefined
   const driver = internal?.[baseAgentDriver]
   const provider = isRuntimeRecord(driver) && hasRuntimeType(driver.provider, "string") ? driver.provider : undefined
-  return agentInvocationCancellationDriver({ kind: internal?.[baseAgentDriverKind] ?? "model", ...(provider ? { provider } : {}) })
+  const kind = internal?.[baseAgentDriverKind] ?? "model"
+  const cancellationDriver: { kind: "model" | "provider" | "run", provider?: string } = { kind: kind === "ask" ? "run" : kind }
+  if (provider) cancellationDriver.provider = provider
+  return agentInvocationCancellationDriver(cancellationDriver)
 }
 
 async function executeAgentInvocation<
@@ -7937,10 +7957,21 @@ async function executeAgentInvocation<
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
         ...((context as AgentRuntimeContext & { [agentInvocationRunId]?: string })[agentInvocationRunId]
           // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-          ? { run: { ...context.run, runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId] } }
+          ? {
+            run: {
+              ...context.run,
+              // SAFETY: The preceding truthy lookup proves this optional runtime marker is a string.
+              runId: (context as AgentRuntimeContext & { [agentInvocationRunId]: string })[agentInvocationRunId],
+            },
+          }
           : {}),
       // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-      }, { agentName: agentInvocationName(definition as AgentDefinition, context), cancellationDriver: invocationCancellationDriver(definition), recoverPending: exclusive, ...(inheritedClaim ? { replaceClaimToken: inheritedClaim } : {}) })
+      }, {
+        // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
+        agentName: agentInvocationName(definition as AgentDefinition, context),
+        cancellationDriver: invocationCancellationDriver(definition),
+        ...(inheritedClaim ? { replaceClaimToken: inheritedClaim } : {}),
+      })
       : undefined
     if ((exclusive || inheritedClaim) && invocationJournal?.claimStatus !== "owned") {
       if (invocationJournal?.claimStatus === "conflict") throw new AgentInvocationClaimConflict()
@@ -7959,7 +7990,7 @@ async function executeAgentInvocation<
   if (invocationJournal) {
     context = invocationJournal.context
     const callerAbortSignal = agentInvocationCallerAbortSignal(input)
-    // Cancellation aborts the capacity wait, the Driver run, and tool calls through the run signal.
+    // A cancellation request aborts the capacity wait, the Driver run, and tool calls through the run abort signal.
     input = {
       ...input,
       abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, invocationJournal.abortSignal]) : invocationJournal.abortSignal,
@@ -7971,11 +8002,6 @@ async function executeAgentInvocation<
   try {
     await invocationJournal?.watchCancellation(invocationCancellationDriver(definition))
     input.abortSignal?.throwIfAborted()
-    if (exclusive || inheritedClaim) {
-      // SAFETY: hasAgentDefinition validated the object before this internal contract assertion.
-      activity = createActiveAgentActivity(definition as AgentDefinition<TRuntimeConfig> | undefined, context)
-      await activity?.update("queued")
-    }
     if (definition && inspectAgentCapacity(definition)) {
       preparedInvocation = await createAgentInvocationContextWithWorkflowFailureDelivery(
         // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
@@ -7987,10 +8013,10 @@ async function executeAgentInvocation<
         options.tools,
       )
     }
-    if (preparedInvocation?.handledResponse || preparedInvocation?.intercepted) {
-      const running = await invocationJournal?.running()
-      if ((exclusive || inheritedClaim) && running === false) throw new Error("Could not persist the Invocation running state before execution.")
+    if (preparedInvocation?.handledResponse) {
+      const runningPersisted = await invocationJournal?.running()
       input.abortSignal?.throwIfAborted()
+      if (invocationJournal && !runningPersisted && !invocationJournal.reusedTerminal) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
@@ -8004,21 +8030,24 @@ async function executeAgentInvocation<
       const workflowExecution = Boolean((context as AgentRuntimeContext & { [agentWorkflowExecutionContextKey]?: boolean })[agentWorkflowExecutionContextKey])
       await finishPreparedInvocationFailure(preparedInvocation, error, workflowExecution)
     }
-    await invocationJournal?.finish(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
-    await activity?.update(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
+    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    await invocationJournal?.finish(status, error)
+    await activity?.update(status, error)
     throw error
   }
   if (!release) {
     try {
-      const running = await invocationJournal?.running()
-      if ((exclusive || inheritedClaim) && running === false) throw new Error("Could not persist the Invocation running state before execution.")
+      const runningPersisted = await invocationJournal?.running()
       input.abortSignal?.throwIfAborted()
+      if (invocationJournal && !runningPersisted && !invocationJournal.reusedTerminal) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
+      input.abortSignal?.throwIfAborted()
       return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
     }
     catch (error) {
-      await invocationJournal?.finish(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
-      await activity?.update(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
+      const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+      await invocationJournal?.finish(status, error)
+      await activity?.update(status, error)
       throw error
     }
   }
@@ -8030,9 +8059,9 @@ async function executeAgentInvocation<
     release()
   }
   try {
-    const running = await invocationJournal?.running()
-    if ((exclusive || inheritedClaim) && running === false) throw new Error("Could not persist the Invocation running state before execution.")
+    const runningPersisted = await invocationJournal?.running()
     input.abortSignal?.throwIfAborted()
+    if (invocationJournal && !runningPersisted && !invocationJournal.reusedTerminal) throw new Error("Could not persist the Invocation running state.")
     await activity?.update("running")
     return await executeAgentInvocationWithCapacityLease(agent, context, input, {
       ...options,
@@ -8049,8 +8078,9 @@ async function executeAgentInvocation<
     }, preparedInvocation, invocationJournal, activity)
   }
   catch (error) {
-    await invocationJournal?.finish(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
-    await activity?.update(invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed", error)
+    const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
+    await invocationJournal?.finish(status, error)
+    await activity?.update(status, error)
     releaseOnce()
     throw error
   }

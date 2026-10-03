@@ -30,9 +30,7 @@ pnpm add @vite-hub/runtime
 ```
 
 The package declares Node.js 24 or newer. Import the root entry for portable
-Runtime contracts. ViteHub owner packages share representation guards through
-`@vite-hub/runtime/internal/runtime-type`; this internal entry has no host dependencies.
-When inspected, the `/node` entry reads Node process
+Runtime contracts. When inspected, the `/node` entry reads Node process
 information and, on Linux, `/proc` and cgroup v2 files.
 
 Long-lived Node services can also use `createProcessReconciler()` from the `/node`

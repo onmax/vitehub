@@ -25,7 +25,7 @@ import { AgentInvocationTimeline, invocationTimeline } from "./agent-invocation-
 
 export { invocationActivities } from "../internal/invocation-activity.ts";
 import { buildInvocationConversation, type InvocationConversation } from "../internal/invocation-conversation.ts";
-import { hasRuntimeType, runtimeType } from "@vite-hub/runtime/internal/runtime-type";
+import { hasRuntimeType, runtimeType } from "../internal/runtime-type.ts";
 import { AgentPatchDiff } from "./agent-code-view.ts";
 import { AgentMarkdown } from "./agent-markdown.ts";
 import { AgentToolList } from "./agent-tool-list.ts";

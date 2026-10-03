@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs"
 
 import { collectViteHubDefinitionInspectors, collectViteHubProviderOutputEntries, redactInspectionValue } from "@vite-hub/internal/inspect"
-import { PROVISION_STATE_FILE, readProvisionStateSync, redactProvisionState } from "@vite-hub/internal/provision-state"
+import { PROVISION_STATE_FILE, readProvisionStateSync } from "@vite-hub/internal/provision-state"
 import { relative, resolve } from "pathe"
 
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
@@ -174,14 +174,18 @@ async function runProviderOutput(args: string[], context: InspectContext, plugin
     .sort((left, right) => left.path.localeCompare(right.path))
 
   if (parsed.json) {
-    const providerOutput = reports.map(report => {
-      // SAFETY: Redaction preserves the report structure and replaces only sensitive values with strings.
-      const redacted = redactInspectionValue(report) as ProviderOutputReport
-      if (report.path === PROVISION_STATE_FILE && report.type === "file" && report.content !== "[unreadable JSON]") {
-        redacted.content = redactProvisionState(readProvisionStateSync(context.rootDir))
-      }
-      return redacted
-    })
+    const provisionPath = relative(context.rootDir, resolve(context.rootDir, PROVISION_STATE_FILE)) || "."
+    const provisionState = readProvisionStateSync(context.rootDir)
+    const provisionStateOutput = Object.fromEntries(Object.entries(provisionState).map(([provider, categories]) => [
+      provider,
+      Object.fromEntries(Object.entries(categories ?? {}).map(([category, ids]) => [
+        category,
+        Object.fromEntries(Object.entries(ids ?? {}).map(([key, id]) => [key, redactInspectionValue(id)])),
+      ])),
+    ]))
+    const providerOutput = reports.map(report => report.path === provisionPath && report.exists && report.owner === "cli" && report.type === "file" && report.content !== "[unreadable JSON]"
+      ? { ...report, content: provisionStateOutput }
+      : redactInspectionValue(report))
     context.stdout.write(`${JSON.stringify({ providerOutput }, null, 2)}\n`)
     return 0
   }

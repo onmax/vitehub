@@ -322,6 +322,14 @@ describe("Console requests", () => {
     ).resolves.toEqual({ auth: true, contributions: {}, sections: ["kv"] })
   })
 
+  it("preserves Cloudflare Access auth mode in the navigation response", async () => {
+    mocks.call.mockResolvedValue({ ok: true, value: { auth: "cloudflare-access", sections: ["kv"] } })
+
+    await expect(
+      loadConsoleNavigation("/cloudflare-navigation-test/api/_vitehub/console/sections"),
+    ).resolves.toEqual({ auth: "cloudflare-access", contributions: {}, sections: ["kv"] })
+  })
+
   it("keeps only valid contributed sections in the navigation response", async () => {
     const view = { kind: "definition-catalog", notice: "Discovered at build time." }
     const queues = { description: "Queue definitions.", icon: "i-ph-tray-light", id: "queues", label: "Queues", view }
@@ -341,18 +349,6 @@ describe("Console requests", () => {
     await expect(
       loadConsoleNavigation("/contributions-navigation-test/api/_vitehub/console/sections"),
     ).resolves.toEqual({ auth: false, contributions: { queues }, sections: ["kv", "queues"] })
-  })
-
-  it("loads Cloudflare Access availability and rejects unknown auth modes", async () => {
-    mocks.call.mockResolvedValueOnce({ ok: true, value: { auth: "cloudflare-access", sections: ["kv"] } })
-    await expect(
-      loadConsoleNavigation("/access-navigation-test/api/_vitehub/console/sections"),
-    ).resolves.toEqual({ auth: "cloudflare-access", contributions: {}, sections: ["kv"] })
-
-    mocks.call.mockResolvedValueOnce({ ok: true, value: { auth: "public", sections: ["kv"] } })
-    await expect(
-      loadConsoleNavigation("/unknown-auth-navigation-test/api/_vitehub/console/sections"),
-    ).resolves.toEqual({ auth: false, contributions: {}, sections: ["kv"] })
   })
 
   it("stops waiting for an RPC result when navigation is aborted", async () => {

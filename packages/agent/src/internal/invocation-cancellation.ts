@@ -1,8 +1,7 @@
 import type { AgentInvocationStore } from "../invocations.ts"
 import { Diagnostic } from "nostics"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 /**
  * Agent Driver that runs a journaled Invocation, and whether ViteHub can stop it.
@@ -87,18 +86,19 @@ export function abortLocalAgentInvocation(owner: AgentInvocationStore, id: strin
     return driver && !driver.enforced ? [{ ownerId: entry.ownerId, name: driver.name }] : []
   })
   const notEnforcedBy = notEnforcedByOwners[0]?.name
-  return {
+  const result: LocalAgentInvocationCancellation = {
     aborted: entries.length > 0,
     ownerIds: entries.map(entry => entry.ownerId),
-    ...(notEnforcedBy ? { notEnforcedBy } : {}),
-    ...(notEnforcedByOwners.length > 0 ? { notEnforcedByOwners } : {}),
   }
+  if (notEnforcedBy) result.notEnforcedBy = notEnforcedBy
+  if (notEnforcedByOwners.length > 0) result.notEnforcedByOwners = notEnforcedByOwners
+  return result
 }
 
-export function agentInvocationCancellationDriver(driver: { kind: "ask" | "model" | "provider" | "run", provider?: string }): AgentInvocationCancellationDriver {
+export function agentInvocationCancellationDriver(driver: { kind: "model" | "provider" | "run", provider?: string }): AgentInvocationCancellationDriver {
   if (driver.kind === "provider") return { enforced: true, name: driver.provider || "provider" }
   if (driver.kind === "run") return { enforced: false, name: "run" }
-  return { enforced: true, name: driver.kind }
+  return { enforced: true, name: "model" }
 }
 
 export function createAgentInvocationCancellationError(id: string): Error {
