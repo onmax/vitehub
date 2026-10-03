@@ -88,8 +88,10 @@ export async function uploadFiles(apiBase: string, input: UploadInput, options: 
  */
 export function createMultipartUploader(baseURL: string, options: MultipartUploadOptions = {}): (file: File, pathname?: string) => MultipartUploadTask {
   const request = options.fetch ?? globalThis.fetch
-  const partSize = Math.max(1, options.partSize ?? defaultPartSize)
-  const concurrency = Math.max(1, options.concurrency ?? 1)
+  const partSize = options.partSize ?? defaultPartSize
+  if (!Number.isFinite(partSize) || partSize <= 0) throw new TypeError("partSize must be a finite positive number.")
+  const concurrency = options.concurrency ?? 1
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) throw new TypeError("concurrency must be a positive integer.")
   const send = (action: string, pathname: string, init: RequestInit, query?: Record<string, string>) =>
     request(multipartUrl(baseURL, action, pathname, query), { ...init, headers: mergeHeaders(options.headers, init.headers) })
 
