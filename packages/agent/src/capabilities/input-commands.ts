@@ -590,7 +590,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             let graphCreditBlocked = false
             if (budgetDepth !== undefined && budgetDepth > MAX_NUMERIC_EXPANSION_DEPTH) {
               graphCreditBlocked = true
-            } else if (budgetDepth !== undefined && nextDepth !== undefined && (nextDepth >= budgetDepth || nextDepth === 0)) {
+            } else if (budgetDepth !== undefined && nextDepth !== undefined && (nextDepth >= budgetDepth || (nextDepth === 0 && nextRuns <= 1))) {
               graphCreditBlocked = true
             }
             if (changedRange) {

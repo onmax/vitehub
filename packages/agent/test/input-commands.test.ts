@@ -450,6 +450,26 @@ describe("inputCommands", () => {
     expect(calls).toBe(1_023)
   })
 
+  it("allows finite decreasing binary fan-out through zero-depth leaves", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        a: {
+          call({ args }) {
+            calls++
+            const depth = Number(args)
+            return depth > 0 ? `/a ${depth - 1} /a ${depth - 1}` : ""
+          },
+        },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a 11" })
+    expect(calls).toBe(4_095)
+  })
+
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
