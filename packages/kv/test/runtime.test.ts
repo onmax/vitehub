@@ -237,6 +237,12 @@ describe("kv runtime", () => {
       UPSTASH_REDIS_REST_TOKEN: "upstash-token",
       UPSTASH_REDIS_REST_URL: "https://upstash.example.com",
     })).toEqual({ store: { driver: "upstash", token: "upstash-token", url: "https://configured.example.com" } })
+    expect(() => resolveRuntimeKVOptions(masked, {
+      KV_REST_API_URL: "https://vercel.example.com",
+      UPSTASH_REDIS_REST_TOKEN: "upstash-token",
+    })).toThrow(
+      "Missing runtime environment variable `KV_REST_API_URL` or `UPSTASH_REDIS_REST_URL` for Upstash KV.",
+    )
     expect(() => resolveRuntimeKVOptions(masked, {})).toThrow(
       "Missing runtime environment variable `KV_REST_API_URL` or `UPSTASH_REDIS_REST_URL` for Upstash KV.",
     )
