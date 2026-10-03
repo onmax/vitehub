@@ -1482,9 +1482,14 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         const token = references[cursor]!
         if (referenceLineBreaks.has(cursor) && endsAgentExpression(references.slice(0, cursor))) memberStart = true
         if (token === ";") { memberStart = true; continue }
-        if (memberStart && ["static", "#"].includes(token) && isIdentifier(references[cursor + 1])) continue
+        if (memberStart && ["static", "readonly", "declare", "public", "private", "protected", "abstract", "override", "accessor"].includes(token)) continue
+        if (memberStart && token === "#" && isIdentifier(references[cursor + 1])) continue
         if (memberStart && isIdentifier(token)
           && (["=", ";", "}"].includes(references[cursor + 1] ?? "")
+            || references[cursor + 1] === ":"
+            || references[cursor + 1] === "?"
+            || references[cursor + 1] === "!"
+              && [":", "=", ";", "}"].includes(references[cursor + 2] ?? "")
             || referenceLineBreaks.has(cursor + 1) && (isIdentifier(references[cursor + 1]) || ["[", "#"].includes(references[cursor + 1] ?? "")))) classFieldKeys.add(cursor)
         const closing = referenceClosings.get(cursor)
         if (closing !== undefined) {
