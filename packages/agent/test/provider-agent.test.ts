@@ -70,8 +70,7 @@ import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "../src/internal/agent-invocation-control.ts"
 import { withAgentInvocationResponseOwner } from "../src/internal/agent-invocation-response-owner.ts"
 import { markAuxiliaryMessageChannelInstructionContext } from "../src/internal/channels.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { getAgentTelemetryConfiguration, setAgentTelemetryConfiguration } from "../src/internal/agent-telemetry.ts"
 import { provideBrowserRuntimeEnvironment } from "../src/internal/browser-runtime.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
@@ -1676,9 +1675,9 @@ cli_auth_credentials_store = "keyring"
   ])("rejects a hard-linked named-profile %s without changing its target", async (kind, name, contents) => {
     const profile = `provider-${kind}-hard-link-${crypto.randomUUID()}`
     const homePath = `${process.cwd()}/.vitehub/data/codex/${profile}`
-    const externalRoot = await mkdtemp(join(tmpdir(), `vitehub-codex-${kind}-target-`))
-    const externalFile = join(externalRoot, name)
     await mkdir(homePath, { recursive: true })
+    const externalRoot = await mkdtemp(join(homePath, "..", `vitehub-codex-${kind}-target-`))
+    const externalFile = join(externalRoot, name)
     await writeFile(externalFile, contents, { mode: 0o644 })
     await link(externalFile, join(homePath, name))
 

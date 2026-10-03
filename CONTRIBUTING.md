@@ -69,6 +69,8 @@ Replace `vite-hub` with a manifest package name, such as `@vite-hub/agent`, and 
 
 Root contracts do not include package tests. The full local gate does not replace provider runtime or browser checks. Read [CI](.github/workflows/ci.yml) for checks enabled on each event and the [live smoke workflow](.github/workflows/live-smoke.yml) for external-service requirements. Do not run live tasks without authorization.
 
+A push to `main` deploys the docs site to vitehub.dev after the `checks` and `docs` jobs pass. The `docs-deploy` job uses the Cloudflare token of the `Production` environment. `vp run --filter vitehub-docs deploy:cloudflare` remains the manual path.
+
 The [Console playground](playground/console/README.md) exercises the real UI with synthetic data. It cannot prove invocation execution, persistence, or provider behavior. For a Console runtime change, also exercise the real route and runtime with a local consumer.
 
 Report the observed user result, exact commands, failures, and unverified parts. Separate setup and infrastructure failures from product failures. Stop when the requested outcome and relevant checks pass; do not broaden testing without a new concern.
@@ -96,6 +98,12 @@ Familiar interfaces such as filesystems, tools, and shells are useful. Keep thei
 Keep changes small. Use existing code or a suitable library before building infrastructure. Prefer inferred types that make invalid states hard to represent. Avoid cast-only wrappers. Comments should explain use or a non-obvious constraint. Measure before and after when claiming a performance improvement.
 
 ViteHub is in active development. Breaking changes and removal of unused compatibility are welcome when they clarify the final contract. Use Better Auth as a composition reference and UnJS for host-independent behavior. Document public behavior in `docs/content/docs/` and the affected package README.
+
+### Documentation structure
+
+`docs/content/docs/` has one folder per product. Each Server Primitive folder is one docs section with its own sidebar and uses the same pages in the same order: `index.md` (the Overview, rendered as a landing page with a hero, page cards, and no sidebar), `get-started.md`, `configure.md`, `server-api.md`, `agent-capability.md` when the primitive has an Agent Capability, `hosts.md`, and `limits-and-errors.md`. Create a page only when the product has real content for it. Product-specific pages such as `env/bridge.md` come after the template pages. `.navigation.yml` declares the section `title`, `icon`, `order`, catalog `category`, and `related` section ids. Agent-only Capabilities live under `agents/capabilities/`. Start, Concepts, and AI resources live under `getting-started/`. When a page moves, add its old path to `docs/modules/vitehub-docs/redirects.ts` and update inbound links; `corepack pnpm exec vp run --filter vitehub-docs test:links` checks every internal link and anchor.
+
+
 
 ## Downstream patch loop
 
@@ -146,4 +154,4 @@ Repository administrators must enable **Settings → Actions → General → All
 
 Pull request work belongs in a dedicated worktree. Reuse an isolated task worktree, or create one from the refreshed target base. Inspect collisions and preserve other agents' work.
 
-Do not commit temporary plans, raw thread exports, or scratch files. Use `.agents/research/` only for durable, cited research that supports a project decision. Remove task-created temporary files and worktrees after their remote state is safe; never remove pre-existing work without authorization.
+Do not commit temporary plans, raw thread exports, or scratch files. Keep durable, cited research in the issue or pull request that supports a project decision. Remove task-created temporary files and worktrees after their remote state is safe; never remove pre-existing work without authorization.

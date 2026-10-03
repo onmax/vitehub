@@ -33,7 +33,7 @@ import ConsoleInvocationComposer from "./console-invocation-composer.vue";
 import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
 import ConsoleSessionNavbar from "./console-session-navbar.vue";
-import { createConsoleInvocationDeletion } from "../client/invocation-deletion";
+import ConsoleSessionCancel from "./console-session-cancel.vue";
 import ConsoleSessionActions from "./console-session-actions.vue";
 import type { ConsoleSessionRerun } from "./console-session-actions.vue";
 import ConsoleSessionInspector from "./console-session-inspector.vue";
@@ -269,6 +269,25 @@ const selectedActions = computed(() => {
       ? { available: true, prompt, ...(invokerProfileId ? { invokerProfileId } : {}) }
       : { available: false, reason: stringValue(rerun?.reason) ?? "unavailable" }) satisfies ConsoleSessionRerun,
   };
+});
+const selectedCancel = computed(() => {
+  const invocation = invocationView.value;
+  const actions = record(record(detail.invocation.value)?.actions);
+  if (!invocation || record(actions?.cancel)?.available !== true) return;
+  const summary = record(invocation);
+  const notEnforcedBy = stringValue(summary?.cancelNotEnforcedBy);
+  const cancel: {
+    cancelRequested: boolean;
+    id: string;
+    notEnforcedBy?: string;
+    terminal: boolean;
+  } = {
+    cancelRequested: Boolean(stringValue(summary?.cancelRequestedAt)),
+    id: invocation.id,
+    terminal: invocation.status !== "pending" && invocation.status !== "running",
+  };
+  if (notEnforcedBy) cancel.notEnforcedBy = notEnforcedBy;
+  return cancel;
 });
 const selectedCost = computed(() => invocationCostDisplay(selectedDisplay.value));
 const selectedTokens = computed(() => invocationTokenDisplay(selectedDisplay.value));
@@ -1266,13 +1285,20 @@ onBeforeUnmount(() => {
                   @refresh="refresh"
                   @toggle-details="detailsOpen = !detailsOpen"
                 >
-                  <template v-if="selectedActions" #actions>
+                  <template v-if="selectedActions || selectedCancel" #actions>
                     <ConsoleSessionActions
+                      v-if="selectedActions"
                       v-bind="selectedActions"
                       :agents-base="agentsBase"
                       :api-base="apiBase"
                       @deleted="removeDeletedInvocation"
                       @started="selectStartedInvocation"
+                    />
+                    <ConsoleSessionCancel
+                      v-if="selectedCancel"
+                      v-bind="selectedCancel"
+                      :api-base="apiBase"
+                      @cancelled="refresh"
                     />
                   </template>
                 </ConsoleSessionNavbar>
@@ -1368,13 +1394,20 @@ onBeforeUnmount(() => {
               @refresh="refresh"
               @toggle-details="detailsOpen = !detailsOpen"
             >
-              <template v-if="selectedActions" #actions>
+              <template v-if="selectedActions || selectedCancel" #actions>
                 <ConsoleSessionActions
+                  v-if="selectedActions"
                   v-bind="selectedActions"
                   :agents-base="agentsBase"
                   :api-base="apiBase"
                   @deleted="removeDeletedInvocation"
                   @started="selectStartedInvocation"
+                />
+                <ConsoleSessionCancel
+                  v-if="selectedCancel"
+                  v-bind="selectedCancel"
+                  :api-base="apiBase"
+                  @cancelled="refresh"
                 />
               </template>
             </ConsoleSessionNavbar>
