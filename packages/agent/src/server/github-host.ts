@@ -1,7 +1,7 @@
 import { github, type GitHubChannelOptions } from '../channels.ts'
 import type { AgentChannelDefinition } from '../types.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
@@ -399,6 +399,37 @@ function createCheckoutPool(root: string) {
 }
 
 type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal: AbortSignal }
+
+function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], {
+      env: options.env,
+      signal: options.signal,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    const submodules: string[] = []
+    let pending = ""
+    let stderr = ""
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    child.stdout.on("data", (chunk: string) => {
+      pending += chunk
+      let end = pending.indexOf("\0")
+      while (end !== -1) {
+        const entry = pending.slice(0, end)
+        if (entry.startsWith("160000 ")) submodules.push(entry.slice(entry.indexOf("\t") + 1))
+        pending = pending.slice(end + 1)
+        end = pending.indexOf("\0")
+      }
+    })
+    child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(0, options.maxBuffer) })
+    child.on("error", reject)
+    child.on("close", (code) => {
+      if (code === 0) resolve(submodules)
+      else reject(new Error(`Git submodule scan failed (${code}): ${stderr}`))
+    })
+  })
+}
 
 async function assertCheckoutDirectories(path: string, boundary?: string) {
   for (let directory = resolve(path); ; directory = dirname(directory)) {
@@ -981,8 +1012,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       }
       // Read gitlinks directly so cleanup does not parse callback-controlled .gitmodules.
       if (checkoutPool) {
-        const tree = (await exec("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], commandOptions)).stdout
-        submodules = tree.split("\0").filter(entry => entry.startsWith("160000 ")).map(entry => entry.slice(entry.indexOf("\t") + 1))
+        submodules = await checkoutSubmodules(checkout, commandOptions)
       }
       if (pooled?.reused) {
         for (const submodule of submodules) {

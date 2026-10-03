@@ -408,6 +408,34 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   expect(await readFile(join(firstPath, 'node_modules/marker'), 'utf8')).toBe('warm')
 }, 30_000)
 
+it('streams a repository tree larger than the command output limit', async () => {
+  const { root, source } = await fixture()
+  for (let index = 0; index < 100; index += 1) {
+    await writeFile(join(source, `file-${index}-${'x'.repeat(100)}`), 'content')
+  }
+  await git(source, 'add', '.')
+  await git(source, 'commit', '-m', 'large tree')
+  const head = await git(source, 'rev-parse', 'HEAD')
+  expect((await git(source, 'ls-tree', '-rz', 'HEAD')).length).toBeGreaterThan(4096)
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: join(root, 'pool') },
+    maxBuffer: 4096,
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  for (let pass = 0; pass < 2; pass += 1) {
+    await host.withPullRequestCheckout({ repository: 'acme/base', number: 1, headSha: head }, async ({ path }) => {
+      expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
+      expect(await readFile(join(path, `file-99-${'x'.repeat(100)}`), 'utf8')).toBe('content')
+    })
+  }
+}, 30_000)
+
 it.each(['directory', 'symlink'])('preserves a callback replacement %s and its metadata without pooling it', async (replacement) => {
   const { root, source, head } = await fixture()
   const pool = join(root, 'pool')
