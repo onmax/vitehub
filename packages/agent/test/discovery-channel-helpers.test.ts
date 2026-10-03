@@ -28,6 +28,17 @@ async function discover(agent: string, files: Record<string, string> = {}) {
 const imports = 'import { defineAgent } from "vite-hub/agent"; import { github, telegram, webChat } from "vite-hub/agent/channels";'
 
 it.each([
+  "({ portal() { return input.id } })",
+  "({ get portal() { return input.id } })",
+  "({ set portal(value) { input.id = value } })",
+])("ignores object method keys in template expressions: %s", async expression => {
+  const imported = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
+  })
+  expect(imported?.workspace).toBeUndefined()
+})
+
+it.each([
   ['channels', 'export default { review: github({ pullRequest: true }) }'],
   ['{ channels }', 'export const channels = { review: github({ pullRequest: true }) }'],
 ])("rejects relative Channel-map imports: %s", async (binding, declaration) => {

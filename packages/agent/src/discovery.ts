@@ -1262,9 +1262,19 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       templateLocalBindings.push({ start, end, names })
     }
+    const methodKey = (index: number) => {
+      if (references[index + 1] !== "(") return false
+      const closing = [...referenceOpenings.entries()].find(([, opening]) => opening === index + 1)?.[0]
+      if (closing === undefined || references[closing + 1] !== "{") return false
+      const previous = references[index - 1]
+      if (["{", ","].includes(previous ?? "")) return true
+      return ["get", "set", "async"].includes(previous ?? "")
+        && ["{", ","].includes(references[index - 2] ?? "")
+    }
     const bindingReference = (index: number) => isIdentifier(references[index])
       && references[index - 1] !== "."
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
+      && !methodKey(index)
       && !templateLocalBindings.some(scope => index >= scope.start && index < scope.end && scope.names.has(references[index]!))
     const reassignedGlobalConversions = new Set<string>()
     for (let index = 0; index < tokens.length; index++) {
@@ -1327,6 +1337,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       (bindingReference(index) && ["eval", "import"].includes(token))
       || ((token === "(" || token.startsWith("`"))
         && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
+        && !methodKey(index - 1)
         && !conversionCall(index)))
       // A tagged template also calls its tag. The tag is outside the
       // interpolation token stream, so treat it as opaque
