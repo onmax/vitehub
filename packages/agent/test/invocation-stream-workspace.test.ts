@@ -184,7 +184,7 @@ describe("Agent Invocation cancellation discovery", () => {
     try {
       const { handlers, server } = createFakeServer(root, {})
       await configurePluginServer((await import("../src/vite.ts")).hubAgent(), server)
-      const response = await invokeMiddleware(handlers.at(-1)!, {}, agentInvocationsDevRoute, {
+      const response = await invokeMiddleware([handlers.at(-1)!], {}, agentInvocationsDevRoute, {
         host: "localhost:3000",
         [agentInvocationsDevHeader]: agentInvocationsDevHeaderValue,
       }, { onRequest: req => { req.method = "GET" } })

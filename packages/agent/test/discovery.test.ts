@@ -1797,7 +1797,7 @@ describe("agent chat capability discovery", () => {
 
       // No Workspace plugin participates in this standalone Agent setup.
       await configurePluginServer(hubAgent(), { ...server, environments: { nitro: { dispatchFetch } } })
-      const discovery = await invokeMiddleware(handlers[1]!, {}, agentInvocationsDevRoute, {
+      const discovery = await invokeMiddleware([handlers[1]!], {}, agentInvocationsDevRoute, {
         [agentInvocationsDevHeader]: "1",
       }, "GET")
       expect(discovery.statusCode).toBe(200)
@@ -1807,10 +1807,10 @@ describe("agent chat capability discovery", () => {
       if (!token) throw new Error("Discovery must publish a readable private token")
       const body = { id: "ainv_missing", operation: "cancel" }
       const headers = { "content-type": "application/json", [agentInvocationsDevHeader]: "1", [agentInvocationsDevTokenServerHeader]: serverId }
-      expect((await invokeMiddleware(handlers[1]!, body, agentInvocationsDevRoute, headers)).statusCode).toBe(403)
+      expect((await invokeMiddleware([handlers[1]!], body, agentInvocationsDevRoute, headers)).statusCode).toBe(403)
       expect(dispatchFetch).not.toHaveBeenCalled()
 
-      const response = await invokeMiddleware(handlers[1]!, body, agentInvocationsDevRoute, {
+      const response = await invokeMiddleware([handlers[1]!], body, agentInvocationsDevRoute, {
         ...headers,
         [workspaceDevTokenHeader]: token,
       })
