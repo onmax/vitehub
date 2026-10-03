@@ -89,10 +89,13 @@ function isWorkflowHandle(value: unknown): value is { name: string } {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
   return typeof value === "object"
     && value !== null
-    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The object guard above establishes the loader value shape.
+    // SAFETY: The object and null checks above establish the loader value shape.
     && typeof (value as { name?: unknown }).name === "string"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
     && typeof (value as { defer?: unknown }).defer === "function"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
     && typeof (value as { getRun?: unknown }).getRun === "function"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
     && typeof (value as { run?: unknown }).run === "function"
 }
 
@@ -230,8 +233,9 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
       consumeInlineWorkflowDefinition(name, registeredInlineDefinition)
       return registeredInlineDefinition
     }
-    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Registry module exports are validated as WorkflowDefinitions at this boundary.
+    // SAFETY: Registry module exports are validated as WorkflowDefinitions at this boundary.
     const definition = ("default" in loaded ? loaded.default : loaded) as WorkflowDefinition | undefined
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry module exports are opaque until their handler shape is checked.
     if (definition && typeof definition.handler === "function") {
       return definition
     }
