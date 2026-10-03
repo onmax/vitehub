@@ -218,6 +218,15 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   })
   await access(firstPath)
 
+  // Regular alternate metadata can expose an outside object store without a symlink.
+  const outsideObjects = join(root, 'borrowed-object-store')
+  await mkdir(outsideObjects)
+  await git(outsideObjects, 'init')
+  await writeFile(join(outsideObjects, 'private'), 'outside checkout object\n')
+  const borrowedBlob = await git(outsideObjects, 'hash-object', '-w', 'private')
+  await writeFile(join(firstPath, '.git/objects/info/alternates'), `${join(outsideObjects, '.git/objects')}\n`)
+  expect(await git(firstPath, 'cat-file', '-p', borrowedBlob)).toBe('outside checkout object')
+
   // Split indexes must not retain references to shared index files removed during reset.
   await git(firstPath, 'update-index', '--split-index')
   expect((await readdir(join(firstPath, '.git'))).some(name => name.startsWith('sharedindex.'))).toBe(true)
@@ -233,6 +242,9 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   const restarted = createGitHubHost(options)
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }, async ({ path }) => {
     expect(path).toBe(firstPath)
+    await expect(access(join(path, '.git/objects/info/alternates'))).rejects.toThrow()
+    await expect(git(path, 'cat-file', '-p', borrowedBlob)).rejects.toThrow()
+    expect(await git(outsideObjects, 'cat-file', '-p', borrowedBlob)).toBe('outside checkout object')
     for (const lock of staleLocks) await expect(access(join(path, '.git', lock))).rejects.toThrow()
     for (const state of staleGitState) await expect(access(join(path, '.git', state))).rejects.toThrow()
     for (const state of ['CHERRY_PICK_HEAD', 'MERGE_HEAD', 'REVERT_HEAD']) await expect(access(join(path, '.git', state))).rejects.toThrow()

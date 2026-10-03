@@ -403,6 +403,8 @@ async function resetPooledCheckout(checkout: string, repository: string, command
   await rename(gitMetadata, gitQuarantine)
   // Retained objects and their subdirectories must not redirect later fetches outside the checkout.
   await assertGitObjectStore(join(gitQuarantine, "objects"))
+  // Object-store metadata can borrow objects from outside the checkout through alternates.
+  await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
   await mkdir(gitMetadata)
   await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
   // Rebuild the index, including split-index state, from the incoming checkout.
