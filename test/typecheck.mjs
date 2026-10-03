@@ -25,17 +25,17 @@ function run(command, args, environment) {
   })
 }
 
-export async function runTypecheck(environment = process.env) {
+export async function runTypecheck(environment = process.env, execute = run) {
   const childEnvironment = typecheckEnvironment(environment)
-  const vp = process.platform === "win32" ? "vp.cmd" : "vp"
+  const vp = fileURLToPath(new URL("./bin/vp", import.meta.resolve("vite-plus/package.json")))
   const steps = [
-    [vp, ["run", "build"]],
-    [vp, ["run", "--filter", "vitehub-docs", "--ignore-depends-on", "typecheck"]],
+    [process.execPath, [vp, "run", "build"]],
+    [process.execPath, [vp, "run", "--filter", "vitehub-docs", "--ignore-depends-on", "typecheck"]],
     [process.execPath, ["test/run-package-task.mjs", "typecheck"]],
   ]
 
   for (const [command, args] of steps) {
-    const exitCode = await run(command, args, childEnvironment)
+    const exitCode = await execute(command, args, childEnvironment)
     if (exitCode !== 0) return exitCode
   }
   return 0
