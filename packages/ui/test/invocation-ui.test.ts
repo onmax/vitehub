@@ -2215,7 +2215,7 @@ describe("Agent Invocation UI", () => {
     expect(invocationActivities(invocation).map(activity => [invocationActivityTitle(activity), activity.toolDisplay?.icon])).toEqual([
       ["Searched meals", "i-lucide-utensils"],
       ["Provider title", "i-lucide-utensils"],
-      ["Db_schema", undefined],
+      ["Db schema", undefined],
     ]);
 
     const UIcon = defineComponent({ props: { name: { required: true, type: String } }, setup: props => () => h("svg", { "data-name": props.name }) });
@@ -3468,7 +3468,7 @@ describe("Agent Invocation UI", () => {
     expect(prompt.get(".vh-invocation-message__content").attributes("data-collapsed")).toBeUndefined();
 
     expect(wrapper.get(".vh-invocation-work__title").text()).toBe("Worked for 2m 43s");
-    expect(wrapper.get(".vh-invocation-work__summary").element.firstElementChild?.classList).toContain("vh-invocation-work__disclosure");
+    expect(wrapper.get(".vh-invocation-work__summary").element.lastElementChild?.classList).toContain("vh-invocation-work__disclosure");
     expect(wrapper.find(".vh-invocation-work__summary .vh-invocation-framework-mark").exists()).toBe(false);
     expect(wrapper.get(".vh-invocation-framework-mark").attributes("style")).toBeUndefined();
     expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Checked the diff.");
