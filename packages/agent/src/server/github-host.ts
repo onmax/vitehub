@@ -313,7 +313,7 @@ export function parseGraphQLRateLimit(value: unknown, checkedAt: number = Date.n
  * Pull request identity is part of the pool key so ignored state cannot cross the trust boundary between pull requests.
  */
 function createCheckoutPool(root: string) {
-  const idle = new Map<string, { directory: string, adopted: boolean, submodules: Buffer[] }[]>()
+  const idle = new Map<string, { directory: string, adopted: boolean, submodules: Buffer[], identity: { dev: number, ino: number } }[]>()
   let adopted: Promise<void> | undefined
   let rootIdentity: { dev: number, ino: number } | undefined
   const key = (repository: string, number: number) => `${repository}#${number}`
@@ -331,12 +331,27 @@ function createCheckoutPool(root: string) {
       return undefined
     }
   }
-  const release = (repository: string, number: number, directory: string, adopted = false, submodules: Buffer[] = []) => {
+  const evict = async (entry: { directory: string, identity: { dev: number, ino: number } }) => {
+    const quarantine = join(root, `.vitehub-evict-${randomUUID()}`)
+    try {
+      // Move the pathname atomically before removing it. If a callback replaced
+      // the idle entry, the identity check fails and the replacement is kept.
+      await rename(entry.directory, quarantine)
+      const current = await lstat(quarantine)
+      if (current.dev !== entry.identity.dev || current.ino !== entry.identity.ino) return
+      await rm(quarantine, { force: true, recursive: true })
+    }
+    catch {
+      await rm(quarantine, { force: true, recursive: true }).catch(() => undefined)
+    }
+  }
+  const release = (repository: string, number: number, directory: string, adopted = false, submodules: Buffer[] = [], identity?: { dev: number, ino: number }) => {
+    if (!identity) return
     const poolKey = key(repository, number)
-    const entries = [...idle.get(poolKey) ?? [], { directory, adopted, submodules }]
+    const entries = [...idle.get(poolKey) ?? [], { directory, adopted, submodules, identity }]
     while (entries.length > 4) {
       const evicted = entries.shift()
-      if (evicted) rm(evicted.directory, { force: true, recursive: true }).catch(() => undefined)
+      if (evicted) void evict(evicted)
     }
     idle.set(poolKey, entries)
   }
@@ -360,7 +375,10 @@ function createCheckoutPool(root: string) {
       if (entry.isDirectory() && repository && match) {
         const directory = join(root, entry.name)
         const valid = await lstat(join(directory, ".git")).then(stat => stat.isDirectory()).catch(() => false)
-        if (valid) release(repository, Number(match[2]), directory, true)
+        if (valid) {
+          const identity = await lstat(directory)
+          release(repository, Number(match[2]), directory, true, [], identity)
+        }
         else await rm(directory, { force: true, recursive: true }).catch(() => undefined)
       }
     }
@@ -1204,7 +1222,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
             throw error
           })
           retainedCheckout = Boolean(retained?.isDirectory() && retained.dev === checkoutIdentity.dev && retained.ino === checkoutIdentity.ino)
-          if (retainedCheckout) checkoutPool.release(pullRequest.repository, pullRequest.number, pooled.directory, false, submodules)
+          if (retainedCheckout) checkoutPool.release(pullRequest.repository, pullRequest.number, pooled.directory, false, submodules, checkoutIdentity)
         }
         if (!retainedCheckout) {
           const discard = pooled?.anchoredDirectory ?? checkout
