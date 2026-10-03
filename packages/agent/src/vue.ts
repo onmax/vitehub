@@ -169,6 +169,7 @@ export function useChat<UI_MESSAGE extends UIMessage = UIMessage>(
 
   async function stop(): Promise<void> {
     stopped.value = true
+    reconnectGeneration++
     await chat.stop()
     if (!latestOptions.value.resume || latestOptions.value.transport || !isBrowserRuntime()) return
     if (!resumableMessageId) return
@@ -180,8 +181,10 @@ export function useChat<UI_MESSAGE extends UIMessage = UIMessage>(
   }
 
   async function reconnect(): Promise<void> {
+    if (stopped.value) return
+    const reconnectGenerationAtStart = reconnectGeneration
     const messages = latestOptions.value.messages ?? chat.messages.value
-    if (!messages.length) return
+    if (!messages.length || reconnectGenerationAtStart !== reconnectGeneration || stopped.value) return
     const generation = ++reconnectStatusGeneration
     reconnecting.value = true
     stopped.value = false
