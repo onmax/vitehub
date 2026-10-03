@@ -196,21 +196,27 @@ export function findInputCommandInvocation(
   }
 }
 
+interface InputCommandInvocationCounts {
+  byName: Map<string, number>
+  total: number
+}
+
 function countInputCommandInvocations(
   text: string,
   trigger: string,
   commands: Record<string, InputCommand>,
-  name?: string,
-): number {
-  let count = 0
+): InputCommandInvocationCounts {
+  const byName = new Map<string, number>()
+  let total = 0
   let cursor = 0
   while (cursor <= text.length) {
     const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
     if (!invocation) break
-    if (name === undefined || invocation.name === name) count++
+    total++
+    byName.set(invocation.name, (byName.get(invocation.name) || 0) + 1)
     cursor = Math.max(invocation.end, invocation.start + 1)
   }
-  return count
+  return { byName, total }
 }
 
 function latestUserMessageIndex(messages: Message[]): number {
@@ -336,6 +342,30 @@ function activeChannelId(context: AgentCapabilityRuntimeContext): string | undef
 
 function commandAllowsCurrentChannel(command: InputCommand, context: AgentCapabilityRuntimeContext): boolean {
   return !command.channels?.length || command.channels.includes(activeChannelId(context) || "")
+}
+
+function directedPath(
+  graph: Map<string, Set<string>>,
+  start: string,
+  target: string,
+): Set<string> | undefined {
+  const visited = new Set<string>()
+  const path = new Set<string>()
+  const visit = (name: string): boolean => {
+    if (name === target) {
+      path.add(name)
+      return true
+    }
+    if (visited.has(name)) return false
+    visited.add(name)
+    for (const next of graph.get(name) || []) {
+      if (!visit(next)) continue
+      path.add(name)
+      return true
+    }
+    return false
+  }
+  return visit(start) ? path : undefined
 }
 
 function createInputCommandMessage(
@@ -474,21 +504,36 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let maxRuns = Math.max(1_000, text.length + 1)
       const creditedGrowth = new Set<string>()
       const transitions = new Set<string>()
+      const transitionGraph = new Map<string, Set<string>>()
       const blockedCommands = new Set<string>()
       let budgetText: string | undefined
       let budgetCommand: string | undefined
       let budgetArgs: string | undefined
       let budgetStart: number | undefined
+      const invocationCounts = new Map<string, InputCommandInvocationCounts>()
+      const cacheInvocationCounts = (value: string, counts: InputCommandInvocationCounts): void => {
+        invocationCounts.set(value, counts)
+        if (invocationCounts.size > 2) invocationCounts.delete(invocationCounts.keys().next().value!)
+      }
+      const getInvocationCounts = (value: string): InputCommandInvocationCounts => {
+        const cached = invocationCounts.get(value)
+        if (cached) return cached
+        const counts = countInputCommandInvocations(value, trigger, commands)
+        cacheInvocationCounts(value, counts)
+        return counts
+      }
       while (cursor <= text.length) {
         // Each registered command can credit growth or a new rewrite stage only once.
         // Repeated or alternating recursive handlers cannot keep raising the allowance.
         if (budgetText !== undefined && text !== budgetText) {
-          const nextRuns = countInputCommandInvocations(text, trigger, commands)
-          const previousRuns = countInputCommandInvocations(budgetText, trigger, commands)
+          const nextCounts = getInvocationCounts(text)
+          const previousCounts = getInvocationCounts(budgetText)
+          const nextRuns = nextCounts.total
+          const previousRuns = previousCounts.total
           const addedRuns = Math.max(0, nextRuns - previousRuns)
           if (budgetCommand !== undefined) {
-            const previousOwnRuns = countInputCommandInvocations(budgetText, trigger, commands, budgetCommand)
-            const nextOwnRuns = countInputCommandInvocations(text, trigger, commands, budgetCommand)
+            const previousOwnRuns = previousCounts.byName.get(budgetCommand) || 0
+            const nextOwnRuns = nextCounts.byName.get(budgetCommand) || 0
             const advancesStage = nextOwnRuns < previousOwnRuns && nextRuns - nextOwnRuns > previousRuns - previousOwnRuns
             const finiteStage = nextOwnRuns === 0 && addedRuns > 0
             const ownGrowth = nextOwnRuns > previousOwnRuns && !creditedGrowth.has(budgetCommand)
@@ -499,12 +544,16 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             const nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
             if (nextInvocation && nextInvocation.start === budgetStart && nextInvocation.name !== budgetCommand) {
               const transition = `${budgetCommand}->${nextInvocation.name}`
-              const reverse = `${nextInvocation.name}->${budgetCommand}`
-              if (transitions.has(reverse)) {
-                blockedCommands.add(nextInvocation.name)
-                blockedCommands.add(budgetCommand)
-              }
               transitions.add(transition)
+              let nextCommands = transitionGraph.get(budgetCommand)
+              if (!nextCommands) transitionGraph.set(budgetCommand, nextCommands = new Set())
+              nextCommands.add(nextInvocation.name)
+              const cycle = directedPath(transitionGraph, nextInvocation.name, budgetCommand)
+              if (cycle) {
+                for (const name of cycle) blockedCommands.add(name)
+                blockedCommands.add(budgetCommand)
+                blockedCommands.add(nextInvocation.name)
+              }
             }
             // A same-command fan-out can be finite even though every stage
             // increases the total number of invocations. A strictly decreasing
@@ -568,7 +617,23 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             continue
           }
           const replacement = commandReplacementText(text, invocation, result)
-          text = `${text.slice(0, invocation.start)}${replacement}${text.slice(invocation.end)}`
+          const nextText = `${text.slice(0, invocation.start)}${replacement}${text.slice(invocation.end)}`
+          if (budgetText === text && nextText !== text) {
+            // The invocation has whitespace boundaries, so only its replacement
+            // can add or remove commands. Preserve counts for unchanged siblings.
+            const previousCounts = getInvocationCounts(text)
+            const replacementCounts = countInputCommandInvocations(replacement, trigger, commands)
+            const byName = new Map(previousCounts.byName)
+            byName.set(invocation.name, (byName.get(invocation.name) || 0) - 1)
+            for (const [name, count] of replacementCounts.byName) {
+              byName.set(name, (byName.get(name) || 0) + count)
+            }
+            cacheInvocationCounts(nextText, {
+              byName,
+              total: previousCounts.total - 1 + replacementCounts.total,
+            })
+          }
+          text = nextText
           input = replaceTargetText(input, target, text, {
             end: invocation.end,
             replacement,
@@ -613,6 +678,12 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           context.input.set(input)
           target = getInputCommandTarget(input)
           if (!target) return
+          const previousCounts = invocationCounts.get(text)
+          if (previousCounts) {
+            const byName = new Map(previousCounts.byName)
+            byName.set(invocation.name, (byName.get(invocation.name) || 0) - 1)
+            cacheInvocationCounts(target.text, { byName, total: previousCounts.total - 1 })
+          }
           text = target.text
           // SAFETY: Input command parsing establishes the asserted command contract.
           await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)

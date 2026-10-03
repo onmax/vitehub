@@ -175,6 +175,27 @@ describe("inputCommands", () => {
     expect(calls).toBe(1_004)
   })
 
+  it("bounds cycles longer than two commands that introduce more commands", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const expand = (next: string) => () => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      return `${next} ${next}`
+    }
+    const capability = inputCommands({
+      commands: {
+        first: { call: expand("/second") },
+        second: { call: expand("/third") },
+        third: { call: expand("/first") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/first" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
