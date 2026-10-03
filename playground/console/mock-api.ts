@@ -475,10 +475,17 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
     const agentName = decodeURIComponent(newInvocation[1]!)
     const input = v.safeParse(v.object({
       files: v.optional(v.pipe(v.array(v.object({ url: v.string(), filename: v.optional(v.string(), "image") })), v.maxLength(10)), []),
+      invokerProfileId: v.optional(v.string()),
       prompt: v.optional(v.string(), ""),
     }), await body(request))
     if (!input.success) {
       json(response, { error: "Invalid Console input." }, 400)
+      return true
+    }
+    const invokerProfileId = input.output.invokerProfileId?.trim()
+    const profiles = agentName === "product-reviewer" ? ["reviewer", "maintainer"] : ["default"]
+    if (input.output.invokerProfileId !== undefined && (!invokerProfileId || !profiles.includes(invokerProfileId))) {
+      json(response, { error: "Unknown Agent invocation profile." }, 400)
       return true
     }
     const prompt = input.output.prompt.trim()
@@ -520,6 +527,7 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
             "input.prompt": prompt,
             "input.hasMessages": images.length > 0,
             "input.messages": inputMessages,
+            ...(invokerProfileId ? { "input.invokerProfileId": invokerProfileId } : {}),
           },
           name: "agent.invocation.start", sequence: 0, timestamp: now, type: "lifecycle",
         },

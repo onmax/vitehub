@@ -118,6 +118,18 @@ it.each(["", "Inspect this screenshot"])("preserves images in a new chat with pr
   })
 })
 
+it("preserves selected invoker profiles in new chats", async () => {
+  const created = await playgroundRequest("/api/_vitehub/console/agents/product-reviewer/invocations", { prompt: "Review this", invokerProfileId: "reviewer" })
+  const { id } = created as { id: string }
+  const detail = await playgroundRequest(`/api/_vitehub/console/invocations/${id}`)
+  expect(detail).toMatchObject({ observations: expect.arrayContaining([expect.objectContaining({
+    name: "agent.invocation.start",
+    attributes: expect.objectContaining({ "input.invokerProfileId": "reviewer" }),
+  })]) })
+  await expect(playgroundRequest("/api/_vitehub/console/agents/product-reviewer/invocations", { prompt: "Review this", invokerProfileId: "unknown" }, 400))
+    .resolves.toEqual({ error: "Unknown Agent invocation profile." })
+})
+
 it("rejects empty and malformed image chats", async () => {
   const endpoint = "/api/_vitehub/console/agents/interface-engineer/invocations"
   await expect(playgroundRequest(endpoint, { prompt: "  ", files: [] }, 400))
