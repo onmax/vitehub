@@ -41,6 +41,19 @@ describe("@vite-hub/source GitHub source", () => {
     }))
   })
 
+  it("keeps distinct pattern arrays in GitHub cache keys", () => {
+    const base = {
+      authScope: "anonymous",
+      kind: "archive",
+      ref: "main",
+      repo: "acme/private",
+      root: "",
+    } as const
+
+    expect(createGitHubCacheKey({ ...base, include: ["a,b", "c"] }))
+      .not.toBe(createGitHubCacheKey({ ...base, include: ["a", "b,c"] }))
+  })
+
   it("pins a configured branch to one inspected revision", async () => {
     stubGitHubSource({ "README.md": "# Readme\n" })
     registerSources({ docs: github({ ref: "main", repo: "acme/app" }) })
