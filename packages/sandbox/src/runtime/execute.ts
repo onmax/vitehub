@@ -2,11 +2,11 @@ import { decodeSandboxValue, encodeSandboxValue } from './binary-sidecars'
 import { sandboxError } from '../sandbox/errors'
 import { readSandboxErrorMetadata } from './error-normalization'
 import { createEntrySource } from './entry-script'
+import { prepareSandboxDefinition } from './definition-preparation'
 import {
   createExecutionFiles,
   normalizeSandboxDefinitionBundle,
   resolveSandboxModulePath,
-  writeSandboxDefinitionBundle,
   type SandboxDefinitionSource,
 } from './execution-files'
 import {
@@ -19,10 +19,7 @@ import {
 } from './output-recovery'
 import type { SandboxExecutionBox } from './execution-box'
 
-import type { SandboxDefinitionBundle, SandboxDefinitionOptions } from '../module-types'
-
-const defaultNodeLauncher = 'import(process.argv[1])'
-const projectPreparations = new Map<string, Promise<void>>()
+import type { SandboxDefinitionOptions } from '../module-types'
 
 export interface SandboxDefinitionExecutionLifecycle {
   onHandlerStart?: () => void
@@ -41,122 +38,6 @@ function toJson(value: unknown, label: string) {
   }
 }
 
-function resolveLauncher() {
-  return {
-    command: 'node',
-    args: ['-e', defaultNodeLauncher],
-  }
-}
-
-async function prepareSandboxProject(
-  sandbox: SandboxExecutionBox,
-  bundle: SandboxDefinitionBundle,
-  baseDir: string,
-  options: { deadline?: number, signal?: AbortSignal, timeout?: number },
-) {
-  const project = bundle.project
-  if (!project)
-    return baseDir
-
-  const projectDir = `/tmp/vitehub-sandbox/projects/${project.digest}`
-  const marker = `${projectDir}/.vitehub/prepared`
-  await sandbox.mkdir('/tmp/vitehub-sandbox/projects', { recursive: true })
-  if (await sandbox.exists(marker))
-    return projectDir
-
-  const preparationKey = `${sandbox.id}:${project.digest}`
-  while (!await sandbox.exists(marker)) {
-    let preparation = projectPreparations.get(preparationKey)
-    let owned = false
-    if (!preparation) {
-      owned = true
-      preparation = prepareSandboxProjectAtomically(sandbox, { ...bundle, project }, projectDir, marker, options)
-      projectPreparations.set(preparationKey, preparation)
-      void preparation.finally(() => {
-        if (projectPreparations.get(preparationKey) === preparation)
-          projectPreparations.delete(preparationKey)
-      }).catch(() => {})
-    }
-    try {
-      await preparation
-    }
-    catch (error) {
-      if (projectPreparations.get(preparationKey) === preparation)
-        projectPreparations.delete(preparationKey)
-      if (owned || options.signal?.aborted) throw error
-      continue
-    }
-    if (projectPreparations.get(preparationKey) === preparation)
-      projectPreparations.delete(preparationKey)
-  }
-  return projectDir
-}
-
-async function prepareSandboxProjectAtomically(
-  sandbox: SandboxExecutionBox,
-  bundle: SandboxDefinitionBundle & { project: NonNullable<SandboxDefinitionBundle['project']> },
-  projectDir: string,
-  marker: string,
-  options: { deadline?: number, signal?: AbortSignal, timeout?: number },
-) {
-  if (await sandbox.exists(marker)) return
-  const staging = `${projectDir}.staging-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-  try {
-    await sandbox.mkdir(staging, { recursive: true })
-    await writeSandboxDefinitionBundle(sandbox, staging, bundle)
-    const result = await executeLauncher(
-      sandbox,
-      bundle.project.install.command,
-      bundle.project.install.args,
-      {
-        ...options,
-        cwd: resolveSandboxModulePath(staging, bundle.project.install.cwd),
-      },
-    )
-    if (!result.ok) {
-      throw sandboxError('Sandbox package preparation failed.', {
-        code: 'SANDBOX_EXECUTION_ERROR',
-        details: {
-          command: bundle.project.install.command,
-          exitCode: result.code,
-          stderr: result.stderr,
-        },
-      })
-    }
-    await sandbox.mkdir(`${staging}/.vitehub`, { recursive: true })
-    await sandbox.writeFile(`${staging}/.vitehub/prepared`, bundle.project.digest)
-    const published = await sandbox.exec('node', [
-      '-e',
-      'import("node:fs/promises").then(({ rename }) => rename(process.argv[1], process.argv[2]))',
-      staging,
-      projectDir,
-    ], { signal: options.signal })
-    if (!published.ok && !await sandbox.exists(marker)) {
-      throw sandboxError('Sandbox package preparation could not publish its project.', {
-        code: 'SANDBOX_EXECUTION_ERROR',
-        details: { exitCode: published.code, stderr: published.stderr },
-      })
-    }
-  }
-  finally {
-    await sandbox.exec('rm', ['-rf', '--', staging]).catch(() => {})
-  }
-}
-
-async function executeLauncher(
-  sandbox: SandboxExecutionBox,
-  command: string,
-  args: string[],
-  options: { cwd?: string, deadline?: number, env?: Record<string, string>, signal?: AbortSignal, timeout?: number },
-) {
-  return await sandbox.exec(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    signal: options.signal,
-    timeout: options.timeout,
-  })
-}
-
 async function executeSandboxDefinitionOnce<TPayload>(
   sandbox: SandboxExecutionBox,
   definitionName: string,
@@ -165,7 +46,6 @@ async function executeSandboxDefinitionOnce<TPayload>(
   payload?: TPayload,
   context?: Record<string, unknown>,
   signal?: AbortSignal,
-  deadline?: number,
   lifecycle?: SandboxDefinitionExecutionLifecycle,
 ) {
   const bundle = normalizeSandboxDefinitionBundle(source)
@@ -188,13 +68,10 @@ async function executeSandboxDefinitionOnce<TPayload>(
           signal,
         ), 'payload/context')
       : undefined
-    const bundleBaseDir = await prepareSandboxProject(sandbox, bundle, files.baseDir, {
-      deadline,
+    const prepared = await prepareSandboxDefinition(sandbox, bundle, files.baseDir, {
       signal,
       timeout: definitionOptions?.timeout,
     })
-    if (!bundle.project)
-      await writeSandboxDefinitionBundle(sandbox, bundleBaseDir, bundle)
     inputJson ||= toJson(await encodeSandboxValue(
       sandbox,
       { payload, context },
@@ -202,7 +79,7 @@ async function executeSandboxDefinitionOnce<TPayload>(
       'payload/context',
       signal,
     ), 'payload/context')
-    const definitionPath = resolveSandboxModulePath(bundleBaseDir, bundle.entry)
+    const definitionPath = resolveSandboxModulePath(prepared.directory, bundle.entry)
     throwIfAborted()
     await Promise.all([
       sandbox.writeFile(files.entryPath, createEntrySource(definitionPath, bundle.execution)),
@@ -210,19 +87,15 @@ async function executeSandboxDefinitionOnce<TPayload>(
     ])
     throwIfAborted()
 
-    const launcher = resolveLauncher()
-    const execArgs = [...launcher.args, files.entryPath, files.inputPath, files.outputPath]
+    const execArgs = ['-e', 'import(process.argv[1])', files.entryPath, files.inputPath, files.outputPath]
 
     let outputRaw = ''
     let execution: Awaited<ReturnType<SandboxExecutionBox['exec']>> | undefined
 
     try {
       lifecycle?.onHandlerStart?.()
-      execution = await executeLauncher(sandbox, launcher.command, execArgs, {
-        cwd: bundle.project
-          ? resolveSandboxModulePath(bundleBaseDir, bundle.project.packagePath)
-          : files.baseDir,
-        deadline,
+      execution = await sandbox.exec('node', execArgs, {
+        cwd: prepared.cwd,
         env: definitionOptions?.env,
         signal,
         timeout: definitionOptions?.timeout,
@@ -292,14 +165,12 @@ export async function executeSandboxDefinition<TPayload>(
       payload,
       context,
       undefined,
-      undefined,
       lifecycle,
     )
   }
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined
   const abortController = new AbortController()
-  const deadline = Date.now() + timeout
 
   try {
     return await Promise.race([
@@ -311,7 +182,6 @@ export async function executeSandboxDefinition<TPayload>(
         payload,
         context,
         abortController.signal,
-        deadline,
         lifecycle,
       ),
       new Promise<never>((_, reject) => {

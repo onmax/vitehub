@@ -138,7 +138,10 @@ function tableMetadata(entries: readonly DatabaseTableEntry[]): {
     ])
     const unique = new Set([
       ...config.columns.filter(column => column.isUnique),
-      ...config.uniqueConstraints.flatMap(constraint => constraint.columns),
+      ...config.uniqueConstraints.filter(constraint => constraint.columns.length === 1).flatMap(constraint => constraint.columns),
+      ...config.indexes
+        .filter(index => index.config.unique && !index.config.where && index.config.columns.length === 1)
+        .flatMap(index => index.config.columns),
     ])
     const foreignKeys = new Map<SQLiteColumn, { column: string; table: string }>()
     for (const foreignKey of config.foreignKeys) {

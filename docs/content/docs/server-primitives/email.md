@@ -228,6 +228,8 @@ Use the quick-start `vitehub({ email: { driver: 'resend', options } })` configur
 
 Set `email.driver` to `resend` or `cloudflare-email` and declare its serializable options in the same Vite config. Keep credentials in Server Env or the deployment platform's secret store, and pass them as Env declarations without defaults. For another provider, implement the exported `EmailDriver` interface and pass it to `createEmail()`.
 
+A driver object initializes once per client. Concurrent sends share pending initialization, and a later send retries initialization after a failure. A driver factory resolves and initializes a driver for each send. The development outbox uses the same lifecycle rules.
+
 ## Test without delivery
 
 The framework distribution does not re-export test utilities. Install the Email

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { checkGlobCwd, seedGlobCwdStore } from "./glob-cwd-checks.ts"
 
 import { clearActiveCloudflareEnv, setActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { sha256 } from "../src/core/path.ts"
@@ -122,6 +123,12 @@ afterEach(() => {
 })
 
 describe("Cloudflare Artifacts workspace store", () => {
+  it("matches glob patterns relative to cwd", async () => {
+    const store = await createStore({ create: vi.fn(), get: vi.fn(async () => artifactsRepo()) })
+    await seedGlobCwdStore(store)
+    await checkGlobCwd(store)
+  })
+
   it("removes only empty directories", async () => {
     const store = await createStore({ create: vi.fn(), get: vi.fn(async () => artifactsRepo()) })
     await store.mkdir("empty")

@@ -853,6 +853,31 @@ describe("vercel provider", () => {
     expect(vercelQueueMock.options).toEqual({ region: "iad1" })
   })
 
+  it.each([
+    { explicit: "sfo1", queue: "fra1", runtime: "iad1", expected: "sfo1" },
+    { explicit: undefined, queue: "fra1", runtime: "iad1", expected: "fra1" },
+    { explicit: undefined, queue: undefined, runtime: "iad1", expected: "iad1" },
+  ])("shares globally selected region $expected across request contexts", async ({ explicit, queue, runtime, expected }) => {
+    if (queue) process.env.QUEUE_REGION = queue;
+    process.env.VERCEL_REGION = runtime;
+    setQueueRuntimeConfig({ provider: "vercel", region: explicit }, createVercelQueueRuntimeClient);
+    setQueueRuntimeRegistry({ welcome: async () => ({ handler: async () => {} }) });
+    const first = await runWithQueueRuntimeEvent({ request: new Request("https://example.com", { headers: { "ce-vqsregion": "ams1" } }) }, () => dynamicQueue.get("welcome"));
+    const second = await runWithQueueRuntimeEvent({ node: { req: { headers: { "x-vercel-id": "hnd1::request" } } } }, () => dynamicQueue.get("welcome"));
+    expect(first).toBe(second);
+    expect(vercelQueueMock.options).toEqual({ region: expected });
+  });
+
+  it("prefers the queue-region header while keeping request-selected clients separate", async () => {
+    setQueueRuntimeConfig({ provider: "vercel" }, createVercelQueueRuntimeClient);
+    setQueueRuntimeRegistry({ welcome: async () => ({ handler: async () => {} }) });
+    const first = await runWithQueueRuntimeEvent({ request: new Request("https://example.com", { headers: { "ce-vqsregion": "fra1", "x-vercel-id": "iad1::request" } }) }, () => dynamicQueue.get("welcome"));
+    expect(vercelQueueMock.options).toEqual({ region: "fra1" });
+    const second = await runWithQueueRuntimeEvent({ req: { headers: new Headers({ "ce-vqsregion": "hnd1" }) } }, () => dynamicQueue.get("welcome"));
+    expect(first).not.toBe(second);
+    expect(vercelQueueMock.options).toEqual({ region: "hnd1" });
+  });
+
   it("uses Vercel waitUntil for deferred dispatch", async () => {
     process.env.VERCEL_REGION = "iad1"
 

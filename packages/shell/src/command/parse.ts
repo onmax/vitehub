@@ -3,43 +3,58 @@ import { shellErrorDiagnostics } from "../error-diagnostics.ts"
 export function parseShellCommand(command: string, mode: "execution" | "inspection" = "execution"): string[] {
   const words: string[] = []
   let current = ""
+  let wordStarted = false
   let quote: "'" | "\"" | undefined
   let escaped = false
 
-  for (const char of command) {
+  for (let index = 0; index < command.length; index += 1) {
+    const char = command[index]!
     if (escaped) {
-      current += char
+      if (char !== "\n") {
+        current += char
+        wordStarted = true
+      }
       escaped = false
+      continue
+    }
+    if (quote) {
+      if (char === quote) quote = undefined
+      else {
+        if (char === "\\" && quote === '"' && /[\\$`"\n]/.test(command[index + 1] ?? "")) escaped = true
+        else current += char
+      }
+      wordStarted = true
       continue
     }
     if (char === "\\") {
       escaped = true
       continue
     }
-    if (quote) {
-      if (char === quote) quote = undefined
-      else current += char
-      continue
-    }
     if (char === "'" || char === "\"") {
       quote = char
+      wordStarted = true
       continue
     }
     if (/\s/.test(char)) {
-      if (current) {
+      if (wordStarted) {
         words.push(current)
         current = ""
+        wordStarted = false
       }
       continue
     }
     current += char
+    wordStarted = true
   }
 
   if (mode === "execution") {
-    if (escaped) current += "\\"
+    if (escaped) {
+      current += "\\"
+      wordStarted = true
+    }
     if (quote) throw shellErrorDiagnostics.SHELL_R0003({ message: "unterminated quote" })
   }
-  if (current) words.push(current)
+  if (wordStarted) words.push(current)
   return words
 }
 

@@ -1,5 +1,6 @@
 import { createStorage } from "unstorage"
 import createDriver from "unstorage/drivers/cloudflare-kv-binding"
+import { normalizeKVListPrefix } from "./list-prefix.ts"
 
 import type { KVListOptions, KVListPage } from "../types.ts"
 import type { KVRuntimeDriver } from "./driver.ts"
@@ -32,7 +33,7 @@ export function createCloudflareKVStorage(options: Record<string, unknown>): unk
   // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- The storage object is extended only with the driver-backed listKeys method.
   // SAFETY: createStorage returns an extensible storage object; listKeys is installed before it escapes.
   const storage = createStorage({ driver }) as unknown as Record<string, unknown>
-  storage.listKeys = (listOptions: KVListOptions) => driver.listKeys(listOptions)
+  storage.listKeys = (listOptions: KVListOptions) => driver.listKeys({ ...listOptions, prefix: normalizeKVListPrefix(listOptions.prefix) })
   return storage
 }
 
