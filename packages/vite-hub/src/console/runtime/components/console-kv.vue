@@ -8,6 +8,7 @@ import { appendUniqueConsoleKeys, requestConsole } from "../client/request";
 import { rememberConsoleSection } from "../sections";
 import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
+import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
 import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
@@ -362,6 +363,9 @@ onBeforeUnmount(() => {
           />
         </div>
         <ConsoleSectionNav active="kv" :collapsed="collapsed" :sections-base="sectionsBase" @navigate="sidebarOpen = false" />
+      </template>
+      <template #footer>
+        <ConsolePrimitiveSwitcher auth-only :sections-base="sectionsBase" />
       </template>
 
     </UDashboardSidebar>

@@ -12,6 +12,7 @@ import {
 import { loadConsoleNavigation, resolveConsoleSectionDetails } from "../client/sections";
 import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
+import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
 import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
@@ -119,6 +120,10 @@ onBeforeUnmount(() => request++);
         <p v-if="!loading && !error && !sidebarSections.length && !collapsed" class="px-4 text-sm leading-6 text-muted">
           Enable Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, or Schedule in the ViteHub configuration to add a section.
         </p>
+      </template>
+
+      <template #footer>
+        <ConsolePrimitiveSwitcher auth-only :sections-base="sectionsBase" />
       </template>
 
     </UDashboardSidebar>
