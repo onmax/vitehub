@@ -11,10 +11,33 @@ export async function stopChild(child, graceMs = 500) {
     // The process group can outlive its leader, so also stop surviving descendants.
     signalChild(child, "SIGKILL")
     await closed
+    await waitForGroupExit(child)
   }
   finally {
     clearTimeout(timer)
   }
+}
+
+async function waitForGroupExit(child) {
+  if (process.platform === "win32" || !child.pid) return
+  const deadline = Date.now() + 500
+  while (Date.now() < deadline) {
+    try {
+      process.kill(-child.pid, 0)
+      signalChild(child, "SIGKILL")
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    catch (error) {
+      if (error.code === "ESRCH") return
+      throw error
+    }
+  }
+  try { process.kill(-child.pid, 0) }
+  catch (error) {
+    if (error.code === "ESRCH") return
+    throw error
+  }
+  throw new Error(`detached process group ${child.pid} survived cleanup`)
 }
 
 function signalChild(child, signal) {
