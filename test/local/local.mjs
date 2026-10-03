@@ -36,20 +36,26 @@ async function waitForProbe(url, timeoutMs = 60_000) {
   throw new Error(`[e2e:local] App at ${url} never became healthy: ${lastError}`)
 }
 
-async function runSuite(name, command, args, env = {}) {
+async function runSuite(name, command, args, env = {}, register) {
   log(`suite ${name}: ${command} ${args.join(" ")}`)
   const child = spawn(command, args, { cwd: repoRoot, env: { ...process.env, ...env }, stdio: "inherit" })
-  await new Promise((resolve, reject) => {
-    child.once("error", reject)
-    child.once("exit", (code, signal) => {
-      if (code === 0) resolve()
-      else reject(new Error(`[e2e:local] Primitive Suite "${name}" failed (exit ${code ?? signal}).`))
+  register?.addChild(child)
+  try {
+    await new Promise((resolve, reject) => {
+      child.once("error", reject)
+      child.once("exit", (code, signal) => {
+        if (code === 0) resolve()
+        else reject(new Error(`[e2e:local] Primitive Suite "${name}" failed (exit ${code ?? signal}).`))
+      })
     })
-  })
+  }
+  finally {
+    register?.removeChild(child)
+  }
 }
 
-function suiteRunner(provider, url) {
-  const runTask = (name, task, args, env) => runSuite(name, "vp", ["run", task, ...args], env)
+function suiteRunner(provider, url, register) {
+  const runTask = (name, task, args, env) => runSuite(name, "vp", ["run", task, ...args], env, register)
   return {
     // blob and database take no --provider flag (parseArgs strict), matching the live workflow.
     blob: () => runTask("blob", "blob:e2e", ["--mode", "local", "--url", url]),
@@ -75,7 +81,7 @@ async function runCloudflare() {
   const stop = manageChild(dev)
   try {
     await waitForProbe(url)
-    const run = suiteRunner("cloudflare", url)
+    const run = suiteRunner("cloudflare", url, stop)
     await run.pkg("kv")
     await run.pkg("rate-limit")
     await run.script("queue")
@@ -123,7 +129,7 @@ async function runVercel() {
   const stop = manageChild(bridge)
   try {
     await waitForProbe(url)
-    const run = suiteRunner("vercel", url)
+    const run = suiteRunner("vercel", url, stop)
     if (hasUpstash) {
       await run.pkg("kv")
       await run.script("schedule", ["--timeout", "90000"])

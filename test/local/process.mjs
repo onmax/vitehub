@@ -32,16 +32,19 @@ function signalChild(child, signal) {
 }
 
 // Keep signal cleanup active until the provider has been reaped.
-export function manageChild(child) {
+export function manageChild(...initialChildren) {
+  const children = new Set(initialChildren)
   let cleanup
   let interrupted = false
   const stop = () => {
-    cleanup ??= stopChild(child).finally(() => {
+    cleanup ??= Promise.all([...children].map(child => stopChild(child))).finally(() => {
       process.off("SIGINT", onSignal)
       process.off("SIGTERM", onSignal)
     })
     return cleanup
   }
+  stop.addChild = child => children.add(child)
+  stop.removeChild = child => children.delete(child)
   const onSignal = async signal => {
     if (interrupted) return
     interrupted = true

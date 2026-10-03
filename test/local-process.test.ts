@@ -34,20 +34,28 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)"], {
         detached: true, stdio: ['ignore', 'pipe', 'inherit'],
       });
-      manageChild(child);
-      child.stdout.once('data', () => console.log(child.pid));
+      const suite = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], {
+        detached: true, stdio: ['ignore', 'ignore', 'inherit'],
+      });
+      const stop = manageChild(child);
+      stop.addChild(suite);
+      child.stdout.once('data', () => console.log(child.pid + ' ' + suite.pid));
       setInterval(() => {}, 1000);
     `], { stdio: ["ignore", "pipe", "pipe"] })
     const closed = once(runner, "close")
     let providerPid: number | undefined
     try {
       const [output] = await once(runner.stdout!, "data")
-      providerPid = Number(String(output).trim())
+      const [provider, suite] = String(output).trim().split(/\\s+/).map(Number)
+      providerPid = provider
+      const suitePid = suite
       expect(providerPid).toBeGreaterThan(0)
+      expect(suitePid).toBeGreaterThan(0)
       runner.kill(signal)
       await closed
       expect(runner.signalCode).toBe(signal)
       expect(() => process.kill(-providerPid!, 0)).toThrow(/ESRCH/)
+      expect(() => process.kill(-suitePid!, 0)).toThrow(/ESRCH/)
     }
     finally {
       if (providerPid) {
