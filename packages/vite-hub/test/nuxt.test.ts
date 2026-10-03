@@ -2042,9 +2042,20 @@ describe("ViteHub Nuxt integration", () => {
     }
   })
 
-  it.each(["none", "app-auth", "console-auth"] as const)("resolves the Nuxt Connections management actor with %s", async (source) => {
+  it("rejects Connections in production Nuxt applications", async () => {
     const production = createNuxt(false)
-    production.nuxt.options.vite.root = "/tmp/vitehub-nuxt/app"
+
+    await expect(viteHubNuxtModule({
+      connections: { management: true },
+      database: true,
+      console: { exposure: "host-managed" },
+      preset: "node",
+    }, production.nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
+  })
+
+  it.each(["none", "app-auth", "console-auth"] as const)("resolves the Nuxt Connections management actor with %s", async (source) => {
+    const development = createNuxt(true)
+    development.nuxt.options.vite.root = "/tmp/vitehub-nuxt/app"
     await viteHubNuxtModule({
       auth: source === "app-auth",
       connections: { management: true },
@@ -2053,12 +2064,12 @@ describe("ViteHub Nuxt integration", () => {
         ? { access: "auth", auth: { provider: "github", allowedEmails: ["maintainer@example.com"], databasePath: "/data/console-auth.sqlite" } }
         : { exposure: "host-managed" },
       preset: "node",
-    }, production.nuxt)
-    const config = nitroOptions(production.nuxt)
-    await production.runNitroConfigHook(config)
+    }, development.nuxt)
+    const config = nitroOptions(development.nuxt)
+    await development.runNitroConfigHook(config)
 
     const pages: Array<{ file: string; name: string; path: string }> = []
-    production.runPagesHook(pages)
+    development.runPagesHook(pages)
     expect(pages).toContainEqual(expect.objectContaining({
       file: expect.stringContaining("pages/connections.vue"),
       name: "vitehub-console-connections",
@@ -2078,7 +2089,7 @@ describe("ViteHub Nuxt integration", () => {
     else {
       expect(generated).toContain("return undefined")
     }
-    await production.runNitroConfigHook(config)
+    await development.runNitroConfigHook(config)
     expect(await readFile(actor, "utf8")).toBe(generated)
     expect(config.alias).toMatchObject({ "#vitehub/console/connections-actor": actor })
   })

@@ -795,7 +795,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     const wasm = (nitro.wasm ??= {}) as Record<string, unknown>
     wasm.lazy ??= true
   }
-  const rootDir = nuxt.options.rootDir || process.cwd()
   nuxt.options.vite ??= {}
   nuxt.options.vite.root ??= rootDir
   const viteRoot = resolve(rootDir, typeof nuxt.options.vite?.root === "string" ? nuxt.options.vite.root : rootDir)
