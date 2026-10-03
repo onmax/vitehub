@@ -1679,7 +1679,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     while (tokens[value] === "(") value++
     // Member writes mark the receiver mutated, but do not sever its alias.
     // Follow only direct initializers so unrelated global properties stay local.
-    if (![";", ",", ")", undefined].includes(tokens[value + 1]) && !startsStatement(value + 1)) return false
+    // TypeScript assertions can follow an aliased global object expression.
+    // Keep the assertion attached to the same expression while rejecting
+    // actual member access or opaque helper results.
+    if (![";", ",", ")", undefined, "!", "as", "satisfies"].includes(tokens[value + 1]) && !startsStatement(value + 1)) return false
     return globalThisReceiver(value, seen)
   }
 

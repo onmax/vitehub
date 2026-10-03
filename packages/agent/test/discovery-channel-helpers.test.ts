@@ -977,6 +977,12 @@ it.each([
   })).rejects.toThrow("opaque Channel")
 })
 
+it.each(["!", "as object", "satisfies object"])("follows asserted global aliases: %s", async assertion => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const globals = globalThis ${assertion}; globals.String = replacement; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it("ignores named function expressions in template interpolations", async () => {
   const definition = await discover(`${imports} import portal from "../../portal.ts"; const ignored = \`\${function portal() {}}\`; export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
