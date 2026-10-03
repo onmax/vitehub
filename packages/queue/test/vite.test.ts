@@ -175,6 +175,42 @@ describe("hubQueue", () => {
     expect(hubQueue().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
 
+  it.each(["before", "after"])("keeps each Nuxt project's Queue output when Nitro resolves %s Vite", async (order) => {
+    const plugin = hubQueue({ provider: "vercel" })
+    const buildStart = plugin.buildStart
+    if (typeof buildStart !== "function") throw new TypeError("Expected buildStart hook")
+    const projects = []
+    for (const name of ["first", "second"]) {
+      const root = await mkdtemp(join(tmpdir(), "vitehub-queue-nuxt-shared-"))
+      roots.push(root)
+      const viteRoot = join(root, "app")
+      const serverDir = join(root, "backend")
+      await mkdir(viteRoot)
+      await mkdir(join(serverDir, "queues"), { recursive: true })
+      await symlink(join(workspaceRoot, "node_modules"), join(root, "node_modules"), "dir")
+      await writeFile(join(serverDir, "queues", `${name}.ts`), "export default { handler: async () => undefined }\n")
+      const config = { root: viteRoot, command: "build", build: { outDir: "dist" }, nitro: { preset: "vercel" }, plugins: [], resolve: { alias: [] } }
+      const configureNitro = () => createQueueNitroConfig(plugin, { nitro: config.nitro, projectRoot: root, root: viteRoot, serverDirs: [serverDir] })
+      if (order === "before") await configureNitro()
+      await (plugin.configResolved as (config: unknown) => Promise<void>)(config)
+      if (order === "after") await configureNitro()
+      const context = { environment: { config } }
+      await buildStart.call(context as never, {} as never)
+      projects.push({ root, viteRoot, name, context })
+    }
+    for (const { context } of projects) {
+      await (plugin.buildEnd as (this: never) => Promise<void>).call(context as never)
+      await (plugin.closeBundle as { handler: (this: never) => Promise<void> }).handler.call(context as never)
+    }
+    for (const { root, viteRoot, name } of projects) {
+      const registry = await readFile(join(root, ".vitehub", "queue", "registry.mjs"), "utf8")
+      expect(registry).toContain(`${name}.ts`)
+      expect(registry).not.toContain(`${name === "first" ? "second" : "first"}.ts`)
+      expect(existsSync(join(root, ".vercel", "output", "config.json"))).toBe(true)
+      expect(existsSync(join(viteRoot, ".vercel"))).toBe(false)
+    }
+  })
+
   it("registers absolute generated paths when Nitro owns the Vite config", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-queue-nitro-owned-"))
     roots.push(root)
