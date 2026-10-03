@@ -1468,6 +1468,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
         reassignedGlobalConversions.add(member.name)
       }
+      else if (!member && assignmentOperator(memberCallEnd(index))) {
+        // Unknown computed writes may replace a conversion helper.
+        reassignedGlobalConversions.add("String")
+        reassignedGlobalConversions.add("Number")
+        reassignedGlobalConversions.add("Boolean")
+      }
     }
     // Only unshadowed global conversions are known calls. Nested opaque calls
     // and imported arguments still invalidate imported Channels.
@@ -1728,6 +1734,21 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       let cursor = parameterEnd + 3
       const parentheses: number[] = []
       while (tokens[cursor] === "(") parentheses.push(cursor++)
+      if (tokens[cursor] === "{") {
+        const bodyEnd = [...openingDelimiters].find(([, opening]) => opening === cursor)?.[0]
+        if (bodyEnd === undefined) continue
+        cursor++
+        while (tokens[cursor] === ";") cursor++
+        if (tokens[cursor] !== "return") continue
+        cursor++
+        while (tokens[cursor] === "(") cursor++
+        if (tokens[cursor] !== "globalThis" || !globalBindingUnshadowed(cursor, "globalThis")) continue
+        cursor++
+        while (tokens[cursor] === ")") cursor++
+        while (tokens[cursor] === ";") cursor++
+        if (cursor === bodyEnd) return true
+        continue
+      }
       if (tokens[cursor] !== "globalThis" || !globalBindingUnshadowed(cursor, "globalThis")) continue
       cursor++
       while (parentheses.length > 0 && openingDelimiters.get(cursor) === parentheses.at(-1)) {

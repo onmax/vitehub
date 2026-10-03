@@ -881,6 +881,7 @@ it.each([
   'globalThis["String"] = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'globalThis["Number"] = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
   'globalThis["Boolean"] = () => getPortal().capabilities = []; const ignored = `${Boolean("id")}`',
+  'globalThis["Str" + "ing"] = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'Reflect.set(globalThis, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
   'const globals = globalThis; globals.String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const globals = globalThis; const alias = globals; alias["Number"] = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
@@ -972,6 +973,8 @@ it.each([
   '_unused => globalThis',
   '(_unused, other) => ((globalThis))',
   '(_unused = {}) => globalThis',
+  '(_unused) => { return globalThis }',
+  '(_unused) => { return (globalThis) }',
   '({ globalThis: ignored }) => globalThis',
   '(...unused) => globalThis',
 ])("rejects conversion replacements through parameterized global arrows: %s", async helper => {
