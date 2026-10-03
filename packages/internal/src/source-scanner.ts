@@ -104,6 +104,18 @@ function isIdentifierStart(char: string | undefined) {
   return !!char && /[\p{ID_Start}_$]/u.test(char)
 }
 
+function identifierCodePoint(source: string, index: number) {
+  const char = source[index]
+  const next = source[index + 1]
+  const previous = source[index - 1]
+  if (char && /[\uDC00-\uDFFF]/.test(char) && previous && /[\uD800-\uDBFF]/.test(previous)) return previous + char
+  return char && next && /[\uD800-\uDBFF]/.test(char) && /[\uDC00-\uDFFF]/.test(next) ? char + next : char
+}
+
+function isIdentifierCharAt(source: string, index: number) {
+  return isIdentifierChar(identifierCodePoint(source, index))
+}
+
 function isRegexLiteralStart(previousSignificant: string) {
   const token = previousSignificant.trimEnd()
   if (/^\.[\w$]+$/.test(token)) return false
@@ -356,9 +368,10 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   const prefix = source.slice(0, index).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ")
   // Once a return type continues past a completed generic, the preceding
   // arguments are masked before checking the next union/intersection member.
-  // Treat the arrow as type whitespace for that continuation check.
+  // Check only the return after the last arrow so parameter annotations
+  // do not interrupt predicate union/intersection continuation.
   if (/=>/.test(prefix) && /\b(?:as|satisfies)\b/.test(prefix)
-    && hasAssertionTypePrefix(prefix.replace(/=>/g, "  "))) return true
+    && hasAssertionTypePrefix(prefix.replace(/[\s\S]*=>/, "as "))) return true
   // Function and constructor assertion types place their return reference
   // after `=>`, so the generic is not directly adjacent to the assertion
   // keyword. Treat that return type as part of the assertion as well.
@@ -372,9 +385,9 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   let typeName = ""
   while (current >= 0) {
     const end = current + 1
-    while (isIdentifierChar(source[current])) current -= 1
+    while (current >= 0 && isIdentifierCharAt(source, current)) current -= identifierCodePoint(source, current)?.length ?? 1
     const identifier = source.slice(current + 1, end)
-    if (!isIdentifierStart(identifier[0]) || [...identifier].slice(1).some(char => !isIdentifierChar(char))) {
+    if (!isIdentifierStart(identifier) || [...identifier].slice(1).some(char => !isIdentifierChar(char))) {
       // Import types qualify named references through import("module").Type.
       if (!qualified || source[current] !== ")") return false
       return assertionSuffix || hasAssertionTypePrefix(source.slice(0, index))
@@ -399,7 +412,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   let keyword: string
   do {
     const end = current + 1
-    while (isIdentifierChar(source[current])) current -= 1
+    while (current >= 0 && isIdentifierCharAt(source, current)) current -= identifierCodePoint(source, current)?.length ?? 1
     keyword = source.slice(current + 1, end)
     if (keyword !== "keyof" && keyword !== "readonly" && keyword !== "typeof") break
     current = previousCodeIndex(source, current, controlFlowRegexes)
@@ -670,7 +683,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
           if (value.slice(start, index + 1) === "extends" && value[previous] !== ".") {
             // `infer R extends Constraint` constrains the inferred name; it
             // does not begin another conditional branch.
-            if (/\binfer\s+[A-Za-z_$][\w$]*\s*$/.test(value.slice(0, start))) continue
+            if (/\binfer\s+[\p{ID_Start}_$][\p{ID_Continue}$]*\s*$/u.test(value.slice(0, start))) continue
             conditionalBranches.push(false)
           }
         }
