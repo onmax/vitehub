@@ -410,7 +410,10 @@ async function assertGitObjectStore(path: string) {
   if (!(await lstat(path)).isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
   for (const entry of await readdir(path, { withFileTypes: true })) {
     if (entry.isDirectory()) await assertGitObjectStore(join(path, entry.name))
-    else if (!entry.isFile()) throw new Error("Pooled checkout has unsafe Git metadata")
+    else {
+      const file = await lstat(join(path, entry.name))
+      if (!file.isFile() || file.nlink !== 1) throw new Error("Pooled checkout has unsafe Git metadata")
+    }
   }
 }
 
@@ -456,6 +459,7 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
     await writeFile(join(replacementGit, "info/exclude"), "")
     for (const [key, value] of [
       ["core.repositoryformatversion", "1"],
+      ["fetch.recurseSubmodules", "false"],
       ["remote.origin.url", `https://github.com/${repository}.git`],
       ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
       ["remote.origin.promisor", "true"],
@@ -951,10 +955,18 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "--detach", "FETCH_HEAD"], commandOptions)
       }
-      // Adopted checkouts have no trusted list of previous submodule paths.
-      // Clear incoming submodules too before removing all adopted ignored state.
+      // Read gitlinks directly so cleanup does not parse callback-controlled .gitmodules.
+      if (checkoutPool) {
+        const tree = (await exec("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], commandOptions)).stdout
+        submodules = tree.split("\0").filter(entry => entry.startsWith("160000 ")).map(entry => entry.slice(entry.indexOf("\t") + 1))
+      }
       if (pooled?.reused) {
-        await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "submodule", "deinit", "--force", "--all"], commandOptions)
+        for (const submodule of submodules) {
+          const target = join(checkout, submodule)
+          await assertCheckoutDirectories(dirname(target), checkout)
+          await rm(target, { force: true, recursive: true })
+          await mkdir(target)
+        }
       }
       // An adopted directory has no trusted PR identity: discard ignored state after
       // checkout installs the verified incoming tree, even if its name matches this PR.
@@ -974,10 +986,6 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
       operation.signal.throwIfAborted()
       // Only a checkout with a verified head returns to the pool. Reuse resets it again.
-      if (checkoutPool) {
-        const tree = (await exec("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], commandOptions)).stdout
-        submodules = tree.split("\0").filter(entry => entry.startsWith("160000 ")).map(entry => entry.slice(entry.indexOf("\t") + 1))
-      }
       if (reset && pooled) {
         await reset.restore()
         checkout = pooled.anchoredDirectory

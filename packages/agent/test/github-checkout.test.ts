@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, cp, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, cp, link, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -338,6 +338,17 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     await expect(git(path, 'config', 'remote.origin.push')).rejects.toThrow()
   })
 
+  // A hard-linked object must not make an outside store available on reuse.
+  const linkedObject = join(outsideObjects, '.git/objects', borrowedBlob.slice(0, 2), borrowedBlob.slice(2))
+  const objectDirectory = join(secondPath, '.git/objects', borrowedBlob.slice(0, 2))
+  await mkdir(objectDirectory, { recursive: true })
+  await link(linkedObject, join(objectDirectory, borrowedBlob.slice(2)))
+  const callback = vi.fn()
+  await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, callback)).rejects.toThrow('unsafe Git metadata')
+  expect(callback).not.toHaveBeenCalled()
+  expect(await git(outsideObjects, 'cat-file', '-p', borrowedBlob)).toBe('outside checkout object')
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async ({ path }) => { secondPath = path })
+
   // Pooled cleanup must reject tampered Git metadata instead of following a symlink.
   await rename(join(secondPath, '.git'), join(secondPath, '.git-real'))
   await symlink(join(secondPath, '.git-real'), join(secondPath, '.git'))
@@ -582,6 +593,11 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
   await git(source, 'add', '.')
   await git(source, 'commit', '-m', 'two')
   const secondSha = await git(source, 'rev-parse', 'HEAD')
+  await writeFile(join(source, '.gitmodules'), '[submodule "broken"\n')
+  await git(source, 'add', '.gitmodules')
+  await git(source, 'commit', '-m', 'malformed submodule config')
+  const malformedSha = await git(source, 'rev-parse', 'HEAD')
+  await git(source, 'checkout', secondSha, '--', '.gitmodules')
   await git(source, 'rm', '-f', 'nested')
   await writeFile(join(source, '.gitignore'), 'nested/\n')
   await git(source, 'add', '.')
@@ -613,6 +629,12 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
     expect(await readFile(join(path, 'nested/file'), 'utf8')).toBe('two')
     await expect(access(join(path, 'nested/untracked'))).rejects.toThrow()
     await writeFile(join(path, 'nested/untracked'), 'stale again')
+  })
+  await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: malformedSha }, async ({ path }) => {
+    expect(path).toBe(firstPath)
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(malformedSha)
+    expect(await readdir(join(path, 'nested'))).toEqual([])
+    await expect(access(join(path, '.git/modules'))).rejects.toThrow()
   })
   await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: removedSha }, async ({ path }) => {
     expect(path).toBe(firstPath)
