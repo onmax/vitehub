@@ -1480,6 +1480,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       templateLocalBindings.push({ start, end, names })
     }
     const classFieldKeys = new Set<number>()
+    const instanceFieldInitializers = new Set<number>()
     const classExpressionNames = new Set<number>()
     for (let index = 0; index < references.length; index++) {
       if (references[index] !== "class" || references[index - 1] === "." || [":", "("].includes(references[index + 1] ?? "")) continue
@@ -1494,11 +1495,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // Only member starts name fields. Initializers and computed keys still
       // read bindings, including assignments to an imported Channel.
       let memberStart = true
+      let memberStatic = false
       for (let cursor = body + 1; cursor < end; cursor++) {
         const token = references[cursor]!
         if (referenceLineBreaks.has(cursor) && endsAgentExpression(references.slice(0, cursor))) memberStart = true
-        if (token === ";") { memberStart = true; continue }
-        if (memberStart && ["static", "readonly", "declare", "public", "private", "protected", "abstract", "override", "accessor"].includes(token)) continue
+        if (token === ";") { memberStart = true; memberStatic = false; continue }
+        if (memberStart && token === "static") { memberStatic = true; continue }
+        if (memberStart && ["readonly", "declare", "public", "private", "protected", "abstract", "override", "accessor"].includes(token)) continue
         if (memberStart && token === "#" && isIdentifier(references[cursor + 1])) continue
         if (memberStart && isIdentifier(token)
           && (["=", ";", "}"].includes(references[cursor + 1] ?? "")
@@ -1506,7 +1509,29 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             || references[cursor + 1] === "?"
             || references[cursor + 1] === "!"
               && [":", "=", ";", "}"].includes(references[cursor + 2] ?? "")
-            || referenceLineBreaks.has(cursor + 1) && (isIdentifier(references[cursor + 1]) || ["[", "#"].includes(references[cursor + 1] ?? "")))) classFieldKeys.add(cursor)
+              || referenceLineBreaks.has(cursor + 1) && (isIdentifier(references[cursor + 1]) || ["[", "#"].includes(references[cursor + 1] ?? "")))) {
+          classFieldKeys.add(cursor)
+          // Instance field initializers run only when an instance is created,
+          // after the class expression itself has been evaluated. Do not let
+          // captures in those initializers taint imported Channels. Static
+          // fields execute during class evaluation and remain inspectable.
+          if (!memberStatic && references[cursor + 1] === "=") {
+            let initializer = cursor + 2
+            let depth = 0
+            for (; initializer < end; initializer++) {
+              const value = references[initializer]!
+              if (["(", "[", "{"].includes(value)) depth++
+              else if ([")", "]", "}"].includes(value)) {
+                if (depth === 0) break
+                depth--
+              }
+              if (depth === 0 && value === ";") break
+              if (depth === 0 && referenceLineBreaks.has(initializer)
+                && endsAgentExpression(references.slice(cursor + 2, initializer))) break
+              instanceFieldInitializers.add(initializer)
+            }
+          }
+        }
         const closing = referenceClosings.get(cursor)
         if (closing !== undefined) {
           cursor = closing
@@ -1519,6 +1544,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
       && !methodKey(index)
       && !classFieldKeys.has(index)
+      && !instanceFieldInitializers.has(index)
       && !classExpressionNames.has(index)
       && !templateLocalBindings.some(scope => index >= scope.start && index < scope.end && scope.names.has(references[index]!))
     const reassignedGlobalConversions = new Set<string>()

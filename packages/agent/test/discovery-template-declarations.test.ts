@@ -22,6 +22,7 @@ async function discover(expression: string) {
 }
 
 it.each([
+  "class { field = portal }",
   "function outer() { function portal() {}; portal.capabilities = [] }",
   "function () { function portal() {}; return portal }",
   "function () { class portal {}; return portal }",
@@ -50,6 +51,7 @@ it.each([
   "function () { const local = function portal() {}; return portal }",
   "function () { const local = class portal {}; return portal }",
   "function () { class Local extends portal {} }",
+  "class { static field = portal }",
   "({ render() { try { throw 0 } catch (portal) { portal.id } return portal } })",
   "function () { try { throw 0 } catch ({ value: local = portal }) { return local } }",
   "function () { for (const portal of []) switch (input.id) {} return portal }",
