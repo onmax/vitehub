@@ -4,8 +4,8 @@ import { docsLegacyFragmentRedirects } from "~~/modules/vitehub-docs/redirects";
 export default defineNuxtRouteMiddleware((to) => {
   const fragment = to.hash.slice(1);
   const path = to.path.replace(/\/+$/, "");
-  const target = Object.entries(docsLegacyFragmentRedirects)
-    .find(([redirectPath]) => redirectPath === path)?.[1][fragment];
+  const redirects = docsLegacyFragmentRedirects[path as keyof typeof docsLegacyFragmentRedirects];
+  const target = redirects?.[fragment as keyof typeof redirects];
 
   if (!target || target === to.path) return;
 
