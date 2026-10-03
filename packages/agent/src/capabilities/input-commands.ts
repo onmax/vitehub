@@ -530,6 +530,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             // siblings can move when a replacement changes the prompt length.
             let nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
             // Channel-skipped tokens must not hide the next executable rewrite.
+            // SAFETY: Parsed invocations are registered command names.
             while (nextInvocation && !commandAllowsCurrentChannel(commands[nextInvocation.name]!, context as AgentCapabilityRuntimeContext)) {
               nextInvocation = findInputCommandInvocation(text, trigger, commands, nextInvocation.end)
             }
