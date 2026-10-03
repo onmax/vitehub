@@ -637,10 +637,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               const workerName = "babysitter-worker";
               const baseSettings = getAgentLayerOptions(baseAgent);
               if (!baseSettings) throw new Error("Babysitter base Agent settings are unavailable.");
-              // Build the worker from the base settings without inheriting its
-              // GitHub Channels. Extending the base Agent would merge those
-              // Channels and preserve the host identity on the worker.
+              // Build the worker from the base settings while replacing only
+              // its GitHub Channel. Extending the base Agent would preserve
+              // the host identity, but dropping the whole map loses other
+              // channel-scoped capabilities needed by repair passes.
               const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              const baseChannels = isRuntimeRecord(_baseChannels) ? _baseChannels : {};
               const baseCapabilities = Array.isArray(workerSettings.capabilities)
                 ? workerSettings.capabilities as AgentCapabilityDefinition[]
                 : [];
@@ -667,6 +669,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 // GitHub authority stays in the broker operations above;
                 // attaching the host here would expose its token to the driver.
                 channels: {
+                  ...baseChannels,
                   github: workerChannel,
                 },
                 // SAFETY: workerCapabilities preserves validated base capability definitions and appends the broker capability.
