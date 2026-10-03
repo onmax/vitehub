@@ -1100,6 +1100,47 @@ describe("vitehub", () => {
     }
   })
 
+  it.each([
+    ["cloudflare", { binding: "CACHE", driver: "cloudflare-kv-binding" }],
+    ["vercel", { driver: "vercel-runtime-cache" }],
+    ["deno", { base: "cache", driver: "deno-kv" }],
+    ["node", { base: ".vitehub/data/cache", driver: "fs-lite" }],
+  ] as const)("mounts Nitro cache storage for the %s preset", async (preset, storage) => {
+    const config = await applyDeploymentConfig({ cache: true, preset })
+
+    expect(config.nitro).toMatchObject({
+      devStorage: { cache: { base: ".vitehub/data/cache", driver: "fs-lite" } },
+      storage: { cache: storage },
+    })
+    if (preset === "cloudflare") {
+      expect(config.nitro).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE" }])
+    }
+  })
+
+  it("keeps an application cache mount and other KV namespaces", async () => {
+    const config = await applyDeploymentConfig(
+      { cache: true, preset: "cloudflare" },
+      { nitro: { cloudflare: { wrangler: { kv_namespaces: [{ binding: "KV", id: "kv-id" }] } }, storage: { cache: { driver: "memory" } } } },
+    )
+
+    expect(config.nitro).toHaveProperty("storage.cache", { driver: "memory" })
+    expect(config.nitro).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "KV", id: "kv-id" }])
+  })
+
+  it("stores the Node cache under dataDir", async () => {
+    const config = await applyDeploymentConfig({ cache: true, dataDir: "/tmp/vitehub-data", preset: "node" })
+
+    expect(config.nitro).toMatchObject({
+      devStorage: { cache: { base: "/tmp/vitehub-data/cache", driver: "fs-lite" } },
+      storage: { cache: { base: "/tmp/vitehub-data/cache", driver: "fs-lite" } },
+    })
+  })
+
+  it("rejects a cache store that the preset cannot provide", () => {
+    expect(() => vitehub({ cache: true, preset: "netlify" })).toThrow("`cache: true` has no default store for the netlify preset.")
+    expect(() => vitehub({ cache: { driver: "fs-lite" }, preset: "cloudflare" })).toThrow("`cache.driver: \"fs-lite\"` requires the node preset, but the preset is cloudflare.")
+  })
+
   it("preserves an explicit Cloudflare WASM loading mode", async () => {
     const config = await applyDeploymentConfig(
       { preset: "cloudflare" },

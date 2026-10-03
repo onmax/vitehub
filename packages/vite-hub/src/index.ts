@@ -1,4 +1,5 @@
 import { consoleD1Binding, consoleDatabaseUrl, withDataDir } from "./storage-config.ts"
+import { applyCacheStorage, resolveCacheStorage, type CacheOptions } from "./cache.ts"
 import { existsSync, readFileSync } from "node:fs"
 import { basename, dirname, join, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -63,6 +64,7 @@ import type { PublicUrlConfig } from "@vite-hub/runtime"
 import type { Plugin, PluginOption, ResolvedConfig, UserConfig } from "vite"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
+export type { CacheOptions } from "./cache.ts"
 export type { ConsoleOptions } from "./console/vite.ts"
 export type { ObservabilityEvlogOptions, ObservabilityOptions } from "./observability-vite.ts"
 
@@ -268,6 +270,12 @@ export interface ViteHubOptions {
   auth?: true | AuthModuleOptions
   blob?: boolean | BlobModuleOptions
   browser?: boolean | BrowserModuleOptions
+  /**
+   * Storage for Nitro's `cache` mount, which `defineCachedFunction()` and `defineCachedEventHandler()` use.
+   * `true` selects the preset's store: Workers KV binding `CACHE`, Vercel Runtime Cache, Deno KV, or `.vitehub/data/cache` on Node.
+   * Development always uses `.vitehub/data/cache`.
+   */
+  cache?: boolean | CacheOptions
   channels?: boolean | ChannelsVitePluginOptions
   /** App-owned OAuth Connections in `server/connections/`. Requires `database`. */
   connections?: boolean | ConnectionsVitePluginOptions
@@ -480,6 +488,7 @@ function deploymentPlugins(
   envPlugin: EnvVitePlugin | undefined,
 ): Plugin[] {
   let deployCommandOwned = false
+  const cacheStorage = options.cache ? resolveCacheStorage(options.cache, plan.preset) : undefined
   const resolvedBuildConfigs = new WeakMap<object, { current: ResolvedBuildConfig }>()
   let providerOutput: ReturnType<typeof useProviderOutputCatalog> | undefined
   let deploymentRoot: string | undefined
@@ -649,6 +658,7 @@ function deploymentPlugins(
             nitro = composeNitroCloudflareProviderOutput(providerOutput, nitro)
           }
         }
+        if (cacheStorage) nitro = applyCacheStorage(nitro, cacheStorage)
         ;(config as { nitro?: unknown }).nitro = nitro
       },
     },

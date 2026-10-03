@@ -22,11 +22,11 @@ After the move, the same KV, Blob, and Database APIs are also available to
 | `blob` from `@nuxthub/blob` | `blob` from `vite-hub/blob` | Same core methods. Methods return `[error, value]`. |
 | `db` and `schema` from `@nuxthub/db` | `useDatabase()` from `vite-hub/database/drizzle` | Drizzle in both. ViteHub supports SQLite, libSQL, and Cloudflare D1. |
 | `hub.db: 'postgresql'` or `'mysql'` | Not supported | Keep NuxtHub or Drizzle for these databases. |
-| `hub.cache` | Nitro storage | `cachedEventHandler` and `defineCachedFunction` are Nitro APIs and keep working. |
+| `hub.cache` | `cache` option | Mounts Nitro's `cache` storage on the preset's store. `cachedEventHandler` and `defineCachedFunction` keep working. |
 | `handleUpload`, multipart helpers, `useUpload` | Not available | Write an upload route with `blob.put()`. Direct uploads need driver-specific signing credentials. |
 | `hosting` auto-detection | `preset` | You must select the host. |
 | `.data/` | `.vitehub/data/` | Local development data does not move automatically. |
-| Auto-imported `kv`, `blob`, `db` | Explicit imports | Add an import to each server file. |
+| Auto-imported `kv`, `blob`, `db`, `schema` | Auto-imported in Nuxt server code | The module adds them for each enabled feature when Nitro auto-imports are on. Explicit imports also work. |
 
 NuxtHub v0.10 removed `hubAI()`, AutoRAG, Vectorize, and `hubBrowser()`.
 ViteHub has no AI or Vectorize feature either. For browser work on Cloudflare,
@@ -254,22 +254,31 @@ for a new empty database. Read [Database](/docs/server-primitives/database).
 ## Keep the cache
 
 `cachedEventHandler()` and `defineCachedFunction()` come from Nitro, not from
-NuxtHub, so they keep working. NuxtHub `hub.cache` only selected the storage
-driver for Nitro's `cache` mount. Without it, Nitro uses its default cache
-storage. To keep a shared cache in production, set the mount in `nitro.storage`
-and declare the host resource. On Cloudflare, ViteHub adds its own `KV` binding
-next to the `CACHE` namespace that you declare.
+NuxtHub, so they keep working. NuxtHub `hub.cache` selected the storage driver
+for Nitro's `cache` mount. In ViteHub, set `cache: true`.
+
+| Preset | Production store |
+| --- | --- |
+| `cloudflare` | Workers KV binding `CACHE` |
+| `vercel` | Vercel Runtime Cache |
+| `deno` | Deno KV |
+| `node` | `.vitehub/data/cache` |
+
+Development uses `.vitehub/data/cache`, or `<dataDir>/cache` when `dataDir` is
+set. The `netlify` preset has no
+default cache store, so `cache: true` fails the build there. A `cache` mount
+that you set in `nitro.storage` takes precedence.
+
+To keep the cache namespace that NuxtHub created on Cloudflare, pass its ID:
 
 ```ts [nuxt.config.ts]
 export default defineNuxtConfig({
-  nitro: {
-    storage: {
-      cache: { driver: "cloudflare-kv-binding", binding: "CACHE" },
-    },
-    cloudflare: {
-      wrangler: {
-        kv_namespaces: [{ binding: "CACHE", id: "<namespace-id>" }],
-      },
+  vitehub: {
+    preset: "cloudflare",
+    cache: {
+      driver: "cloudflare-kv-binding",
+      binding: "CACHE",
+      namespaceId: process.env.CLOUDFLARE_CACHE_NAMESPACE_ID,
     },
   },
 })
@@ -307,7 +316,7 @@ export default defineConfig({
 | Host | What changes |
 | --- | --- |
 | Cloudflare | Set `preset: "cloudflare"`. Run `pnpm vitehub provision run --provider cloudflare` to resolve the D1 database ID. |
-| Vercel | Set `preset: "vercel"`. KV reads only `KV_REST_API_URL` and `KV_REST_API_TOKEN`. Rename `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Blob reads `BLOB_READ_WRITE_TOKEN`. |
+| Vercel | Set `preset: "vercel"`. KV reads `KV_REST_API_URL` and `KV_REST_API_TOKEN`, then `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`. Blob reads `BLOB_READ_WRITE_TOKEN`. |
 | Node | Set `preset: "node"`. KV and Blob use the file system under `.vitehub/data/`. |
 
 Netlify and Deno have their own presets. Read
