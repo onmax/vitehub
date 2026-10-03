@@ -222,6 +222,58 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("bounds mixed same-command recursive expansion through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        same: {
+          call({ args, context, text }) {
+            if (++calls > 1_500) throw new Error("Expansion did not stop")
+            const replacement = Number(args) > 0 ? "/same 0 /same 1" : ""
+            if (mode === "replacement") return replacement
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const rewritten = prompt.replace(text, replacement)
+            if (mode === "mutation") context.input.set({ prompt: rewritten })
+            else return { prompt: rewritten }
+          },
+        },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 1" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
+  it.each(["replacement", "result", "mutation"] as const)("allows decreasing same-command fan-out with options through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        same: {
+          call({ args, context, text }) {
+            calls++
+            const depth = Number(args.split(" ")[0])
+            const replacement = depth > 0 ? `/same ${depth - 1} --format brief /same ${depth - 1} --format brief` : ""
+            if (mode === "replacement") return replacement
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const rewritten = prompt.replace(text, replacement)
+            if (mode === "mutation") context.input.set({ prompt: rewritten })
+            else return { prompt: rewritten }
+          },
+        },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 9 --format brief" })
+    expect(calls).toBe(1_023)
+  })
+
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

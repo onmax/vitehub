@@ -484,6 +484,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let budgetText: string | undefined
       let budgetCommand: string | undefined
       let budgetArgs: string | undefined
+      let budgetInvocationRange: { start: number, end: number } | undefined
       let budgetReplacementRange: { start: number, end: number } | undefined
       const invocationCounts = new Map<string, InputCommandInvocationCounts>()
       const cacheInvocationCounts = (value: string, counts: InputCommandInvocationCounts): void => {
@@ -527,14 +528,32 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               }
               changedRange = { start, end }
             }
-            // A same-command fan-out can be finite even though every stage
-            // increases the total number of invocations. A strictly decreasing
-            // numeric argument proves that the branch has a finite measure.
-            const finiteSameCommandGrowth = budgetCommand === nextInvocation?.name
-              && budgetArgs !== undefined
-              && /^\s*\d+(?:\s|$)/.test(budgetArgs)
-              && /^\s*\d+(?:\s|$)/.test(nextInvocation.args)
-              && Number(/^\s*(\d+)/.exec(nextInvocation.args)![1]) < Number(/^\s*(\d+)/.exec(budgetArgs)![1])
+            // Every generated child must decrease the numeric measure. Checking
+            // only the first child misses a recursive sibling with unchanged depth.
+            let finiteSameCommandGrowth = false
+            const depth = budgetArgs?.match(/^\s*(\d+)(?:\s|$)/)
+            if (depth && budgetCommand === nextInvocation?.name && budgetInvocationRange) {
+              let replacementRange = budgetReplacementRange
+              if (!replacementRange) {
+                const prefix = budgetText.slice(0, budgetInvocationRange.start)
+                const suffix = budgetText.slice(budgetInvocationRange.end)
+                if (text.startsWith(prefix) && text.endsWith(suffix) && text.length >= prefix.length + suffix.length) {
+                  replacementRange = { start: prefix.length, end: text.length - suffix.length }
+                }
+              }
+              // For broader input mutations, check the whole input conservatively.
+              const replacement = replacementRange ? text.slice(replacementRange.start, replacementRange.end) : text
+              let child = findInputCommandInvocation(replacement, trigger, commands)
+              finiteSameCommandGrowth = child !== undefined
+              while (child) {
+                const childDepth = child.args.match(/^\s*(\d+)(?:\s|$)/)
+                if (child.name !== budgetCommand || !childDepth || Number(childDepth[1]) >= Number(depth[1])) {
+                  finiteSameCommandGrowth = false
+                  break
+                }
+                child = findInputCommandInvocation(replacement, trigger, commands, Math.max(child.end, child.start + 1))
+              }
+            }
             const introducesNextInvocation = nextInvocation && nextInvocation.name !== budgetCommand && changedRange
               && nextInvocation.start < changedRange.end
               && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
@@ -567,6 +586,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         budgetText = undefined
         budgetCommand = undefined
         budgetArgs = undefined
+        budgetInvocationRange = undefined
         budgetReplacementRange = undefined
         const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
         if (!invocation) break
@@ -581,6 +601,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         budgetText = text
         budgetCommand = invocation.name
         budgetArgs = invocation.args
+        budgetInvocationRange = { start: invocation.start, end: invocation.end }
         if (transitionLineage.length && transitionLineage[transitionLineage.length - 1] !== invocation.name) {
           transitionLineage = []
         }
