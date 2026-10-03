@@ -176,6 +176,7 @@ catalogs:
     tinyglobby: ^0.2.17
 
 overrides:
+  mdast-util-to-markdown: 2.1.2
   "@vercel/blob>undici": ^6.28.0
   "@voidzero-dev/vite-plus-core": 0.3.3
   "ai@>=7.0.0 <8.0.0": 7.0.127
