@@ -1719,11 +1719,11 @@ export const AgentInvocation = defineComponent({
         && status !== "pending" && status !== "running") workOpen.value = false;
     });
     // The elapsed time of a live session ticks every second; a settled session shows its fixed duration.
-    watch(() => props.invocation.status === "pending" || props.invocation.status === "running", (live) => {
+    watch([() => props.invocation.status === "pending" || props.invocation.status === "running", mounted], ([live, isMounted]) => {
       if (liveClock) clearInterval(liveClock);
       liveClock = undefined;
       liveNow.value = live ? new Date() : undefined;
-      if (live) liveClock = setInterval(() => liveNow.value = new Date(), 1_000);
+      if (live && isMounted) liveClock = setInterval(() => liveNow.value = new Date(), 1_000);
     }, { immediate: true });
     onBeforeUnmount(() => {
       clearSelectedElement();
