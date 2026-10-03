@@ -1817,11 +1817,13 @@ export function hubWorkspace(options?: WorkspaceModuleOptions): WorkspaceVitePlu
         rootDir: roots.projectRoot,
         write: async ({ readCloudflareState, signal, write }) => {
           const definitions = discoverDefinitions(roots, serverDirs)
-          await copyVercelFunctionRuntimePackages({
-            packages: vercelFunctionRuntimePackages(),
-            rootDir: roots.projectRoot,
-            signal,
-          })
+          if (resolvedOptions !== false) {
+            await copyVercelFunctionRuntimePackages({
+              packages: vercelFunctionRuntimePackages(),
+              rootDir: roots.projectRoot,
+              signal,
+            })
+          }
           await writeCloudflareArtifactsProviderOutput(
             roots.projectRoot,
             resolved!.build?.outDir ?? "dist/client",
