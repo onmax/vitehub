@@ -66,7 +66,7 @@
   },
   "devDependencies": {
     "@nuxt/ui": "catalog:nuxt",
-    "@pierre/diffs": "1.4.0",
+    "@pierre/diffs": "1.5.1",
     "@pierre/theme": "1.1.0",
     "@pierre/trees": "1.0.0-beta.6",
     "@vitejs/plugin-vue": "^6.0.9",

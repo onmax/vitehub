@@ -2134,8 +2134,8 @@ importers:
         specifier: catalog:nuxt
         version: 4.11.3(a233659ddfabb124f14c88b5c1759252)
       '@pierre/diffs':
-        specifier: 1.4.0
-        version: 1.4.0(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.6))(react@19.2.6)
+        specifier: 1.5.1
+        version: 1.5.1(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.6))(react@19.2.6)
       '@pierre/theme':
         specifier: 1.1.0
         version: 1.1.0
@@ -7565,8 +7565,8 @@ packages:
     resolution: {integrity: sha512-tmmZ3lQxAe/k/+rNnXQRawJ4NjxO2hqiOLTHvWchtGZULp4RyFeh6aU4XdOYBFe2KE1oShQTv4AblOs2iOrNnQ==}
     engines: {node: '>= 10.0.0'}
 
-  '@pierre/diffs@1.4.0':
-    resolution: {integrity: sha512-eSYnNDjRdgx01O16t8yxVW5M96ppgUMKbMyRE7/cyeJa+dMQrS/s0ed3n0KK9a2Or7SXon6cYbBLhAiAggD6ZQ==}
+  '@pierre/diffs@1.5.1':
+    resolution: {integrity: sha512-+EXNfz4ZXI6FHr7P6ToWEORwyYiPVfAmzhA70xF+0y/oNvj7gbNTLJJ6jNzkBjuMbRlu564TAmgYZLc5OyHURA==}
     peerDependencies:
       react: ^18.3.1 || ^19.0.0
       react-dom: ^18.3.1 || ^19.0.0
@@ -22862,7 +22862,7 @@ snapshots:
       '@parcel/watcher-win32-x64': 2.5.6
     optional: true
 
-  '@pierre/diffs@1.4.0(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.6))(react@19.2.6)':
+  '@pierre/diffs@1.5.1(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@pierre/theme': 2.0.0
       '@pierre/theming': 1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@4.5.0)(react-dom@19.2.8(react@19.2.6))(react@19.2.6)(shiki@4.5.0)
