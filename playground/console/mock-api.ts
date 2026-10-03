@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import * as v from "valibot"
 
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
@@ -472,14 +473,39 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   const newInvocation = /^\/api\/_vitehub\/console\/agents\/([^/]+)\/invocations$/.exec(path)
   if (newInvocation && request.method === "POST") {
     const agentName = decodeURIComponent(newInvocation[1]!)
-    // SAFETY: The playground validates the prompt immediately after decoding this local JSON request.
-    const input = await body(request) as { files?: unknown, invokerProfileId?: unknown, prompt?: unknown }
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The playground validates the untrusted prompt before it creates a record.
-    const prompt = typeof input.prompt === "string" ? input.prompt.trim() : ""
-    if (!prompt) {
-      json(response, { error: "A prompt is required." }, 400)
+    const input = v.safeParse(v.object({
+      files: v.optional(v.pipe(v.array(v.object({ url: v.string(), filename: v.optional(v.string(), "image") })), v.maxLength(10)), []),
+      prompt: v.optional(v.string(), ""),
+    }), await body(request))
+    if (!input.success) {
+      json(response, { error: "Invalid Console input." }, 400)
       return true
     }
+    const prompt = input.output.prompt.trim()
+    const images = []
+    let totalBytes = 0
+    for (const file of input.output.files) {
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]*={0,2})$/.exec(file.url)
+      const bytes = match ? Buffer.from(match[2]!, "base64") : undefined
+      if (!match || !bytes?.length || bytes.toString("base64") !== match[2]) {
+        json(response, { error: "Provide a valid PNG, JPEG, WebP, or GIF data URL." }, 400)
+        return true
+      }
+      totalBytes += bytes.length
+      if (totalBytes > 10 * 1024 * 1024) {
+        json(response, { error: "Images must total at most 10 MiB." }, 413)
+        return true
+      }
+      // Synthetic sessions retain data URLs without writing to a Blob provider.
+      images.push({ type: "image", url: file.url, name: file.filename.slice(0, 255), mediaType: match[1]!, size: bytes.length })
+    }
+    if (!prompt && !images.length) {
+      json(response, { error: "A prompt or image is required." }, 400)
+      return true
+    }
+    const inputMessages = images.length
+      ? [{ id: "user-1", role: "user", parts: [...(prompt ? [{ type: "text", text: prompt }] : []), ...images] }]
+      : undefined
     const id = `ainv_console_${Date.now().toString(36)}`
     const now = new Date().toISOString()
     store.create({
@@ -488,14 +514,22 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       createdAt: now,
       id,
       observations: [
-        { attributes: { "input.hasPrompt": true, "input.prompt": prompt }, name: "agent.invocation.start", sequence: 0, timestamp: now, type: "lifecycle" },
+        {
+          attributes: {
+            "input.hasPrompt": Boolean(prompt),
+            "input.prompt": prompt,
+            "input.hasMessages": images.length > 0,
+            "input.messages": inputMessages,
+          },
+          name: "agent.invocation.start", sequence: 0, timestamp: now, type: "lifecycle",
+        },
         { attributes: { "vitehub.activity.body": `Loaded ${agentName} for a Console chat. The playground never runs a model, so this session stays live.` }, name: "vitehub.agent.configured", sequence: 1, timestamp: now, type: "lifecycle" },
-        { attributes: { "message.content": prompt, "message.id": "user-1", "message.role": "user" }, name: "agent.message.recorded", sequence: 2, timestamp: now, type: "run" },
+        ...(images.length ? [] : [{ attributes: { "message.content": prompt, "message.id": "user-1", "message.role": "user" }, name: "agent.message.recorded", sequence: 2, timestamp: now, type: "run" as const }]),
       ],
       origin: "console",
       startedAt: now,
       status: "running",
-      title: prompt.length > 48 ? `${prompt.slice(0, 47)}…` : prompt,
+      title: prompt.length > 48 ? `${prompt.slice(0, 47)}…` : prompt || images[0]?.name || "Image chat",
       traceId: `trace_${id}`,
       updatedAt: now,
     })

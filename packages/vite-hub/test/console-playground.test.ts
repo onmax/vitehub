@@ -33,7 +33,7 @@ it("loads Console data through the playground's stateless RPC endpoint", async (
   })
 })
 
-async function playgroundRequest(endpoint: string, input?: unknown): Promise<unknown> {
+async function playgroundRequest(endpoint: string, input?: unknown, status = 200): Promise<unknown> {
   const { consoleMockAPI } = await vi.importActual<{ consoleMockAPI: () => Plugin }>("../../../playground/console/mock-api.ts")
   type Middleware = (request: IncomingMessage, response: ServerResponse, next: () => void) => Promise<void>
   let handler: Middleware | undefined
@@ -49,7 +49,7 @@ async function playgroundRequest(endpoint: string, input?: unknown): Promise<unk
   if (!handler) throw new Error("Expected playground middleware")
   // SAFETY: The route writes only the status, headers, and response body.
   await handler(request, response as unknown as ServerResponse, () => { throw new Error("Unexpected next middleware") })
-  expect(response.statusCode).toBe(200)
+  expect(response.statusCode).toBe(status)
   return JSON.parse(text)
 }
 
@@ -83,4 +83,35 @@ it("returns succeeded Schedule runs and consistent run history", async () => {
       ]),
     }),
   ]) })
+})
+
+it.each(["", "Inspect this screenshot"])("preserves images in a new chat with prompt %j", async (prompt) => {
+  const file = { url: "data:image/png;base64,aW1hZ2U=", filename: "screenshot.png" }
+  const created = await playgroundRequest("/api/_vitehub/console/agents/interface-engineer/invocations", { prompt, files: [file] })
+  expect(created).toMatchObject({ id: expect.any(String) })
+  // SAFETY: The assertion above verifies the response ID before it is used in a route.
+  const { id } = created as { id: string }
+  const detail = await playgroundRequest(`/api/_vitehub/console/invocations/${id}`)
+  expect(detail).toMatchObject({
+    invocation: { status: "running", title: prompt || file.filename },
+    observations: expect.arrayContaining([expect.objectContaining({
+      name: "agent.invocation.start",
+      attributes: expect.objectContaining({
+        "input.hasPrompt": Boolean(prompt),
+        "input.hasMessages": true,
+        "input.messages": [{ id: "user-1", role: "user", parts: [
+          ...(prompt ? [{ type: "text", text: prompt }] : []),
+          { type: "image", url: file.url, name: file.filename, mediaType: "image/png", size: 5 },
+        ] }],
+      }),
+    })]),
+  })
+})
+
+it("rejects empty and malformed image chats", async () => {
+  const endpoint = "/api/_vitehub/console/agents/interface-engineer/invocations"
+  await expect(playgroundRequest(endpoint, { prompt: "  ", files: [] }, 400))
+    .resolves.toMatchObject({ error: "A prompt or image is required." })
+  await expect(playgroundRequest(endpoint, { files: [{ url: "not-an-image" }] }, 400))
+    .resolves.toMatchObject({ error: expect.any(String) })
 })
