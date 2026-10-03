@@ -42,6 +42,7 @@ it.skipIf(process.platform === "win32")("kills descendants after the group leade
     ])
     expect(child.exitCode).toBe(0)
     await closed
+    expect(() => process.kill(-child.pid!, 0)).toThrow(/ESRCH/)
   }
   finally {
     clearTimeout(timer)

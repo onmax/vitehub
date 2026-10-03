@@ -36,20 +36,30 @@ export function manageChild(...initialChildren) {
   const children = new Set(initialChildren)
   let cleanup
   let interrupted = false
+  let stopping = false
+  const pendingStops = new Set()
   const stop = () => {
+    stopping = true
     cleanup ??= (async () => {
       while (children.size) {
         const snapshot = [...children]
         await Promise.all(snapshot.map(child => stopChild(child)))
         if (![...children].some(child => !snapshot.includes(child))) break
       }
+      await Promise.all(pendingStops)
     })().finally(() => {
       process.off("SIGINT", onSignal)
       process.off("SIGTERM", onSignal)
     })
     return cleanup
   }
-  stop.addChild = child => children.add(child)
+  stop.addChild = child => {
+    children.add(child)
+    if (stopping) {
+      const pending = stopChild(child).finally(() => pendingStops.delete(pending))
+      pendingStops.add(pending)
+    }
+  }
   stop.removeChild = child => children.delete(child)
   const onSignal = async signal => {
     if (interrupted) return
