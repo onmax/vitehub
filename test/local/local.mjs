@@ -38,7 +38,12 @@ async function waitForProbe(url, timeoutMs = 60_000) {
 
 async function runSuite(name, command, args, env = {}, register) {
   log(`suite ${name}: ${command} ${args.join(" ")}`)
-  const child = spawn(command, args, { cwd: repoRoot, env: { ...process.env, ...env }, stdio: "inherit" })
+  const child = spawn(command, args, {
+    cwd: repoRoot,
+    detached: process.platform !== "win32",
+    env: { ...process.env, ...env },
+    stdio: "inherit",
+  })
   register?.addChild(child)
   try {
     await new Promise((resolve, reject) => {
