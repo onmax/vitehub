@@ -652,6 +652,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               }));
               const baseCapabilities = workerSettings.capabilities;
               const repair = repairCapability(operations, merge.mode === "auto");
+              // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
               const workerCapabilities = typeof baseCapabilities === "function"
                 ? async (context: Parameters<AgentCapabilitiesResolver>[0]) => [
                   ...(await baseCapabilities(context)).filter(capability => capability.id !== "babysitter.github"),
