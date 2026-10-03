@@ -19,6 +19,14 @@ let runtimeConfigPromise: Promise<false | ResolvedBlobModuleOptions> | undefined
 let runtimeStorages = new Map<string, BlobStorage>()
 let pendingStorages = new Map<string, Promise<BlobStorage>>()
 
+function isCallable(value: unknown): value is Function {
+  const tag = Object.prototype.toString.call(value)
+  return tag === "[object Function]"
+    || tag === "[object AsyncFunction]"
+    || tag === "[object GeneratorFunction]"
+    || tag === "[object AsyncGeneratorFunction]"
+}
+
 export {
   clearActiveCloudflareEnv,
   getActiveCloudflareBinding,
@@ -67,7 +75,7 @@ export function getNamedBlobRuntimeStorage(name: string): BlobStorage | undefine
 
 export function setBlobRuntimeConfig(config: false | ResolvedBlobModuleOptions | undefined): void {
   const snapshot = config === undefined ? undefined : JSON.stringify(config, (_key, value: unknown) => {
-    if (typeof value !== "function") return value
+    if (!isCallable(value)) return value
     let id = functionIds.get(value)
     if (id === undefined) {
       id = ++nextFunctionId
