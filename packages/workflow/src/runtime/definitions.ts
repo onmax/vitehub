@@ -64,7 +64,9 @@ function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
   return isRuntimeRecord(value) && hasRuntimeType(value.handler, "function")
 }
 
-function isWorkflowHandle(value: unknown): value is { name: string } {
+type WorkflowHandle = { name: string }
+
+function isWorkflowHandle(value: unknown): value is WorkflowHandle {
   return isRuntimeRecord(value)
     && hasRuntimeType(value.name, "string")
     && hasRuntimeType(value.defer, "function")
@@ -83,7 +85,7 @@ function findExportedInlineWorkflowDefinition(
   if (!isRuntimeRecord(loaded)) return undefined
 
   const generation = loadingInlineRegistryStorage.getStore()?.state.generation ?? registryState.generation
-  const definitionForHandle = (handle: object) => {
+  const definitionForHandle = (handle: WorkflowHandle) => {
     const retained = handleDefinitions.get(handle)
     return retained?.generation === generation ? retained.definition : undefined
   }
