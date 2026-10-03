@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
 import * as v from "valibot"
@@ -446,7 +447,7 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   const serverId = v.is(v.string(), server.discovery.blobDevTokenServerId) ? server.discovery.blobDevTokenServerId : undefined
   let token: string | undefined
   try {
-    token = serverId ? await readViteHubDevToken(context.rootDir, { namespace: blobDevTokenNamespace, serverId }) : undefined
+    token = serverId ? await readViteHubDevToken(resolveViteHubProjectRoot(context.rootDir), { namespace: blobDevTokenNamespace, serverId }) : undefined
   }
   catch (error) {
     return writeFailure(parsed, context, { message: `Could not read the private Blob Dev token: ${error instanceof Error ? error.message : String(error)}` })

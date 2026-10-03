@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events"
-import { mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
@@ -419,6 +419,46 @@ async function call(middleware: Middleware, init: { body?: string, headers?: Rec
 const guard = { [blobDevHeader]: blobDevHeaderValue }
 
 describe("Blob dev endpoint", () => {
+  it("uses the project token for CLI requests from a nested Vite root", async () => {
+    await writeFile(join(cwd, "package.json"), "{}")
+    const nestedRoot = join(cwd, "nested", "app")
+    await mkdir(nestedRoot, { recursive: true })
+    const dispatchFetch = vi.fn(async (request: Request) => {
+      expect(request.headers.get(viteHubDevTokenHeader)).toBe(devToken.token)
+      expect(request.headers.get(blobDevTokenServerHeader)).toBe(devToken.serverId)
+      expect(await request.json()).toEqual({ operation: "list" })
+      return Response.json({ blobs: [], hasMore: false, limit: 100, prefix: "", store: "default", stores: ["default"] })
+    })
+    const { middlewares, server } = fakeServer({ nitro: { dispatchFetch } })
+    server.config.root = nestedRoot
+    registerBlobDevEndpoint(server, {
+      devTokenServerId: () => devToken.serverId,
+      discovery: () => ({ blobDevTokenServerId: devToken.serverId }),
+      forwardHeaders: [viteHubDevTokenHeader, blobDevTokenServerHeader],
+    })
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => {
+      const response = await call(middlewares[0]!, {
+        body: typeof request?.body === "string" ? request.body : undefined,
+        headers: Object.fromEntries(new Headers(request?.headers)),
+        method: request?.method ?? "GET",
+      })
+      return new Response(response.body, { headers: response.headers, status: response.status })
+    })
+    const output = context()
+    output.context.cwd = nestedRoot
+    output.context.rootDir = nestedRoot
+    await expect(runBlobCli(["list", "--json"], output.context, { fetch })).resolves.toBe(0)
+    expect(JSON.parse(output.stdout.output())).toMatchObject({ blobs: [], store: "default" })
+    expect(dispatchFetch).toHaveBeenCalledOnce()
+
+    expect(await call(middlewares[0]!, {
+      body: "{\"operation\":\"list\"}",
+      headers: { ...guard, "content-type": "application/json", [viteHubDevTokenHeader]: "wrong-token", [blobDevTokenServerHeader]: devToken.serverId },
+      method: "POST",
+    })).toMatchObject({ status: 403 })
+    expect(dispatchFetch).toHaveBeenCalledOnce()
+  })
+
   it("rejects requests without the guard header or from another origin", async () => {
     const { middlewares, server } = fakeServer()
     registerBlobDevEndpoint(server)

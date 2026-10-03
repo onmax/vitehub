@@ -1,3 +1,4 @@
+import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { registerViteHubNitroDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
@@ -36,7 +37,7 @@ export function registerBlobDevEndpoint(server: BlobDevServer, options: BlobDevE
       const token = request.headers[viteHubDevTokenHeader]
       const requestedServerId = Array.isArray(serverId) ? serverId[0] : serverId
       const requestedToken = Array.isArray(token) ? token[0] : token
-      if (requestedServerId !== expectedServerId || !requestedToken || requestedToken !== await readViteHubDevToken(server.config.root, { namespace: blobDevTokenNamespace, serverId: expectedServerId })) {
+      if (requestedServerId !== expectedServerId || !requestedToken || requestedToken !== await readViteHubDevToken(resolveViteHubProjectRoot(server.config.root), { namespace: blobDevTokenNamespace, serverId: expectedServerId })) {
         return new Response("Forbidden Blob Dev token.", { status: 403 })
       }
     },
