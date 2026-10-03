@@ -162,6 +162,7 @@ describe("source scanner", () => {
     "as 类型<string, unknown> | Other<string, unknown>",
     "satisfies 类型<string, unknown> & Other<string, unknown>",
     "as 类型<string, unknown> | Другой<string, unknown>",
+    "as unknown as (value: unknown) => value is Result<string, unknown> & Other<string, unknown>",
   ])("keeps nested generic assertion commas inside one argument: %s", (assertion) => {
     const argument = `{ cron: '0 8 * * *' } ${assertion}`
     expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])

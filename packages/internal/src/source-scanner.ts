@@ -446,7 +446,7 @@ function maskAssertionTypeArguments(source: string) {
       index = end - 1
       continue
     }
-    if (source.startsWith("import", index) && !isIdentifierChar(source[index - 1])) {
+    if (source.startsWith("import", index) && !isIdentifierCharAt(source, index - 1)) {
       const open = skipWhitespaceAndComments(source, index + 6)
       if (source[open] === "(") {
         const argument = skipWhitespaceAndComments(source, open + 1)
@@ -580,8 +580,8 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
     }
     if (
       !source.startsWith(name, index)
-      || isIdentifierChar(source[index - 1])
-      || isIdentifierChar(source[index + name.length])
+      || isIdentifierCharAt(source, index - 1)
+      || isIdentifierCharAt(source, index + name.length)
       || isFunctionDeclarationName(source, index)
       || isMemberAccessName(source, index)
     ) {
