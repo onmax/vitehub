@@ -1322,8 +1322,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (close === undefined || references[close + 1] !== "{") return undefined
       const bodyClose = referenceClosings.get(close + 1)
       if (bodyClose === undefined) return undefined
-      return { name, parameters: cursor, parameterClose: close, bodyClose }
+      return { name, parameters: cursor, parameterClose: close, bodyOpen: close + 1, bodyClose }
     }
+    const uncalledFunctionBodies: { start: number; end: number }[] = []
     const functionExpressionCall = (index: number) => {
       for (let cursor = Math.max(0, index - 3); cursor <= index; cursor++) {
         const expression = functionExpression(cursor)
@@ -1337,6 +1338,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const names = callbackBindingNames(expression.parameters, expression.parameterClose, undefined, references)
       if (expression.name !== undefined) names.add(expression.name)
       templateLocalBindings.push({ start: index, end: expression.bodyClose, names })
+      // Constructing a function only stringifies its source. Calls in an
+      // uninvoked function body cannot execute while evaluating the template.
+      // Keep immediately invoked function expressions conservative.
+      const afterBody = references[expression.bodyClose + 1]
+      if (!['(', '.', '?.'].includes(afterBody ?? '')) {
+        uncalledFunctionBodies.push({ start: expression.bodyOpen, end: expression.bodyClose })
+      }
     }
     // Method parameters shadow module bindings throughout their method body.
     // Keep these names local to the template interpolation so an unrelated
@@ -1535,7 +1543,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           && (sequence !== tokens || globalBindingUnshadowed(cursor, name))))
     }
     const hiddenCode = references.some((token, index) =>
-      (bindingReference(index) && (token === "eval" || token === "import" && references[index + 1] !== "."))
+      !uncalledFunctionBodies.some(body => index >= body.start && index < body.end)
+      && ((bindingReference(index) && (token === "eval" || token === "import" && references[index + 1] !== "."))
       || ((token === "(" || token.startsWith("`"))
         && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
         && !methodKey(index - 1)
@@ -1543,7 +1552,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && !(token === "(" && ![".", "?"].includes(references[index - 2] ?? "")
           && (["for", "if", "while", "switch", "catch", "with"].includes(references[index - 1] ?? "")
           || references[index - 1] === "await" && references[index - 2] === "for"))
-        && !conversionCall(index)))
+        && !conversionCall(index))))
       // A tagged template also calls its tag. The tag is outside the
       // interpolation token stream, so treat it as opaque
       // to avoid trusting captured imported Channels that it may mutate.

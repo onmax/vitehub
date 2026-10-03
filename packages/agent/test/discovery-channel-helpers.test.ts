@@ -29,6 +29,7 @@ const imports = 'import { defineAgent } from "vite-hub/agent"; import { github, 
 
 it.each([
   "import.meta.url",
+  "function () { return format() }",
   "class { #portal; get value() { return this.#portal } }",
   "class { #portal; has(value) { return #portal in value } }",
   "({ render() { const portal = { id: input.id }; return portal.id } })",
