@@ -183,8 +183,12 @@ describe("Agent Invocation cancellation discovery", () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-discovery-"))
     try {
       const { handlers, server } = createFakeServer(root, {})
-      await configurePluginServer((await import("../src/vite.ts")).hubAgent(), server)
-      const response = await invokeMiddleware([handlers.at(-1)!], {}, agentInvocationsDevRoute, {
+      const plugin = (await import("../src/vite.ts")).hubAgent()
+      if (typeof plugin.configResolved === "function") {
+        await plugin.configResolved.call({} as never, { command: "serve", root, server: { port: 3000 } } as never)
+      }
+      await configurePluginServer(plugin, server)
+      const response = await invokeMiddleware(handlers, {}, agentInvocationsDevRoute, {
         host: "localhost:3000",
         [agentInvocationsDevHeader]: agentInvocationsDevHeaderValue,
       }, { onRequest: req => { req.method = "GET" } })

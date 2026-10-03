@@ -4,7 +4,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { discoverViteHubDevServer, fetchViteHubDevEndpoint, readViteHubDevTargetOption, resolveViteHubDevServerUrl } from "@vite-hub/internal/cli"
-import { agentInvocationsDevGuard, agentInvocationsDevRoute, agentInvocationsDevRuntimeUnavailableMessage } from "../invocations-dev.ts"
+import { agentInvocationsDevGuard, agentInvocationsDevRoute, agentInvocationsDevRuntimeUnavailableMessage, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
+import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
 import { isCompatibleAgentDevServerRoot } from "./agent-info-cli.ts"
 import type { AgentInvocationCancelResult, AgentInvocationListResult, AgentInvocationRecord, AgentInvocationStore } from "../invocations.ts"
 import type { AgentInvocationsDevRequestBody } from "../invocations-dev.ts"
@@ -57,6 +58,7 @@ interface AgentInvocationsDevDiscovery {
   message?: unknown
   root?: unknown
   runtime?: unknown
+  workspaceDevTokenServerId?: unknown
 }
 
 function parseCancelDiscovery(value: unknown): AgentInvocationsDevDiscovery {
@@ -66,6 +68,7 @@ function parseCancelDiscovery(value: unknown): AgentInvocationsDevDiscovery {
   }
   const discovery: AgentInvocationsDevDiscovery = { root: value.root, runtime: value.runtime }
   if (value.message !== undefined) discovery.message = value.message
+  if (value.workspaceDevTokenServerId !== undefined) discovery.workspaceDevTokenServerId = value.workspaceDevTokenServerId
   return discovery
 }
 
@@ -283,9 +286,14 @@ async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvoc
     return
   }
   const body: AgentInvocationsDevRequestBody = { id, operation: "cancel" }
+  if (!hasRuntimeType(discovery.workspaceDevTokenServerId, "string")) {
+    throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancellation discovery did not publish a token server ID." })
+  }
+  const token = await readWorkspaceDevToken(hasRuntimeType(discovery.root, "string") ? discovery.root : rootDir, { serverId: discovery.workspaceDevTokenServerId })
+  if (!token) throw agentDiagnostics.AGENT_R0972({ message: "No private Agent Dev token found. Start the Compatible Vite Development Server first." })
   const response = await fetchViteHubDevEndpoint(fetchImpl, url, cancelEndpoint, {
     body: JSON.stringify(body),
-    headers: { "accept": "application/json", "content-type": "application/json" },
+    headers: { "accept": "application/json", "content-type": "application/json", [workspaceDevTokenHeader]: token, [agentInvocationsDevTokenServerHeader]: discovery.workspaceDevTokenServerId },
     method: "POST",
     signal: AbortSignal.timeout(timeout),
   })

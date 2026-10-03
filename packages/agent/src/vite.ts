@@ -16,6 +16,7 @@ import { registerViteHubNitroDevEndpoint, renderViteHubNitroDevHandler } from "@
 import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, generatedViteHubWatchIgnoredAddition, resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
+import { validateWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 
 import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
 import {
@@ -24,6 +25,7 @@ import {
   agentInvocationsDevRuntimeRoute,
   agentInvocationsDevRuntimeUnavailableCode,
   agentInvocationsDevRuntimeUnavailableMessage,
+  agentInvocationsDevTokenServerHeader,
 } from "./invocations-dev.ts"
 import {
   configureCloudflareAgentState,
@@ -2893,6 +2895,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       const handler = join(generatedRoot, generatedAgentInvocationsDevHandler)
       await mkdir(dirname(handler), { recursive: true })
       await writeFile(handler, renderViteHubNitroDevHandler({
+        context: { rootDir: config.root, serverId: workspaceDevTokenServerId(config.server?.port) },
         export: "handleAgentInvocationsDevRequest",
         module: `${getAgentImportBase(agent, frameworkOptions)}/runtime/invocations-dev`,
       }), "utf8")
@@ -3024,6 +3027,11 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       server.watcher?.on("add", refreshDiscovery)
       server.watcher?.on("unlink", refreshDiscovery)
       if (agent !== false) {
+        await registerAgentInvocationStreamEndpoint(server, {
+          runtimeCapabilities,
+          schedule: hasScheduleVitePlugin(resolved ?? server.config),
+          scheduleRuntimeImport: getScheduleRuntimeImport(agent, frameworkOptions),
+        })
         // Cancel runs in the Nitro dev environment, which owns the application's journals and abort handles.
         registerViteHubNitroDevEndpoint(server, {
           ...agentInvocationsDevGuard,
@@ -3034,12 +3042,12 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           },
           route: agentInvocationsDevRoute,
           runtimeRoute: agentInvocationsDevRuntimeRoute,
+          discovery: { workspaceDevTokenServerId: workspaceDevTokenServerId(server.config.server.port) },
+          authorize: async req => req.headers[agentInvocationsDevTokenServerHeader] !== workspaceDevTokenServerId(server.config.server.port) || !await validateWorkspaceDevToken(server.config.root, req.headers, { serverId: workspaceDevTokenServerId(server.config.server.port) })
+            ? new Response("Forbidden Agent Invocations Dev token.", { status: 403 })
+            : undefined,
+          forwardHeaders: [workspaceDevTokenHeader, agentInvocationsDevTokenServerHeader],
           unavailable: { code: agentInvocationsDevRuntimeUnavailableCode, message: agentInvocationsDevRuntimeUnavailableMessage },
-        })
-        await registerAgentInvocationStreamEndpoint(server, {
-          runtimeCapabilities,
-          schedule: hasScheduleVitePlugin(resolved ?? server.config),
-          scheduleRuntimeImport: getScheduleRuntimeImport(agent, frameworkOptions),
         })
       }
     },
