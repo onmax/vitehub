@@ -200,6 +200,7 @@ const router = createRouter({
         searchBase: "/api/_vitehub/console/search",
         section: "databases",
         sectionsBase,
+        view: "data",
       },
     },
   ],
