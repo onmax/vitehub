@@ -23,7 +23,7 @@ async function invoke(body: string, id = "missing", method: "GET" | "POST" = "PO
 }
 
 describe("Console playground Invocation actions", () => {
-  it.each(["{", '{"action":"delete"}', '{"action":"cancel","extra":true}', "[]", "null", "{}"])("rejects unsupported input %s before cancellation", async (body) => {
+  it.each(["{", '{"action":"rerun"}', '{"action":"cancel","extra":true}', "[]", "null", "{}"])("rejects unsupported input %s before cancellation", async (body) => {
     expect(await invoke(body, "ainv_capabilities_mcp_title")).toMatchObject({ status: 400 })
     expect(await invoke("", "ainv_capabilities_mcp_title", "GET")).toMatchObject({ status: 200 })
   })

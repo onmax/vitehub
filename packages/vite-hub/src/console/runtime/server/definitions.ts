@@ -25,7 +25,12 @@ function copyContent(content: ConsoleSectionContent): ConsoleSectionContent {
 
 /** Copies request-time records so that the reader cannot change the response after it returns. */
 export function copyConsoleRecords(records: readonly ConsoleRecord[]): ConsoleRecord[] {
-  return records.map(record => ({ cells: { ...record.cells }, fields: copyFields(record.fields), id: record.id, runnable: record.runnable }))
+  return records.map(record => ({
+    cells: { ...record.cells },
+    fields: copyFields(record.fields),
+    id: record.id,
+    ...(record.runnable === true ? { runnable: true } : {}),
+  }))
 }
 
 function copySection(section: ConsoleContributedSection): ConsoleContributedSection {
