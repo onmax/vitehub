@@ -3304,7 +3304,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       ]
       // `vitehub agent invocations cancel` runs in the Nitro runtime, so it reaches the application's journals.
       // The handler exists only for the Development Server.
-      const devNitroHandlers = !denoOutput && nitroContext && environment?.command === "serve"
+      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
       const nitro = installCloudflareState
@@ -3402,7 +3402,6 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
         // so returning the complete Nitro config would repeat every user entry, such as Wrangler secrets.
         // SAFETY: Nitro's Vite plugin reads this open `nitro` key from the user config; mergedNitro starts from its value.
         ;(config as { nitro?: NitroConfig }).nitro = mergedNitro
-        result.nitro = mergedNitro
       }
       return result
     },
