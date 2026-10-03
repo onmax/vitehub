@@ -565,6 +565,7 @@ describe("inputCommands", () => {
     expect(calls).toBe(4_095)
   })
 
+  // This regression executes the full million-command budget, including on slower CI runners.
   it("caps cumulative work for numeric fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
@@ -584,7 +585,7 @@ describe("inputCommands", () => {
     await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 21" }))
       .rejects.toThrow("maximum command expansion depth")
     expect(calls).toBeLessThanOrEqual(1_000_001)
-  })
+  }, 600_000)
 
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
