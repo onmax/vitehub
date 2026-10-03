@@ -1232,43 +1232,41 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // captured Channel options without leaving a statically visible write.
   if (directEvalCalls.size > 0) invalidateCapturedBindings()
   // Template interpolations execute expressions hidden inside a literal token.
-  // Their side effects cannot be inspected by this scanner.
+  // Track referenced captures and keep opaque calls conservative.
   for (let templateIndex = 0; templateIndex < tokens.length; templateIndex++) {
     const template = tokens[templateIndex]!
     if (!template.startsWith("`") || !/(?<!\\)(?:\\\\)*\$\{/.test(template)) continue
-    invalidateCapturedBindings()
     const references = templateReferences(template)
-    // Arrow callback parameters inside an interpolation shadow imported
-    // bindings. Keep their names out of the module-level import read check.
-    const templateLocalBindings = new Set<string>()
-    for (let arrow = 0; arrow < references.length; arrow++) {
-      if (references[arrow] !== ">" || references[arrow - 1] !== "=") continue
-      let cursor = arrow - 2
-      while (cursor >= 0 && !["(", ")", ",", ";", "{"].includes(references[cursor]!)) cursor--
-      const start = references[cursor] === "(" ? cursor + 1 : cursor + 2
-      for (let parameter = start; parameter < arrow - 1; parameter++) {
-        if (isIdentifier(references[parameter])) templateLocalBindings.add(references[parameter]!)
+    // Each arrow shadows names only within its own parameter list and body.
+    const templateLocalBindings: { start: number; end: number; names: Set<string> }[] = []
+    const referenceOpenings = new Map<number, number>()
+    const referenceStack: number[] = []
+    for (let index = 0; index < references.length; index++) {
+      if (["(", "[", "{"].includes(references[index]!)) referenceStack.push(index)
+      else if ([")", "]", "}"].includes(references[index]!)) {
+        const opening = referenceStack.pop()
+        if (opening !== undefined) referenceOpenings.set(index, opening)
       }
+    }
+    for (let arrow = 0; arrow < references.length; arrow++) {
+      if (references[arrow] !== "=" || references[arrow + 1] !== ">") continue
+      const start = referenceOpenings.get(arrow - 1) ?? arrow - 1
+      const names = new Set(references.slice(start, arrow).filter(isIdentifier))
+      let end = arrow + 2
+      let depth = 0
+      for (; end < references.length; end++) {
+        const token = references[end]!
+        if (depth === 0 && [";", ",", ")", "]", "}"].includes(token)) break
+        if (["(", "[", "{"].includes(token)) depth++
+        else if ([")", "]", "}"].includes(token)) depth--
+      }
+      templateLocalBindings.push({ start, end, names })
     }
     const bindingReference = (index: number) => isIdentifier(references[index])
       && references[index - 1] !== "."
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
-      && !templateLocalBindings.has(references[index]!)
+      && !templateLocalBindings.some(scope => index >= scope.start && index < scope.end && scope.names.has(references[index]!))
     const reassignedGlobalConversions = new Set<string>()
-    // Calls to local helpers that directly return globalThis can hide a
-    // conversion write behind the call expression. Only assignments taint the
-    // conversion; reads such as `globals().String` remain harmless.
-    for (let index = 0; index < tokens.length; index++) {
-      if (tokens[index] !== "function" || !tokens[index + 1]) continue
-      const name = tokens[index + 1]!
-      const end = tokens.indexOf("}", index + 2)
-      if (end < 0 || !tokens.slice(index, end).includes("globalThis")) continue
-      for (let cursor = 0; cursor + 5 < tokens.length; cursor++) {
-        if (tokens[cursor] !== name || tokens[cursor + 1] !== "(" || tokens[cursor + 2] !== ")" || tokens[cursor + 3] !== ".") continue
-        const property = tokens[cursor + 4]
-        if (["String", "Number", "Boolean"].includes(property!) && assignmentOperator(cursor + 5)) reassignedGlobalConversions.add(property!)
-      }
-    }
     for (let index = 0; index < tokens.length; index++) {
       const objectEnd = intrinsicObjectEnd(index)
       const reflectEnd = intrinsicReflectEnd(index)
@@ -1278,7 +1276,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (member?.name !== "defineProperty" && member?.name !== "defineProperties" && member?.name !== "set" && member?.name !== "assign") continue
       const call = memberCallEnd(member.end - 1, index)
       if (tokens[call] !== "(") continue
-      const target = resolveReference(call + 1, new Set(), true)
+      const target = call + 1
       if (!globalThisReceiver(target) || tokens[target + 1] !== ",") continue
       // Bulk writes can replace any of the built-in conversion helpers without
       // exposing a direct member assignment.
@@ -1299,13 +1297,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // `globalThis["String"] = replacement`). Treat these as opaque too.
     for (let index = 0; index < tokens.length; index++) {
       // Member writes mark globalThis and its aliases mutated. Follow their
-      // direct initializers without requiring globalBindingAvailable().
-      const call = tokens[index + 1] === "(" ? memberCallEnd(index) : index
+      // direct initializers and helpers with an exact globalThis return.
+      // Reads through these receivers do not reassign conversions.
+      const call = tokens[index + 1] === "("
+        ? [...openingDelimiters].find(([, opening]) => opening === index + 1)?.[0] ?? index
+        : index
       const helperGlobal = tokens[index + 1] === "(" && tokens[call] === ")"
-        && tokens[call + 1] === "." && [...tokens].some((token, declaration) =>
-          token === "function" && tokens[declaration + 1] === tokens[index]
-          && tokens.slice(declaration, tokens.indexOf("}", declaration + 2)).includes("globalThis"))
-        || arrowGlobalHelper(tokens[index]!)
+        && (functionGlobalHelper(tokens[index]!) || arrowGlobalHelper(tokens[index]!))
       if (!globalThisReceiver(index) && !helperGlobal) continue
       const member = helperGlobal ? memberAccess(call) : memberAccess(index)
       if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
@@ -1334,8 +1332,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // interpolation token stream, so treat it as opaque
       // to avoid trusting captured imported Channels that it may mutate.
       || opaqueCalls.has(templateIndex)
-    for (const name of imported) {
-      if (hiddenCode || references.some((token, index) => token === name && bindingReference(index))) mutatedBindings.add(name)
+    if (hiddenCode) {
+      invalidateCapturedBindings()
+      for (const name of imported) mutatedBindings.add(name)
+    }
+    for (let index = 0; index < references.length; index++) {
+      const name = references[index]!
+      if (!bindingReference(index) || isFunctionParameter(templateIndex, name)
+        || callbackParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
+        || expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))) continue
+      if (imported.has(name) || declarations.has(name) || visibleDeclaration(templateIndex, name) !== undefined) mutatedBindings.add(name)
     }
   }
   // Invoking an extracted member of an opaque result may mutate captured
@@ -1502,28 +1508,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // unmodified function declaration with that exact return expression as an
     // alias; arbitrary helper calls remain opaque.
     if (!mutatedBindings.has(tokens[index]!) && tokens[index + 1] === "(") {
-      for (let declaration = 0; declaration + 1 < tokens.length; declaration++) {
-        if (tokens[declaration] !== "function" || tokens[declaration + 1] !== tokens[index]) continue
-        const close = tokens.indexOf("}", declaration + 2)
-        if (close > declaration && tokens.slice(declaration, close).includes("globalThis")) return true
-      }
-      if (arrowGlobalHelper(tokens[index]!)) return true
-      for (let declaration = 0; declaration + 3 < tokens.length; declaration++) {
-        if (tokens[declaration] !== "function" || tokens[declaration + 1] !== tokens[index]) continue
-        const parameters = declaration + 2
-        if (tokens[parameters] !== "(") continue
-        const parameterEnd = [...openingDelimiters].find(([, opening]) => opening === parameters)?.[0]
-        const body = parameterEnd === undefined ? undefined : parameterEnd + 1
-        const bodyEnd = body === undefined ? undefined : [...openingDelimiters].find(([, opening]) => opening === body)?.[0]
-        if (body === undefined || bodyEnd === undefined || tokens[body] !== "{") continue
-        let cursor = body + 1
-        while (cursor < bodyEnd && tokens[cursor] === ";") cursor++
-        if (tokens[cursor] !== "return" || tokens[cursor + 1] !== "globalThis"
-          || tokens[cursor] === ".") continue
-        cursor += 2
-        while (tokens[cursor] === ";") cursor++
-        if (cursor === bodyEnd) return true
-      }
+      if (functionGlobalHelper(tokens[index]!) || arrowGlobalHelper(tokens[index]!)) return true
     }
     const binding = visibleDeclaration(index)
     const initializer = binding === undefined ? undefined : declaratorInitializers.get(binding + 1)
@@ -1534,6 +1519,25 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // Follow only direct initializers so unrelated global properties stay local.
     if (![";", ",", ")", undefined].includes(tokens[value + 1]) && !startsStatement(value + 1)) return false
     return globalThisReceiver(value, seen)
+  }
+
+  function functionGlobalHelper(name: string): boolean {
+    for (let declaration = 0; declaration + 3 < tokens.length; declaration++) {
+      if (tokens[declaration] !== "function" || tokens[declaration + 1] !== name) continue
+      const parameters = declaration + 2
+      if (tokens[parameters] !== "(") continue
+      const parameterEnd = [...openingDelimiters].find(([, opening]) => opening === parameters)?.[0]
+      const body = parameterEnd === undefined ? undefined : parameterEnd + 1
+      const bodyEnd = body === undefined ? undefined : [...openingDelimiters].find(([, opening]) => opening === body)?.[0]
+      if (body === undefined || bodyEnd === undefined || tokens[body] !== "{") continue
+      let cursor = body + 1
+      while (cursor < bodyEnd && tokens[cursor] === ";") cursor++
+      if (tokens[cursor] !== "return" || tokens[cursor + 1] !== "globalThis") continue
+      cursor += 2
+      while (tokens[cursor] === ";") cursor++
+      if (cursor === bodyEnd) return true
+    }
+    return false
   }
 
   function arrowGlobalHelper(name: string): boolean {

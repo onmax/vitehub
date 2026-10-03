@@ -1653,3 +1653,35 @@ it("preserves shadowed NaN Capability Workspace values", async () => {
   const source = `${imports} const NaN = {}; export default defineAgent({ capabilities: [{ id: "storage", workspace: NaN }] })`
   expect((await discover(source))?.workspace).toBe("review")
 })
+
+it.each([
+  'driver: { instructions: ({ input }) => `Review ${input.id}` }',
+  'driver: { instructions: ({ input }) => `${String(input.id)}` }',
+  'driver: { instructions: ({ input }) => `${`${input.id}`}` }',
+])("keeps local Channel options inspectable beside unrelated templates: %s", async settings => {
+  const definition = await discover(`${imports} const options = { pullRequest: false }; export default defineAgent({ channels: { custom: github(options) }, ${settings} })`)
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
+  '`${portal.capabilities = []}${portal => portal}`',
+  '`${portal => portal}${portal.capabilities = []}`',
+  '`${[portal => portal, portal.capabilities = []]}`',
+  '`${((portal) => portal)}${portal.capabilities = []}`',
+])("keeps imported template mutations outside arrow parameter scopes opaque: %s", async expression => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = ${expression}; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  'function globals() { return { value: globalThis } }',
+  'function globals() { const value = globalThis; return {} }',
+])("ignores conversion writes through helpers that return local objects: %s", async helper => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; ${helper}; globals().String = value; const ignored = \`\${String("id")}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
+})
