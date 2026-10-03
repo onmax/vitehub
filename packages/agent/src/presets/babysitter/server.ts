@@ -656,6 +656,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Preserve host-owned activity and delivery closures without
               // exposing their identity to provider credential resolution.
               Reflect.deleteProperty(workerChannel, Symbol.for("vitehub.githubChannelIdentity"));
+              // Keep the base Agent's configured Workspace sources, loaders, and
+              // instruction bindings while replacing the checkout-owned fields.
+              const baseWorkspace = isRuntimeRecord(workerSettings.workspace)
+                ? workerSettings.workspace
+                : {};
               const agent = defineAgent({
                 ...workerSettings,
                 name: workerName,
@@ -690,6 +695,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   },
                 },
                 workspace: {
+                  ...baseWorkspace,
                   commit: false,
                   mode: "write" as const,
                   store: { provider: "local" as const, root: checkout },
