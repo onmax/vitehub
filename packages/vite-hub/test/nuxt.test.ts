@@ -787,6 +787,26 @@ describe("ViteHub Nuxt integration", () => {
     await application.runCloseHook()
   })
 
+  it.each([true, false])("uses Vite Database settings for the Console journal before and after replay (Definition binding: %s)", async (definitionBinding) => {
+    const databaseRoot = "/tmp/vitehub-nuxt/vite-app/data"
+    await mkdir(resolve(databaseRoot, "server/databases"), { recursive: true })
+    await writeFile(resolve(databaseRoot, "server/databases/config.ts"), `export default defineDatabase({ ${definitionBinding ? 'cloudflare: { binding: "VITE_DB", databaseId: "vite-id", databaseName: "vite" },' : ""} schema: {} })\n`)
+    const application = createNuxt(false)
+    Object.assign(application.nuxt.options.vite, {
+      root: "/tmp/vitehub-nuxt/vite-app",
+      database: { projectRoot: "data", ...(definitionBinding ? {} : { driver: "d1", binding: "VITE_DB", databaseId: "vite-id", databaseName: "vite" }) },
+    })
+    await viteHubNuxtModule({
+      preset: "cloudflare", agent: true, console: { exposure: "host-managed" }, database: true,
+    }, application.nuxt)
+
+    const pluginPath = "/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"
+    expect(await readFile(pluginPath, "utf8")).toContain('d1: { binding: "VITE_DB",')
+    await application.runNitroConfigHook(nitroOptions(application.nuxt))
+    expect(await readFile(pluginPath, "utf8")).toContain('d1: { binding: "VITE_DB",')
+    await application.runCloseHook()
+  })
+
   it("uses the resolved top-level Nuxt D1 Database configuration for the Console journal", async () => {
     await mkdir("/tmp/vitehub-nuxt/custom-server/databases", { recursive: true })
     await writeFile("/tmp/vitehub-nuxt/custom-server/databases/config.ts", 'export default defineDatabase({ schema: {} })\n')

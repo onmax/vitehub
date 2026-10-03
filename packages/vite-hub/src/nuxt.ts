@@ -747,24 +747,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   const plan = resolveDeploymentPlan(options.preset)
   const rootDir = nuxt.options.rootDir || process.cwd()
   const projectRoot = resolveViteHubProjectRoot(rootDir)
-  const configuredOptions = options.database && nuxt.options.database && typeof nuxt.options.database === "object"
-    ? {
-        ...options,
-        database: {
-          ...nuxt.options.database,
-          ...(options.database === true ? {} : options.database),
-        },
-      }
-    : options
-  // Explicit Database roots are relative to Nuxt's rootDir; automatic discovery uses the ViteHub project root.
-  const consoleDatabaseRoot = configuredOptions.database && configuredOptions.database !== true && configuredOptions.database.projectRoot !== undefined
-    ? rootDir
-    : projectRoot
-  const consoleJournal = resolveConsoleJournal(
-    consoleDatabaseUrl(options),
-    consoleD1Binding(plan.preset, configuredOptions.database, { root: consoleDatabaseRoot, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
-    !nuxt.options.dev,
-  )
   const nitro = (nuxt.options.nitro ??= {})
   const nitroPreset = plan.preset === "cloudflare" && options.realtime
     ? "cloudflare-durable"
@@ -790,6 +772,16 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     ...databaseOptions,
     ...(configuredDatabaseDiscoveryRoot ? { projectRoot: configuredDatabaseDiscoveryRoot } : {}),
   }
+  const configuredOptions = options.database
+    ? { ...options, database: effectiveDatabaseOptions }
+    : options
+  // Explicit Database roots are normalized above; automatic discovery uses the ViteHub project root.
+  const consoleDatabaseRoot = configuredDatabaseDiscoveryRoot ? rootDir : projectRoot
+  const consoleJournal = resolveConsoleJournal(
+    consoleDatabaseUrl(options),
+    consoleD1Binding(plan.preset, configuredOptions.database, { root: consoleDatabaseRoot, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
+    !nuxt.options.dev,
+  )
   // SAFETY: ViteHub Blob extends Vite's open user config with the documented top-level `blob` key.
   const viteBlob = (nuxt.options.vite as UserConfig & { blob?: Parameters<typeof vitehub>[0]["blob"] }).blob
   const effectiveBlob = options.console ? viteBlob ?? options.blob : false
