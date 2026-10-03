@@ -480,6 +480,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let maxRuns = Math.max(1_000, text.length + 1)
       const creditedGrowth = new Set<string>()
       const blockedTransitions = new Set<string>()
+      const transitionGraph = new Map<string, Set<string>>()
+      const creditedCyclicTransitions = new Set<string>()
       let transitionLineage: string[] = []
       let budgetText: string | undefined
       let budgetCommand: string | undefined
@@ -562,6 +564,35 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               && nextInvocation.start < changedRange.end
               && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
             let cycleDetected = false
+            // Keep every generated edge after leading commands finish and are removed.
+            // A cyclic edge can receive credit once, but cannot renew it indefinitely.
+            let graphCreditBlocked = false
+            if (changedRange) {
+              const generatedNames = new Set<string>()
+              const generatedText = text.slice(changedRange.start, changedRange.end)
+              let generated = findInputCommandInvocation(generatedText, trigger, commands)
+              while (generated) {
+                if (generated.name !== budgetCommand && commandAllowsCurrentChannel(commands[generated.name]!, context as AgentCapabilityRuntimeContext)) {
+                  generatedNames.add(generated.name)
+                  const successors = transitionGraph.get(budgetCommand) || new Set<string>()
+                  successors.add(generated.name)
+                  transitionGraph.set(budgetCommand, successors)
+                }
+                generated = findInputCommandInvocation(generatedText, trigger, commands, Math.max(generated.end, generated.start + 1))
+              }
+              const reachesBudget = (name: string, seen: Set<string>): boolean => {
+                if (name === budgetCommand) return true
+                if (seen.has(name)) return false
+                seen.add(name)
+                return [...(transitionGraph.get(name) || [])].some(successor => reachesBudget(successor, seen))
+              }
+              for (const successor of generatedNames) {
+                if (!reachesBudget(successor, new Set())) continue
+                const transition = `${budgetCommand}->${successor}`
+                if (creditedCyclicTransitions.has(transition)) graphCreditBlocked = true
+                creditedCyclicTransitions.add(transition)
+              }
+            }
             if (introducesNextInvocation && nextInvocation) {
               if (!transitionLineage.length) transitionLineage.push(budgetCommand)
               const transition = `${budgetCommand}->${nextInvocation.name}`
@@ -579,7 +610,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             } else if (!finiteSameCommandGrowth) {
               transitionLineage = []
             }
-            if ((!nextInvocation || cycleDetected || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
+            if (!graphCreditBlocked && (!nextInvocation || cycleDetected || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
               && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth)) {
               // Credit the rewritten invocation too, which may consume the base allowance.
               maxRuns += (addedRuns > 0 ? addedRuns : nextRuns) + 1
