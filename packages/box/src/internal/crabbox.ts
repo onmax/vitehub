@@ -15,6 +15,7 @@ import type {
   ResolvedBoxPlan,
   ResolvedBoxRequirementInput,
 } from "../index.ts"
+import { listCommandFiles } from "./file-listing.ts"
 import { materializeGitCheckout } from "./git-checkout.ts"
 import {
   boxRequirementError,
@@ -768,32 +769,11 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
     },
     async listFiles({ abortSignal, path, recursive = false }: { abortSignal?: AbortSignal, path: string, recursive?: boolean }) {
       const target = resolveSessionPath(state.root, path)
-      const command = [
-        "find",
-        shellQuote(target),
-        "-mindepth 1",
-        ...(recursive ? [] : ["-maxdepth 1"]),
-        "-printf '%y\\t%s\\t%p\\0'",
-      ].join(" ")
-      const result = await this.run({ abortSignal: stateAbortSignal(state, abortSignal), command })
-      if (result.exitCode !== 0) throw crabboxError(`list ${path}`, result)
-      return result.stdout
-        .split("\0")
-        .filter(Boolean)
-        .map((line) => {
-          const [kind, size, entryPath] = line.split("\t")
-          if (!entryPath || !kind) throw boxErrorDiagnostics.BOX_R0107({ message: `[vitehub] Crabbox returned an invalid file entry for ${path}.` })
-          return {
-            path: entryPath,
-            size: kind === "f" ? Number(size) : undefined,
-            type: kind === "d"
-              ? "directory" as const
-              : kind === "l"
-                ? "symlink" as const
-                : "file" as const,
-          }
-        })
-        .sort((left, right) => left.path.localeCompare(right.path))
+      return await listCommandFiles(
+        options => this.run(options),
+        { abortSignal: stateAbortSignal(state, abortSignal), path: target, recursive },
+        result => crabboxError(`list ${path}`, result),
+      )
     },
     async makeDirectory({ abortSignal, path, recursive = false }: { abortSignal?: AbortSignal, path: string, recursive?: boolean }) {
       const target = resolveSessionPath(state.root, path)

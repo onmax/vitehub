@@ -13,6 +13,25 @@ afterEach(async () => {
 })
 
 describe("fs blob driver", () => {
+  it.each([
+    ["", ["docs/"]],
+    ["doc", ["docs/"]],
+    ["docs", ["docs/"]],
+    ["docs/", ["docs/reports/"]],
+    ["docs/re", ["docs/reports/"]],
+  ])("returns exact folded folder keys for prefix %j", async (prefix, folders) => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    tempDirs.push(base)
+    const driver = createDriver({ base, driver: "fs" })
+    await driver.put("docs/reports/one.txt", "one")
+
+    await expect(driver.list({ folded: true, prefix })).resolves.toMatchObject({
+      blobs: [],
+      folders,
+      hasMore: false,
+    })
+  })
+
   it("rejects listings when the base points at a file", async () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
     tempDirs.push(base)

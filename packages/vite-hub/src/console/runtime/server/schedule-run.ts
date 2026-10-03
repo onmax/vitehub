@@ -83,27 +83,10 @@ export async function handleConsoleScheduleRunRequest(request: Request): Promise
   try {
     const contentLength = request.headers.get("content-length")
     if (contentLength && Number.parseInt(contentLength, 10) > maximumBodyBytes) return failure("Schedule run request body is too large.", 413)
-    const reader = request.body?.getReader()
-    if (!reader) return failure("Malformed Schedule run payload.", 400)
-    const decoder = new TextDecoder()
-    let text = ""
-    let bytes = 0
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) {
-        text += decoder.decode()
-        break
-      }
-      bytes += chunk.value.byteLength
-      if (bytes > maximumBodyBytes) {
-        await reader.cancel()
-        return failure("Schedule run request body is too large.", 413)
-      }
-      text += decoder.decode(chunk.value, { stream: true })
-    }
-    body = JSON.parse(text)
+    body = await consoleRequestJSON({ req: request }, maximumBodyBytes)
   }
-  catch {
+  catch (error) {
+    if (Reflect.get(Object(error), "statusCode") === 413) return failure("Schedule run request body is too large.", 413)
     return failure("Malformed Schedule run payload.", 400)
   }
   const outcome = await runConsoleSchedule(body)

@@ -37,6 +37,9 @@ pnpm vitehub --help
 ```
 
 Every project includes `inspect` and `provision`. Other namespaces appear when their Vite integrations are active.
+Each CLI invocation resolves every active plugin's CLI contributor once. Commands and Provision Steps use that contribution for the invocation; the next invocation resolves it again.
+
+The CLI owns the `inspect` namespace. Plugin command contributions with that name are ignored.
 
 ```txt
 Usage: vitehub <namespace> <feature> [args...]
@@ -48,7 +51,7 @@ Available namespaces:
 
 ## Inspect the project
 
-`inspect definitions` lists the Definitions that each active package discovered. The Console reads the same package-owned summaries. `inspect provider-output` lists generated Provider Output files and shows which exist.
+`inspect definitions` lists the Definitions that each active package discovered. The Console reads the same package-owned summaries. `inspect provider-output` lists generated Provider Output files and shows which exist. It resolves Vite configuration for build with production mode and loads Nuxt with development disabled, so production-only contributors are included. Other commands use development configuration.
 
 ```sh
 pnpm vitehub inspect definitions --kind queue

@@ -24,6 +24,15 @@ const driverErrorSchema = v.custom<Error>((value) => {
   return nativeError && v.is(v.object({ message: v.string(), name: v.string() }), value)
 })
 
+const driverOutcomeSchema = v.pipe(
+  v.array(v.unknown()),
+  v.length(2),
+  v.union([
+    v.strictTuple([v.null(), v.unknown()]),
+    v.strictTuple([driverErrorSchema, v.undefined()]),
+  ]),
+)
+
 function resolveDriverCapabilities(options: CreateRateLimiterOptions): RateLimitDriverCapabilities {
   const capabilities = options.driver.capabilities
   if (!capabilities || typeof capabilities !== "object") {
@@ -145,7 +154,11 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
       if (!input || !v.is(v.string(), input.key) || input.key.length === 0) {
         throw rateLimitErrorDiagnostics.RATE_LIMIT_R0030({ message: "[vitehub] Rate Limiter consume() requires a non-empty key." })
       }
-      const [error, result] = await options.driver.consume(driverInput(input))
+      const outcome = await options.driver.consume(driverInput(input))
+      if (!v.is(driverOutcomeSchema, outcome)) {
+        throw rateLimitErrorDiagnostics.RATE_LIMIT_R0044({ message: "[vitehub] Rate Limit driver consume() must return [null, value] or [Error, undefined]." })
+      }
+      const [error, result] = outcome
       if (error) {
         return {
           allowed: policy.failure === "allow",
@@ -164,10 +177,7 @@ export function createRateLimiter(options: CreateRateLimiterOptions): RateLimite
         return { limit: policy.limit, reason: unsupportedReason(driver.name, "peek"), status: "unsupported", windowMs: policy.windowMs }
       }
       const outcome: unknown = await driver.peek(driverInput(input))
-      const parsed = v.safeParse(v.union([
-        v.strictTuple([v.null(), v.unknown()]),
-        v.strictTuple([driverErrorSchema, v.undefined()]),
-      ]), outcome)
+      const parsed = v.safeParse(driverOutcomeSchema, outcome)
       if (!parsed.success) throw rateLimitErrorDiagnostics.RATE_LIMIT_R0043({ message: "[vitehub] Rate Limit driver peek() must return [null, value] or [Error, undefined]." })
       const [error, result] = parsed.output
       if (error) return { cause: error.cause ?? error, limit: policy.limit, status: "unavailable", windowMs: policy.windowMs }

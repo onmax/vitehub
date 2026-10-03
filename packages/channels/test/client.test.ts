@@ -131,6 +131,40 @@ describe("createChannel", () => {
     }
   })
 
+  it.each(["getter", "descriptor", "enumeration"])("preserves delivery when optional metadata %s throws", async (failure) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {})
+    const metadata = {
+      id: "delivered",
+      providerStatus: "accepted",
+      get raw() { throw new Error("metadata unavailable") },
+    }
+    const result = new Proxy(metadata, {
+      ownKeys(target) {
+        if (failure === "enumeration") throw new Error("cannot enumerate metadata")
+        return Reflect.ownKeys(target)
+      },
+      getOwnPropertyDescriptor(target, key) {
+        if (failure === "descriptor" && key === "raw") throw new Error("cannot inspect metadata")
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+    })
+    const send = vi.fn(() => result)
+    try {
+      const channel = createChannel("alerts", { connectors: { configured: { send } } })
+      const [error, receipt] = await channel.send("Build finished.", { connector: "configured" })
+
+      expect(error).toBeNull()
+      expect(receipt).toMatchObject({ id: "delivered", channel: "alerts", connector: "configured" })
+      if (failure !== "enumeration") expect(receipt).toHaveProperty("providerStatus", "accepted")
+      expect(receipt).not.toHaveProperty("raw")
+      expect(send).toHaveBeenCalledOnce()
+      expect(info.mock.calls.flat().join("\n")).not.toContain("outbound.failed")
+    }
+    finally {
+      info.mockRestore()
+    }
+  })
+
   it.each([
     ["", "non-empty"],
     ["Build finished.", "requires a connector"],
