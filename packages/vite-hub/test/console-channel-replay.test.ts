@@ -65,7 +65,10 @@ function replayEvent(body: unknown, headers: Record<string, string> = { "content
 }
 
 function nodeReplayEvent(body: unknown): ConsoleRequestEvent {
-  const payload = JSON.stringify(body)
+  return nodeReplayPayloadEvent(JSON.stringify(body))
+}
+
+function nodeReplayPayloadEvent(payload: string): ConsoleRequestEvent {
   return {
     node: {
       req: {
@@ -80,6 +83,21 @@ function nodeReplayEvent(body: unknown): ConsoleRequestEvent {
   }
 }
 
+function fetchReplayPayloadEvent(payload: string): ConsoleRequestEvent {
+  return {
+    req: new Request("https://app.test/_vitehub/channels/replay", {
+      body: payload,
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    }),
+  }
+}
+
+function jsonReplayPayloadEvent(payload: string): ConsoleRequestEvent {
+  const event = replayEvent(undefined)
+  return { ...event, req: { ...event.req, json: async () => JSON.parse(payload) } }
+}
+
 describe("Console Channel replay route", () => {
   let root: string
   beforeEach(async () => {
@@ -87,6 +105,30 @@ describe("Console Channel replay route", () => {
   })
   afterEach(async () => {
     await rm(root, { force: true, recursive: true })
+  })
+
+  describe.each([
+    ["Fetch", fetchReplayPayloadEvent],
+    ["Node", nodeReplayPayloadEvent],
+    ["JSON-only", jsonReplayPayloadEvent],
+  ])("%s request bodies", (_host, event) => {
+    it("returns 413 for oversized replay requests before invoking the Agent", async () => {
+      const { agent, label } = labeller()
+      installConsoleAgentDefinitions([{ definition: { default: agent }, fallbackName: "labeller" }], { invoke: true, projectRoot: root })
+      const payload = JSON.stringify({ agent: "labeller", channel: "mailbox", padding: "x".repeat(64 * 1024) })
+
+      const response = await channelReplayHandler(event(payload))
+
+      expect(response.status).toBe(413)
+      expect(response.headers.get("cache-control")).toBe("no-store")
+      expect(label).not.toHaveBeenCalled()
+    })
+
+    it("keeps malformed JSON as 400", async () => {
+      const response = await channelReplayHandler(event('{"agent":'))
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({ message: "Malformed Channel replay payload." })
+    })
   })
 
   it("describes and replays Channel history when Console invocation is enabled", async () => {
