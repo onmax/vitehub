@@ -472,6 +472,45 @@ describe("openapi capability", () => {
     await resolved.close()
   })
 
+  it.each([
+    ["string", "name=value", "name=value"],
+    ["JSON", { name: "value" }, '{"name":"value"}'],
+  ])("preserves a %s hook body through Connection dispatch", async (_name, body, expected) => {
+    const client = { call: vi.fn(), fetch: vi.fn(async (_url: string | URL, _init?: RequestInit) => jsonResponse({ ok: true })) }
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { openapi } = await import("../src/capabilities.ts")
+    const resolved = await resolveAgentCapabilities({ capabilities: [openapi({
+      connection: "portal",
+      hooks: { request: ({ request }) => { request.body = body } },
+      operations: ["submit"],
+      spec: { paths: { "/submit": { post: { operationId: "submit", requestBody: { content: { "application/json": { schema: {} } } } } } } },
+      server: "https://portal.example.com",
+    })] }, { ...runtime(), capabilities: { connections: { runtime: () => ({ client: () => client }) } } }, {})
+    await expect((resolved.tools as AgentToolSet).submit.execute?.({ body: {} })).resolves.toEqual({ ok: true })
+    expect(client.fetch.mock.calls[0]?.[1]?.body).toBe(expected)
+    await resolved.close()
+  })
+
+  it.each([
+    ["URLSearchParams", () => new URLSearchParams({ name: "value" })],
+    ["FormData", () => { const body = new FormData(); body.set("name", "value"); return body }],
+    ["Uint8Array", () => new Uint8Array([0, 255])],
+  ] as const)("rejects a %s hook body before Connection dispatch", async (_name, body) => {
+    const client = { call: vi.fn(), fetch: vi.fn(async () => jsonResponse({ ok: true })) }
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { openapi } = await import("../src/capabilities.ts")
+    const resolved = await resolveAgentCapabilities({ capabilities: [openapi({
+      connection: "portal",
+      hooks: { request: ({ request }) => { request.body = body() } },
+      operations: ["submit"],
+      spec: { paths: { "/submit": { post: { operationId: "submit", requestBody: { content: { "application/json": { schema: {} } } } } } } },
+      server: "https://portal.example.com",
+    })] }, { ...runtime(), capabilities: { connections: { runtime: () => ({ client: () => client }) } } }, {})
+    await expect((resolved.tools as AgentToolSet).submit.execute?.({ body: {} })).rejects.toThrow("require a string body")
+    expect(client.fetch).not.toHaveBeenCalled()
+    await resolved.close()
+  })
+
   it.each(["CONNECTION_DENIED", "CONNECTION_APPROVAL_REQUIRED", "CONNECTION_INVALID", "CONNECTION_REAUTH_REQUIRED"])("calls the Connection guard once for CLI rejection %s", async (code) => {
     const failure = new ViteHubError(code, "Connection rejected the request")
     const client = { call: vi.fn(), fetch: vi.fn(async () => { throw failure }) }

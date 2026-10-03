@@ -498,7 +498,7 @@ async function executeOpenAPIOperation<
     // The Connection adds credentials after the request hook, so hooks never see the token.
     ...(connection ? {
       fetch: (target: string, init: RequestInit) => connection.client.fetch(target, {
-        body: typeof init.body === "string" ? init.body : undefined,
+        body: connectionRequestBody(init.body),
         headers: init.headers,
         method: init.method,
         redirect: init.redirect,
@@ -513,6 +513,12 @@ async function executeOpenAPIOperation<
     signal: abortSignal ?? context.abortSignal,
   })
   return transformOpenAPIResponse(options, context, operation, requestInput, draft, url, result)
+}
+
+function connectionRequestBody(body: RequestInit["body"]): string | undefined {
+  if (body === undefined || body === null) return undefined
+  if (typeof body === "string") return body
+  throw new TypeError("[vitehub] OpenAPI requests through a Connection require a string body. Serialize the request hook body before dispatch.")
 }
 
 function openAPIRequestOptions<

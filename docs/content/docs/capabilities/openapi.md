@@ -118,6 +118,8 @@ openapi({
 })
 ```
 
+Connection request bodies must serialize to strings for durable approval replay. JSON bodies are serialized automatically. Hooks that supply Fetch bodies such as `URLSearchParams`, `FormData`, or binary data must serialize them to a string first; otherwise the request fails before dispatch.
+
 The Connection adds its credentials after `hooks.request`, so hooks never see the token. The capability sends requests through the Connection client as the `fetch` action. `GET` and `HEAD` requests are reads. Other methods are writes. Without a matching `fetch` rule, writes are denied, so allow them in the Agent rule of the Connection:
 
 ```ts [server/connections/billing.ts]
