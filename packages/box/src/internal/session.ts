@@ -49,18 +49,6 @@ export interface RuntimeSession {
     abortSignal?: AbortSignal;
     path: string;
   }): Promise<Uint8Array | null>;
-  readFile?(options: {
-    abortSignal?: AbortSignal;
-    path: string;
-  }): Promise<ReadableStream<Uint8Array> | null>;
-  readTextFile?(options: {
-    abortSignal?: AbortSignal;
-    encoding?: string;
-    endLine?: number;
-    path: string;
-    startLine?: number;
-  }): Promise<string | null>;
-  restricted?(): RuntimeSession;
   removeFile(options: {
     abortSignal?: AbortSignal;
     path: string;
@@ -76,17 +64,6 @@ export interface RuntimeSession {
   writeBinaryFile(options: {
     abortSignal?: AbortSignal;
     content: Uint8Array;
-    path: string;
-  }): Promise<void>;
-  writeFile?(options: {
-    abortSignal?: AbortSignal;
-    content: ReadableStream<Uint8Array>;
-    path: string;
-  }): Promise<void>;
-  writeTextFile?(options: {
-    abortSignal?: AbortSignal;
-    content: string;
-    encoding?: string;
     path: string;
   }): Promise<void>;
 }

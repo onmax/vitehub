@@ -10,7 +10,8 @@ import { check, fallback, literal, object, optional, pipe, record, safeParse, st
 
 import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
-import { contentStreamChunks, contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, resolveInside, sha256 } from "../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../core/glob.ts"
+import { contentStreamChunks, contentToBytes, isExcludedWorkspacePath, normalizeWorkspacePath, resolveInside, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
 
 import type {
@@ -1181,10 +1182,10 @@ class LocalWorkspaceStore implements WorkspaceStore {
     return entries.sort((a, b) => a.path.localeCompare(b.path))
   }
 
-  async glob(pattern: string | string[], _options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
-    const patterns = Array.isArray(pattern) ? pattern : [pattern]
-    const entries = await this.list("", { recursive: true })
-    return entries.filter(entry => entry.type === "file" && patterns.some(item => matchesAny(entry.path, item)))
+  async glob(pattern: string | string[], options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
+    const { cwd, matches } = createWorkspaceGlobMatcher(pattern, options)
+    const entries = await this.list(cwd, { recursive: true })
+    return entries.filter(entry => entry.type === "file" && matches(entry.path))
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {

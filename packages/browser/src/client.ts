@@ -1,3 +1,4 @@
+import { withBrowserTimeout } from "./internal/timeout.ts"
 import type {
   BrowserClaimOptions,
   BrowserClient,
@@ -23,24 +24,6 @@ import {
 } from "./errors.ts"
 import { browserErrorDiagnostics } from "./error-diagnostics.ts"
 
-const CONTROLLER_RELEASE_TIMEOUT_MS = 30_000
-
-async function releaseLateController(release: Promise<void>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    await Promise.race([
-      release,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(browserProviderError("browser", "release a late browser controller"))
-        }, CONTROLLER_RELEASE_TIMEOUT_MS)
-      }),
-    ])
-  }
-  finally {
-    if (timer) clearTimeout(timer)
-  }
-}
 export type {
   BrowserClaimOptions,
   BrowserClient,
@@ -205,7 +188,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       if (this.closing || this.state !== "released") {
         const lateControl = attached
         attached = undefined
-        await releaseLateController(Promise.resolve(lateControl.release()))
+        await withBrowserTimeout(Promise.resolve(lateControl.release()), () => browserProviderError("browser", "release a late browser controller"))
         throw browserSessionStateError("attach a controller to", this.state)
       }
       this.state = "controlled"

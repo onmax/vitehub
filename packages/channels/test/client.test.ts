@@ -260,6 +260,63 @@ describe("createChannel", () => {
     }
   })
 
+  it("shares definition loading across named clients and concurrent sends", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const send = vi.fn(() => ({ id: "delivered" }));
+    const load = vi.fn(async () => ({ connectors: { configured: { send } } }));
+    setChannelRuntimeRegistry({ alerts: load });
+    try {
+      const first = useChannel("alerts" as string);
+      const second = useChannel("alerts" as string);
+      const results = await Promise.all([first.send("First", { connector: "configured" }), second.send("Second", { connector: "configured" })]);
+      expect(results.every(([error]) => error === null)).toBe(true);
+      expect(load).toHaveBeenCalledOnce();
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      setChannelRuntimeRegistry(undefined);
+      info.mockRestore();
+    }
+  });
+
+  it("refreshes existing named clients when their registry changes", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const first = vi.fn(() => ({ id: "old" }));
+    const second = vi.fn(() => ({ id: "new" }));
+    setChannelRuntimeRegistry({ alerts: async () => ({ connectors: { configured: { send: first } } }) });
+    const channel = useChannel("alerts" as string);
+    try {
+      await expect(channel.send("First", { connector: "configured" })).resolves.toMatchObject([null, { id: "old" }]);
+      setChannelRuntimeRegistry({ alerts: async () => ({ connectors: { configured: { send: second } } }) });
+      await expect(channel.send("Second", { connector: "configured" })).resolves.toMatchObject([null, { id: "new" }]);
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledOnce();
+    } finally {
+      setChannelRuntimeRegistry(undefined);
+      info.mockRestore();
+    }
+  });
+
+  it("keeps an old failed load from evicting the replacement registry client", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    let fail!: (error: Error) => void;
+    const old = new Promise<never>((_resolve, reject) => { fail = reject; });
+    setChannelRuntimeRegistry({ alerts: () => old });
+    const channel = useChannel("alerts" as string);
+    const pending = channel.send("First", { connector: "configured" });
+    const load = vi.fn(async () => ({ connectors: { configured: { send: () => ({ id: "new" }) } } }));
+    setChannelRuntimeRegistry({ alerts: load });
+    try {
+      await expect(channel.send("Second", { connector: "configured" })).resolves.toMatchObject([null, { id: "new" }]);
+      fail(new Error("old registry failed"));
+      await expect(pending).resolves.toMatchObject([expect.any(Error), null]);
+      await expect(channel.send("Third", { connector: "configured" })).resolves.toMatchObject([null, { id: "new" }]);
+      expect(load).toHaveBeenCalledOnce();
+    } finally {
+      setChannelRuntimeRegistry(undefined);
+      info.mockRestore();
+    }
+  });
+
   it("normalizes non-Error connector failures", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     try {
