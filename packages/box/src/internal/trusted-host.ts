@@ -941,11 +941,39 @@ function processHandle(
     },
     stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
     wait: () => wait,
-    async kill() {
-      signalProcessTree(child, "SIGTERM");
-      await wait.catch(() => undefined);
+    async kill(signal?: string) {
+      signalProcessTree(child, normalizeSignal(signal));
+      const settled = wait.catch(() => undefined);
+      if (signal !== undefined) {
+        await settled;
+        return;
+      }
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const gracePeriod = new Promise<void>((resolvePromise) => {
+          timer = setTimeout(resolvePromise, 250);
+        });
+        await Promise.race([
+          gracePeriod,
+          settled.then(() => {
+            // The leader can exit while descendants still need termination.
+            if (child.pid && process.platform !== "win32" && processGroupExists(child.pid))
+              return gracePeriod;
+          }),
+        ]);
+        signalProcessTree(child, "SIGKILL");
+        await settled;
+      } finally {
+        clearTimeout(timer);
+      }
     },
   };
+}
+
+function normalizeSignal(signal = "TERM"): NodeJS.Signals {
+  const normalized = signal.toUpperCase();
+  // SAFETY: Node's process.kill and child.kill validate this normalized name and reject unknown signals before sending it.
+  return (normalized.startsWith("SIG") ? normalized : `SIG${normalized}`) as NodeJS.Signals;
 }
 
 function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals) {
