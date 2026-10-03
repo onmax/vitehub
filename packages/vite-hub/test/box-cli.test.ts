@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
+import * as boxSsh from "@vite-hub/box/ssh";
 import type { ViteHubCliContext } from "@vite-hub/internal/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -41,6 +42,7 @@ const cleanup: Array<() => Promise<unknown>> = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const dispose of cleanup.splice(0).reverse()) await dispose();
   agentStatus.definitions.length = 0;
 });
@@ -108,18 +110,24 @@ describe("vitehub box", () => {
         run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", path]),
       ),
     );
-    const port = 20_000 + Math.floor(Math.random() * 20_000);
+    const serveSsh = boxSsh.serveSsh;
+    const listener = vi.spyOn(boxSsh, "serveSsh").mockImplementation((options) =>
+      serveSsh({ ...options, port: 0 }),
+    );
     const serve = context({
       CRABBOX_STATIC_USER: "agent",
       RUNNER_WORKSPACE: root,
       SSH_AUTHORIZED_KEY: `${identity}.pub`,
       SSH_HOST_KEY: hostKey,
-      SSH_PORT: String(port),
+      SSH_PORT: "2222",
     });
     const running = Promise.resolve(feature("serve").run([], serve.context));
     await vi.waitFor(() => expect(serve.stdout()).toContain('"event":"box.listening"'), {
       timeout: 10_000,
     });
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ port: 2222 }));
+    const { port } = JSON.parse(serve.stdout()) as { port: number };
+    expect(port).toBeGreaterThan(0);
     expect(JSON.parse(serve.stdout())).toEqual({ event: "box.listening", port });
 
     const { stdout } = await run("ssh", [
