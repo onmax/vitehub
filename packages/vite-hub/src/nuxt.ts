@@ -226,6 +226,24 @@ function installNitroRuntimeResolvers(config: Record<string, unknown>, plugins: 
   }
 }
 
+function replayNitroAliases(configured: unknown, nitroConfig: Record<string, unknown>, allowed: ReadonlySet<string>): void {
+  if (!configured) return
+  const aliases = (nitroConfig.alias ??= {}) as Record<string, string>
+  const entries = Array.isArray(configured)
+    ? configured.flatMap((alias: { find: string | RegExp, replacement: string }) => {
+        if (typeof alias.replacement !== "string") return []
+        if (typeof alias.find === "string") return [[alias.find, alias.replacement] as const]
+        const source = alias.find.source
+        return source.startsWith("^") && source.endsWith("$")
+          ? [[source.slice(1, -1).replaceAll("\\/", "/"), alias.replacement] as const]
+          : []
+      })
+    : Object.entries(configured as Record<string, string>)
+  for (const [name, replacement] of entries) {
+    if (allowed.has(name)) aliases[name] ??= replacement
+  }
+}
+
 function addTypeScriptDefaults(options: Record<string, unknown>, includes: string[], excludes: string[]): void {
   const typescript = (options.typescript ??= {}) as Record<string, unknown>
   const tsConfig = (typescript.tsConfig ??= {}) as Record<string, unknown>
@@ -699,6 +717,7 @@ async function applyNitroConfig(
   await finalizeNitroReplayPlugins(plugins, config)
 
   if (config.nitro) {
+    replayNitroAliases(config.resolve?.alias, config.nitro, new Set(["@vite-hub/markdown-template"]))
     installVitePluginNitroModules(config.nitro, plugins)
     Object.assign(nitroConfig, config.nitro)
   }

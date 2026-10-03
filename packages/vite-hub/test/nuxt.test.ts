@@ -416,6 +416,11 @@ describe("ViteHub Nuxt integration", () => {
       defaultPlugins,
       {
         name: "@vite-hub/markdown-template/vite",
+        config: () => ({
+          resolve: {
+            alias: [{ find: /^@vite-hub\/markdown-template$/, replacement: "/tmp/markdown-template-runtime.mjs" }],
+          },
+        }),
         load,
         resolveId,
       },
@@ -424,6 +429,7 @@ describe("ViteHub Nuxt integration", () => {
     await viteHubNuxtModule({ preset: "cloudflare" }, nuxt)
     const nitroConfig: Record<string, unknown> = {}
     await runNitroConfigHook(nitroConfig)
+    expect((nitroConfig.alias as Record<string, string>)["@vite-hub/markdown-template"]).toBe("/tmp/markdown-template-runtime.mjs")
     const plugins = (nitroConfig.rollupConfig as { plugins: Plugin[] }).plugins
     const resolver = plugins.find(plugin => plugin.name === "vite-hub/nuxt-runtime-resolver:@vite-hub/markdown-template/vite")
     expect(resolver).toBeDefined()
