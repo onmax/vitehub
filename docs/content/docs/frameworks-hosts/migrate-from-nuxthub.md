@@ -46,30 +46,21 @@ Replace the `hub` key with the ViteHub module and a
 [deployment preset](/docs/frameworks-hosts#choose-a-preset). Each feature is off
 until you enable it.
 
-::code-group
-
-```ts [Before: nuxt.config.ts]
-export default defineNuxtConfig({
-  modules: ["@nuxthub/core"],
-  hub: {
-    db: "sqlite",
-    kv: true,
-    blob: true,
-  },
-})
+```diff [nuxt.config.ts]
++import viteHubNuxt from "vite-hub/nuxt"
++
+ export default defineNuxtConfig({
+-  modules: ["@nuxthub/core"],
+-  hub: {
+-    db: "sqlite",
+-    kv: true,
+-    blob: true,
+-  },
++  modules: [
++    [viteHubNuxt, { preset: "cloudflare", database: true, kv: true, blob: true }],
++  ],
+ })
 ```
-
-```ts [After: nuxt.config.ts]
-import viteHubNuxt from "vite-hub/nuxt"
-
-export default defineNuxtConfig({
-  modules: [
-    [viteHubNuxt, { preset: "cloudflare", database: true, kv: true, blob: true }],
-  ],
-})
-```
-
-::
 
 Read [Nuxt](/docs/frameworks-hosts/nuxt) for the other module behavior.
 
@@ -78,25 +69,16 @@ Read [Nuxt](/docs/frameworks-hosts/nuxt) for the other module behavior.
 Import `kv` from `vite-hub/kv`. Each method returns an `[error, value]` tuple
 instead of throwing, so check the error.
 
-::code-group
-
-```ts [Before: server/api/settings.get.ts]
-export default defineEventHandler(async () => {
-  return await kv.get("settings")
-})
+```diff [server/api/settings.get.ts]
++import { kv } from "vite-hub/kv"
++
+ export default defineEventHandler(async () => {
+-  return await kv.get("settings")
++  const [error, settings] = await kv.get("settings")
++  if (error) throw error
++  return settings
+ })
 ```
-
-```ts [After: server/api/settings.get.ts]
-import { kv } from "vite-hub/kv"
-
-export default defineEventHandler(async () => {
-  const [error, settings] = await kv.get("settings")
-  if (error) throw error
-  return settings
-})
-```
-
-::
 
 `get`, `set`, `has`, `del`, `keys`, and `clear` keep their names. `set` passes
 its options, such as `ttl`, to the store driver, so TTL support depends on the
@@ -110,27 +92,17 @@ Import `blob` from `vite-hub/blob`. `put`, `get`, `head`, `list`, `del`, and
 `addRandomSuffix`, and `customMetadata` options. Each method returns an
 `[error, value]` tuple.
 
-::code-group
-
-```ts [Before: server/routes/files/[...pathname].get.ts]
-export default defineEventHandler(async (event) => {
-  const { pathname } = getRouterParams(event)
-  return blob.serve(event, pathname)
-})
+```diff [server/routes/files/[...pathname].get.ts]
++import { blob } from "vite-hub/blob"
++
+ export default defineEventHandler(async (event) => {
+   const { pathname } = getRouterParams(event)
+-  return blob.serve(event, pathname)
++  const [error, stream] = await blob.serve(event, pathname)
++  if (error) throw error
++  return stream
+ })
 ```
-
-```ts [After: server/routes/files/[...pathname].get.ts]
-import { blob } from "vite-hub/blob"
-
-export default defineEventHandler(async (event) => {
-  const { pathname } = getRouterParams(event)
-  const [error, stream] = await blob.serve(event, pathname)
-  if (error) throw error
-  return stream
-})
-```
-
-::
 
 ViteHub has no `handleUpload()`, multipart helpers, or `useUpload()`
 composable. Validate files with `ensureBlob()` and call `blob.put()` in your own
@@ -167,26 +139,15 @@ export default defineDatabase({
 
 Replace the `@nuxthub/db` import with `useDatabase()`. Queries do not change.
 
-::code-group
+```diff [server/api/users.get.ts]
+-import { db, schema } from "@nuxthub/db"
++import { useDatabase } from "vite-hub/database/drizzle"
 
-```ts [Before: server/api/users.get.ts]
-import { db, schema } from "@nuxthub/db"
-
-export default defineEventHandler(async () => {
-  return await db.select().from(schema.users)
-})
+ export default defineEventHandler(async () => {
++  const { db, schema } = useDatabase("default")
+   return await db.select().from(schema.users)
+ })
 ```
-
-```ts [After: server/api/users.get.ts]
-import { useDatabase } from "vite-hub/database/drizzle"
-
-export default defineEventHandler(async () => {
-  const { db, schema } = useDatabase("default")
-  return await db.select().from(schema.users)
-})
-```
-
-::
 
 ### Migrations
 
