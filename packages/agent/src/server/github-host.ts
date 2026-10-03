@@ -360,7 +360,11 @@ type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal:
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
 async function resetPooledCheckout(checkout: string, repository: string, commandOptions: GitHubCommandOptions) {
-  for (const path of [".git/hooks", ".git/index.lock", ".git/config.lock", ".git/config.worktree.lock", ".git/HEAD.lock", ".git/shallow.lock", ".git/packed-refs.lock", ".git/config", ".git/config.worktree", ".vitehub"]) {
+  for (const path of [
+    ".git/hooks", ".git/index.lock", ".git/config.lock", ".git/config.worktree.lock", ".git/HEAD.lock", ".git/shallow.lock", ".git/packed-refs.lock",
+    ".git/rebase-merge", ".git/rebase-apply", ".git/sequencer", ".git/CHERRY_PICK_HEAD", ".git/MERGE_HEAD", ".git/REVERT_HEAD",
+    ".git/config", ".git/config.worktree", ".vitehub",
+  ]) {
     await rm(join(checkout, path), { force: true, recursive: true })
   }
   await rm(`${checkout}.meta.json`, { force: true })
