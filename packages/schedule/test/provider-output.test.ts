@@ -1132,6 +1132,8 @@ describe("schedule provider output", () => {
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
     "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
+    "as unknown as () => Result<string, unknown>",
+    "as unknown as new () => Result<string, unknown>",
     'satisfies import("types", { with: { "resolution-mode": "import" } }).Record<string, unknown>',
     'as import /* type */ ("types" /* module */, /* attributes */ { with: { "resolution-mode": "require" } } /* end */).Record<string, unknown>',
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',

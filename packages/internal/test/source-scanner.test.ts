@@ -112,6 +112,8 @@ describe("source scanner", () => {
     "as unknown as T extends keyof Types.Promise<string, unknown> ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
     "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
+    "as unknown as () => Result<string, unknown>",
+    "as unknown as new () => Result<string, unknown>",
     "as keyof /* type */ Record<string, unknown>",
     "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",
     "as true extends true ? false extends true ? never : Options<string, unknown> : never",

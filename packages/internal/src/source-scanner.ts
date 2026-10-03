@@ -350,6 +350,11 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // operator), for example `T extends Types.Promise<A, B>`. Keep the fast
   // path broad enough to mask its generic arguments before call splitting.
   const prefix = source.slice(0, index).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ")
+  // Function and constructor assertion types place their return reference
+  // after `=>`, so the generic is not directly adjacent to the assertion
+  // keyword. Treat that return type as part of the assertion as well.
+  if (/=>\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
+    && /\b(?:as|satisfies)\b/.test(prefix)) return true
   if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
@@ -611,6 +616,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // punctuation that is valid inside TypeScript type expressions (for
       // example generic arguments and tuple types).
       if (!assertion) return false
+      if (/(?:\([^)]*\)|\bnew\s+\([^)]*\))\s*=>\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*(?!\s*\()/.test(value)) return true
       // Each conditional type question mark must follow an `extends` clause.
       // Track nested true branches until their colon; a further question mark
       // in a completed false branch is a runtime ternary.
@@ -653,7 +659,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       }
       // Operators and call syntax after an assertion change the runtime value;
       // reject them while retaining union/intersection punctuation in types.
-      if (/(?:&&|\|\||\?\?|=>|\?\.|[+*/;%=^]|,)/.test(value)) return false
+      if (/(?:&&|\|\||\?\?|\?\.|[+*/;%=^]|,)/.test(value)) return false
       // A spaced subtraction after an assertion is runtime syntax. Hyphens
       // inside template-literal types remain allowed because they are not
       // surrounded by operator whitespace.
