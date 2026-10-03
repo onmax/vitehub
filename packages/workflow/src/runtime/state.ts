@@ -24,7 +24,10 @@ export interface WorkflowRunState<TResult = unknown> {
   status: "running" | "completed" | "failed"
 }
 
-const runs = new Map<string, WorkflowRunState>()
+// Execution retains its state through the completion callback. Inspection must
+// not keep an abandoned promise and its payload alive by itself.
+const runs = new Map<string, WeakRef<WorkflowRunState>>()
+let collectedRuns: FinalizationRegistry<{ key: string, reference: WeakRef<WorkflowRunState> }> | undefined
 const completedRuns = new Map<string, WorkflowRunState>()
 
 function getRunKey(name: string, id: string): string {
@@ -220,6 +223,12 @@ export function setWorkflowRun<TResult = unknown>(
 ): WorkflowRunState<TResult> {
   pruneWorkflowRuns()
   const key = getRunKey(name, id)
+  // Durable providers can load runtime state on hosts without these GC APIs.
+  collectedRuns ??= new FinalizationRegistry(({ key, reference }) => {
+    if (runs.get(key) === reference) runs.delete(key)
+  })
+  const previous = runs.get(key)
+  if (previous) collectedRuns.unregister(previous)
   completedRuns.delete(key)
   const state: WorkflowRunState<TResult> = {
     promise: promise.then((resolved) => {
@@ -227,8 +236,9 @@ export function setWorkflowRun<TResult = unknown>(
       state.result = resolved.result
       state.error = resolved.error
       state.expiresAt = Date.now() + RUNS_TTL_MS
-      if (runs.get(key) === state) {
+      if (runs.get(key)?.deref() === state) {
         runs.delete(key)
+        collectedRuns?.unregister(reference)
         completedRuns.set(key, state)
         pruneWorkflowRuns()
       }
@@ -236,14 +246,22 @@ export function setWorkflowRun<TResult = unknown>(
     }),
     status: "running",
   }
-  runs.set(key, state)
+  const reference = new WeakRef(state)
+  runs.set(key, reference)
+  collectedRuns.register(state, { key, reference }, reference)
   return state
 }
 
 export function getWorkflowRunState(name: string, id: string): WorkflowRunState | undefined {
   pruneWorkflowRuns()
   const key = getRunKey(name, id)
-  return runs.get(key) ?? completedRuns.get(key)
+  const reference = runs.get(key)
+  const state = reference?.deref()
+  if (reference && !state) {
+    runs.delete(key)
+    collectedRuns?.unregister(reference)
+  }
+  return state ?? completedRuns.get(key)
 }
 
 export function resetWorkflowRuntime(): void {
@@ -253,6 +271,7 @@ export function resetWorkflowRuntime(): void {
   loadingRegistryEntries.clear()
   loadedRegistryEntries.clear()
   fallbackEvent = undefined
+  for (const reference of runs.values()) collectedRuns?.unregister(reference)
   runs.clear()
   completedRuns.clear()
 }

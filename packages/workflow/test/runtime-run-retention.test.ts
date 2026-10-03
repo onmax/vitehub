@@ -1,3 +1,6 @@
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
+
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createWorkflow } from "../src/runtime/client.ts"
@@ -15,6 +18,46 @@ afterEach(() => {
 })
 
 describe("inline Workflow run retention", () => {
+  it("releases abandoned executions while retaining reachable active runs", async () => {
+    const stateModule = new URL("../dist/runtime/state.js", import.meta.url).href
+    await promisify(execFile)(process.execPath, ["--expose-gc", "--input-type=module", "-e", `
+      import assert from "node:assert/strict"
+      import { setImmediate } from "node:timers/promises"
+      const weakRef = globalThis.WeakRef
+      const finalizationRegistry = globalThis.FinalizationRegistry
+      globalThis.WeakRef = undefined
+      globalThis.FinalizationRegistry = undefined
+      const { getWorkflowRunState, resetWorkflowRuntime, setWorkflowRun } = await import(${JSON.stringify(stateModule)})
+      resetWorkflowRuntime()
+      assert.equal(getWorkflowRunState("gc", "missing"), undefined)
+      globalThis.WeakRef = weakRef
+      globalThis.FinalizationRegistry = finalizationRegistry
+
+      let finish
+      const execution = new Promise(resolve => { finish = resolve })
+      setWorkflowRun("gc", "reachable", execution)
+      for (let index = 0; index < 1_025; index++) {
+        setWorkflowRun("gc", String(index), new Promise(() => {}))
+      }
+      let collected = false
+      for (let attempt = 0; attempt < 100; attempt++) {
+        await setImmediate()
+        globalThis.gc()
+        assert.equal(getWorkflowRunState("gc", "reachable")?.status, "running")
+        if (Array.from({ length: 1_025 }, (_, index) => getWorkflowRunState("gc", String(index))).every(run => !run)) {
+          collected = true
+          break
+        }
+      }
+      assert.ok(collected, "inspection must not retain an abandoned execution")
+      finish({ status: "completed", result: "done" })
+      await getWorkflowRunState("gc", "reachable").promise
+      await setImmediate()
+      globalThis.gc()
+      assert.equal(getWorkflowRunState("gc", "reachable")?.result, "done")
+    `])
+  })
+
   it("keeps more than 1024 active runs inspectable through completion", async () => {
     setWorkflowRuntimeConfig({ provider: "vercel" })
     const first = gate()
