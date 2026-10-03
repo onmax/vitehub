@@ -57,6 +57,13 @@ describe("Console section contributions", () => {
     expect(parseConsoleSectionContent({ records: [record], kind: "record-table", section: "schedules" }, "schedules")).toEqual({ records: [record], kind: "record-table" })
   })
 
+  it("accepts runnable metadata only when it is true", () => {
+    const definition = { fields: [], file: "sync.ts", name: "sync", source: "server-schedules" }
+    for (const runnable of [false, "true", 1, undefined]) {
+      expect(parseConsoleSectionContent({ definitions: [{ ...definition, runnable }], kind: "definition-catalog", section: "schedules" }, "schedules")).toEqual({ definitions: [definition], kind: "definition-catalog" })
+    }
+  })
+
   it("serializes descriptors that the Console UI can parse", () => {
     for (const descriptor of describeConsoleContributedSections([...consoleContributedSections.keys()])) {
       expect(parseConsoleContributedSection(JSON.parse(JSON.stringify(descriptor)))).toEqual(descriptor)

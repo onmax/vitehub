@@ -1948,7 +1948,7 @@ describe("ViteHub Nuxt integration", () => {
       database: true,
       console: source === "console-auth"
         ? { access: "auth", auth: { provider: "github", allowedEmails: ["maintainer@example.com"], databasePath: "/data/console-auth.sqlite" } }
-        : { exposure: "host-managed" },
+        : source === "app-auth" ? { access: "auth" } : { exposure: "host-managed" },
       preset: "node",
     }, development.nuxt)
     const config = nitroOptions(development.nuxt)

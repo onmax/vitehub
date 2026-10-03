@@ -54,7 +54,7 @@ export default async function consoleDefinitionsHandler(event: ConsoleRequestEve
     }
   }
   const reader = readers && Object.hasOwn(readers, section) ? readers[section] : undefined
-  if (!reader || content.kind !== "record-table") return { ...content, section }
-  const records = mergeRecords(content.records, await readRuntimeRecords(reader))
+  if (content.kind !== "record-table") return { ...content, section }
+  const records = reader ? mergeRecords(content.records, await readRuntimeRecords(reader)) : content.records
   return { kind: "record-table", records: section === "schedules" ? markRunnableSchedules(records) : records, section }
 }
