@@ -146,6 +146,7 @@ const nitroRuntimeResolverNames = new Set([
   "@vite-hub/blob/vite",
   "@vite-hub/email/vite",
   "@vite-hub/kv/vite",
+  "@vite-hub/markdown-template/vite",
 ])
 
 const nitroConfigResolvedNames = new Set([
@@ -851,6 +852,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     [VITEHUB_SERVER_DIRS]?: string[]
     kv?: KVModuleOptions
     queue?: QueueModuleOptions
+    database?: Record<string, unknown> | false
   }
   if (envConfig && Object.values(envConfig).some(Boolean)) {
     const existingEnv = viteConfig.env ?? {}
@@ -878,9 +880,13 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   addTypeScriptDefaults(nuxt.options, generatedTypes, generatedData)
   addTypeScriptDefaults((nuxt.options.nitro ??= {}), generatedTypes, generatedData)
   if (options.database) {
-    const databaseOptions = options.database === true ? {} : options.database
+    const viteDatabaseOptions = viteConfig.database && typeof viteConfig.database === "object" ? viteConfig.database : {}
+    const databaseOptions = {
+      ...viteDatabaseOptions,
+      ...(options.database === true ? {} : options.database),
+    }
     await hubDatabaseNuxt({
-      ...(options.preset === "cloudflare" ? { driver: "d1" as const } : {}),
+      ...(options.preset === "cloudflare" && !("driver" in databaseOptions) ? { driver: "d1" as const } : {}),
       ...databaseOptions,
     })(undefined, nuxt)
   }
