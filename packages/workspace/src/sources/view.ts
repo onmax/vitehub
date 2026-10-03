@@ -681,8 +681,11 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       await ensureMaterializedSources(sources.filter(source => !usesLiveProvider(source)))
 
       const result = new Map<string, WorkspaceEntry>()
-      for (const entry of await store.glob(patterns, options)) {
-        result.set(entry.path, entry)
+      // The descriptor directory is virtual and reserved by backing Stores.
+      if (cwd !== ".vitehub/sources") {
+        for (const entry of await store.glob(patterns, options)) {
+          result.set(entry.path, entry)
+        }
       }
       for (const entry of descriptorPathEntries(cwd, { recursive: true })) {
         if (entry.type === "file" && matches(entry.path)) result.set(entry.path, entry)

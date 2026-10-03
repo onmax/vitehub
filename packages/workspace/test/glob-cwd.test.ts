@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createWorkspace } from "../src/core/workspace.ts"
+import { createGitHubWorkspaceStore } from "../src/providers/github/store.ts"
 import { createWorkspaceAssets } from "../src/runtime/assets.ts"
 import { custom } from "../src/sources/custom.ts"
 import { fetch as fetchSource } from "../src/sources/fetch.ts"
@@ -80,8 +81,11 @@ describe("Workspace glob cwd", () => {
     expect(request).not.toHaveBeenCalled()
   })
 
-  it("allows the exposed request descriptor directory as cwd", async () => {
-    const store = createMemoryWorkspaceStore()
+  it.each(["memory", "github"])("allows descriptor cwd with the %s Store", async (provider) => {
+    const request = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected provider request"))
+    const store = provider === "memory"
+      ? createMemoryWorkspaceStore()
+      : createGitHubWorkspaceStore({ provider: "github", repository: "onmax/repo", token: "test-token" }, "descriptor-cwd")
     const querySchema = {
       "~standard": {
         jsonSchema: { input: () => ({ type: "object", properties: {} }) },
@@ -95,5 +99,9 @@ describe("Workspace glob cwd", () => {
 
     expect((await view.glob("*.json", { cwd: ".vitehub/sources" })).map(entry => entry.path))
       .toEqual([".vitehub/sources/status.json"])
+    expect(await view.glob("*.md", { cwd: ".vitehub/sources" })).toEqual([])
+    const emptyView = createWorkspaceSourceView({ name: "no-descriptors" }, store)
+    expect(await emptyView.glob("*.json", { cwd: ".vitehub/sources" })).toEqual([])
+    expect(request).not.toHaveBeenCalled()
   })
 })
