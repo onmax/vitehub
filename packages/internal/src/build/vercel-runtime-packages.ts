@@ -1,7 +1,8 @@
-import { access, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat } from "node:fs/promises"
+import { access, copyFile, cp, mkdir, readFile, realpath, rm, stat } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
+import { updateRuntimePackageDirectory } from "./runtime-package-directory.ts"
 import { createDefaultVercelOutputRoot } from "./deployment-output.ts"
 import { internalErrorDiagnostics } from "../error-diagnostics.ts"
 
@@ -47,60 +48,15 @@ export async function copyVercelFunctionRuntimePackages(options: VercelFunctionR
   const packages = Array.isArray(options.packages) ? options.packages : await options.packages()
   if (!packages.length) return
 
-  const outputNodeModules = resolve(serverDir, "node_modules")
-  const stagingRoot = await mkdtemp(resolve(serverDir, ".vitehub-runtime-packages-"))
-  const stagedNodeModules = resolve(stagingRoot, "node_modules")
-  const previousNodeModules = resolve(stagingRoot, "previous-node_modules")
-  let movedPreviousOutput = false
-  let installedReplacement = false
-  let cleanupStagingRoot = true
-
-  try {
-    try {
-      await cp(outputNodeModules, stagedNodeModules, { recursive: true })
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    await mkdir(stagedNodeModules, { recursive: true })
-
-    await copyNodeRuntimePackages({
-      outputNodeModules: stagedNodeModules,
+  await updateRuntimePackageDirectory({
+    directory: resolve(serverDir, "node_modules"),
+    signal: options.signal,
+    update: outputNodeModules => copyNodeRuntimePackages({
+      outputNodeModules,
       packages,
       rootDir: options.rootDir,
-    })
-    options.signal?.throwIfAborted()
-
-    try {
-      await rename(outputNodeModules, previousNodeModules)
-      movedPreviousOutput = true
-      cleanupStagingRoot = false
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-
-    try {
-      options.signal?.throwIfAborted()
-      await rename(stagedNodeModules, outputNodeModules)
-      installedReplacement = true
-      options.signal?.throwIfAborted()
-      cleanupStagingRoot = true
-    }
-    catch (error) {
-      if (installedReplacement) await rm(outputNodeModules, { force: true, recursive: true })
-      if (movedPreviousOutput) {
-        await rename(previousNodeModules, outputNodeModules)
-      }
-      cleanupStagingRoot = true
-      throw error
-    }
-  }
-  finally {
-    if (cleanupStagingRoot) await rm(stagingRoot, { force: true, recursive: true })
-  }
+    }),
+  })
 }
 
 export async function copyNodeRuntimePackages(options: NodeRuntimePackagesOptions): Promise<void> {

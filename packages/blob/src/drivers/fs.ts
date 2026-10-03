@@ -53,7 +53,8 @@ function resolveBlobPath(root: string, pathname: string) {
 }
 
 function resolveMetaPath(root: string, pathname: string) {
-  return resolve(root, ".vitehub", "blob-meta", `${encodeMetaKey(pathname)}.json`)
+  const normalized = relative(root, resolveBlobPath(root, pathname)).split(sep).join("/")
+  return resolve(root, ".vitehub", "blob-meta", `${encodeMetaKey(normalized)}.json`)
 }
 
 function isNotFound(error: unknown): boolean {

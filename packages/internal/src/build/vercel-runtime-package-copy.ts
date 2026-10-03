@@ -1,6 +1,7 @@
-import { access, cp, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises"
+import { access, cp, mkdir, readFile, realpath, rm } from "node:fs/promises"
 import { dirname, join, relative, resolve, sep } from "node:path"
 
+import { updateRuntimePackageDirectory } from "./runtime-package-directory.ts"
 import { createDefaultVercelOutputRoot } from "./deployment-output.ts"
 
 import type { VercelFunctionRuntimePackage } from "./vercel-runtime-packages.ts"
@@ -15,71 +16,26 @@ export async function copyVercelFunctionRuntimePackageDirectories(options: {
 }): Promise<void> {
   if (!options.packages.length) return
   const functionDir = resolve(options.outputRoot ?? createDefaultVercelOutputRoot(options.rootDir), "functions", options.serverFunctionName ?? "__server.func")
-  const outputNodeModules = resolve(functionDir, "node_modules")
-  const stagingRoot = await mkdtemp(resolve(functionDir, ".vitehub-runtime-package-directories-"))
-  const stagedNodeModules = resolve(stagingRoot, "node_modules")
-  const previousNodeModules = resolve(stagingRoot, "previous-node_modules")
-  let movedPreviousOutput = false
-  let installedReplacement = false
-  let publicationSucceeded = false
-  let restorationSucceeded = false
-
-  try {
-    try {
-      await cp(outputNodeModules, stagedNodeModules, { recursive: true })
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    await mkdir(stagedNodeModules, { recursive: true })
-
-    const copied = new Map<string, string>()
-    const selected = new Map<string, string>()
-    for (const runtimePackage of options.packages) {
-      try {
-        selected.set(runtimePackage.name, await realpath(await resolvePackageJson(runtimePackage.name, dirname(runtimePackage.resolveFrom ?? join(options.rootDir, "package.json")))))
+  await updateRuntimePackageDirectory({
+    directory: resolve(functionDir, "node_modules"),
+    signal: options.signal,
+    async update(stagedNodeModules) {
+      const copied = new Map<string, string>()
+      const selected = new Map<string, string>()
+      for (const runtimePackage of options.packages) {
+        try {
+          selected.set(runtimePackage.name, await realpath(await resolvePackageJson(runtimePackage.name, dirname(runtimePackage.resolveFrom ?? join(options.rootDir, "package.json")))))
+        }
+        catch (error) {
+          // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
+          if (!runtimePackage.optional || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+        }
       }
-      catch (error) {
-        // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-        if (!runtimePackage.optional || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+      for (const runtimePackage of options.packages) {
+        await copyPackageDirectory(runtimePackage.name, runtimePackage.resolveFrom ?? join(options.rootDir, "package.json"), stagedNodeModules, copied, selected, runtimePackage.optional)
       }
-    }
-    for (const runtimePackage of options.packages) {
-      await copyPackageDirectory(runtimePackage.name, runtimePackage.resolveFrom ?? join(options.rootDir, "package.json"), stagedNodeModules, copied, selected, runtimePackage.optional)
-    }
-    options.signal?.throwIfAborted()
-
-    try {
-      await rename(outputNodeModules, previousNodeModules)
-      movedPreviousOutput = true
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-
-    try {
-      options.signal?.throwIfAborted()
-      await rename(stagedNodeModules, outputNodeModules)
-      installedReplacement = true
-      options.signal?.throwIfAborted()
-      publicationSucceeded = true
-    }
-    catch (error) {
-      if (installedReplacement) await rm(outputNodeModules, { force: true, recursive: true })
-      if (movedPreviousOutput) {
-        await rename(previousNodeModules, outputNodeModules)
-        restorationSucceeded = true
-      }
-      throw error
-    }
-  }
-  finally {
-    if (!movedPreviousOutput || publicationSucceeded || restorationSucceeded) {
-      await rm(stagingRoot, { force: true, recursive: true })
-    }
-  }
+    },
+  })
 }
 
 async function copyPackageDirectory(name: string, resolveFrom: string, outputNodeModules: string, copied: Map<string, string>, selected: Map<string, string>, optional = false, conflictNodeModules?: string): Promise<void> {
