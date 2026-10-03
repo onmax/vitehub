@@ -13,6 +13,7 @@ import { loadConsoleNavigation, resolveConsoleSectionDetails } from "../client/s
 import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
 import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
+import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
 
@@ -80,13 +81,14 @@ onBeforeUnmount(() => request++);
   <ConsoleFrame>
     <UDashboardSidebar
       id="console-navigation"
+      class="vitehub-console__nav"
       v-model:open="sidebarOpen"
       :default-size="16"
       :collapsed-size="4"
       :min-size="13"
       :max-size="26"
       :menu="{ title: 'ViteHub', description: 'Choose a section.' }"
-      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'h-11 shrink-0 border-t border-default px-2 py-1.5' }"
+      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'shrink-0 border-t border-default px-2 py-1.5' }"
       resizable
     >
       <template #header="{ collapsed }">
@@ -106,42 +108,16 @@ onBeforeUnmount(() => request++);
             ]"
           />
         </div>
-        <div v-if="loading" class="grid gap-2 px-2" :class="collapsed ? 'pt-2' : ''">
-          <USkeleton v-for="index in 2" :key="index" :class="collapsed ? 'h-9' : 'h-14'" />
+        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
+          <UDashboardSearchButton
+            :collapsed="collapsed"
+            block
+            class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
+            label="Search"
+          />
         </div>
-        <nav
-          v-else-if="sidebarSections.length"
-          class="grid gap-1 px-2"
-          :class="collapsed ? 'pt-2' : ''"
-        >
-          <div class="flex shrink-0 items-center gap-1 pb-2 pt-1">
-            <UDashboardSearchButton
-              :collapsed="collapsed"
-              block
-              class="vitehub-console__search min-w-0 flex-1 rounded-md border border-default bg-transparent px-2 ring-0 hover:bg-elevated/60"
-              label="Search console"
-            />
-          </div>
-          <UTooltip
-            v-for="section in sidebarSections"
-            :key="section.id"
-            :text="section.label"
-            :disabled="!collapsed"
-            :content="{ side: 'right' }"
-          >
-            <UButton
-              block
-              class="justify-start"
-              color="neutral"
-              :icon="section.icon"
-              :label="collapsed ? undefined : section.label"
-              :aria-label="collapsed ? section.label : undefined"
-              variant="ghost"
-              @click="openSection(section.routeName)"
-            />
-          </UTooltip>
-        </nav>
-        <p v-else-if="!collapsed && !error" class="px-4 text-sm leading-6 text-muted">
+        <ConsoleSectionNav :collapsed="collapsed" :sections-base="sectionsBase" @navigate="sidebarOpen = false" />
+        <p v-if="!loading && !error && !sidebarSections.length && !collapsed" class="px-4 text-sm leading-6 text-muted">
           Enable Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, or Schedule in the ViteHub configuration to add a section.
         </p>
       </template>
@@ -161,43 +137,43 @@ onBeforeUnmount(() => request++);
 
     <UDashboardPanel id="console-home" :ui="{ body: 'min-h-0 overflow-y-auto p-0 gap-0' }">
       <template #header>
-        <UDashboardNavbar title="Overview" :ui="{ root: 'border-b border-default' }" />
+        <UDashboardNavbar title="Overview" :toggle="{ 'aria-label': 'Open sections' }" :ui="{ root: 'border-0' }" />
       </template>
 
       <template #body>
-        <main class="px-5 py-8 sm:px-8 lg:px-12">
-          <div class="mx-auto w-full max-w-5xl">
-            <UPageHeader
-              class="max-w-2xl border-0 p-0"
-              title="Primitives"
-              description="Inspect the server features enabled for this project."
-            />
+        <main class="px-5 pb-16 pt-6 sm:px-8">
+          <div class="mx-auto w-full max-w-3xl">
+            <header class="mb-6">
+              <h1 class="text-xl font-semibold tracking-tight text-highlighted">
+                {{ installedNavigation?.projectName || "ViteHub Console" }}
+              </h1>
+              <p class="mt-1 text-sm text-muted">
+                {{ loading ? "Loading the enabled primitives…" : `${availableSections.length} ${availableSections.length === 1 ? "primitive" : "primitives"} enabled for this project.` }}
+              </p>
+            </header>
 
-            <div v-if="loading" class="mt-8 grid gap-3 sm:grid-cols-2">
-              <USkeleton v-for="index in 4" :key="index" class="h-28 rounded-xl" />
+            <div v-if="loading" class="grid gap-px">
+              <USkeleton v-for="index in 5" :key="index" class="h-12 rounded-md" />
             </div>
-            <UPageGrid
-              v-else-if="availableSections.length"
-              class="mt-8 gap-3"
-              :class="availableSections.length > 1 ? 'sm:grid-cols-2 lg:grid-cols-2' : 'max-w-lg'"
-            >
-              <UPageCard
-                v-for="section in availableSections"
-                :key="section.id"
-                :icon="section.icon"
-                :title="section.label"
-                :description="section.description"
-                :ui="{ root: 'cursor-pointer text-left', container: 'p-5 sm:p-5', leadingIcon: 'size-5' }"
-                as="button"
-                type="button"
-                variant="subtle"
-                :aria-label="`Open ${section.label}`"
-                @click="openSection(section.routeName)"
-              />
-            </UPageGrid>
+            <ul v-else-if="availableSections.length" class="vitehub-console__directory grid gap-px">
+              <li v-for="section in availableSections" :key="section.id">
+                <button
+                  class="group flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors hover:bg-elevated/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  type="button"
+                  :aria-label="`Open ${section.label}`"
+                  @click="openSection(section.routeName)"
+                >
+                  <UIcon :name="section.icon" class="size-4 shrink-0 text-muted opacity-80" />
+                  <span class="min-w-0 flex-1">
+                    <span class="block text-sm font-medium text-highlighted">{{ section.label }}</span>
+                    <span class="block truncate text-xs text-muted">{{ section.description }}</span>
+                  </span>
+                  <UIcon name="i-lucide-chevron-right" class="size-3.5 shrink-0 text-dimmed opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+                </button>
+              </li>
+            </ul>
             <UAlert
               v-else-if="error"
-              class="mt-8"
               color="error"
               variant="subtle"
               icon="i-ph-cloud-slash-light"
@@ -209,7 +185,7 @@ onBeforeUnmount(() => request++);
             />
             <UEmpty
               v-else
-              class="mt-8 min-h-72 rounded-xl border border-dashed border-default"
+              class="min-h-72"
               icon="i-ph-layout-light"
               title="No primitives enabled"
               description="Enable Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, or Schedule in the ViteHub configuration to add a Console page."
