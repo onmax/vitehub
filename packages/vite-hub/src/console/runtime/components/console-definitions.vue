@@ -79,7 +79,7 @@ function errorMessage(value: unknown): string | undefined {
 }
 
 async function runSelectedSchedule(): Promise<void> {
-  const name = selectedName.value;
+  const name = selectedRecord.value?.cells.schedule || selectedName.value;
   if (!name || !props.scheduleRunBase || !canRunSelected.value || runningSchedule.value) return;
   runningSchedule.value = name;
   try {
