@@ -1010,7 +1010,7 @@ describe("Agent Invocations", () => {
     await expect(invocations.getByRunId("stalled-store")).resolves.toBeUndefined()
   }, 10_000)
 
-  it.each([false, true])("bounds journal readiness before lifecycle hooks, failure: %s", async (fail) => {
+  it.each([false, true])("rejects stalled journal startup before lifecycle hooks, driver failure: %s", async (fail) => {
     const memory = createMemoryAgentInvocationStore()
     const invocations = defineAgentInvocations({ store: {
       ...memory,
@@ -1019,19 +1019,19 @@ describe("Agent Invocations", () => {
     const finish = vi.fn()
     const error = vi.fn()
     const failure = new Error("driver failed")
+    const run = vi.fn(() => { if (fail) throw failure; return "done" })
     const agent = defineAgent({
-      driver: { run: () => { if (fail) throw failure; return "done" } },
+      driver: { run },
       hooks: { "agent:error": error, "agent:finish": finish },
       invocations,
       runtime: false,
     })
 
     const invocation = runAgent(agent, runtime(`stalled-store-hook-${fail}`), {})
-    if (fail) await expect(invocation).rejects.toBe(failure)
-    else await expect(invocation).resolves.toBe("done")
-    const hook = fail ? error : finish
-    expect(hook).toHaveBeenCalledOnce()
-    expect(hook.mock.calls[0]?.[0].invocation).not.toHaveProperty("traceId")
+    await expect(invocation).rejects.toMatchObject({ code: "AGENT_R0973" })
+    expect(run).not.toHaveBeenCalled()
+    expect(error).not.toHaveBeenCalled()
+    expect(finish).not.toHaveBeenCalled()
   }, 5_000)
 
   it("does not block trace appends on stalled observation writes", async () => {
@@ -1226,7 +1226,7 @@ describe("Agent Invocations", () => {
     expect(record?.observations[0]?.trace?.id).toBe(first.traceId)
   })
 
-  it.each([false, true])("omits hook trace identity when duplicate creation resolves after readiness, failure: %s", async (fail) => {
+  it.each([false, true])("rejects unpersisted duplicate startup before lifecycle hooks, driver failure: %s", async (fail) => {
     const memory = createMemoryAgentInvocationStore()
     const context = { ...runtime(`late-duplicate-hook-${fail}`), trace: { id: "first-trace" } }
     const first = await bindAgentInvocations(defineAgentInvocations({ store: memory }), context, { deferClaim: true })
@@ -1247,8 +1247,9 @@ describe("Agent Invocations", () => {
     const finish = vi.fn()
     const error = vi.fn()
     const failure = new Error("driver failed")
+    const run = vi.fn(() => { if (fail) throw failure; return "done" })
     const agent = defineAgent({
-      driver: { run: () => { if (fail) throw failure; return "done" } },
+      driver: { run },
       hooks: { "agent:error": error, "agent:finish": finish },
       invocations,
       runtime: false,
@@ -1256,16 +1257,17 @@ describe("Agent Invocations", () => {
 
     const invocation = runAgent(agent, { ...context, trace: { id: "retry-trace" } }, {})
     try {
-      if (fail) await expect(invocation).rejects.toBe(failure)
-      else await expect(invocation).resolves.toBe("done")
-      const hook = fail ? error : finish
-      expect(hook).toHaveBeenCalledOnce()
-      expect(hook.mock.calls[0]?.[0].invocation).not.toHaveProperty("traceId")
+      await expect(invocation).rejects.toMatchObject({ code: "AGENT_R0973" })
+      expect(run).not.toHaveBeenCalled()
+      expect(error).not.toHaveBeenCalled()
+      expect(finish).not.toHaveBeenCalled()
 
       releaseCreate()
       await created
       expect((await invocations.getByRunId(context.run.runId))?.traceId).toBe(first.traceId)
-      expect(hook.mock.calls[0]?.[0].invocation).not.toHaveProperty("traceId")
+      expect(run).not.toHaveBeenCalled()
+      expect(error).not.toHaveBeenCalled()
+      expect(finish).not.toHaveBeenCalled()
     }
     finally {
       releaseCreate()
@@ -1418,7 +1420,8 @@ describe("Agent Invocations", () => {
       const completed = await invocations.getByRunId(`finalizer-race-${backend}`)
       expect(completed?.status).toBe("completed")
       rejectFailed = false
-      await vi.advanceTimersByTimeAsync(1_000)
+      // The losing finalizer retains its bounded retry under runtime custody.
+      await vi.advanceTimersByTimeAsync(60_000)
       await Promise.all(recoveryTasks)
       const settled = await invocations.getByRunId(`finalizer-race-${backend}`)
       expect(settled?.status).toBe("completed")
@@ -5004,7 +5007,8 @@ describe("Agent Invocations", () => {
 
     const first = runAgent(agent, runtime("delivery-1"), {})
     await vi.waitFor(async () => expect((await invocations.getByRunId("delivery-1"))?.status).toBe("running"))
-    await expect(runAgent(agent, runtime("delivery-1"), {})).resolves.toBe("done")
+    await expect(runAgent(agent, runtime("delivery-1"), {})).rejects.toThrow("Could not persist the Invocation running state.")
+    expect(calls).toBe(1)
     expect((await invocations.getByRunId("delivery-1"))?.status).toBe("running")
     release()
     await expect(first).resolves.toBe("done")
