@@ -61,13 +61,13 @@ const entries = computed<ConsoleSectionEntry[]>(() =>
 const selectedDefinition = computed(() =>
   definitions.value.find((definition) => definition.name === selectedName.value),
 );
+const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
 const canRunSelected = computed(() =>
-  Boolean(props.scheduleRunBase && selectedDefinition.value?.runnable),
+  Boolean(props.scheduleRunBase && (selectedDefinition.value?.runnable || selectedRecord.value?.runnable)),
 );
 const selectedRun = computed(() =>
   selectedName.value ? scheduleRuns.value[selectedName.value] : undefined,
 );
-const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
 const selectedEntry = computed(() => entries.value.find((entry) => entry.id === selectedName.value));
 
 function errorMessage(value: unknown): string | undefined {
@@ -79,12 +79,14 @@ function errorMessage(value: unknown): string | undefined {
 }
 
 async function runSelectedSchedule(): Promise<void> {
-  const name = selectedName.value;
+  const name = selectedRecord.value?.cells.schedule || selectedName.value;
   if (!name || !props.scheduleRunBase || !canRunSelected.value || runningSchedule.value) return;
-  runningSchedule.value = name;
+  const selection = selectedName.value;
+  if (!selection) return;
+  runningSchedule.value = selection;
   try {
     const run = await runConsoleScheduleDefinition(props.scheduleRunBase, name);
-    scheduleRuns.value = { ...scheduleRuns.value, [name]: run };
+    scheduleRuns.value = { ...scheduleRuns.value, [selection]: run };
   } finally {
     runningSchedule.value = undefined;
   }
@@ -475,6 +477,15 @@ onBeforeUnmount(() => request?.abort());
               </dl>
             </section>
             <UAlert
+              v-if="selectedRun"
+              :color="selectedRun.status === 'succeeded' ? 'success' : selectedRun.status === 'failed' || selectedRun.status === 'unavailable' ? 'error' : 'neutral'"
+              :icon="selectedRun.status === 'succeeded' ? 'i-ph-check-circle-light' : 'i-ph-warning-circle-light'"
+              :title="selectedRun.status === 'unavailable' ? 'Could not run this Schedule' : `Run ${selectedRun.status}`"
+              :description="consoleScheduleRunDescription(selectedRun)"
+              variant="subtle"
+            />
+            <UAlert
+              v-else
               color="neutral"
               icon="i-ph-info-light"
               title="Read-only records"

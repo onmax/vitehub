@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "ai";
 import { AgentInvocationList } from "../src/components/agent-invocation-list.ts";
 import { AgentInvocation, AgentInvocationInspector, workspaceArtifactPath } from "../src/components/agent-invocation.ts";
+import { invocationTimeline } from "../src/components/agent-invocation-timeline.ts";
 import { AgentMessageParts } from "../src/components/agent-message-parts.ts";
 import { AgentCapabilityInspector } from "../src/components/agent-capability-inspector.ts";
 import { AgentToolList } from "../src/components/agent-tool-list.ts";
@@ -118,6 +119,43 @@ describe("Agent Invocation UI", () => {
       formatter.mockRestore();
       warn.mockRestore();
       error.mockRestore();
+    }
+  });
+
+  it.each(["pending", "running"] as const)("hydrates %s work before starting its live elapsed timer", async (status) => {
+    const timestamp = "2026-09-05T00:00:00.000Z";
+    const invocation: AgentInvocationView = {
+      id: "live-hydration", status, traceId: "trace", createdAt: timestamp, startedAt: timestamp, updatedAt: timestamp,
+      observations: [{ name: "agent.message", type: "lifecycle", timestamp, sequence: 1, attributes: {
+        "message.content": "Run it.", "message.id": "user", "message.role": "user",
+      } }, { name: "agent.tool.start", type: "run", timestamp, sequence: 2, attributes: {
+        "tool.id": "shell", "tool.name": "shell", "tool.input": { command: "pnpm test" },
+      } }],
+    };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T00:00:01.000Z"));
+    const component = { render: () => h(AgentInvocation, { invocation }) };
+    const app = createSSRApp(component);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await renderToString(createSSRApp(component));
+      const container = document.createElement("div");
+      container.innerHTML = html;
+      expect(container.querySelector(".vh-invocation-work__elapsed")).toBeNull();
+      vi.setSystemTime(new Date("2026-09-05T00:00:02.000Z"));
+      app.mount(container);
+      await nextTick();
+      expect(container.querySelector(".vh-invocation-work__elapsed")?.textContent).toBe("0:02");
+      expect(warn.mock.calls.flat().join(" ")).not.toMatch(/hydration/i);
+      expect(error.mock.calls.flat().join(" ")).not.toMatch(/hydration/i);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(container.querySelector(".vh-invocation-work__elapsed")?.textContent).toBe("0:03");
+    } finally {
+      app.unmount();
+      warn.mockRestore();
+      error.mockRestore();
+      vi.useRealTimers();
     }
   });
 
@@ -1209,6 +1247,78 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.get('[role="status"]').text()).toBe("Message could not be copied");
   });
 
+  it.each([false, true])("preserves a distinct repeated user turn with commentary=%s", async (commentary) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      createdAt: timestamp, id: "repeated-user-turn", status: "completed", traceId: "trace", updatedAt: timestamp,
+      observations: [
+        { attributes: { "message.content": "Run it.", "message.id": "prompt", "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "First answer.", "message.id": "answer-1", "message.role": "assistant" }, name: "agent.message", sequence: 2, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Run it.", "message.id": "later-user", "message.role": "user" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Second answer.", "message.id": "answer-2", "message.role": "assistant" }, name: "agent.message", sequence: 4, timestamp, type: "lifecycle" },
+        ...(commentary ? [{ attributes: { "message.content": "Continuing.", "message.id": "commentary", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 5, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+
+    expect(wrapper.findAll('.vh-invocation-message[data-role="user"]').map(message => message.get(".vh-invocation-message__body").text()))
+      .toEqual(["Run it.", "Run it."]);
+    expect(work.text()).toContain("First answer.");
+    expect(wrapper.text()).toContain("Second answer.");
+    wrapper.unmount();
+  });
+
+  it.each([false, true])("hides the initial driver echo with independent IDs and commentary=%s", async (commentary) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      createdAt: timestamp, id: "driver-echo", status: "completed", traceId: "trace", updatedAt: timestamp,
+      observations: [
+        { attributes: { "input.messages": [{ id: "persisted-prompt", role: "user", parts: [{ type: "text", text: "Run it." }] }] }, name: "agent.invocation.started", sequence: 1, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Run it.", "message.id": "driver-event", "message.role": "user" }, name: "agent.input.message", sequence: 2, timestamp, type: "run" },
+        { attributes: { "message.content": "First answer.", "message.id": "answer-1", "message.role": "assistant" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Run it.", "message.id": "later-event", "message.role": "user" }, name: "agent.input.message", sequence: 4, timestamp, type: "run" },
+        { attributes: { "message.content": "Second answer.", "message.id": "answer-2", "message.role": "assistant" }, name: "agent.message", sequence: 5, timestamp, type: "lifecycle" },
+        ...(commentary ? [{ attributes: { "message.content": "Continuing.", "message.id": "commentary", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 6, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+    expect(wrapper.findAll('.vh-invocation-message[data-role="user"]').map(message => message.get(".vh-invocation-message__body").text()))
+      .toEqual(["Run it.", "Run it."]);
+    expect(wrapper.findAll(".vh-invocation-work__activities .vh-invocation-message[data-role=user]")).toHaveLength(1);
+    expect(wrapper.text()).toContain("First answer.");
+    expect(wrapper.text()).toContain("Second answer.");
+    wrapper.unmount();
+  });
+
+  it.each([true, false])("hides a repeated prompt record only with a shared identity=%s", async (sharedIdentity) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      createdAt: timestamp, id: "prompt-records", status: "completed", traceId: "trace", updatedAt: timestamp,
+      observations: [
+        { attributes: { "message.content": "Run it.", ...(sharedIdentity ? { "message.id": "prompt" } : {}), "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" },
+        { attributes: { "input.messages": [{ id: "prompt", role: "user", parts: [{ type: "text", text: "Run it." }] }] }, name: "agent.invocation.started", sequence: 2, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Done.", "message.id": "answer", "message.role": "assistant" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" },
+      ],
+    } satisfies AgentInvocationView;
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const work = wrapper.find(".vh-invocation-work__details");
+    if (work.exists()) {
+      if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+      work.element.open = true;
+      await work.trigger("toggle");
+    }
+    expect(wrapper.findAll('.vh-invocation-message[data-role="user"]')).toHaveLength(sharedIdentity ? 1 : 2);
+    wrapper.unmount();
+  });
+
   it("keeps adjacent completed lifecycle activities grouped", async () => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {
@@ -1791,8 +1901,7 @@ describe("Agent Invocation UI", () => {
     const row = mount(AgentInvocationInspector, { props: { invocation } })
       .get(".vh-invocation-timeline__row");
     expect(row.text()).toContain("+1m 59s · 1s");
-    expect(row.get(".vh-invocation-timeline__track span").attributes("style"))
-      .toContain("left: 98.5%");
+    expect(invocationTimeline(invocation)).toMatchObject([{ durationMs: 1_000, offsetMs: 118_999 }]);
   });
 
   it.each([
@@ -2220,7 +2329,7 @@ describe("Agent Invocation UI", () => {
     expect(invocationActivities(invocation).map(activity => [invocationActivityTitle(activity), activity.toolDisplay?.icon])).toEqual([
       ["Searched meals", "i-lucide-utensils"],
       ["Provider title", "i-lucide-utensils"],
-      ["Db_schema", undefined],
+      ["Db schema", undefined],
     ]);
 
     const UIcon = defineComponent({ props: { name: { required: true, type: String } }, setup: props => () => h("svg", { "data-name": props.name }) });
@@ -3473,7 +3582,7 @@ describe("Agent Invocation UI", () => {
     expect(prompt.get(".vh-invocation-message__content").attributes("data-collapsed")).toBeUndefined();
 
     expect(wrapper.get(".vh-invocation-work__title").text()).toBe("Worked for 2m 43s");
-    expect(wrapper.get(".vh-invocation-work__summary").element.firstElementChild?.classList).toContain("vh-invocation-work__disclosure");
+    expect(wrapper.get(".vh-invocation-work__summary").element.lastElementChild?.classList).toContain("vh-invocation-work__disclosure");
     expect(wrapper.find(".vh-invocation-work__summary .vh-invocation-framework-mark").exists()).toBe(false);
     expect(wrapper.get(".vh-invocation-framework-mark").attributes("style")).toBeUndefined();
     expect(wrapper.get(".vh-invocation-work__activities").text()).toContain("Checked the diff.");
@@ -3513,6 +3622,7 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.find(".vh-invocation-preparation__context a").exists()).toBe(false);
     expect(wrapper.get(".vh-invocation-preparation__context").text()).toContain("PR #1040");
     expect(wrapper.get(".vh-invocation-preparation__body").text()).toBe("Workspace checkout failed");
+    expect(wrapper.get(".vh-invocation-preparation__step").attributes("data-status")).toBe("failed");
     expect(wrapper.get(".vh-invocation-preparation__steps .vh-invocation-event__notice").text()).toContain("Some activity details were omitted.");
   });
 

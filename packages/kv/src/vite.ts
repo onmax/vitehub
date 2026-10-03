@@ -120,6 +120,7 @@ function serializeCloudflareRuntime(config: ResolvedKVModuleOptions): string {
     "",
     `const kvConfig = ${JSON.stringify(config, null, 2)}`,
     "const storages = new Map();",
+    "export async function disposeKVStores() { storages.clear(); }",
     "",
     "function resolveStoreConfig(name) {",
     "  const stores = kvConfig.stores || { default: kvConfig.store };",

@@ -1,3 +1,4 @@
+import ConsoleConnections from "../components/console-connections.vue";
 import ConsoleEnv from "../components/console-env.vue";
 import "./styles.css";
 import "@vite-hub/ui/styles.css";
@@ -15,12 +16,13 @@ import ConsoleDefinitions from "../components/console-definitions.vue";
 import ConsoleHome from "../components/console-home.vue";
 import ConsoleKv from "../components/console-kv.vue";
 import {
+  consoleDatabaseSchemaPath,
+  consoleDatabaseTablePath,
   consoleDatabasesSchemaPath,
   consoleDatabasesTablePath,
 } from "../console-route";
 import { consoleSectionRouteName, isConsoleSectionId } from "../sections";
 import App from "./app.vue";
-import { deferLucideIcons } from "./icons";
 import { createConsoleSectionLoader, loadConsoleNavigation, subscribeConsoleNavigation } from "./sections";
 
 const sectionsBase = "/api/_vitehub/console/sections";
@@ -30,6 +32,7 @@ const hostBase = "";
 const router = createRouter({
   history: createWebHistory("/_vitehub/"),
   routes: [
+    { component: ConsoleConnections, name: "vitehub-console-connections", path: "/connections", meta: { consoleSection: "connections", title: "Connections · ViteHub Console" }, props: { agentsBase: "/api/_vitehub/console/agents", definitionsBase: "/api/_vitehub/console/definitions", kvBase: "/api/_vitehub/console/kv", managementBase: "/_vitehub/connections", searchBase: "/api/_vitehub/console/search", sectionsBase } },
     { component: ConsoleEnv, name: "vitehub-console-env", path: "/env", meta: { consoleSection: "env", title: "Env · ViteHub Console" }, props: { agentsBase: "/api/_vitehub/console/agents", definitionsBase: "/api/_vitehub/console/definitions", kvBase: "/api/_vitehub/console/kv", envBase: "/api/_vitehub/console/env", managementBase: "/_vitehub/env/manage", searchBase: "/api/_vitehub/console/search", sectionsBase } },
     {
       component: ConsoleConnections,
@@ -124,6 +127,36 @@ const router = createRouter({
       },
     },
     {
+      component: ConsoleDatabase,
+      name: "vitehub-console-database-schema",
+      path: consoleDatabaseSchemaPath,
+      meta: { consoleSection: "database", title: "Schema · ViteHub Console" },
+      props: {
+        agentsBase: "/api/_vitehub/console/agents",
+        databaseBase: "/api/_vitehub/console/database",
+        definitionsBase: "/api/_vitehub/console/definitions",
+        kvBase: "/api/_vitehub/console/kv",
+        searchBase: "/api/_vitehub/console/search",
+        sectionsBase,
+        view: "schema",
+      },
+    },
+    {
+      component: ConsoleDatabase,
+      name: "vitehub-console-database",
+      path: consoleDatabaseTablePath,
+      meta: { consoleSection: "database", title: "Database · ViteHub Console" },
+      props: {
+        agentsBase: "/api/_vitehub/console/agents",
+        databaseBase: "/api/_vitehub/console/database",
+        definitionsBase: "/api/_vitehub/console/definitions",
+        kvBase: "/api/_vitehub/console/kv",
+        searchBase: "/api/_vitehub/console/search",
+        sectionsBase,
+        view: "data",
+      },
+    },
+    {
       component: ConsoleKv,
       name: "vitehub-console-kv",
       path: "/kv",
@@ -164,6 +197,7 @@ const router = createRouter({
         definitionsBase: "/api/_vitehub/console/definitions",
         kvBase: "/api/_vitehub/console/kv",
         searchBase: "/api/_vitehub/console/search",
+        section: "databases",
         sectionsBase,
         view: "schema",
       },
@@ -179,6 +213,7 @@ const router = createRouter({
         definitionsBase: "/api/_vitehub/console/definitions",
         kvBase: "/api/_vitehub/console/kv",
         searchBase: "/api/_vitehub/console/search",
+        section: "databases",
         sectionsBase,
         view: "data",
       },
@@ -203,8 +238,8 @@ function addContributedRoutes(navigation) {
         agentsBase: "/api/_vitehub/console/agents",
         definitionsBase: "/api/_vitehub/console/definitions",
         details,
-        scheduleRunBase: "/api/_vitehub/console/schedule-run",
         kvBase: "/api/_vitehub/console/kv",
+        scheduleRunBase: "/api/_vitehub/console/schedule-run",
         searchBase: "/api/_vitehub/console/search",
         sectionsBase,
       },
@@ -225,7 +260,9 @@ router.beforeEach(async (to) => {
     // Contributed section routes exist only after the navigation response arrives.
     const navigation = await loadConsoleNavigation(sectionsBase);
     if (navigation) addContributedRoutes(navigation);
-    return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" };
+    return router.resolve(to.fullPath).matched.length > 0
+      ? to.fullPath
+      : { name: "vitehub-console" };
   }
   const section = to.meta.consoleSection;
   if (!isConsoleSectionId(section)) return;
@@ -243,14 +280,8 @@ router.beforeEach(async (to) => {
 router.afterEach((to) => {
   document.title = String(to.meta.title ?? "ViteHub Console");
 });
-deferLucideIcons();
 createApp(App)
   .use(router)
   .use(ui, { router: () => router.currentRoute.value })
   .use(createViteHubUI())
   .mount("#app");
-
-// KaTeX styles embed their fonts. Load them after the first render instead of in the blocking stylesheet.
-const loadMathStyles = () => void import("katex/dist/katex.min.css");
-if ("requestIdleCallback" in window) window.requestIdleCallback(loadMathStyles, { timeout: 2_000 });
-else setTimeout(loadMathStyles, 0);

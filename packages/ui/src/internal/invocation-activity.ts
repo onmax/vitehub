@@ -1,6 +1,6 @@
 import type { TraceEventLogEntry } from "@vite-hub/runtime";
 import type { AgentInvocationView, AgentToolInspection } from "../types.ts";
-import { hasRuntimeType } from "./runtime-type.ts";
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 type InvocationActivityKind =
   | "action"
@@ -240,8 +240,25 @@ function payloadDetail(attributes: Record<string, unknown>): string | undefined 
   return stringAttribute(attributes, "tool.detail", "tool.output.summary", "vitehub.activity.detail");
 }
 
+/** Sentences for common snake_case tool identifiers. Other identifiers keep their words with the underscores removed. */
+const toolTitles: Record<string, string> = {
+  apply_patch: "Changed files",
+  edit_file: "Changed files",
+  exec_command: "Ran command",
+  grep_search: "Searched code",
+  list_dir: "Listed directory",
+  read_file: "Read file",
+  run_command: "Ran command",
+  web_fetch: "Fetched page",
+  web_search: "Searched the web",
+  write_file: "Changed files",
+};
+
 function normalizedTitle(value: string): string {
-  const title = value.replace(/\s+(?:complete|completed)$/i, "").trim();
+  const trimmed = value.replace(/\s+(?:complete|completed)$/i, "").trim();
+  const known = toolTitles[trimmed.toLocaleLowerCase()];
+  if (known) return known;
+  const title = /^[a-z0-9]+(?:_[a-z0-9]+)+$/i.test(trimmed) ? trimmed.replaceAll("_", " ") : trimmed;
   return title ? title[0]!.toUpperCase() + title.slice(1) : "Activity";
 }
 
@@ -359,6 +376,7 @@ export function invocationActivities(invocation: AgentInvocationView): Invocatio
           ...observation,
           attributes: {
             "message.content": body,
+            "message.origin": "invocation-input",
             "message.id": value ? stringAttribute(value, "id") ?? key : key,
             "message.role": role,
             ...(originalAttributes["vitehub.observation.truncated"] === true
@@ -549,6 +567,11 @@ export function latestInvocationTokens(activities: readonly InvocationActivity[]
   return snapshots.length ? Math.max(...snapshots) : undefined;
 }
 
+/** The short detail of an activity: its command, path, or recorded detail. */
+export function invocationActivityDetail(activity: InvocationActivity): string | undefined {
+  return activity.preview ?? stringAttribute(activity.attributes, "vitehub.activity.detail");
+}
+
 export function invocationActivityTitle(activity: InvocationActivity): string {
   const explicit = activity.attributes["vitehub.activity.title"];
   if (hasRuntimeType(explicit, "string") && explicit.trim()) return explicit.trim();
@@ -572,6 +595,7 @@ export function invocationActivityTitle(activity: InvocationActivity): string {
   if (activity.kind === "reasoning") return "Thinking";
   if (activity.kind === "model") return "Thinking";
   if (activity.kind === "run") return activity.name.endsWith(".finish") ? "Finished session" : "Started session";
+  if (activity.kind === "error" && activity.name.startsWith("agent.invocation.")) return "Session failed";
   return normalizedTitle(activity.name.replace(/\.(start|finish|error|decision|recorded)$/, "").replaceAll(".", " "));
 }
 

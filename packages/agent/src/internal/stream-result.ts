@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "./runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 export type AsyncIterableReadableStream<T> = AsyncIterable<T> & ReadableStream<T>
 

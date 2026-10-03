@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./runtime-type.ts"
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { cp, mkdir, readFile, readdir, rename, rm, rmdir, symlink, writeFile } from "node:fs/promises"

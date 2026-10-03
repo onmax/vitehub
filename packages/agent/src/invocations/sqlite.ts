@@ -1,7 +1,7 @@
 import { normalizeAgentInvocationListOptions } from "./list-options.ts"
 import { createClient } from "@libsql/client"
 
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { applyAgentInvocationStoreUpdate } from "../invocations.ts"
 import { searchableAgentInvocationText } from "./search.ts"
 import { filteredObservationRecord } from "./observation-projection.ts"

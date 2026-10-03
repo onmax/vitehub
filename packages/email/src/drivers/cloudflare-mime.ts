@@ -130,4 +130,3 @@ export function encodeCloudflareMimeMessage(message: EmailMessage, id: string): 
     "",
   ].join("\r\n");
 }
-
