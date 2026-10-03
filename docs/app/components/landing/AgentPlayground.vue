@@ -284,7 +284,7 @@ const agentProperties: Record<AgentPropertyKey, {
     icon: "i-lucide-workflow",
     label: "runtime",
     title: "Execution runtime",
-    to: "/docs/server-primitives/workflows/",
+    to: "/docs/workflows/",
   },
   workspace: {
     description: "Provides the persistent file tree and selects where the Agent's working state is stored.",
@@ -298,7 +298,7 @@ const agentProperties: Record<AgentPropertyKey, {
     icon: "i-lucide-blocks",
     label: "capabilities",
     title: "Capabilities",
-    to: "/docs/capabilities/official-capabilities/",
+    to: "/docs/agents/capabilities/official/",
   },
   channels: {
     description: "Connects the Agent to triggers and delivery surfaces such as GitHub, Slack, and HTTP.",

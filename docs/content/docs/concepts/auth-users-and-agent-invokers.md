@@ -3,7 +3,6 @@ title: Auth Users and Agent Invokers
 description: Understand how application identity becomes trusted invocation identity.
 navigation.order: 14
 navigation.group: Application model
-navigation.lanes: [agents]
 icon: i-lucide-user-check
 ---
 
@@ -49,4 +48,4 @@ export default defineAgent({
 
 Don't put secrets or raw session payloads in `meta`.
 
-Read [Auth](/docs/server-primitives/auth) for session setup and [Access](/docs/capabilities/access) for decisions based on invoker identity.
+Read [Auth](/docs/auth) for session setup and [Access](/docs/agents/capabilities/access) for decisions based on invoker identity.

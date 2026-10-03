@@ -17,7 +17,7 @@ Each docs page shows **Copy page** next to its title. The arrow beside it opens 
 | --- | --- |
 | Copy page | Copies the Markdown of the page to the clipboard. |
 | View as Markdown | Opens the raw Markdown page in a new tab. |
-| Copy Markdown URL | Copies the raw URL, for example `https://vitehub.dev/raw/docs/server-primitives/kv.md`. |
+| Copy Markdown URL | Copies the raw URL, for example `https://vitehub.dev/raw/docs/kv.md`. |
 | Open in ChatGPT | Opens ChatGPT with a prompt that references the raw URL. |
 | Open in Claude | Opens Claude with the same prompt. |
 | Copy MCP server URL | Copies `https://vitehub.dev/mcp`. |
@@ -26,7 +26,7 @@ Each docs page shows **Copy page** next to its title. The arrow beside it opens 
 **Open in ChatGPT** and **Open in Claude** start a new chat with this prompt:
 
 ```txt [Prompt]
-Read https://vitehub.dev/raw/docs/server-primitives/kv.md from the ViteHub documentation. Use it as context to answer my questions and to help me apply it in my project.
+Read https://vitehub.dev/raw/docs/kv.md from the ViteHub documentation. Use it as context to answer my questions and to help me apply it in my project.
 ```
 
 The chat tool fetches the published page from `vitehub.dev`. On a local or preview copy of the docs, **Copy page** and **View as Markdown** use the raw page of that copy.
@@ -59,7 +59,7 @@ Start with the compact index, select one raw page, and keep its URL with the sup
 
 Add a second page only when the first page links to a required concept or reference.
 This keeps the task context small and makes documentation drift easier to find.
-For a smaller index, use `https://vitehub.dev/llms/agents.txt` or `https://vitehub.dev/llms/server-primitives.txt`.
+Use the links in `https://vitehub.dev/llms.txt` to select a focused product or reference page.
 
 ## Paste context into another tool
 

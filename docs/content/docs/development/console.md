@@ -86,7 +86,7 @@ This view does not read secret values, call external providers, or check credent
 
 ## Manage Connections
 
-Open Connections to see each [Connection](/docs/server-primitives/connections) from `server/connections/`, with its provider, account, status, and token expiry. Select a Connection to open its details:
+Open Connections to see each [Connection](/docs/connections) from `server/connections/`, with its provider, account, status, and token expiry. Select a Connection to open its details:
 
 - **Connection** shows the account, scopes, and last error. **Connect** or **Reconnect** starts the provider consent flow and returns to the Console. For an API key Connection, **Set key** or **Replace key** stores a new key. The Console sends it only over HTTPS or to a loopback host. **Refresh token** refreshes the access token. **Disconnect** deletes the grant. It also revokes the grant at the provider when the provider supports revocation.
 - **Access** shows the rules from the Connection Definition for server code, routes, and Agents.
@@ -277,7 +277,7 @@ For `host-managed`, your middleware must authenticate and authorize all `/_viteh
 
 ### Manage Connections
 
-Explicit `access` and `exposure` configurations also keep [Connections](/docs/server-primitives/connections) read-only. Console users can list Connections, access rules, and activity. Set `manageConnections: true` to let them connect, set API keys, refresh, and disconnect:
+Explicit `access` and `exposure` configurations also keep [Connections](/docs/connections) read-only. Console users can list Connections, access rules, and activity. Set `manageConnections: true` to let them connect, set API keys, refresh, and disconnect:
 
 ```ts
 console: { access: 'auth', manageConnections: true }
@@ -328,7 +328,7 @@ export default defineNuxtConfig({
 
 Do not use `robots.txt` as access control. A crawler can ignore it, and a disallowed URL may still be listed without its contents.
 
-Read [Auth](/docs/server-primitives/auth#authorize-access-routes) for sign-in redirects and the complete callback contract.
+Read [Auth](/docs/auth#authorize-access-routes) for sign-in redirects and the complete callback contract.
 
 ## Know what the Console stores
 
@@ -393,7 +393,7 @@ Invocation journals are metadata-only by default. In that mode, Captured setup i
 
 Open **Usage** in the Console sidebar to inspect provider-reported tokens and cost across the past 24 hours, 7 days, 30 days, or 90 days. The dashboard groups completed Agent Invocations by time and model. A warning appears when the bounded journal scan reaches 10,000 records or a recorded finish event is truncated, so partial totals are never presented as complete.
 
-Session details also show the normalized usage record for one invocation. Add the [Usage Capability](/docs/capabilities/usage) when the provider needs an explicit usage request, estimated cost, or a typed Agent Usage Record at finish. Providers that report usage without the Capability still appear because the recorded finish event is authoritative.
+Session details also show the normalized usage record for one invocation. Add the [Usage Capability](/docs/agents/capabilities/usage) when the provider needs an explicit usage request, estimated cost, or a typed Agent Usage Record at finish. Providers that report usage without the Capability still appear because the recorded finish event is authoritative.
 
 The Console does not calculate missing provider data. Token counts, model metadata, and provider-reported cost remain absent when the provider does not report them. Global and per-bucket model breakdowns sort by descending total tokens, then by model name.
 
@@ -430,4 +430,4 @@ Images must be PNG, JPEG, WebP, or GIF, with at most ten images and 10 MiB combi
 
 Open the right panel's tab chooser and select **Capabilities**. Select a Capability to inspect its recorded data and tools. MCP groups tools by server and preserves original tool names and schemas. Title shows its generation settings, progress, and result. Other Capabilities have a default tools and configuration view.
 
-The panel reads the selected Invocation's snapshots. It does not run MCP discovery or title generation. Missing or truncated capture is marked. Developers can [contribute a read-only view](/docs/capabilities/custom-capabilities#contribute-an-inspection-view) with the shared JSON Render component catalog.
+The panel reads the selected Invocation's snapshots. It does not run MCP discovery or title generation. Missing or truncated capture is marked. Developers can [contribute a read-only view](/docs/agents/capabilities/custom#contribute-an-inspection-view) with the shared JSON Render component catalog.

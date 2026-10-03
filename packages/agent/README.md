@@ -108,7 +108,7 @@ Set `defineAgent({ intercept })` to finish an Invocation before the Driver runs.
 
 ## Custom Capability tools
 
-Custom Capability tools infer their handler input from inline Standard Schema validators. Schema transforms and optional outputs keep their types. A mismatched handler is a type error. Raw JSON Schema needs an explicit handler input type. Use `defineCapability<Config>()({...})` when you set the runtime config type. See the [custom Capability guide](https://vitehub.dev/docs/capabilities/custom-capabilities).
+Custom Capability tools infer their handler input from inline Standard Schema validators. Schema transforms and optional outputs keep their types. A mismatched handler is a type error. Raw JSON Schema needs an explicit handler input type. Use `defineCapability<Config>()({...})` when you set the runtime config type. See the [custom Capability guide](https://vitehub.dev/docs/agents/capabilities/custom).
 
 Tools can declare `title`, a short past-tense label such as `Searched meals`, and `icon`, an Iconify name such as `i-lucide-utensils`. Tool events use `title` when the driver gives none. `inspectAgentTools()` records them as `label` and `icon`, and metadata-only journals keep both. The model does not receive them. Built-in `db`, `kv`, and `blob` tools and Workspace `materialize_sources` declare both.
 
@@ -690,7 +690,7 @@ Capability definitions can declare `inspection: { label, view? }`. Lifecycle hoo
 
 MCP records server discovery and tool provenance. Title records generation settings, progress, and its result. The Console's Capabilities tab reads these snapshots without invoking either capability. Other capabilities use the default tools/configuration view. Set the Invocation journal's `configuration` to `"content"` to retain inspection state and views independently of other trace content. Metadata-only capture keeps labels. Existing redaction and observation bounds apply.
 
-See [custom capability inspection](https://vitehub.dev/docs/capabilities/custom-capabilities#contribute-an-inspection-view) for the catalog and a complete example.
+See [custom capability inspection](https://vitehub.dev/docs/agents/capabilities/custom#contribute-an-inspection-view) for the catalog and a complete example.
 
 
 ### Instruction templates

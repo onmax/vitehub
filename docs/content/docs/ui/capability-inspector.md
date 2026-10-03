@@ -88,4 +88,4 @@ Tools match a Capability through their `capabilityId`.
 
 - [Tool list](/docs/ui/tool-list) renders the tool contracts inside each Capability.
 - [Invocation inspector](/docs/ui/invocation-inspector) shows the rest of the configuration.
-- [Capabilities](/docs/capabilities) explains how Agents receive operations.
+- [Capabilities](/docs/agents/capabilities) explains how Agents receive operations.

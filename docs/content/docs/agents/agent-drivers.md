@@ -95,7 +95,7 @@ export default defineAgent({
 })
 ```
 
-`credentials` accepts the contents of Codex `auth.json`, a sealed Server Env value, or an invocation-time resolver. This lets a Kubernetes secret or an [Env provider](/docs/server-primitives/env#read-external-env-storage) supply auth without startup file plumbing. ViteHub resolves it for each invocation, validates the JSON object, and projects it as a `0600` file inside a `0700` Codex Home. Provisioned credentials require a POSIX host; ViteHub rejects them on Windows because these file modes cannot guarantee owner-only access there. The value never enters the provider environment or inspection output.
+`credentials` accepts the contents of Codex `auth.json`, a sealed Server Env value, or an invocation-time resolver. This lets a Kubernetes secret or an [Env provider](/docs/env#read-external-env-storage) supply auth without startup file plumbing. ViteHub resolves it for each invocation, validates the JSON object, and projects it as a `0600` file inside a `0700` Codex Home. Provisioned credentials require a POSIX host; ViteHub rejects them on Windows because these file modes cannot guarantee owner-only access there. The value never enters the provider environment or inspection output.
 
 A named `credentialProfile` shares one writable Home between Drivers in the process and stores it at `.vitehub/data/codex/<credentialProfile>`. ViteHub serializes Codex runtime access to the profile, so one Codex process owns that Home at a time. Codex can refresh `auth.json` there. ViteHub fingerprints the last external seed, preserves Codex's refreshed file while that seed is unchanged, and replaces the file on the next invocation when the resolver returns a rotated value.
 
@@ -350,7 +350,7 @@ export default defineAgent({
 
 State, instructions, and criteria accept JSON values. Root numbers and booleans become text for the `advocaat` Entry contract. Numbers and booleans inside objects or arrays stay native. Score legends retain the original level descriptions.
 
-`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/capabilities/llm-gate) or [`llmRoute()`](/docs/capabilities/llm-route) without a `model`, the decision also uses Jev.
+`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/agents/capabilities/llm-gate) or [`llmRoute()`](/docs/agents/capabilities/llm-route) without a `model`, the decision also uses Jev.
 
 ### Provider exit evidence
 

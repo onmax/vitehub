@@ -59,8 +59,8 @@ describe("landing page", () => {
     expect(agentCode).toContain('import { kv } from "vite-hub/agent/capabilities"');
     expect(agentCode).toContain("capabilities: [kv(");
     expect(`${routeCode}\n${agentCode}`).not.toContain("@vite-hub/");
-    expect(sharedApi.primitiveTo).toBe("/docs/server-primitives/kv");
-    expect(sharedApi.capabilityTo).toBe("/docs/capabilities/kv");
+    expect(sharedApi.primitiveTo).toBe("/docs/kv");
+    expect(sharedApi.capabilityTo).toBe("/docs/kv/agent-capability");
   });
 
   it("links NuxtHub users to a migration guide with real import paths", async () => {

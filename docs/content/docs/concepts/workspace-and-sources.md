@@ -48,4 +48,4 @@ Workspace Scope narrows the visible tree for one invocation. The trusted host or
 
 Use `useWorkspace()` from server code to inspect the file tree. Generated Workspace and Source metadata lists discovered names and request descriptors without exposing provider credentials.
 
-Read [Workspace](/docs/server-primitives/workspace), [Source](/docs/server-primitives/source), and [Workspace context](/docs/agents/workspace-context) for the APIs.
+Read [Workspace](/docs/workspace), [Source](/docs/source), and [Workspace context](/docs/agents/workspace-context) for the APIs.

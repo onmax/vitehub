@@ -14,7 +14,7 @@ The server has two read-only tools:
 | Tool | Result |
 | --- | --- |
 | `list-pages` | The title, path, description, and URL of every documentation page. |
-| `get-page` | The title, description, URL, and Markdown content of one page. Use a path from `list-pages`, for example `/docs/server-primitives/kv`. |
+| `get-page` | The title, description, URL, and Markdown content of one page. Use a path from `list-pages`, for example `/docs/kv`. |
 
 The server reads the documentation only. It does not connect to your application and does not run ViteHub operations.
 
@@ -106,7 +106,7 @@ Ask the agent to use both tools:
 Use the vitehub MCP server to list the pages about Queue, then read the Queue page and summarize how to send a message.
 ```
 
-The agent calls `list-pages`, selects `/docs/server-primitives/queue`, and calls `get-page` with that path.
+The agent calls `list-pages`, selects `/docs/queue`, and calls `get-page` with that path.
 
 To check the endpoint without an MCP client, request the tool list:
 

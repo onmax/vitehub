@@ -6,9 +6,8 @@ const isSupportMatrix = computed(
 );
 
 const navLinks = [
-  { label: "Agents", to: "/docs/agents" },
-  { label: "Primitives", to: "/docs/server-primitives" },
   { label: "Docs", to: "/docs" },
+  { label: "Agents", to: "/docs/agents" },
   { label: "Examples", to: "/examples" },
   { label: "Blog", to: "/blog" },
 ];
@@ -18,7 +17,7 @@ const mobileLinks = [
   ...navLinks,
 ];
 
-// The docs drawer already lists Agents, Primitives, and Docs pages.
+// The docs drawer already lists the docs product pages.
 const docsMobileLinks = mobileLinks.filter((link) => !link.to.startsWith("/docs"));
 
 // Touch screens get taller header icon buttons. The 44px header and a 320px row still fit.

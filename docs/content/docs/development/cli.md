@@ -590,7 +590,7 @@ VERCEL_TOKEN=... VERCEL_PROJECT_ID=... pnpm vitehub provision run --provider ver
 ## Next steps
 
 - Use [Agent Evals](/docs/agents/evals) for behaviour checks.
-- Use [Workspace](/docs/server-primitives/workspace) for Workspace Sessions and write access.
+- Use [Workspace](/docs/workspace) for Workspace Sessions and write access.
 - Use [Provisioning](/docs/development/provisioning) for provider resource ids.
 - Use [Config options](/docs/reference/config-options) for package integration switches.
 
