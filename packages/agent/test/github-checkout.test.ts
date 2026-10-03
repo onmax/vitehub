@@ -168,6 +168,46 @@ process.exit(result.status ?? 1);
 
 }, 30_000)
 
+it.each(['darwin', 'win32'])('uses disposable checkouts without touching a configured pool on %s', async (platform) => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const adopted = join(pool, 'YWNtZQ--YmFzZQ-pr-1-ABC123')
+  await mkdir(adopted, { recursive: true })
+  await writeFile(join(adopted, 'marker'), 'untouched')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const originalPlatform = process.platform
+  const host = (() => {
+    Object.defineProperty(process, 'platform', { value: platform })
+    try {
+      return createGitHubHost({
+        checkouts: { root: pool },
+        credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+      })
+    }
+    finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+    }
+  })()
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let previousPath = ''
+  for (let pass = 0; pass < 2; pass++) {
+    await host.withPullRequestCheckout(pullRequest, async ({ path }) => {
+      expect(path.startsWith(`${pool}/`)).toBe(false)
+      expect(path).not.toBe(previousPath)
+      expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
+      previousPath = path
+    })
+    await expect(access(previousPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+  expect(await readdir(pool)).toEqual(['YWNtZQ--YmFzZQ-pr-1-ABC123'])
+  expect(await readFile(join(adopted, 'marker'), 'utf8')).toBe('untouched')
+}, 30_000)
+
 it('reuses a pooled checkout, keeps ignored files, and resets the rest', async () => {
   const root = await mkdtemp(join(tmpdir(), 'vitehub-checkout-pool-'))
   roots.push(root)

@@ -41,7 +41,7 @@ export interface GitHubHostOptions {
    * Keeps pull request checkouts under `root` and reuses them per pull request. Reuse keeps ignored
    * files, such as dependencies and build output, resets everything else, and fetches only the new head.
    * Reuse removes initialized submodules, including their ignored files. Initialize them again as needed.
-   * Use it only when one process owns `root`.
+   * Use it only when one process owns `root`. Pooling requires Linux; other hosts use temporary checkouts.
    */
   checkouts?: { root: string }
   credentials: (context: GitHubHostCredentialContext) => GitHubHostCredentials | Promise<GitHubHostCredentials>
@@ -361,10 +361,6 @@ async function renameThroughParent(source: string, target: string, retainedTarge
   // Resolve the source and destination parents through directory handles. A
   // concurrent process can replace a path component after lstat, but it cannot
   // replace the directory represented by an open descriptor.
-  if (process.platform !== "linux") {
-    await rename(source, target)
-    return
-  }
   const sourceParent = await open(dirname(source), "r")
   const targetParent = retainedTargetParent ?? (dirname(target) === dirname(source)
     ? sourceParent
@@ -474,7 +470,9 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
   if (options.checkouts !== undefined && (!hasRuntimeType(options.checkouts?.root, "string") || !options.checkouts.root.trim())) {
     throw agentDiagnostics.AGENT_R0748({ message: "GitHub host checkouts.root must be a directory path." })
   }
-  const checkoutPool = options.checkouts ? createCheckoutPool(resolve(options.checkouts.root)) : undefined
+  // Linux provides descriptor-relative rename through /proc. Other hosts use
+  // disposable checkouts because path-based restoration can follow swapped parents.
+  const checkoutPool = options.checkouts && process.platform === "linux" ? createCheckoutPool(resolve(options.checkouts.root)) : undefined
   const reserve = options.reserve ?? 1_500
   const cacheMs = options.cacheMs ?? 15_000
   const graphQLCheckTimeout = options.graphQLCheckTimeout ?? GITHUB_GRAPHQL_CHECK_TIMEOUT_MS
