@@ -363,7 +363,7 @@ function isAssertionTypeArguments(source: string, index: number) {
   }
   // Primitive type keywords end an assertion before a comparison, rather than
   // accepting type arguments like a named type reference does.
-  if (!qualified && /^(?:any|bigint|boolean|const|never|null|number|object|string|symbol|undefined|unknown|void)$/.test(typeName)) return false
+  if (!qualified && /^(?:any|bigint|boolean|const|false|never|null|number|object|string|symbol|this|true|undefined|unknown|void)$/.test(typeName)) return false
   const end = current + 1
   while (isIdentifierChar(source[current])) current -= 1
   const keyword = source.slice(current + 1, end)

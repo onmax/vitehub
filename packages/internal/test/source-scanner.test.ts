@@ -102,6 +102,9 @@ describe("source scanner", () => {
   it.each([
     "value as number < lower, upper > 0",
     "value satisfies number < lower, upper > 0",
+    "value as true < lower, upper > false",
+    "value as false < lower, upper > true",
+    "value as this < lower, upper > true",
     "object.as.Record < lower, upper > 0",
     "object.satisfies.Record < lower, upper > 0",
     "value as const, left < lower, upper > 0",
