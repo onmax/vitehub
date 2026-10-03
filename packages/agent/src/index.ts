@@ -4429,7 +4429,9 @@ async function createAgentInvocationContext<
         throw agentDiagnostics.AGENT_R0711({ message: "[vitehub] Provider Agent timeout must be no greater than 2,147,483,647 milliseconds." })
       }
       const timeoutSignal = AbortSignal.timeout(input.timeout)
+      const callerAbortSignal = agentInvocationCallerAbortSignal(input)
       input = { ...input, abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, timeoutSignal]) : timeoutSignal }
+      markAgentInvocationCallerAbortSignal(input, callerAbortSignal)
     }
     const resolveReadiness = async () => {
       if (driverKind !== "provider" || !definition?.status) return undefined
