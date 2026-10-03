@@ -815,6 +815,13 @@ it.each([
   expect(definition?.workspace).toBeUndefined()
 })
 
+it("ignores reads through helper-returned global conversions", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; function globals() { return globalThis }; const value = globals().String; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
 it("stops conditional aliases at semicolon-free initializer boundaries", async () => {
   const definition = await discover(`import { defineAgent } from "vite-hub/agent"
 import { join } from "node:path"

@@ -1243,17 +1243,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
     const reassignedGlobalConversions = new Set<string>()
     // Calls to local helpers that directly return globalThis can hide a
-    // conversion write behind the call expression.
+    // conversion write behind the call expression. Only assignments taint the
+    // conversion; reads such as `globals().String` remain harmless.
     for (let index = 0; index < tokens.length; index++) {
       if (tokens[index] !== "function" || !tokens[index + 1]) continue
       const name = tokens[index + 1]!
       const end = tokens.indexOf("}", index + 2)
       if (end < 0 || !tokens.slice(index, end).includes("globalThis")) continue
-      for (let cursor = 0; cursor + 4 < tokens.length; cursor++) {
-        if (tokens[cursor] === name && tokens[cursor + 1] === "(" && tokens[cursor + 2] === ")" && tokens[cursor + 3] === ".") {
-          const property = tokens[cursor + 4]
-          if (["String", "Number", "Boolean"].includes(property!)) reassignedGlobalConversions.add(property!)
-        }
+      for (let cursor = 0; cursor + 5 < tokens.length; cursor++) {
+        if (tokens[cursor] !== name || tokens[cursor + 1] !== "(" || tokens[cursor + 2] !== ")" || tokens[cursor + 3] !== ".") continue
+        const property = tokens[cursor + 4]
+        if (["String", "Number", "Boolean"].includes(property!) && assignmentOperator(cursor + 5)) reassignedGlobalConversions.add(property!)
       }
     }
     for (let index = 0; index < tokens.length; index++) {
