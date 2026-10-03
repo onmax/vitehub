@@ -44,8 +44,10 @@ function isPackageResolutionMiss(error: unknown): boolean {
 // Node then fails while it reads the nearest package.json. Try the next candidate instead.
 function isUnreadableCandidate(error: unknown): boolean {
   // SAFETY: Node module resolution failures expose their stable error code through ErrnoException.
-  const code = (error as NodeJS.ErrnoException | undefined)?.code
-  return code === "ERR_INVALID_PACKAGE_CONFIG" || code === "EACCES" || code === "EPERM"
+  const failure = error as NodeJS.ErrnoException | undefined
+  if (failure?.code === "EACCES" || failure?.code === "EPERM") return true
+  return failure?.code === "ERR_INVALID_PACKAGE_CONFIG"
+    && /permission denied|operation not permitted/i.test(failure.message)
 }
 
 function resolvePackageJson(name: string, resolveFrom: string): string | undefined {

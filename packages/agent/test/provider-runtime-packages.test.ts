@@ -128,6 +128,16 @@ describe("Provider runtime packages", () => {
       .toThrow("Cannot package @anthropic-ai/claude-agent-sdk")
   })
 
+  it.each(["codex", "claude-code"] as const)("preserves malformed package errors for %s", async (provider) => {
+    const { rootDir } = await createProject({ claude: true, codex: true })
+    const packageName = provider === "codex" ? "@openai/codex" : "@anthropic-ai/claude-agent-sdk"
+    await writeFile(join(rootDir, "node_modules", ...packageName.split("/"), "package.json"), "{invalid json")
+
+    expect(() => resolveInstalledProviderExecutable(provider, {
+      arch: "x64", libc: "glibc", platform: "linux", resolveFrom: join(rootDir, "package.json"),
+    })).toThrow(expect.objectContaining({ code: "ERR_INVALID_PACKAGE_CONFIG" }))
+  })
+
   // Root bypasses directory permissions, so the unreadable build root cannot be reproduced.
   it.skipIf(process.getuid?.() === 0)("skips a build root that the runtime user cannot read", async () => {
     const codexTarget = "@openai/codex-linux-x64"
