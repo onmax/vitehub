@@ -725,7 +725,10 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
     await writeFile(join(path, 'nested/file'), 'dirty')
     await writeFile(join(path, 'nested/untracked'), 'stale')
   })
-  await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: secondSha }, async ({ path }) => {
+  // A restarted host adopts the pooled checkout without the prior process's
+  // trusted submodule list. Incoming gitlinks must still clear old worktrees.
+  const restartedHost = createGitHubHost({ checkouts: { root: join(root, 'pool') }, credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }) })
+  await restartedHost.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: secondSha }, async ({ path }) => {
     expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(secondSha)
     expect(await readdir(join(path, 'nested'))).toEqual([])
@@ -736,13 +739,13 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
     await expect(access(join(path, 'nested/untracked'))).rejects.toThrow()
     await writeFile(join(path, 'nested/untracked'), 'stale again')
   })
-  await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: malformedSha }, async ({ path }) => {
+  await restartedHost.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: malformedSha }, async ({ path }) => {
     expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(malformedSha)
     expect(await readdir(join(path, 'nested'))).toEqual([])
     await expect(access(join(path, '.git/modules'))).rejects.toThrow()
   })
-  await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: removedSha }, async ({ path }) => {
+  await restartedHost.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: removedSha }, async ({ path }) => {
     expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(removedSha)
     await expect(access(join(path, 'nested'))).rejects.toThrow()
