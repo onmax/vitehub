@@ -835,16 +835,21 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             cacheInvocationCounts(target.text, { byName, total: previousCounts.total - 1 })
           }
           text = target.text
+          // SAFETY: Input command parsing establishes the asserted command contract.
+          await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
+          input = context.input.get()
+          target = getInputCommandTarget(input)
+          if (!target) return
+          text = target.text
           // Preserve recursive tracking while a remaining sibling can re-enter
-          // the active lineage. Reset only at a proven independent boundary.
+          // the active lineage. Reset only at a proven independent boundary,
+          // after the hook has had a chance to mutate the input.
           if (!canReenterLineage(text)) {
             transitionLineage = []
             blockedTransitions.clear()
             creditedCyclicTransitions.clear()
             numericTransitionDepths.clear()
           }
-          // SAFETY: Input command parsing establishes the asserted command contract.
-          await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
           cursor = 0
           continue
         }
