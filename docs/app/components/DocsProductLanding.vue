@@ -8,94 +8,56 @@ const props = defineProps<{
   section: DocsSection;
 }>();
 
-/** Products that share a looping scene with the landing page grid. */
-const scenes = new Map([
-  ["agents", "agent"],
-  ["connections", "connections"],
-  ["content", "content"],
-  ["email", "email"],
-  ["kv", "kv"],
-  ["queue", "queue"],
-  ["realtime", "realtime"],
-  ["sandbox", "sandbox"],
-  ["source", "source"],
-  ["workflows", "workflow"],
-]);
-
-const scene = computed(() => scenes.get(props.section.id) ?? null);
+// The Markdown body opens with `::product-hero` and continues with `::product-feature` sections.
+// This component appends the page index and the related products.
 const subpages = computed(() => getDocsSectionSubpages(props.section));
 // Sections with sidebar groups, such as Agents, list their pages by group instead of one card per page.
 const pageGroups = computed(() => getDocsSidebarGroups(props.section).filter(group => group.label));
 const related = computed(() => getDocsRelatedSections(docsManifest.sections, props.section));
-const getStarted = computed(() => subpages.value.find(page => page.id === "get-started") ?? subpages.value[0]);
-const serverApi = computed(() => subpages.value.find(page => page.id === "server-api"));
 </script>
 
 <template>
   <article class="vh-product-landing">
-    <header class="vh-product-hero">
-      <div class="vh-product-hero-copy">
-        <p v-if="section.category !== page.title" class="vh-product-eyebrow">
-          <UIcon :name="sidebarSectionIcon(section)" class="size-4 shrink-0" />
-          <span>{{ section.category }}</span>
-        </p>
-        <h1 class="vh-product-title">{{ page.title }}</h1>
-        <p v-if="page.description" class="vh-product-description">{{ page.description }}</p>
-
-        <div class="vh-product-actions">
-          <NuxtLink
-            v-if="getStarted"
-            :to="getStarted.path"
-            class="vh-product-cta group"
-          >
-            {{ getStarted.title }}
-            <UIcon name="i-lucide-arrow-right" class="landing-cta-arrow size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none" aria-hidden="true" />
-          </NuxtLink>
-          <NuxtLink v-if="serverApi" :to="serverApi.path" class="vh-product-cta-secondary">
-            {{ serverApi.title }}
-          </NuxtLink>
-          <DocsPageHeaderLinks class="ms-auto" />
-        </div>
-      </div>
-
-      <div v-if="scene" class="vh-product-hero-scene" aria-hidden="true">
-        <LandingPrimitiveMotion :name="scene" play />
-      </div>
-    </header>
-
-    <nav v-if="pageGroups.length" class="vh-product-groups" aria-label="Product pages">
-      <section v-for="group in pageGroups" :key="group.label || 'pages'" class="vh-product-group">
-        <h2 class="vh-product-group-heading">{{ group.label }}</h2>
-        <NuxtLink
-          v-for="subpage in group.pages"
-          :key="subpage.path"
-          :to="subpage.path"
-          class="vh-product-group-link"
-        >
-          <UIcon :name="sidebarPageIcon(subpage)" class="size-4 shrink-0" />
-          <span class="min-w-0 truncate">{{ subpage.title }}</span>
-        </NuxtLink>
-      </section>
-    </nav>
-
-    <nav v-else-if="subpages.length" class="vh-product-pages" aria-label="Product pages">
-      <NuxtLink
-        v-for="subpage in subpages"
-        :key="subpage.path"
-        :to="subpage.path"
-        class="vh-product-page group"
-      >
-        <UIcon :name="sidebarPageIcon(subpage)" class="size-4 shrink-0 text-muted transition-colors group-hover:text-highlighted" />
-        <span class="min-w-0">
-          <span class="vh-product-page-title">{{ subpage.title }}</span>
-          <span v-if="subpage.description" class="vh-product-page-description">{{ subpage.description }}</span>
-        </span>
-      </NuxtLink>
-    </nav>
-
     <UPageBody prose class="docs-content vh-product-body">
       <ContentRenderer :value="page" />
     </UPageBody>
+
+    <section class="vh-product-index" aria-label="Product pages">
+      <div class="vh-product-index-head">
+        <h2 class="vh-product-index-title">Read the {{ section.title }} docs</h2>
+        <DocsPageHeaderLinks />
+      </div>
+
+      <nav v-if="pageGroups.length" class="vh-product-groups">
+        <section v-for="group in pageGroups" :key="group.label || 'pages'" class="vh-product-group">
+          <h3 class="vh-product-group-heading">{{ group.label }}</h3>
+          <NuxtLink
+            v-for="subpage in group.pages"
+            :key="subpage.path"
+            :to="subpage.path"
+            class="vh-product-group-link"
+          >
+            <UIcon :name="sidebarPageIcon(subpage)" class="size-4 shrink-0" />
+            <span class="min-w-0 truncate">{{ subpage.title }}</span>
+          </NuxtLink>
+        </section>
+      </nav>
+
+      <nav v-else-if="subpages.length" class="vh-product-pages">
+        <NuxtLink
+          v-for="subpage in subpages"
+          :key="subpage.path"
+          :to="subpage.path"
+          class="vh-product-page group"
+        >
+          <UIcon :name="sidebarPageIcon(subpage)" class="size-4 shrink-0 text-muted transition-colors group-hover:text-highlighted" />
+          <span class="min-w-0">
+            <span class="vh-product-page-title">{{ subpage.title }}</span>
+            <span v-if="subpage.description" class="vh-product-page-description">{{ subpage.description }}</span>
+          </span>
+        </NuxtLink>
+      </nav>
+    </section>
 
     <footer v-if="related.length" class="vh-product-related">
       <h2 class="vh-product-related-heading">Related</h2>
@@ -119,107 +81,37 @@ const serverApi = computed(() => subpages.value.find(page => page.id === "server
   padding-bottom: 4rem;
 }
 
-.vh-product-hero {
-  display: grid;
-  gap: 2rem;
-  align-items: center;
-  padding: 3rem 0 2.5rem;
-  border-bottom: 1px solid var(--ui-border);
+/* The landing body spans the full landing width. Its sections manage their own measure. */
+.vh-product-body {
+  max-width: none;
+  padding-bottom: 0;
 }
 
-@media (min-width: 64rem) {
-  .vh-product-hero {
-    grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
-    gap: 4rem;
-    padding: 4rem 0 3rem;
-  }
+.vh-product-index {
+  padding-top: 3rem;
 }
 
-.vh-product-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 1rem;
-  color: var(--ui-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.8125rem;
-}
-
-.vh-product-title {
-  margin: 0;
-  color: var(--ui-text-highlighted);
-  font-size: clamp(2.5rem, 4.5vw, 3.75rem);
-  font-weight: 600;
-  letter-spacing: -0.03em;
-  line-height: 1.05;
-  text-wrap: balance;
-}
-
-.vh-product-description {
-  max-width: 46ch;
-  margin: 1.25rem 0 0;
-  color: var(--ui-text-muted);
-  font-size: 1.125rem;
-  line-height: 1.75rem;
-  text-wrap: pretty;
-}
-
-.vh-product-actions {
+.vh-product-index-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem 1.25rem;
-  margin-top: 1.75rem;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
 }
 
-.vh-product-cta {
-  display: inline-flex;
-  min-height: 2.5rem;
-  align-items: center;
-  gap: 0.375rem;
-  border: 1px solid var(--ui-text-highlighted);
-  background: var(--ui-text-highlighted);
-  padding: 0 1rem;
-  color: var(--ui-bg);
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.vh-product-cta:hover .landing-cta-arrow {
-  transform: translateX(0.25rem);
-}
-
-.vh-product-cta-secondary {
-  display: inline-flex;
-  min-height: 2.5rem;
-  align-items: center;
-  color: var(--ui-text-muted);
-  font-size: 0.875rem;
-  font-weight: 500;
-  transition: color 150ms ease;
-}
-
-.vh-product-cta-secondary:hover {
+.vh-product-index-title {
+  margin: 0;
   color: var(--ui-text-highlighted);
-}
-
-.vh-product-hero-scene {
-  display: none;
-  height: 8rem;
-  color: var(--ui-text-muted);
-}
-
-@media (min-width: 64rem) {
-  .vh-product-hero-scene {
-    display: block;
-  }
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 /* Each card draws its right and bottom line, so a short last row leaves no filler cells. */
 .vh-product-pages {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: 2rem;
   border-top: 1px solid var(--ui-border);
   border-left: 1px solid var(--ui-border);
 }
@@ -273,7 +165,6 @@ const serverApi = computed(() => subpages.value.find(page => page.id === "server
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.5rem 2rem;
-  margin-top: 2rem;
 }
 
 @media (min-width: 48rem) {
@@ -303,15 +194,6 @@ const serverApi = computed(() => subpages.value.find(page => page.id === "server
 
 .vh-product-group-link:hover {
   color: var(--ui-text-highlighted);
-}
-
-.vh-product-body {
-  max-width: var(--vh-content-width);
-  margin-top: 2.5rem;
-}
-
-.vh-product-body :deep(h1:first-of-type) {
-  display: none;
 }
 
 .vh-product-related {
@@ -349,10 +231,8 @@ const serverApi = computed(() => subpages.value.find(page => page.id === "server
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vh-product-page,
-  .vh-product-cta .landing-cta-arrow {
+  .vh-product-page {
     transition: none;
-    transform: none;
   }
 }
 </style>
