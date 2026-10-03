@@ -12,6 +12,10 @@ defineProps<{
 
 <template>
   <article class="vh-product-landing">
+    <div class="vh-product-actions">
+      <DocsPageHeaderLinks />
+    </div>
+
     <UPageBody prose class="docs-content vh-product-body !px-0">
       <ContentRenderer :value="page" />
     </UPageBody>
@@ -23,6 +27,12 @@ defineProps<{
 <style scoped>
 .vh-product-landing {
   padding-bottom: 4rem;
+}
+
+.vh-product-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 1rem;
 }
 
 /* The landing body spans the full landing width. Its sections manage their own measure. */
