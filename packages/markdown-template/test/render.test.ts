@@ -408,6 +408,10 @@ Unavailable
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<object data="data:text/html,<script>alert(1)</script>"></object>'))
       .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<a xlink:href="javascript:alert(1)">Open</a>'))
+      .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<script src="javascript:alert(1)"></script>'))
+      .rejects.toThrow("must resolve to a safe destination")
   })
 
   it("preserves URL-like attributes on custom tags", async () => {

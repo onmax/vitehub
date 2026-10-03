@@ -90,17 +90,16 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
       },
       A: async (node, state, parent) => {
         const props = resolveScalarTemplateAttributes(node[1], renderData(state))
+        const sanitized = await sanitizeUrlAttributes("a", props, node[1])
         const href = Object.hasOwn(node[1], ":href")
           ? await safeLinkDestination(resolveScalarTemplateBinding({ ":value": node[1][":href"] }, renderData(state)), String(node[1][":href"]))
-          : typeof props.href === "string"
-            ? await safeLinkDestination(props.href, "href", { decodeHtmlEntities: node[1].$?.html === 1 })
-            : undefined
+          : sanitized.href
         if (href === undefined) return await state.handlers.a!(node, state, parent)
         // SAFETY: Preserve the element tag and children, replacing only its resolved attributes.
-        return await state.handlers.a!([node[0], { ...props, href }, ...node.slice(2)] as ElementNode, state, parent)
+        return await state.handlers.a!([node[0], { ...sanitized, href }, ...node.slice(2)] as ElementNode, state, parent)
       },
       Html: {
-        match: node => node[1].$?.html === 1 && !literalHtmlTags.has(node[0]),
+        match: node => node[1].$?.html === 1,
         handler: async (node, state, parent) => {
           const [tag, attrs, ...children] = node
           const props = resolveScalarTemplateAttributes(attrs, renderData(state))
@@ -109,7 +108,7 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- String XML attributes need escaping; Comark serializes boolean and numeric attributes.
             [key, typeof value === "string" ? escapeHtml(value) : value]))
           // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Only raw text children of block HTML need Markdown parsing; parsed nodes are rendered directly.
-          const content = attrs.$?.block === 1 && children.every(child => typeof child === "string")
+          const content = attrs.$?.block === 1 && !literalHtmlTags.has(tag) && children.every(child => typeof child === "string")
             ? (await parseMarkdown(children.join(""), parseOptions)).nodes
             : children
           return await state.handlers.html!([tag, { ...escaped, $: attrs.$ }, ...content], state, parent)
