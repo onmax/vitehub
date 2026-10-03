@@ -19,7 +19,6 @@ const pages: Record<string, string> = {
   AgentInvocationInspector: "invocation-inspector",
   AgentInvocationTimeline: "timeline",
   AgentInvocationList: "invocation-list",
-  AgentInvocationTimeline: "timeline",
   AgentMarkdown: "markdown",
   AgentMessageParts: "message-parts",
   AgentMultiFileDiff: "diff",
