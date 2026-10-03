@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { randomId } from "@vite-hub/internal/runtime/random"
 
 import { normalizeWorkflowOptions } from "../config.ts"

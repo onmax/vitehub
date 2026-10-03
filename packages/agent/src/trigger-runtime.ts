@@ -4,7 +4,8 @@ import {
   normalizeCapabilities,
 } from "./capability-runtime.ts"
 import { AgentHttpError } from "./http-error.ts"
-import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 
 import type {
   AgentCallbackContext,

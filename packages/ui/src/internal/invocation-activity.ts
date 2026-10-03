@@ -1,6 +1,6 @@
 import type { TraceEventLogEntry } from "@vite-hub/runtime";
 import type { AgentInvocationView, AgentToolInspection } from "../types.ts";
-import { hasRuntimeType } from "./runtime-type.ts";
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 type InvocationActivityKind =
   | "action"

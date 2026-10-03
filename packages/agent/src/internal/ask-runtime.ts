@@ -1,6 +1,7 @@
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { getMessageText } from "../messages.ts"
-import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./runtime-type.ts"
 import { importServerEnvModule } from "./server-env.ts"
 
 import type { AskAnswers, AskEntry, AskQuestion, AskQuestions } from "../ask.ts"

@@ -1,4 +1,5 @@
-import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./runtime-type.ts"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 
 import { isExecutionAuthority, type ExecutionAuthority } from "@vite-hub/runtime"

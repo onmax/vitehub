@@ -18,7 +18,8 @@ export type ConfiguredAgentDefinition<TOptions extends object, TDefinition = Age
   readonly options: Readonly<TOptions>
 }
 
-import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 
 /** Resolve a local name before the normal Agent layer composition. */
 export function resolveNamedAgentPresetOptions(input: unknown): unknown {

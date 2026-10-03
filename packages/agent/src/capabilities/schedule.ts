@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../internal/runtime-type.ts"
 import { isIanaTimeZone } from "@vite-hub/internal/runtime/time-zone"
 
 import { defineCapability, normalizeMode } from "../capability-runtime.ts"

@@ -1,6 +1,6 @@
 import { agentHostWorkspaceRoute } from './server/host-workspace.ts'
 import { createHash } from 'node:crypto'
-import { hasRuntimeType } from './internal/runtime-type.ts'
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { Plugin, UserConfig } from 'vite'
