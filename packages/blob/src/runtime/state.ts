@@ -12,6 +12,7 @@ import { normalizeBlobOptions } from "../config.ts"
 import type { BlobStorage, ResolvedBlobModuleOptions } from "../types.ts"
 
 let runtimeConfig: false | ResolvedBlobModuleOptions | undefined
+let runtimeConfigSnapshot: string | undefined
 let runtimeConfigPromise: Promise<false | ResolvedBlobModuleOptions> | undefined
 let runtimeStorages = new Map<string, BlobStorage>()
 let pendingStorages = new Map<string, Promise<BlobStorage>>()
@@ -63,8 +64,10 @@ export function getNamedBlobRuntimeStorage(name: string): BlobStorage | undefine
 }
 
 export function setBlobRuntimeConfig(config: false | ResolvedBlobModuleOptions | undefined): void {
-  if (config !== undefined && config === runtimeConfig) return
+  const snapshot = config === undefined ? undefined : JSON.stringify(config)
+  if (config !== undefined && config === runtimeConfig && snapshot === runtimeConfigSnapshot) return
   runtimeConfig = config
+  runtimeConfigSnapshot = snapshot
   runtimeConfigPromise = undefined
   runtimeStorages = new Map()
   pendingStorages = new Map()

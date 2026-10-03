@@ -47,4 +47,20 @@ describe("Blob runtime storage lifetime", () => {
 
     expect(getNamedBlobRuntimeStorage("assets")).toBe(replacement)
   })
+
+  it("invalidates storage when an installed config is mutated in place", async () => {
+    const config = { store: { bucket: "before", driver: "s3" as const } }
+    setBlobRuntimeConfig(config)
+    const first = blob.store("assets")
+    const create = vi.fn(async () => first)
+    await resolveNamedBlobRuntimeStorage("assets", create)
+
+    config.store.bucket = "after"
+    setBlobRuntimeConfig(config)
+    const second = blob.store("assets")
+    await resolveNamedBlobRuntimeStorage("assets", async () => second)
+
+    expect(getNamedBlobRuntimeStorage("assets")).toBe(second)
+    expect(second).not.toBe(first)
+  })
 })
