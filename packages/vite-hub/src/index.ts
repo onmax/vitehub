@@ -36,6 +36,7 @@ import { assertDeploymentService, deploymentPresetFromNitro, normalizeNitroPrese
 import { viteHubTypesPlugin } from "./internal/types.ts"
 import { consoleConnectionsActorId } from "./console/auth-build.ts"
 import { agentChannelEnvPlugin } from "./agent-channel-env.ts"
+import { databaseDisabledPlugin } from "./database-disabled.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
 import { observabilityVitePlugin, type ObservabilityOptions } from "./observability-vite.ts"
 import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
@@ -870,6 +871,16 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
   configureProviderOptionalImportAliases(providerImportAliases, options, presetKVOptions || undefined)
   const workspaceDependencyRuntimeImports = frameworkWorkspaceDependencyRuntimeImports(sandboxEnabled)
 
+  if (!options.database) {
+    const databaseRuntimeImports = new Map<string, string>()
+    for (const specifier of ["vite-hub/database/drizzle", "@vite-hub/database/drizzle"]) {
+      databaseRuntimeImports.set(specifier, specifier)
+      // Vite applies the framework alias first, so resolveId can receive the facade path.
+      const facade = frameworkProviderImportAliases[specifier]
+      if (facade) databaseRuntimeImports.set(facade, specifier)
+    }
+    plugins.push(databaseDisabledPlugin(databaseRuntimeImports))
+  }
   plugins.push(frameworkDependencyResolver(options, envPlugin, providerImportAliases, blobEnabled, presetKVOptions || undefined))
 
   if (options.observability) {
