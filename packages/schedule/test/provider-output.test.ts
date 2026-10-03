@@ -1137,6 +1137,9 @@ describe("schedule provider output", () => {
     "as unknown as () => [config: Record<string, unknown>, extra: string]",
     "as unknown as new () => [config: Record<string, unknown>, extra: string]",
     "as unknown as () => ({ config: Record<string, unknown> })",
+    "as unknown as () => (Result<string, unknown>)",
+    "as unknown as () => ((Result<string, unknown>))",
+    "as unknown as () => ((value: string) => { config: Record<string, unknown> })",
     "as unknown as () => /* return */ { config: Record<string, unknown> }",
     "as unknown as () => () => { config: Record<string, unknown> }",
     "as unknown as () => Result<string, unknown>",
@@ -1185,6 +1188,12 @@ describe("schedule provider output", () => {
     "as unknown as () => { config: Record<string, unknown> } + fallback",
     "as unknown as new () => [config: Record<string, unknown>] (argument)",
     "as unknown as () => { config: string } ? fallback : alternate",
+    "as unknown as () => (Result<string, unknown> + fallback)",
+    "as unknown as new () => ((Result<string, unknown> || fallback))",
+    "as unknown as () => (Result<string, unknown> (argument))",
+    "as unknown as () => (Result<string, unknown> ? fallback : alternate)",
+    "as (Result<string, unknown> + fallback)",
+    "as unknown as () => (Result<string, unknown> ^ (bar()))",
     "as unknown as () => Result<string, unknown> + fallback",
     "as unknown as () => Result<string, unknown> || fallback",
     "as unknown as () => Result<string, unknown> ? fallback : alternate",
@@ -1205,6 +1214,17 @@ describe("schedule provider output", () => {
     const rootDir = await createTempProject("vitehub-schedule-output-runtime-assertion-")
     await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),
       `export default defineSchedule({ cron: '0 2 * * *' } ${assertion})\n`, "utf8")
+
+    await expect(generateProviderOutputs({
+      clientOutDir: "dist/client",
+      rootDir,
+    })).rejects.toThrow(/Schedule discovery requires a direct default export/)
+  })
+
+  it.each([">fallback", ">>fallback", ">>>fallback", ">=fallback", "<fallback", "<<fallback", "<=fallback"])("rejects compact relational cron assertions: %s", async (operator) => {
+    const rootDir = await createTempProject("vitehub-schedule-output-relational-assertion-")
+    await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),
+      `export default defineSchedule({ cron: '0 2 * * *' } as Foo${operator})\n`, "utf8")
 
     await expect(generateProviderOutputs({
       clientOutDir: "dist/client",

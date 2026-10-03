@@ -466,12 +466,14 @@ function maskAssertionTypeArguments(source: string) {
   // signatures. Preserve its boundaries so runtime suffixes stay visible.
   const masked = output.join("")
   for (let index = 0; index < masked.length; index++) {
-    const close = masked[index] === "{" ? "}" : masked[index] === "[" ? "]" : masked[index] === "(" ? ")" : undefined
+    // Parentheses can group runtime expressions as well as types. Inspect
+    // their contents; function parameters are masked separately below.
+    const close = masked[index] === "{" ? "}" : masked[index] === "[" ? "]" : undefined
     if (!close) continue
     const prefix = masked.slice(0, index).trimEnd()
     // Function and constructor return types can start with a structural
     // region. Keep runtime suffixes outside that region visible.
-    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|?:]|=>)$/.test(prefix)) continue
+    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|?:(]|=>)$/.test(prefix)) continue
     const end = findMatching(masked, index, masked[index]!, close)
     if (end === undefined) continue
     output.fill(" ", index + 1, end)
@@ -662,6 +664,10 @@ export function findDefaultExportCall(source: string, names: string[], options: 
         else if (value[index] === ":") {
           if (conditionalBranches.pop() !== true) return false
         }
+        // Generic arguments and signature arrows have already been masked.
+        // Any remaining angle bracket is a runtime operator, even without
+        // whitespace between it and the asserted type.
+        else if (value[index] === "<" || value[index] === ">") return false
       }
       if (conditionalBranches.length) return false
       // `const` is a complete assertion type by itself. Any operator after it
@@ -691,8 +697,6 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // assertion suffix. Hyphens embedded in template-literal types do not
       // have an identifier directly before the operator boundary.
       if (/\b[A-Za-z_$][\w$]*\s*-\s*(?:[A-Za-z_$\d"'`])/.test(value)) return false
-      // Relational operators are spaced; generic/type delimiters are not.
-      if (/(?:^|\s)(?:<<|>>>|>>|[<>])(?:=)?(?=\s|[A-Za-z_$\d])/.test(value)) return false
       if (/\b(?:instanceof|in)\b/.test(value)) return false
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.

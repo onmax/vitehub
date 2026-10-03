@@ -117,6 +117,9 @@ describe("source scanner", () => {
     "as unknown as () => [config: Record<string, unknown>, extra: string]",
     "as unknown as new () => [config: Record<string, unknown>, extra: string]",
     "as unknown as () => ({ config: Record<string, unknown> })",
+    "as unknown as () => (Result<string, unknown>)",
+    "as unknown as () => ((Result<string, unknown>))",
+    "as unknown as () => ((value: string) => { config: Record<string, unknown> })",
     "as unknown as () => /* return */ { config: Record<string, unknown> }",
     "as unknown as () => () => { config: Record<string, unknown> }",
     "as unknown as () => Result<string, unknown>",
@@ -183,6 +186,12 @@ describe("source scanner", () => {
     "as unknown as () => { config: Record<string, unknown> } + fallback",
     "as unknown as new () => [config: Record<string, unknown>] (argument)",
     "as unknown as () => { config: string } ? fallback : alternate",
+    "as unknown as () => (Result<string, unknown> + fallback)",
+    "as unknown as new () => ((Result<string, unknown> || fallback))",
+    "as unknown as () => (Result<string, unknown> (argument))",
+    "as unknown as () => (Result<string, unknown> ? fallback : alternate)",
+    "as (Result<string, unknown> + fallback)",
+    "as unknown as () => (Result<string, unknown> ^ (bar()))",
     "as unknown as () => Result<string, unknown> + fallback",
     "as unknown as () => Result<string, unknown> || fallback",
     "as unknown as () => Result<string, unknown> ? fallback : alternate",
@@ -206,6 +215,12 @@ describe("source scanner", () => {
     "as Types /* marker */ . extends ? fallback : alternate",
   ])("rejects runtime suffixes after nested assertion types: %s", (assertion) => {
     expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } ${assertion})`, ["defineSchedule"]))
+      .toBeUndefined()
+  })
+
+  it.each([">fallback", ">>fallback", ">>>fallback", ">=fallback", "<fallback", "<<fallback", "<=fallback"])("rejects compact relational assertions behind wrapping assertions: %s", (operator) => {
+    const expression = `(({ cron: '0 8 * * *' } as Foo${operator}) as ScheduleDefinitionInput)`
+    expect(findDefaultExportCall(`export default defineSchedule(${expression})`, ["defineSchedule"]))
       .toBeUndefined()
   })
 
