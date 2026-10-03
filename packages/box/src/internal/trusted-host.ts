@@ -997,19 +997,19 @@ function processHandle(
         return;
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
-      let timedOut = false;
       try {
+        const gracePeriod = new Promise<void>((resolvePromise) => {
+          timer = setTimeout(resolvePromise, 250);
+        });
         await Promise.race([
-          settled,
-          new Promise((resolvePromise) => {
-            timer = setTimeout(() => {
-              timedOut = true;
-              resolvePromise(undefined);
-            }, 250);
+          gracePeriod,
+          settled.then(() => {
+            // The leader can exit while descendants still need termination.
+            if (child.pid && process.platform !== "win32" && processGroupExists(child.pid))
+              return gracePeriod;
           }),
         ]);
-        // Descendants can survive even after the process-group leader exits.
-        if (timedOut) signalProcessTree(child, "SIGKILL");
+        signalProcessTree(child, "SIGKILL");
         await settled;
       } finally {
         clearTimeout(timer);

@@ -512,6 +512,53 @@ describe("createTrustedHostRuntime", () => {
     }
   });
 
+  it("terminates surviving descendants after the leader exits without shortening the grace period", async () => {
+    if (process.platform === "win32") return;
+    const root = await temporaryRoot();
+    const survived = join(root, "survived");
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await box.open();
+    let descendantPid: number | undefined;
+    try {
+      const descendantCode = [
+        "process.on('SIGTERM', () => {",
+        "  setTimeout(() => require('node:fs').writeFileSync(process.argv[1], ''), 400);",
+        "});",
+        "process.send(process.pid);",
+        "setInterval(() => {}, 1000);",
+      ].join("\n");
+      const child = await session.spawn!("exec", [process.execPath, "-e", [
+        "const { spawn } = require('node:child_process');",
+        `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantCode)}, ${JSON.stringify(survived)}], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });`,
+        "descendant.once('message', pid => {",
+        "  descendant.disconnect(); descendant.unref(); console.log(pid);",
+        "});",
+        "process.on('SIGTERM', () => process.exit(0));",
+        "setInterval(() => {}, 1000);",
+      ].join("\n")]);
+      const reader = child.stdout.getReader();
+      const ready = await reader.read();
+      reader.releaseLock();
+      descendantPid = Number(new TextDecoder().decode(ready.value));
+      expect(descendantPid).toBeGreaterThan(0);
+      const started = performance.now();
+      await child.kill();
+      expect(performance.now() - started).toBeGreaterThanOrEqual(200);
+      await expect(child.wait()).resolves.toMatchObject({ code: 0 });
+      await new Promise(resolve => setTimeout(resolve, 450));
+      await expect(stat(survived)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (descendantPid) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch (error) {
+          expect(error).toMatchObject({ code: "ESRCH" });
+        }
+      }
+      await session.close();
+    }
+  });
+
   it("normalizes portable signal names before forwarding them to Node", async () => {
     if (process.platform === "win32") return;
     const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
