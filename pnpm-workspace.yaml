@@ -6,7 +6,7 @@ packages:
   - "playground/console"
 catalog:
   '@cloudflare/vitest-plugin': ^1.1.4
-  '@t3tools/provider-runtime': https://pkg.pr.new/vite-hub/t3code/@t3tools/provider-runtime@cb8ae81c8433fb25acbcb82884ecd9a2e365de25
+  '@t3tools/provider-runtime': https://pkg.pr.new/vite-hub/t3code/@t3tools/provider-runtime@610d58f5fb6320b2c5a08f9b6d877b59a3cd27f9
   '@types/proper-lockfile': 4.1.4
   proper-lockfile: 4.1.2
   remark-gfm: ^4.0.1
