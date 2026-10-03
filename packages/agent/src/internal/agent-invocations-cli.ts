@@ -9,6 +9,7 @@ import type { AgentInvocationListResult, AgentInvocationRecord, AgentInvocationS
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
 import type { RuntimeDiagnosticError } from "@vite-hub/runtime"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
+import { isCompatibleAgentDevServerRoot } from "./agent-info-cli.ts"
 import { agentInvocationsDevHeader, agentInvocationsDevHeaderValue, agentInvocationsDevRoute, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
 import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
 
@@ -382,6 +383,7 @@ async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
   const server = await discoverViteHubDevServer<{ root?: unknown, workspaceDevTokenServerId?: unknown }>({
     endpoint: { header: agentInvocationsDevHeader, headerValue: agentInvocationsDevHeaderValue, route: agentInvocationsDevRoute },
     fetch: fetchImpl,
+    isCompatibleRoot: isCompatibleAgentDevServerRoot,
     rootDir: resolve(context.rootDir ?? process.cwd()),
     serverUrl: parsed.url,
     signal: AbortSignal.timeout(timeout),
@@ -392,7 +394,8 @@ async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
     : undefined
   if (!server || !serverId) throw new Error(discoveryError.value.trim() || "No Compatible Vite Development Server found.")
   const target = new URL(server.url)
-  const token = await readWorkspaceDevToken(context.rootDir ?? process.cwd(), { serverId })
+  const serverRoot = hasRuntimeType(server.discovery.root, "string") ? server.discovery.root : context.rootDir ?? process.cwd()
+  const token = await readWorkspaceDevToken(serverRoot, { serverId })
   if (!token) throw new Error("No private Agent Dev token found. Start the Compatible Vite Development Server first.")
   target.pathname = agentInvocationsDevRoute
   target.search = ""
