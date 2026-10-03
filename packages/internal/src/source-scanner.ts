@@ -346,7 +346,11 @@ export function findMatching(source: string, index: number, open: string, close:
 }
 
 function isAssertionTypeArguments(source: string, index: number, assertionSuffix = false) {
-  if (/\b(?:extends|implements)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
+  // A conditional type constraint may be qualified (and may use a type
+  // operator), for example `T extends Types.Promise<A, B>`. Keep the fast
+  // path broad enough to mask its generic arguments before call splitting.
+  const prefix = source.slice(0, index).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ")
+  if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let current = previousCodeIndex(source, index - 1, controlFlowRegexes)
@@ -411,7 +415,7 @@ function maskAssertionTypeArguments(source: string) {
       // Template-literal types can contain commas in `${...}` expressions.
       // Mask them only when they begin at a type delimiter; a template after
       // a complete assertion remains a runtime suffix and must stay visible.
-      if (source[index] === "`" && /[?:|&]\s*$/.test(source.slice(0, index))) output.fill(" ", index, end)
+      if (source[index] === "`" && /(?:\b(?:as|satisfies)|[?:|&])\s*$/.test(source.slice(0, index))) output.fill(" ", index, end)
       index = end - 1
       continue
     }
@@ -611,6 +615,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Track nested true branches until their colon; a further question mark
       // in a completed false branch is a runtime ternary.
       const conditionalBranches: boolean[] = []
+      const controlFlowRegexes: ControlFlowRegexCache = new Map()
       for (let index = 0; index < value.length; index++) {
         if (isQuote(value[index])) {
           index = skipQuoted(value, index) - 1
@@ -619,7 +624,8 @@ export function findDefaultExportCall(source: string, names: string[], options: 
         if (isIdentifierChar(value[index])) {
           const start = index
           while (isIdentifierChar(value[index + 1])) index += 1
-          if (value.slice(start, index + 1) === "extends" && value[start - 1] !== ".") {
+          const previous = previousCodeIndex(value, start - 1, controlFlowRegexes)
+          if (value.slice(start, index + 1) === "extends" && value[previous] !== ".") {
             conditionalBranches.push(false)
           }
         }
