@@ -175,7 +175,19 @@ describe("hubQueue", () => {
     expect(hubQueue().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
 
-  it.each(["before", "after"])("keeps each Nuxt project's Queue output when Nitro resolves %s Vite", async (order) => {
+  it("uses project Queue options when Nitro resolves before the Vite config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-queue-nuxt-options-"))
+    roots.push(root)
+    const plugin = hubQueue(false)
+    const config = plugin.config as unknown as (config: Record<string, unknown>) => unknown
+    config({ root, queue: { provider: "cloudflare" } })
+    const nitro = await createQueueNitroConfig(plugin, {
+      nitro: { preset: "cloudflare_module" }, projectRoot: root, root,
+    })
+    expect(nitro.plugins).toEqual([resolve(root, ".vitehub/nitro/queue/plugin.ts")])
+  })
+
+  it.each(["before", "after", "interleaved"])("keeps each Nuxt project's Queue output when Nitro resolves %s Vite", async (order) => {
     const plugin = hubQueue({ provider: "vercel" })
     const buildStart = plugin.buildStart
     if (typeof buildStart !== "function") throw new TypeError("Expected buildStart hook")
@@ -196,7 +208,11 @@ describe("hubQueue", () => {
       if (order === "after") await configureNitro()
       const context = { environment: { config } }
       await buildStart.call(context as never, {} as never)
-      projects.push({ root, viteRoot, name, context })
+      projects.push({ root, viteRoot, name, context, configureNitro })
+    }
+    // Resolve A Vite, B Vite, A Nitro, B Nitro before either output is generated.
+    if (order === "interleaved") {
+      for (const { configureNitro } of projects) await configureNitro()
     }
     for (const { context } of projects) {
       await (plugin.buildEnd as (this: never) => Promise<void>).call(context as never)
