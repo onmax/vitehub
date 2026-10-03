@@ -882,11 +882,13 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     const databaseOptions = options.database === true ? {} : options.database
     // A discovered Definition owns its Cloudflare binding. Keep the historical
     // implicit D1 resource only when no Definition is available to own it.
-    const databaseRoot = databaseOptions.projectRoot
-      ? resolve(rootDir, databaseOptions.projectRoot)
-      : projectRoot
+    const databaseRoot = resolveViteHubProjectRoot(rootDir, {
+      projectRoot: databaseOptions.projectRoot,
+    })
     const discoveredDatabase = resolveDBViteConfig(databaseOptions, databaseRoot, {
-      serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
+      serverDirs: databaseOptions.projectRoot
+        ? [resolve(databaseRoot, "server")]
+        : nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
     })
     await hubDatabaseNuxt({
       ...(options.preset === "cloudflare" && !discoveredDatabase ? { driver: "d1" as const } : {}),
