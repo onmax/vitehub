@@ -233,6 +233,7 @@ jobs:
         with:
           name: vitehub-docs-output
           path: docs/.output
+          include-hidden-files: true
           retention-days: 1
           if-no-files-found: error
 
@@ -251,6 +252,7 @@ jobs:
     concurrency:
       group: docs-deploy
       cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
