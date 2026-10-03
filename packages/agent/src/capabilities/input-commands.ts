@@ -462,8 +462,6 @@ function inputCommandNumericDepth(args: string | undefined): number | undefined 
   return Number.isSafeInteger(depth) ? depth : undefined
 }
 
-const MAX_NUMERIC_EXPANSION_CREDIT = 100
-
 export function inputCommands(options: InputCommandsOptions): AgentCapabilityDefinition {
   const commands = normalizeInputCommands(options)
   const trigger = normalizeInputCommandTrigger(options.trigger)
@@ -585,9 +583,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               // Same-command fan-out must decrease every child, including siblings.
               && (nextInvocation?.name !== budgetCommand || finiteSameCommandGrowth),
             )
-            if (budgetDepth !== undefined && runs === 1) {
-              maxRuns += Math.min(budgetDepth + 2, MAX_NUMERIC_EXPANSION_CREDIT)
-            }
             // Keep every generated edge after leading commands finish and are removed.
             // A cyclic edge can receive credit once, but cannot renew it indefinitely.
             let graphCreditBlocked = false
@@ -641,7 +636,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               const nextOwnRuns = nextCounts.byName.get(budgetCommand) || 0
               if (!(previousOwnRuns > 1 && nextOwnRuns > 0)) creditedCyclicTransitions.clear()
             }
-            if (!graphCreditBlocked && (!nextInvocation || cycleDetected || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
+            if (!graphCreditBlocked && (!nextInvocation || cycleDetected || advancesNumericStage
+              || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
               && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth || advancesNumericStage)) {
               // Credit the rewritten invocation too, which may consume the base allowance.
               maxRuns += (addedRuns > 0 ? addedRuns : nextRuns) + 1

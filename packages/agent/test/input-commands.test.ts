@@ -382,6 +382,26 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it("allows a bounded decreasing numeric cycle", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const rewrite = (next: string): InputCommand["call"] => ({ args }) => {
+      calls++
+      const depth = Number(args.split(" ")[0])
+      return depth > 0 ? { prompt: `/${next} ${depth - 1}` } : undefined
+    }
+    const capability = inputCommands({
+      commands: {
+        a: { call: rewrite("b") },
+        b: { call: rewrite("a") },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a 2000" })
+    expect(calls).toBe(2001)
+  })
+
   it.each(["replacement", "result", "mutation"] as const)("allows decreasing same-command fan-out with options through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
