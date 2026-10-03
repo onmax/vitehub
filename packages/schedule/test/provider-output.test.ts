@@ -1202,6 +1202,20 @@ describe("schedule provider output", () => {
     })).rejects.toThrow(/Schedule discovery requires a direct default export/)
   })
 
+  it.each([
+    "({ cron: '0 2 * * *' } as Foo) `tag`",
+    "({ cron: '0 2 * * *' } as Foo<string>) `tag`",
+  ])("rejects tagged-template expressions after cron assertions: %s", async (expression) => {
+    const rootDir = await createTempProject("vitehub-schedule-output-tagged-assertion-")
+    await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),
+      `export default defineSchedule(${expression})\n`, "utf8")
+
+    await expect(generateProviderOutputs({
+      clientOutDir: "dist/client",
+      rootDir,
+    })).rejects.toThrow(/must declare a static cron string/)
+  })
+
   it("rejects raw default objects for provider cron extraction", async () => {
     const rootDir = await createTempProject("vitehub-schedule-output-raw-object-cron-")
     await writeFile(join(rootDir, "src", "cleanup.schedule.ts"), [

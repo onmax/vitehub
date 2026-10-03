@@ -177,6 +177,8 @@ describe("source scanner", () => {
     "as unknown as () => Result<string, unknown> || fallback",
     "as unknown as () => Result<string, unknown> ? fallback : alternate",
     "as unknown as () => Result<string, unknown> (argument)",
+    "as Foo `tag`",
+    "as Foo<string> `tag`",
     "as unknown as new () => Result<string, unknown> + fallback",
     "as unknown as new () => Result<string, unknown> || fallback",
     "as unknown as new () => Result<string, unknown> ? fallback : alternate",

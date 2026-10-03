@@ -632,6 +632,13 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       const controlFlowRegexes: ControlFlowRegexCache = new Map()
       for (let index = 0; index < value.length; index++) {
         if (isQuote(value[index])) {
+          // A template literal immediately following a completed type is a
+          // tagged-template runtime suffix. Keep it visible to suffix
+          // validation instead of treating it as a template-literal type.
+          if (value[index] === "`") {
+            const previous = previousCodeIndex(value, index - 1, controlFlowRegexes)
+            if (/[A-Za-z0-9_$>\])]/.test(value[previous] || "")) return false
+          }
           index = skipQuoted(value, index) - 1
           continue
         }
