@@ -1290,9 +1290,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         || previous === "*" && references[index - 2] === "async"
     }
     const classFieldKeys = new Set<number>()
+    const classExpressionNames = new Set<number>()
     const referenceClosings = new Map([...referenceOpenings].map(([closing, opening]) => [opening, closing]))
     for (let index = 0; index < references.length; index++) {
       if (references[index] !== "class" || references[index - 1] === "." || [":", "("].includes(references[index + 1] ?? "")) continue
+      if (isIdentifier(references[index + 1])
+        && ["extends", "{"].includes(references[index + 2] ?? "")) classExpressionNames.add(index + 1)
       let body = index + 1
       while (body < references.length && references[body] !== "{") {
         body = (referenceClosings.get(body) ?? body) + 1
@@ -1322,6 +1325,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
       && !methodKey(index)
       && !classFieldKeys.has(index)
+      && !classExpressionNames.has(index)
       && !templateLocalBindings.some(scope => index >= scope.start && index < scope.end && scope.names.has(references[index]!))
     const reassignedGlobalConversions = new Set<string>()
     for (let index = 0; index < tokens.length; index++) {

@@ -41,6 +41,8 @@ it.each([
 })
 
 it.each([
+  "class portal {}",
+  "class portal extends Base {}",
   "class { portal = input.id }",
   "class Named { portal = input.id }",
   "class { static portal = input.id }",
