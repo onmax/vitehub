@@ -97,6 +97,32 @@ describe("Collections", () => {
     expect(load).toHaveBeenLastCalledWith({ cursor: 2, limit: 2, query: {}, signal: undefined })
   })
 
+  it("round-trips Unicode cursor input and validates transformed output", async () => {
+    const load = vi.fn(async ({ cursor }: { cursor?: string }) => cursor === undefined
+      ? [{ id: "日本語 🌍" }, { id: "next" }]
+      : [])
+    const collection = defineCollection(load, {
+      cursor: row => row.id,
+      cursorSchema: v.pipe(v.string(), v.transform(value => value.toUpperCase())),
+      defaultLimit: 1,
+      maxLimit: 1,
+    })
+
+    const first = await collection.page({ query: {} })
+    await collection.page({ cursor: first.nextCursor!, query: {} })
+    expect(load).toHaveBeenLastCalledWith({ cursor: "日本語 🌍", limit: 2, query: {}, signal: undefined })
+
+    const invalidOutput = defineCollection(async () => [{ id: 1 }, { id: 2 }], {
+      cursor: row => row.id,
+      cursorSchema: v.pipe(v.number(), v.transform(() => Number.POSITIVE_INFINITY)),
+      defaultLimit: 1,
+      maxLimit: 1,
+    })
+    const invalidPage = await invalidOutput.page({ query: {} })
+    await expect(invalidOutput.page({ cursor: invalidPage.nextCursor!, query: {} }))
+      .rejects.toBeInstanceOf(CollectionCursorError)
+  })
+
   it("accepts plain cursor objects from another realm", async () => {
     // SAFETY: Node's VM evaluates the exact plain cursor object literal owned by this fixture.
     const cursor = runInNewContext("({ id: 'one' })") as { id: string }

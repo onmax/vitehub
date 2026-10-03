@@ -1,11 +1,14 @@
-import { access, copyFile, cp, mkdir, mkdtemp, readFile, realpath, rename, rm, stat } from "node:fs/promises"
+import { createRuntimePackageResolver, isPackageResolutionMiss } from "./runtime-package-resolution.ts"
+import { access, copyFile, cp, mkdir, readFile, realpath, rm, stat } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 
+import { updateRuntimePackageDirectory } from "./runtime-package-directory.ts"
 import { createDefaultVercelOutputRoot } from "./deployment-output.ts"
 import { internalErrorDiagnostics } from "../error-diagnostics.ts"
 
 const runtimeExportConditions = new Set(["default", "import", "module", "node", "node-addons", "require"])
+const resolvePackageJson = createRuntimePackageResolver((source, path) => parsePackageJson(JSON.parse(source), path).name)
 let nodeFileTracePromise: Promise<typeof import("@vercel/nft").nodeFileTrace> | undefined
 
 export interface NodeRuntimePackage {
@@ -47,60 +50,15 @@ export async function copyVercelFunctionRuntimePackages(options: VercelFunctionR
   const packages = Array.isArray(options.packages) ? options.packages : await options.packages()
   if (!packages.length) return
 
-  const outputNodeModules = resolve(serverDir, "node_modules")
-  const stagingRoot = await mkdtemp(resolve(serverDir, ".vitehub-runtime-packages-"))
-  const stagedNodeModules = resolve(stagingRoot, "node_modules")
-  const previousNodeModules = resolve(stagingRoot, "previous-node_modules")
-  let movedPreviousOutput = false
-  let installedReplacement = false
-  let cleanupStagingRoot = true
-
-  try {
-    try {
-      await cp(outputNodeModules, stagedNodeModules, { recursive: true })
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    await mkdir(stagedNodeModules, { recursive: true })
-
-    await copyNodeRuntimePackages({
-      outputNodeModules: stagedNodeModules,
+  await updateRuntimePackageDirectory({
+    directory: resolve(serverDir, "node_modules"),
+    signal: options.signal,
+    update: outputNodeModules => copyNodeRuntimePackages({
+      outputNodeModules,
       packages,
       rootDir: options.rootDir,
-    })
-    options.signal?.throwIfAborted()
-
-    try {
-      await rename(outputNodeModules, previousNodeModules)
-      movedPreviousOutput = true
-      cleanupStagingRoot = false
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-
-    try {
-      options.signal?.throwIfAborted()
-      await rename(stagedNodeModules, outputNodeModules)
-      installedReplacement = true
-      options.signal?.throwIfAborted()
-      cleanupStagingRoot = true
-    }
-    catch (error) {
-      if (installedReplacement) await rm(outputNodeModules, { force: true, recursive: true })
-      if (movedPreviousOutput) {
-        await rename(previousNodeModules, outputNodeModules)
-      }
-      cleanupStagingRoot = true
-      throw error
-    }
-  }
-  finally {
-    if (cleanupStagingRoot) await rm(stagingRoot, { force: true, recursive: true })
-  }
+    }),
+  })
 }
 
 export async function copyNodeRuntimePackages(options: NodeRuntimePackagesOptions): Promise<void> {
@@ -298,57 +256,6 @@ function hasNodeModulesSegment(path: string): boolean {
 function isInsideDirectory(parent: string, child: string): boolean {
   const childRelativePath = relative(parent, child)
   return childRelativePath === "" || (!childRelativePath.startsWith(`..${sep}`) && childRelativePath !== ".." && !isAbsolute(childRelativePath))
-}
-
-async function resolvePackageJson(name: string, resolver: NodeJS.Require, fromDir: string): Promise<string | undefined> {
-  try {
-    return resolver.resolve(`${name}/package.json`)
-  }
-  catch (error) {
-    if (!isPackageResolutionMiss(error)) throw error
-  }
-
-  try {
-    let current = dirname(resolver.resolve(name))
-    while (current !== dirname(current)) {
-      const candidate = join(current, "package.json")
-      try {
-        await access(candidate)
-        const parsedPackageJson: unknown = JSON.parse(await readFile(candidate, "utf8"))
-        // SAFETY: parsePackageJson validates the object boundary before this narrower property view.
-        const packageJson = parsePackageJson(parsedPackageJson, candidate) as { name?: string }
-        if (packageJson.name === name) return candidate
-      }
-      catch (error) {
-        // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      }
-      current = dirname(current)
-    }
-  }
-  catch (error) {
-    if (!isPackageResolutionMiss(error)) throw error
-  }
-
-  let current = fromDir
-  while (current !== dirname(current)) {
-    const candidate = join(current, "node_modules", ...name.split("/"), "package.json")
-    try {
-      await access(candidate)
-      return candidate
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    current = dirname(current)
-  }
-}
-
-function isPackageResolutionMiss(error: unknown): boolean {
-  // SAFETY: Node module resolution failures expose their stable error code through ErrnoException.
-  const code = (error as NodeJS.ErrnoException | undefined)?.code
-  return code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
 }
 
 function parsePackageJson(value: unknown, path: string): Record<string, unknown> {

@@ -1,11 +1,10 @@
-import { collectViteHubProvisionSteps } from "@vite-hub/internal/cli"
 import { mergeProvisionState, PROVISION_STATE_FILE, readProvisionState, writeProvisionState } from "@vite-hub/internal/provision-state"
-import { resolveCloudflareProvisionConfig, resolveVercelProvisionConfig } from "@vite-hub/internal/provision"
+import { planProvisionSteps, resolveCloudflareProvisionConfig, resolveVercelProvisionConfig } from "@vite-hub/internal/provision"
 
 import type { ViteHubCliCommandNamespace, ViteHubCliContext } from "@vite-hub/internal/cli"
 import type {
-  ProvisionAction,
-  ProvisionContext,
+  PlannedProvisionAction,
+  ProvisionPlan,
   ProvisionProvider,
   ProvisionState,
   ProvisionStep,
@@ -24,17 +23,6 @@ interface ParsedProvisionArgs {
   help: boolean
   json: boolean
   provider?: string
-}
-
-interface PlannedProvisionAction {
-  action: ProvisionAction
-  step: string
-}
-
-interface ProvisionPlan {
-  actions: PlannedProvisionAction[]
-  checked: boolean
-  warnings: string[]
 }
 
 const PROVISION_PROVIDERS = ["cloudflare", "vercel"] as const satisfies readonly ProvisionProvider[]
@@ -131,29 +119,14 @@ function hasProviderCredentials(provider: ProvisionProvider, env: ProvisionFeatu
 
 // Runs only the plan phase. Step messages go to stderr so stdout stays one JSON document in --json mode.
 async function planProvision(provider: ProvisionProvider, context: ProvisionFeatureContext, options: ProvisionFeatureOptions, json: boolean): Promise<ProvisionPlan> {
-  const warnings: string[] = []
-  let checked = true
-  const provisionContext: ProvisionContext = {
+  return await planProvisionSteps(provider, await options.collectSteps(), {
     env: context.env,
     fetch: globalThis.fetch,
     logger: {
       log: message => (json ? context.stderr : context.stdout).write(`${message}\n`),
-      warn: (message) => {
-        warnings.push(message)
-        if (!json) context.stderr.write(`${message}\n`)
-      },
+      warn: message => { if (!json) context.stderr.write(`${message}\n`) },
     },
-    markPlanUnchecked: () => { checked = false },
-  }
-
-  const actions: PlannedProvisionAction[] = []
-  const steps = (await options.collectSteps()).filter(step => step.provider === provider)
-  for (const step of steps) {
-    for (const action of await step.plan(provisionContext)) {
-      actions.push({ action, step: step.id })
-    }
-  }
-  return { actions, checked, warnings }
+  })
 }
 
 function serializeAction({ action, step }: PlannedProvisionAction) {
@@ -275,8 +248,8 @@ export async function runProvisionStatus(args: string[], context: ProvisionFeatu
 }
 
 /** Built-in namespace that orchestrates package-contributed Provision Steps. */
-export function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliCommandNamespace {
-  const options: ProvisionFeatureOptions = { collectSteps: () => collectViteHubProvisionSteps(plugins) }
+export function createProvisionNamespace(steps: readonly ProvisionStep[]): ViteHubCliCommandNamespace {
+  const options: ProvisionFeatureOptions = { collectSteps: async () => [...steps] }
   return {
     description: "Idempotently create missing provider resources.",
     features: [{

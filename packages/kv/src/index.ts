@@ -1,4 +1,4 @@
-export { kv } from "./runtime/storage.ts"
+export { disposeKVStores, kv } from "./runtime/storage.ts"
 export type {
   CloudflareKVStoreConfig,
   DenoKVStoreConfig,

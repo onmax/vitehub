@@ -50,6 +50,7 @@ export default defineEventHandler(async (event) => {
 | Import | Use |
 | --- | --- |
 | `kv` from `@vite-hub/kv` | Read and write the Default KV Store or a named KV Store. |
+| `disposeKVStores` from `@vite-hub/kv` | Dispose all cached stores from an application shutdown hook. |
 | `hubKv` from `@vite-hub/kv/vite` | Register KV runtime configuration. |
 | `resolveKVViteConfig` from `@vite-hub/kv/vite` | Resolve KV Vite runtime config manually. |
 
@@ -202,3 +203,17 @@ Do not build coordination locks on top of basic `kv.get()` and `kv.set()`. The a
 - Expose scoped model access through [Official capabilities](/docs/capabilities/official-capabilities).
 
 KV inspection represents `bigint` values, including nested values, as decimal strings. Values that cannot be serialized return `KV_VALUE_UNSUPPORTED`. Cloudflare write results report the effective TTL after rounding.
+
+## Application teardown
+
+After stopping new application work, call `disposeKVStores()` from your shutdown hook. It releases cached default and named stores, including retained filesystem iterators and Upstash overflow pages. Concurrent calls share one cleanup promise. Cleanup failures reject with an `AggregateError`. Later operations create fresh stores, so restart process-local listings without an old cursor.
+
+For Nitro, register the hook in a server plugin:
+
+```ts [server/plugins/kv-cleanup.ts]
+import { disposeKVStores } from '@vite-hub/kv'
+
+export default defineNitroPlugin((nitroApp) => {
+  nitroApp.hooks.hook('close', disposeKVStores)
+})
+```

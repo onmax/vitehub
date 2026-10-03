@@ -56,3 +56,16 @@ export function asUnknownBoundary(value: unknown): unknown {
 export function isRuntimeObject(value: unknown): value is object {
   return value !== null && Object(value) === value
 }
+
+export function runtimeType(value: unknown): keyof RuntimeTypeMap {
+  if (value === undefined) return "undefined"
+  if (value === null) return "object"
+  if (isCallableRepresentation(value)) return "function"
+  if (Object(value) === value) return "object"
+  const tag = Object.prototype.toString.call(value)
+  if (tag === "[object BigInt]") return "bigint"
+  if (tag === "[object Boolean]") return "boolean"
+  if (tag === "[object Number]") return "number"
+  if (tag === "[object String]") return "string"
+  return "symbol"
+}

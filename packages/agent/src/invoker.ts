@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord, runtimeType } from "./internal/runtime-type.ts"
+import { hasRuntimeType, runtimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 
 import type {
   AgentCallbackContext,

@@ -2,7 +2,8 @@ import { inheritAgentLayerOptions } from "./agent-layers.ts"
 import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
 import { agentInstructionSources, resolveAgentInstructions } from "./agent-instructions.ts"
-import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 import { listMaterializedWorkspaceEntries, listMaterializedWorkspaceSourceEntries, normalizeWorkspaceSourcesMetadata, readWorkspaceSourceMaterializationStatus, workspaceSourceGrantPaths, type WorkspaceSourceMetadata } from "@vite-hub/workspace/source-metadata"
 import {
   noExecutionAuthority,
@@ -820,6 +821,7 @@ function providerMetadata(driver: {
   reasoningEffort?: AgentInspectionProviderMetadata["reasoningEffort"]
   reasoningSummary?: AgentInspectionProviderMetadata["reasoningSummary"]
   sessionStorePath?: string
+  toolchain?: AgentInspectionProviderMetadata["toolchain"]
 }): AgentInspectionProviderMetadata {
   const providerSettings = Object.entries(driver.providerSettings || {})
     .filter(([, value]) => value !== undefined)
@@ -839,6 +841,7 @@ function providerMetadata(driver: {
     ...(driver.reasoningEffort ? { reasoningEffort: driver.reasoningEffort } : {}),
     ...(driver.reasoningSummary ? { reasoningSummary: driver.reasoningSummary } : {}),
     ...(driver.sessionStorePath ? { sessionStore: "sqlite" as const } : {}),
+    ...(driver.toolchain !== undefined ? { toolchain: driver.toolchain } : {}),
   }
 }
 

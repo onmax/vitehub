@@ -1,5 +1,6 @@
 import { workspaceConflict, workspaceError } from "../../core/errors.ts"
-import { contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
+import { contentToBytes, isExcludedWorkspacePath, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../../core/glob.ts"
 import { resolveRuntimeVercelBlobWorkspaceStore } from "../../storage/provider.ts"
 import { createSnapshotFromEntries, diffSnapshots } from "../../storage/utils.ts"
 import * as bundledVercelBlob from "@vercel/blob"
@@ -54,6 +55,13 @@ type VercelBlobModule = {
   }): Promise<unknown>
 }
 
+function isMissingBlobError(error: unknown) {
+  return error instanceof Error && (
+    error.name === "BlobNotFoundError"
+    || /requested blob does not exist/i.test(error.message)
+  )
+}
+
 function joinBlobPath(...parts: string[]) {
   return parts.map(part => normalizeWorkspacePath(part)).filter(Boolean).join("/")
 }
@@ -75,15 +83,20 @@ async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) 
     async delete(key: string): Promise<void> {
       await blob.del(key, auth(options))
     },
-    async download(key: string): Promise<Blob> {
+    async download(key: string): Promise<Blob | undefined> {
       const result = await blob.get(key, { access, ...auth(options) })
-      if (!result || result.statusCode !== 200 || !result.stream) throw Object.assign(workspaceErrorDiagnostics.WORKSPACE_R0033({ message: "not found" }), { code: "NotFound" })
+      if (!result) return undefined
+      if (result.statusCode !== 200) throw workspaceErrorDiagnostics.WORKSPACE_R0033({ message: `Unexpected Vercel Blob response: ${result.statusCode}.` })
       return await new Response(result.stream, {
         headers: result.blob.contentType ? { "content-type": result.blob.contentType } : undefined,
       }).blob()
     },
-    async head(key: string): Promise<BlobListItem> {
-      const result = await blob.head(key, auth(options))
+    async head(key: string): Promise<BlobListItem | undefined> {
+      const result = await blob.head(key, auth(options)).catch((error: unknown) => {
+        if (isMissingBlobError(error)) return undefined
+        throw error
+      })
+      if (!result) return undefined
       return {
         key: result.pathname,
         lastModified: result.uploadedAt.getTime(),
@@ -152,7 +165,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   async readFile(path: string): Promise<WorkspaceFile | undefined> {
     const normalized = normalizeSafeWorkspacePath(path)
     const pathname = this.#fileKey(normalized)
-    const file = await (await this.#client()).download(pathname).catch(() => null)
+    const file = await (await this.#client()).download(pathname)
     if (!file) return undefined
     const bytes = await file.arrayBuffer()
     return { path: normalized, content: new Uint8Array(bytes) }
@@ -204,10 +217,11 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
     return [...entries.values()].sort((a, b) => a.path.localeCompare(b.path))
   }
 
-  async glob(pattern: string | string[], _options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
+  async glob(pattern: string | string[], options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
     const patterns = Array.isArray(pattern) ? pattern.map(normalizeSafeWorkspacePattern) : normalizeSafeWorkspacePattern(pattern)
-    const entries = await this.list("", { recursive: true })
-    return entries.filter(entry => entry.type === "file" && matchesAny(entry.path, patterns))
+    const { cwd, matches } = createWorkspaceGlobMatcher(patterns, options)
+    const entries = await this.list(cwd, { recursive: true })
+    return entries.filter(entry => entry.type === "file" && matches(entry.path))
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {
@@ -237,7 +251,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
     }
     const client = await this.#client()
     const targets: string[] = []
-    const current = await client.head(this.#fileKey(normalized)).catch(() => null)
+    const current = await client.head(this.#fileKey(normalized))
     if (current) targets.push(this.#fileKey(normalized))
     else if (options.recursive) {
       for (const blob of await this.#listBlobs(`${this.#fileKey(normalized)}/`)) {
@@ -295,7 +309,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   }
 
   async #readJson(pathname: string): Promise<unknown> {
-    const file = await (await this.#client()).download(pathname).catch(() => null)
+    const file = await (await this.#client()).download(pathname)
     return file ? JSON.parse(await file.text()) : undefined
   }
 }

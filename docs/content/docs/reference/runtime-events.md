@@ -49,6 +49,8 @@ Use the tagged `payload` field when an event needs structured detail. Payload vi
 
 The payload contract is independent of `attributes`. Existing attribute content remains metadata-only by default and still requires the existing content policy to opt a trusted sink into inputs or outputs.
 
+Attribute projection reads own data properties without invoking getters. In metadata mode, this also applies to nested objects and array entries: content keys are recorded as omitted, and other accessors are skipped. Content mode keeps nested attribute values unchanged.
+
 ## Runtime lifecycle hooks
 
 Runtime lifecycle hooks are host-provided callbacks for observing shared runtime behavior.

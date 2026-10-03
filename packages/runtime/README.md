@@ -30,7 +30,9 @@ pnpm add @vite-hub/runtime
 ```
 
 The package declares Node.js 24 or newer. Import the root entry for portable
-Runtime contracts. When inspected, the `/node` entry reads Node process
+Runtime contracts. ViteHub owner packages share representation guards through
+`@vite-hub/runtime/internal/runtime-type`; this internal entry has no host dependencies.
+When inspected, the `/node` entry reads Node process
 information and, on Linux, `/proc` and cgroup v2 files.
 
 Long-lived Node services can also use `createProcessReconciler()` from the `/node`
@@ -133,6 +135,11 @@ known content-bearing attribute keys such as `input`, `prompt`, `body`, and
 secret detection. Arbitrary names such as `token` or `authorization` are not
 automatically redacted, and `error.message` is retained. `{ content: "content" }`
 retains all supplied attributes.
+
+Attribute projection reads own data properties. It does not invoke attribute
+getters. In `metadata` mode this also applies to nested objects and array entries;
+accessor-backed content keys are recorded as omitted, and other accessors are
+skipped. In `content` mode nested attribute values remain unchanged.
 
 Own trace access, retention, size limits, redaction, and durable export in the
 host. `entries()` returns the current in-memory entries; it does not persist or
