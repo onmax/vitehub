@@ -3637,6 +3637,23 @@ describe("ViteHub Nuxt integration", () => {
     ])
   })
 
+  it("auto-imports the Blob upload composables only when Blob is enabled", async () => {
+    const withBlob = createNuxt()
+    const withoutBlob = createNuxt()
+
+    await viteHubNuxtModule({ blob: true, preset: "node" }, withBlob.nuxt)
+    await viteHubNuxtModule({ preset: "node" }, withoutBlob.nuxt)
+
+    // SAFETY: The module initializes Nuxt's imports collection.
+    const imports = (nuxt: typeof withBlob.nuxt) => (nuxt.options as typeof nuxt.options & { imports: { imports: Array<{ from: string, name: string }> } }).imports.imports
+    expect(imports(withBlob.nuxt)).toEqual([
+      { from: "vite-hub/source/client", name: "useCollection" },
+      { from: "vite-hub/blob/vue", name: "useMultipartUpload" },
+      { from: "vite-hub/blob/vue", name: "useUpload" },
+    ])
+    expect(imports(withoutBlob.nuxt)).toEqual([{ from: "vite-hub/source/client", name: "useCollection" }])
+  })
+
   it("rejects a configured Nuxt composable that would bind a different useChat", async () => {
     const { nuxt } = createNuxt()
     Object.assign(nuxt.options, {
