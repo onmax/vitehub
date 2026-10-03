@@ -40,6 +40,16 @@ it.each([
   "({ render() { { const portal = input; return portal.id } } })",
   "({ render() { { var portal = input } return portal } })",
   "class { static { const portal = input; portal.id } }",
+  "({ render() { for (const portal of []) return portal.id } })",
+  "({ render() { for (let portal in input) { portal.id } } })",
+  "({ render() { for (let portal = 0; portal < 1; portal++) { portal.id } } })",
+  "({ render() { for (const { id: portal } of []) return portal } })",
+  "({ render() { for (const [portal] of []) return portal } })",
+  "({ render() { for (let first = 0, portal = 0; portal < 1; portal++) return portal } })",
+  "({ render() { for (var portal of []) {} return portal } })",
+  "({ async render() { for await (const portal of []) return portal.id } })",
+  "({ render() { for (const portal of []) if (input.id) portal.id; else portal.id; } })",
+  "({ render() { for (const portal of []) for (const item of []) portal.id } })",
 ])("ignores unrelated template metadata and method locals: %s", async expression => {
   const definition = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; export default defineAgent({ channels: { custom: portal }, driver: { instructions: () => \`${"${"}${expression}${"}"}\` } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
@@ -83,6 +93,15 @@ it.each([
   "({ render() { const { portal: local } = input; return portal } })",
   "({ render() { const local = portal; return local } })",
   "({ render() { const portal = input; return portal } })}${portal",
+  "({ render() { for (const portal of []) {} return portal } })",
+  "({ render() { for (let portal in input) portal.id; return portal } })",
+  "({ render() { for (let portal = 0; portal < 1; portal++) {} return portal } })",
+  "({ render() { for (const local of portal) return local } })",
+  "({ render() { for (const portal of []) if (input.id) portal.id; else portal.id; return portal } })",
+  "({ render() { for (const portal of []) {} } }), portal",
+  "input.for()",
+  "input.if()",
+  "({ render() { for (const portal of []) input.for() } })",
 ])("keeps imported reads outside template local scopes opaque: %s", async expression => {
   await expect(discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,

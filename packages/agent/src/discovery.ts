@@ -1351,11 +1351,33 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // Resolve body declarations in their lexical block, or function for var.
     // Do not let a method local hide imported reads in another interpolation.
     const templateFunctionScopes = [...templateLocalBindings]
+    const templateStatementEnd = (start: number): number => {
+      const token = references[start]
+      if (token === "{") return (referenceClosings.get(start) ?? start) + 1
+      if (["for", "if", "while", "with"].includes(token ?? "")) {
+        const parameters = token === "for" && references[start + 1] === "await" ? start + 2 : start + 1
+        const close = referenceClosings.get(parameters)
+        if (close !== undefined) {
+          const end = templateStatementEnd(close + 1)
+          return token === "if" && references[end] === "else" ? templateStatementEnd(end + 1) : end
+        }
+      }
+      for (let cursor = start; cursor < references.length; cursor++) {
+        if (["}", ")", "]"].includes(references[cursor]!)) return cursor
+        if (references[cursor] === ";") return cursor + 1
+        if (cursor > start && referenceLineBreaks.has(cursor)
+          && endsAgentExpression(references.slice(start, cursor))) return cursor
+        cursor = referenceClosings.get(cursor) ?? cursor
+      }
+      return references.length
+    }
     for (let index = 0; index < references.length; index++) {
       const keyword = references[index]!
       const declarationStart = keyword === "function" && references[index - 1] === "async" ? index - 1 : index
+      const loopOpen = references[index - 1] === "(" && (references[index - 2] === "for"
+        || references[index - 2] === "await" && references[index - 3] === "for") ? index - 1 : undefined
       if (!["const", "let", "var", "function", "class"].includes(keyword)
-        || !["{", ";", "}"].includes(references[declarationStart - 1] ?? "") && !referenceLineBreaks.has(declarationStart)) continue
+        || loopOpen === undefined && !["{", ";", "}"].includes(references[declarationStart - 1] ?? "") && !referenceLineBreaks.has(declarationStart)) continue
       const owner = templateFunctionScopes.filter(scope => index > scope.start && index < scope.end)
         .sort((a, b) => b.start - a.start)[0]
       if (!owner) continue
@@ -1363,8 +1385,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         references[opening] === "{" && opening < index && closing > index)
         .sort(([a], [b]) => b - a)[0]
       if (!block) continue
-      const start = keyword === "var" ? owner.start : block[0]
-      const end = keyword === "var" ? owner.end : block[1]
+      const loopClose = loopOpen === undefined ? undefined : referenceClosings.get(loopOpen)
+      const start = keyword === "var" ? owner.start : loopOpen ?? block[0]
+      const end = keyword === "var" ? owner.end : loopClose === undefined ? block[1] : templateStatementEnd(loopClose + 1)
       // Statement declarations bind their name throughout the containing
       // block. A named expression instead binds only inside its own body.
       if (keyword === "function" || keyword === "class") {
@@ -1380,6 +1403,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         for (; cursor < end; cursor++) {
           const token = references[cursor]!
           if ([",", ";", "}"].includes(token)
+            || loopOpen !== undefined && ["of", "in", ")"].includes(token)
             || referenceLineBreaks.has(cursor) && endsAgentExpression(references.slice(binding, cursor))) break
           cursor = referenceClosings.get(cursor) ?? cursor
         }
@@ -1468,8 +1492,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
         reassignedGlobalConversions.add(member.name)
       }
-      else if (!member && assignmentOperator(memberCallEnd(index))) {
-        // Unknown computed writes may replace a conversion helper.
+      else if (!member && memberCallEnd(index) > index + 1 && assignmentOperator(memberCallEnd(index))) {
+        // Unknown computed writes may replace a conversion helper. A bare
+        // alias declaration or assignment does not write a member.
         reassignedGlobalConversions.add("String")
         reassignedGlobalConversions.add("Number")
         reassignedGlobalConversions.add("Boolean")
@@ -1495,6 +1520,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
         && !methodKey(index - 1)
         && !functionExpressionCall(index - 1)
+        && !(token === "(" && ![".", "?"].includes(references[index - 2] ?? "")
+          && (["for", "if", "while", "switch", "catch", "with"].includes(references[index - 1] ?? "")
+          || references[index - 1] === "await" && references[index - 2] === "for"))
         && !conversionCall(index)))
       // A tagged template also calls its tag. The tag is outside the
       // interpolation token stream, so treat it as opaque
