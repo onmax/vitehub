@@ -1085,6 +1085,10 @@ function processHandle(child: ChildProcessWithoutNullStreams, abortSignal: Abort
       else resolvePromise({ exitCode: code ?? 1 })
     })
   })
+  // A background caller may not await immediately. Observe rejection now so
+  // cancellation and spawn failures cannot become process-level unhandled
+  // rejections before the caller reaches wait().
+  void wait.catch(() => undefined)
   let stdin: WritableStream<Uint8Array> | undefined
   return {
     pid: child.pid,
