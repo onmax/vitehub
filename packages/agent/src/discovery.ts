@@ -2585,9 +2585,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
       if (tokens[receiverEnd] === "as" || tokens[receiverEnd] === "satisfies") {
         wrapped = true
-        receiverEnd++
-        while (receiverEnd < tokens.length && tokens[receiverEnd] !== ")"
-          && tokens[receiverEnd] !== "." && tokens[receiverEnd] !== "[") receiverEnd++
+        // Type assertions can contain qualified names, arrays, and nested
+        // function types. Skip the full type before resolving the member.
+        receiverEnd = skipAssertion(receiverEnd)
         if (tokens[receiverEnd] === ")") receiverEnd++
         continue
       }

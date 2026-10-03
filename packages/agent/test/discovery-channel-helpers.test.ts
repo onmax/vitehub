@@ -59,9 +59,9 @@ it.each([
   expect(definition?.workspace).toBeUndefined()
 })
 
-it("rejects global conversion writes through TypeScript assertions", async () => {
+it.each(["object", "Types.Global", "Types.Global<object>", "Types.Global[]", "{ String: (value: unknown) => string }"])("rejects global conversion writes through TypeScript assertions: %s", async type => {
   await expect(discover(`${imports} import portal from "../../portal.ts";
-(globalThis as object).String = () => getPortal().capabilities = [{ workspace: {} }];
+(globalThis as ${type}).String = () => getPortal().capabilities = [{ workspace: {} }];
 const ignored = \`\${String("id")}\`;
 export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
@@ -97,7 +97,6 @@ export default defineAgent({ channels: { github: portal } })`, {
 
 it.each([
   "import('./other.ts')",
-  "class { #portal = portal; get value() { return this.#portal } }",
   "({ render() { const portal = input; return portal } }), portal",
   "({ render() { { const portal = input } return portal } })",
   "({ render() { const { portal: local } = input; return portal } })",
@@ -143,6 +142,12 @@ it.each([
 it.each([
   "class portal {}",
   "class portal extends Base {}",
+  "class { #portal = portal; get value() { return this.#portal } }",
+  "class { field = portal }",
+  "class { field = portal = input.id }",
+  "class { portal = portal }",
+  "class { field =\n portal = input.id }",
+  "class { field = input.id +\n portal }",
   "class { portal = input.id }",
   "class Named { portal = input.id }",
   "class { static portal = input.id }",
@@ -157,7 +162,7 @@ it.each([
   "class { portal\n other = input.id }",
   "class { portal = { portal: input.id } }",
   "class extends Base { portal = input.id }",
-])("ignores class field keys in template expressions: %s", async expression => {
+])("ignores inert instance initializers and class field keys in template expressions: %s", async expression => {
   const imported = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
   })
@@ -165,13 +170,8 @@ it.each([
 })
 
 it.each([
-  "class { field = portal }",
   "class { [portal] = input.id }",
-  "class { field = portal = input.id }",
-  "class { portal = portal }",
   "class { static portal = portal }",
-  "class { field =\n portal = input.id }",
-  "class { field = input.id +\n portal }",
   "class { field = `${portal}` }",
   "class { field = `${portal = input.id}` }",
   "class extends portal { field = input.id }",
@@ -1977,8 +1977,12 @@ it.each([
   })).rejects.toThrow("opaque Channel")
 })
 
-it("rejects mutations in callback arrows passed to calls and invoked afterward", async () => {
-  await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = \`${"${consume(() => portal.capabilities = [])()}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+it.each([
+  "consume(() => portal.capabilities = [])()",
+  "consume[handler](() => portal.capabilities = [])()",
+  "consume[handler](consume[other](() => portal.capabilities = []))()",
+])("rejects opaque enclosing calls that can invoke mutating callback arrows: %s", async expression => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = \`${"${" + expression + "}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
   })).rejects.toThrow("opaque Channel")
 })
