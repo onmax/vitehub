@@ -3,7 +3,7 @@ import * as v from "valibot"
 
 import { consoleAgentInvokerProfiles, getConsoleAgentDefinition } from "./agents.ts"
 import { getConsoleInvocations } from "./invocations.ts"
-import { assertConsoleRequest, consoleRequestJSON, consoleRequestURL } from "./request.ts"
+import { assertConsoleRequest, consoleRequestError, consoleRequestJSON, consoleRequestURL } from "./request.ts"
 import { invocationUsage } from "./usage.ts"
 
 import type { ConsoleRequestEvent } from "./request.ts"
@@ -79,7 +79,14 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
 
 function requestedInvocationId(event: ConsoleRequestEvent): string {
   const pathId = consoleRequestURL(event).pathname.split("/").at(-1)
-  return event.context?.params?.id ?? (pathId ? decodeURIComponent(pathId) : "")
+  if (event.context?.params?.id !== undefined) return event.context.params.id
+  if (!pathId) return ""
+  try {
+    return decodeURIComponent(pathId)
+  }
+  catch {
+    throw consoleRequestError(400, "Malformed invocation id.")
+  }
 }
 
 /** Delete one terminal invocation after the Console checks invoke access for its Agent. */
