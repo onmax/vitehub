@@ -262,21 +262,24 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   })).rejects.toThrow('unsafe Git metadata')
 
   // Cleanup must not traverse a linked checkout or an intermediate metadata directory.
-  for (const component of ['checkout', 'info']) {
-    const number = component === 'checkout' ? 3 : 4
+  for (const [index, component] of ['checkout', 'info', 'objects', 'objects/pack'].entries()) {
+    const number = index + 3
     let checkoutPath = ''
     await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: oneSha }, async ({ path }) => {
       checkoutPath = path
     })
-    const outside = join(root, `outside-${component}`)
-    const replaced = component === 'checkout' ? checkoutPath : join(checkoutPath, '.git/info')
+    const outside = join(root, `outside-${component.replaceAll('/', '-')}`)
+    const replaced = component === 'checkout' ? checkoutPath : join(checkoutPath, '.git', component)
+    await mkdir(replaced, { recursive: true })
     await rename(replaced, outside)
     await writeFile(join(outside, 'exclude'), 'keep me')
     await symlink(outside, replaced)
-    await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: oneSha }, async () => {
+    const outsideEntries = await readdir(outside, { recursive: true })
+    await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }, async () => {
       throw new Error('must not run')
     })).rejects.toThrow('unsafe Git metadata')
     expect(await readFile(join(outside, 'exclude'), 'utf8')).toBe('keep me')
+    expect(await readdir(outside, { recursive: true })).toEqual(outsideEntries)
     if (component === 'checkout') expect(await git(outside, 'rev-parse', 'HEAD')).toBe(oneSha)
     await expect(access(checkoutPath)).rejects.toThrow()
   }

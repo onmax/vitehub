@@ -364,6 +364,14 @@ async function assertCheckoutDirectories(path: string) {
   }
 }
 
+async function assertGitObjectStore(path: string) {
+  if (!(await lstat(path)).isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    if (entry.isDirectory()) await assertGitObjectStore(join(path, entry.name))
+    else if (!entry.isFile()) throw new Error("Pooled checkout has unsafe Git metadata")
+  }
+}
+
 /**
  * Removes the state of the previous pull request from a pooled checkout. Ignored files stay.
  * The previous run could write Git configuration and hooks, so both are recreated.
@@ -393,6 +401,8 @@ async function resetPooledCheckout(checkout: string, repository: string, command
   }
   const gitQuarantine = `${gitMetadata}.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
   await rename(gitMetadata, gitQuarantine)
+  // Retained objects and their subdirectories must not redirect later fetches outside the checkout.
+  await assertGitObjectStore(join(gitQuarantine, "objects"))
   await mkdir(gitMetadata)
   await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
   for (const name of ["HEAD", "index"]) {
