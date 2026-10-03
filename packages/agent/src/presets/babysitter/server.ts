@@ -675,8 +675,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Keep the base Agent's configured Workspace sources, loaders, and
               // instruction bindings while replacing the checkout-owned fields.
               const baseWorkspace = isRuntimeRecord(workerSettings.workspace)
-                ? workerSettings.workspace
+                ? { ...workerSettings.workspace }
                 : {};
+              // Named Workspace references cannot be combined with owned fields.
+              // The checkout below replaces the reference with its prepared workspace.
+              Reflect.deleteProperty(baseWorkspace, "name");
               const agent = defineAgent({
                 ...workerSettings,
                 name: workerName,
