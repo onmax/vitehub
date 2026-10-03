@@ -62,6 +62,25 @@ function isHttpTransportConfig(transport: McpClientConfig["transport"]): transpo
   return "type" in transport && (transport.type === "http" || transport.type === "sse") && "url" in transport
 }
 
+async function readMcpRequestBody(request: Request): Promise<string> {
+  if (!request.signal) return request.text()
+  if (request.signal.aborted) throw request.signal.reason ?? new DOMException("The operation was aborted.", "AbortError")
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(request.signal.reason ?? new DOMException("The operation was aborted.", "AbortError"))
+    request.signal.addEventListener("abort", onAbort, { once: true })
+    void request.text().then(
+      body => {
+        request.signal.removeEventListener("abort", onAbort)
+        resolve(body)
+      },
+      error => {
+        request.signal.removeEventListener("abort", onAbort)
+        reject(error)
+      },
+    )
+  })
+}
+
 /** A static server config that names a Connection. A resolver can also return `connection`; `useAgentConnectionClient()` checks the primitive when it runs. */
 const connectionConfigSchema = v.looseObject({ connection: v.string(), transport: v.looseObject({}) })
 
@@ -79,7 +98,7 @@ function withMcpConnection(context: AgentCapabilityContext, server: string, conf
   const fetch: typeof globalThis.fetch = async (input, init) => {
     // MCP needs each response in this session; durable approval replay cannot resume it.
     const target = new Request(input, init)
-    const body = target.method === "GET" || target.method === "HEAD" ? undefined : await target.text()
+    const body = target.method === "GET" || target.method === "HEAD" ? undefined : await readMcpRequestBody(target)
     return connection.fetch(target.url, {
       body,
       headers: target.headers,
