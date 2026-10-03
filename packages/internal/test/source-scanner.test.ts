@@ -95,6 +95,10 @@ describe("source scanner", () => {
     "as [Record<string, unknown>]",
     "satisfies First<string, unknown> & Second<string, unknown>",
     "as First<string, unknown> | Second<string, unknown>",
+    "as true extends true ? Options<string, unknown> : never",
+    "as false extends true ? never : Options<string, unknown>",
+    "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",
+    "as true extends true ? false extends true ? never : Options<string, unknown> : never",
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
     'as import // type\n ("types" /* module */).Record<string, unknown>',
   ])("keeps nested generic assertion commas inside one argument: %s", (assertion) => {
@@ -139,6 +143,8 @@ describe("source scanner", () => {
     "as { config: Record<string, unknown> } || fallback",
     'satisfies import("types").Record<string, unknown> + extra',
     "as (number) < lower, upper > 0",
+    "as Options<string, unknown> ? (bar()) : fallback",
+    "as true extends true ? Options<string, unknown> : never ? (bar()) : fallback",
   ])("rejects runtime suffixes after nested assertion types: %s", (assertion) => {
     expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } ${assertion})`, ["defineSchedule"]))
       .toBeUndefined()

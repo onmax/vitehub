@@ -346,6 +346,12 @@ export function findMatching(source: string, index: number, open: string, close:
 }
 
 function isAssertionTypeArguments(source: string, index: number, assertionSuffix = false) {
+  // A conditional type's branch can begin with a generic reference. This
+  // check runs before walking the qualified name because the preceding token
+  // is `?`, rather than an assertion operator or a union delimiter.
+  if (/\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) return true
+  if (/\b(?:extends|implements)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
+    && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let current = previousCodeIndex(source, index - 1, controlFlowRegexes)
   let qualified = false
@@ -373,6 +379,15 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   if (assertionSuffix) return true
   if (source[current] === "&" || source[current] === "|") {
     return hasAssertionTypePrefix(source.slice(0, index))
+  }
+  // Conditional types introduce their true branch after `?`, which is also
+  // a valid boundary for a generic reference. Keep its commas inside the
+  // assertion while the complete-assertion validator checks the suffix.
+  if (source[current] === "?") {
+    return /\b(?:as|satisfies)\b[\s\S]*\?\s*$/.test(source.slice(0, index))
+  }
+  if (/\?\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) {
+    return /\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
   }
   const end = current + 1
   while (isIdentifierChar(source[current])) current -= 1
@@ -594,7 +609,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       }
       // Operators and call syntax after an assertion change the runtime value;
       // reject them while retaining union/intersection punctuation in types.
-      if (/(?:&&|\|\||\?\?|=>|\?\.|[+*/?;%=^]|,)/.test(value)) return false
+      if (/(?:&&|\|\||\?\?|=>|\?\.|[+*/;%=^]|,)/.test(value)) return false
       // A spaced subtraction after an assertion is runtime syntax. Hyphens
       // inside template-literal types remain allowed because they are not
       // surrounded by operator whitespace.

@@ -1119,6 +1119,8 @@ describe("schedule provider output", () => {
     'satisfies import("types").Record<string, unknown>',
     "satisfies First<string, unknown> & Second<string, unknown>",
     "as First<string, unknown> | Second<string, unknown>",
+    "as true extends true ? Options<string, unknown> : never",
+    "as false extends true ? never : Options<string, unknown>",
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
   ])("reads static provider cron from a generic assertion: %s", async (assertion) => {
     const rootDir = await createTempProject("vitehub-schedule-output-assertion-cron-")
