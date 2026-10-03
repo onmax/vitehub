@@ -1540,7 +1540,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // `const define = Object.defineProperty; define(globalThis, "String", …)`.
     // The alias may be shadowed in a nested scope, so only use this as a
     // fail-closed signal when any invocation is present.
-    const intrinsicWriterAliases = new Set<string>()
+    const intrinsicWriterBindings = new Set<number>()
     for (const [binding, initializer] of declaratorInitializers) {
       if (!isIdentifier(tokens[binding] ?? "")) continue
       const objectEnd = intrinsicObjectEnd(initializer)
@@ -1549,11 +1549,30 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (receiverEnd === undefined) continue
       const member = memberAccess(receiverEnd - 1)
       if (member && ["defineProperty", "defineProperties", "set", "assign"].includes(member.name)) {
-        intrinsicWriterAliases.add(tokens[binding]!)
+        const declaration = visibleDeclaration(binding)
+        if (declaration !== undefined) intrinsicWriterBindings.add(declaration)
       }
     }
+    // A writer alias can also be introduced by a later assignment (`let
+    // define; define = Object.defineProperty`). Resolve that assignment to
+    // its lexical binding so unrelated same-named calls stay independent.
     for (let index = 0; index < tokens.length; index++) {
-      if (!intrinsicWriterAliases.has(tokens[index]!) || tokens[index - 1] === ".") continue
+      if (!isIdentifier(tokens[index] ?? "") || !assignmentOperator(index + 1)) continue
+      const initializer = assignmentInitializer(index + 1)
+      if (initializer === undefined) continue
+      const objectEnd = intrinsicObjectEnd(initializer)
+      const reflectEnd = intrinsicReflectEnd(initializer)
+      const receiverEnd = objectEnd ?? reflectEnd
+      if (receiverEnd === undefined) continue
+      const member = memberAccess(receiverEnd - 1)
+      if (!member || !["defineProperty", "defineProperties", "set", "assign"].includes(member.name)) continue
+      const declaration = visibleDeclaration(index)
+      if (declaration !== undefined) intrinsicWriterBindings.add(declaration)
+    }
+    for (let index = 0; index < tokens.length; index++) {
+      if (tokens[index - 1] === ".") continue
+      const declaration = visibleDeclaration(index)
+      if (declaration === undefined || !intrinsicWriterBindings.has(declaration)) continue
       const call = memberCallEnd(index)
       if (tokens[call] !== "(") continue
       reassignedGlobalConversions.add("String")
@@ -1838,6 +1857,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (isFunctionParameter(reference) || callbackParameters.some(scope =>
       reference >= scope.start && reference < scope.end && scope.names.has(name))
       || expressionArrowParameters.some(scope => reference >= scope.start && reference < scope.end && scope.names.has(name))) return false
+    // A nearer variable binding shadows an outer function declaration with
+    // the same name. Only the binding visible at the call site may qualify.
+    if (visibleDeclaration(reference) !== undefined) return false
     // Resolve the helper in the invocation's lexical scope. A name-only scan
     // can accidentally use a top-level helper when a local declaration shadows
     // it and returns an unrelated object.

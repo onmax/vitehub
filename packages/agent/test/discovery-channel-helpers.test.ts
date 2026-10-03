@@ -921,6 +921,7 @@ it.each([
   'function globals() { return globalThis }; globals.bind(null)().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const globals = () => (globalThis); globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const globals = () => ((globalThis)); globals().Number = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
+  'let define; define = Object.defineProperty; define(globalThis, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'function globals() { return (globalThis) }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
@@ -935,6 +936,22 @@ it.each([
   await expect(discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; ${expression}; export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
   })).rejects.toThrow("opaque Channel")
+})
+
+it("keeps shadowed intrinsic writer aliases separate", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; const define = Object.defineProperty; (() => { const define = () => {}; define(); })(); const ignored = \`${"${String(input.id)}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it("keeps a shadowed global helper separate from its outer declaration", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; function globals() { return globalThis }; (() => { const globals = () => ({}); globals().String = replacement })(); const ignored = \`${"${String(input.id)}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
 })
 
 it.each(["String", "Number", "Boolean"].flatMap(name =>
