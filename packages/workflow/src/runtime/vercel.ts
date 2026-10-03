@@ -130,7 +130,8 @@ function invalidVercelResult(field: string): Error {
 
 function normalizeStatus(status: unknown): WorkflowRunStatus {
   if (!hasRuntimeType(status, "string")) throw invalidVercelResult("status")
-  return statusMap[status.toLowerCase()] || "unknown"
+  const normalized = status.toLowerCase()
+  return Object.hasOwn(statusMap, normalized) ? statusMap[normalized]! : "unknown"
 }
 
 function normalizeRunId(id: unknown): string {
