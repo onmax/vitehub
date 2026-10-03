@@ -389,14 +389,14 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   if (/\?\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) {
     return /\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
   }
-  // Unary type operators can precede the generic reference. Walk back to
+  // Type operators can precede the generic reference. Walk back to
   // the assertion boundary with the same comment-aware token handling.
   let keyword: string
   do {
     const end = current + 1
     while (isIdentifierChar(source[current])) current -= 1
     keyword = source.slice(current + 1, end)
-    if (keyword !== "keyof" && keyword !== "readonly") break
+    if (keyword !== "keyof" && keyword !== "readonly" && keyword !== "typeof") break
     current = previousCodeIndex(source, current, controlFlowRegexes)
   } while (current >= 0)
   return (keyword === "as" || keyword === "satisfies")

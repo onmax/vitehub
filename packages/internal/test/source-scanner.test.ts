@@ -98,6 +98,8 @@ describe("source scanner", () => {
     "as true extends true ? Options<string, unknown> : never",
     "as false extends true ? never : Options<string, unknown>",
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
+    "as unknown as typeof shape<string, unknown>",
+    "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
     "as keyof /* type */ Record<string, unknown>",
     "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",
     "as true extends true ? false extends true ? never : Options<string, unknown> : never",
