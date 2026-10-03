@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { createWriteStream } from "node:fs"
 import { readFile, rename, rm, stat } from "node:fs/promises"
-import { resolve } from "node:path"
+import { isAbsolute, relative, resolve, sep } from "node:path"
 import { Readable, Transform, Writable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
@@ -34,6 +34,11 @@ import type { BlobDevFileHeader, BlobDevOperation, BlobDevRequestBody } from "./
 import type { BlobDevDeleteResult, BlobDevHeadResult, BlobDevListResult, BlobDevObject, BlobDevPutResult } from "./runtime/dev.ts"
 
 export type BlobCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
+
+function isCompatibleBlobDevServerRoot(rootDir: string, serverRoot: string): boolean {
+  const nestedPath = relative(resolve(rootDir), resolve(serverRoot))
+  return nestedPath === "" || (nestedPath !== ".." && !nestedPath.startsWith(`..${sep}`) && !isAbsolute(nestedPath))
+}
 
 export interface BlobCliOptions {
   fetch?: typeof fetch
@@ -445,6 +450,7 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   const server = await discoverViteHubDevServer<BlobDevDiscovery>({
     endpoint: blobDevEndpoint,
     fetch: fetchImpl,
+    isCompatibleRoot: isCompatibleBlobDevServerRoot,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
     ...withTimeout(parsed.timeout),
@@ -466,7 +472,8 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   const serverId = v.is(v.string(), server.discovery.blobDevTokenServerId) ? server.discovery.blobDevTokenServerId : undefined
   let token: string | undefined
   try {
-    token = serverId ? await readViteHubDevToken(resolveViteHubProjectRoot(context.rootDir), { namespace: blobDevTokenNamespace, serverId }) : undefined
+    const serverRoot = typeof server.discovery.root === "string" ? server.discovery.root : resolveViteHubProjectRoot(context.rootDir)
+    token = serverId ? await readViteHubDevToken(resolveViteHubProjectRoot(serverRoot), { namespace: blobDevTokenNamespace, serverId }) : undefined
   }
   catch (error) {
     return writeFailure(parsed, context, { message: `Could not read the private Blob Dev token: ${error instanceof Error ? error.message : String(error)}` })
