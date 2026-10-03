@@ -376,6 +376,7 @@ export function invocationActivities(invocation: AgentInvocationView): Invocatio
           ...observation,
           attributes: {
             "message.content": body,
+            "message.origin": "invocation-input",
             "message.id": value ? stringAttribute(value, "id") ?? key : key,
             "message.role": role,
             ...(originalAttributes["vitehub.observation.truncated"] === true

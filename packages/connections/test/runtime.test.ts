@@ -642,6 +642,15 @@ describe("calls", () => {
     await client.fetch("https://mail.example.com/mail/v1/users/me/labels")
     expect(test.provider.calls.at(-1)!.headers.get("accept")).toBe("application/json")
   })
+
+  it("sanitizes caller set-cookie headers for OAuth requests", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    await test.runtime.client("mail", {}).fetch("https://mail.example.com/mail/v1/users/me/labels", {
+      headers: { "set-cookie": "session=secret" },
+    })
+    expect(test.provider.calls.at(-1)!.headers.has("set-cookie")).toBe(false)
+  })
 })
 
 describe("policy", () => {

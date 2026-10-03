@@ -23,90 +23,81 @@ export interface PublicPackageBinContract {
   target: string
 }
 
-const optionalPeerExports = new Map<string, readonly string[]>([
-  ["@vite-hub/agent", ["@vite-hub/workflow"]],
-  ["@vite-hub/agent/evlog", ["evlog"]],
-  ["@vite-hub/agent/evlog/posthog", ["evlog", "posthog-node"]],
-  ["@vite-hub/agent/observability", ["evlog"]],
-  ["@vite-hub/agent/observability/host", ["evlog"]],
-  ["@vite-hub/agent/observability/posthog", ["evlog", "posthog-node"]],
-  ["@vite-hub/agent/eval", ["evalite", "vitest"]],
-  ["@vite-hub/agent/runtime/workflow", ["@vite-hub/workflow"]],
-  ["@vite-hub/auth/agent", ["@vite-hub/agent"]],
-  ["@vite-hub/auth/nuxt", ["vite"]],
-  ["@vite-hub/browser/controllers/playwright", ["playwright-core"]],
-  ["@vite-hub/browser/internal/chromium", ["playwright-core"]],
-  ["@vite-hub/browser/internal/chromium.workerd", ["playwright-core"]],
-  ["@vite-hub/connections/agent", ["drizzle-orm"]],
-  ["@vite-hub/connections/server", ["drizzle-orm"]],
-  ["@vite-hub/env/database", ["drizzle-orm"]],
-  ["@vite-hub/kv/runtime/upstash-driver", ["@upstash/redis"]],
-  ["@vite-hub/source/client", ["vue"]],
-  ["@vite-hub/ui/vite", ["@nuxt/ui"]],
-  ["@vite-hub/workspace/collections/client", ["vue"]],
-  ["@vite-hub/workspace/nitro", ["vite"]],
-  ["@vite-hub/workflow/runtime/openworkflow", ["openworkflow"]],
-  ["@vite-hub/workflow/runtime/openworkflow-worker", ["openworkflow"]],
-  ["vite-hub", ["vite"]],
-  ["vite-hub/agent/evlog", ["evlog"]],
-  ["vite-hub/agent/evlog/posthog", ["evlog", "posthog-node"]],
-  ["vite-hub/agent/observability", ["evlog"]],
-  ["vite-hub/agent/eval", ["evalite", "vitest"]],
-  ["vite-hub/browser/controllers/playwright", ["playwright-core"]],
-  ["vite-hub/nuxt", ["vite"]],
-  ["vite-hub/source/client", ["vue"]],
-  ["vite-hub/content", ["comark-content"]],
-  ["vite-hub/content/client", ["comark-content"]],
-  ["vite-hub/ui", ["vue"]],
-  ["vite-hub/ui/headless", ["vue"]],
-  ["vite-hub/ui/nuxt", ["vue"]],
-  ["vite-hub/ui/vite", ["@nuxt/ui"]],
-  ["vite-hub/workspace/collections/client", ["vue"]],
-  ["vite-hub/workflow/runtime/openworkflow", ["openworkflow"]],
-  ["vite-hub/workflow/runtime/openworkflow-worker", ["openworkflow"]],
+type OptionalPeerUsage = "both" | "declaration" | "runtime"
+
+const optionalPeerUsage = new Map<string, Readonly<Record<string, OptionalPeerUsage>>>([
+  ["@vite-hub/agent", { "@vite-hub/workflow": "declaration" }],
+  ["@vite-hub/agent/evlog", { "evlog": "both" }],
+  ["@vite-hub/agent/evlog/posthog", { "evlog": "both", "posthog-node": "both" }],
+  ["@vite-hub/agent/observability", { "evlog": "both" }],
+  ["@vite-hub/agent/observability/host", { "evlog": "both" }],
+  ["@vite-hub/agent/observability/posthog", { "evlog": "both", "posthog-node": "both" }],
+  ["@vite-hub/agent/eval", { "evalite": "both", "vitest": "both" }],
+  ["@vite-hub/agent/runtime/workflow", { "@vite-hub/workflow": "declaration" }],
+  ["@vite-hub/auth/agent", { "@vite-hub/agent": "both" }],
+  ["@vite-hub/auth/nuxt", { "vite": "both" }],
+  ["@vite-hub/browser/controllers/playwright", { "playwright-core": "declaration" }],
+  ["@vite-hub/browser/internal/chromium", { "playwright-core": "declaration" }],
+  ["@vite-hub/browser/internal/chromium.workerd", { "playwright-core": "declaration" }],
+  ["@vite-hub/connections/agent", { "drizzle-orm": "both" }],
+  ["@vite-hub/connections/server", { "drizzle-orm": "both" }],
+  ["@vite-hub/env/database", { "drizzle-orm": "both" }],
+  ["@vite-hub/kv/runtime/upstash-driver", { "@upstash/redis": "both" }],
+  ["@vite-hub/source/client", { "vue": "both" }],
+  ["@vite-hub/ui/vite", { "@nuxt/ui": "both" }],
+  ["@vite-hub/workspace/collections/client", { "vue": "both" }],
+  ["@vite-hub/workspace/nitro", { "vite": "declaration" }],
+  ["@vite-hub/workflow/runtime/openworkflow", { "openworkflow": "declaration" }],
+  ["@vite-hub/workflow/runtime/openworkflow-worker", { "openworkflow": "declaration" }],
+  ["vite-hub", { "vite": "both" }],
+  ["vite-hub/agent/evlog", { "evlog": "both" }],
+  ["vite-hub/agent/evlog/posthog", { "evlog": "both", "posthog-node": "both" }],
+  ["vite-hub/agent/observability", { "evlog": "both" }],
+  ["vite-hub/agent/eval", { "evalite": "both", "vitest": "both" }],
+  ["vite-hub/browser/controllers/playwright", { "playwright-core": "declaration" }],
+  ["vite-hub/nuxt", { "vite": "both" }],
+  ["vite-hub/source/client", { "vue": "both" }],
+  ["vite-hub/content", { "comark-content": "both" }],
+  ["vite-hub/content/client", { "comark-content": "both" }],
+  ["vite-hub/ui", { "vue": "both" }],
+  ["vite-hub/ui/headless", { "vue": "both" }],
+  ["vite-hub/ui/nuxt", { "vue": "declaration" }],
+  ["vite-hub/ui/vite", { "@nuxt/ui": "both" }],
+  ["vite-hub/workspace/collections/client", { "vue": "both" }],
+  ["vite-hub/workflow/runtime/openworkflow", { "openworkflow": "both" }],
+  ["vite-hub/workflow/runtime/openworkflow-worker", { "openworkflow": "both" }],
+  ["@vite-hub/agent/vite", { "vite": "declaration" }],
+  ["@vite-hub/auth/vite", { "vite": "declaration" }],
+  ["@vite-hub/blob/vite", { "vite": "declaration" }],
+  ["@vite-hub/browser/vite", { "vite": "declaration" }],
+  ["@vite-hub/channels/vite", { "vite": "declaration" }],
+  ["@vite-hub/connections/vite", { "vite": "declaration" }],
+  ["@vite-hub/database/vite", { "vite": "declaration" }],
+  ["@vite-hub/kv/vite", { "vite": "declaration" }],
+  ["@vite-hub/queue/vite", { "vite": "declaration" }],
+  ["@vite-hub/realtime/vite", { "vite": "declaration" }],
+  ["@vite-hub/sandbox/vite", { "vite": "declaration" }],
+  ["@vite-hub/schedule/vite", { "vite": "declaration" }],
+  ["@vite-hub/workflow/vite", { "vite": "declaration" }],
+  ["@vite-hub/workspace/vite", { "vite": "declaration" }],
+  ["@vite-hub/schedule/runtime/kv", { "@vite-hub/kv": "runtime" }],
 ])
 
-const runtimeOnlyPeerExports = new Map<string, readonly string[]>([
-  ["@vite-hub/schedule/runtime/kv", ["@vite-hub/kv"]],
-])
-
-const declarationOnlyPeerExports = new Map<string, readonly string[]>([
-  ["@vite-hub/agent", ["@vite-hub/workflow"]],
-  ["@vite-hub/agent/runtime/workflow", ["@vite-hub/workflow"]],
-  ["@vite-hub/agent/vite", ["vite"]],
-  ["@vite-hub/auth/vite", ["vite"]],
-  ["@vite-hub/blob/vite", ["vite"]],
-  ["@vite-hub/browser/controllers/playwright", ["playwright-core"]],
-  ["@vite-hub/browser/internal/chromium", ["playwright-core"]],
-  ["@vite-hub/browser/internal/chromium.workerd", ["playwright-core"]],
-  ["@vite-hub/browser/vite", ["vite"]],
-  ["@vite-hub/channels/vite", ["vite"]],
-  ["@vite-hub/connections/vite", ["vite"]],
-  ["@vite-hub/database/vite", ["vite"]],
-  ["@vite-hub/kv/vite", ["vite"]],
-  ["@vite-hub/queue/vite", ["vite"]],
-  ["@vite-hub/realtime/vite", ["vite"]],
-  ["@vite-hub/sandbox/vite", ["vite"]],
-  ["@vite-hub/schedule/vite", ["vite"]],
-  ["@vite-hub/workflow/runtime/openworkflow", ["openworkflow"]],
-  ["@vite-hub/workflow/runtime/openworkflow-worker", ["openworkflow"]],
-  ["@vite-hub/workflow/vite", ["vite"]],
-  ["@vite-hub/workspace/nitro", ["vite"]],
-  ["@vite-hub/workspace/vite", ["vite"]],
-  ["vite-hub/browser/controllers/playwright", ["playwright-core"]],
-  ["vite-hub/ui/nuxt", ["vue"]],
-])
-
-function optionalDeclarationPeersForExport(specifier: string, subpath: string) {
-  const peers = [...(optionalPeerExports.get(specifier) || [])]
-  if (/(?:^|\/)vite$/.test(subpath)) peers.push("vite")
-  if (/(?:^|\/)vue$/.test(subpath)) peers.push("vue")
-  return peers
+function optionalPeersForExport(specifier: string, subpath: string) {
+  const usage: Record<string, OptionalPeerUsage> = { ...optionalPeerUsage.get(specifier) }
+  if (/(?:^|\/)vite$/.test(subpath)) usage.vite ??= "both"
+  if (/(?:^|\/)vue$/.test(subpath)) usage.vue ??= "both"
+  const entries = Object.entries(usage)
+  return {
+    optionalDeclarationPeers: entries.filter(([, mode]) => mode !== "runtime").map(([peer]) => peer),
+    optionalRuntimePeers: entries.filter(([, mode]) => mode !== "declaration").map(([peer]) => peer),
+  }
 }
 
-function exportTarget(rawTarget: string | Record<string, string>) {
-  if (rawTarget instanceof Object) return rawTarget.import || rawTarget.default || rawTarget.types
-  return rawTarget
+function exportTarget(rawTarget: NonNullable<ReturnType<typeof readPackageManifest>["exports"]>[string]) {
+  if (typeof rawTarget === "string") return rawTarget
+  const target = rawTarget.import || rawTarget.default || rawTarget.types
+  return typeof target === "string" ? target : target?.import || target?.default || target?.node
 }
 
 function exportSpecifier(packageName: string, subpath: string) {
@@ -131,15 +122,10 @@ export const publicPackageExportContracts: readonly PublicPackageExportContract[
     const target = exportTarget(rawTarget)
     if (!target) throw new Error(`${info.packageName} ${subpath} has no import, default, or types target`)
     const specifier = exportSpecifier(info.packageName, subpath)
-    const optionalDeclarationPeers = optionalDeclarationPeersForExport(specifier, subpath)
-    const declarationOnlyPeers = new Set(declarationOnlyPeerExports.get(specifier) || [])
+    const optionalPeers = optionalPeersForExport(specifier, subpath)
     return {
       kind: exportKind(info.packageName, subpath, specifier, target),
-      optionalDeclarationPeers,
-      optionalRuntimePeers: [
-        ...optionalDeclarationPeers.filter(peer => !declarationOnlyPeers.has(peer)),
-        ...(runtimeOnlyPeerExports.get(specifier) || []),
-      ],
+      ...optionalPeers,
       packageName: info.packageName,
       specifier,
       subpath,

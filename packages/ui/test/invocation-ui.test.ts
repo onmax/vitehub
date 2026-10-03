@@ -1266,6 +1266,32 @@ describe("Agent Invocation UI", () => {
     wrapper.unmount();
   });
 
+  it.each([false, true])("hides the initial driver echo with independent IDs and commentary=%s", async (commentary) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      createdAt: timestamp, id: "driver-echo", status: "completed", traceId: "trace", updatedAt: timestamp,
+      observations: [
+        { attributes: { "input.messages": [{ id: "persisted-prompt", role: "user", parts: [{ type: "text", text: "Run it." }] }] }, name: "agent.invocation.started", sequence: 1, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Run it.", "message.id": "driver-event", "message.role": "user" }, name: "agent.input.message", sequence: 2, timestamp, type: "run" },
+        { attributes: { "message.content": "First answer.", "message.id": "answer-1", "message.role": "assistant" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Run it.", "message.id": "later-event", "message.role": "user" }, name: "agent.input.message", sequence: 4, timestamp, type: "run" },
+        { attributes: { "message.content": "Second answer.", "message.id": "answer-2", "message.role": "assistant" }, name: "agent.message", sequence: 5, timestamp, type: "lifecycle" },
+        ...(commentary ? [{ attributes: { "message.content": "Continuing.", "message.id": "commentary", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 6, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+    expect(wrapper.findAll('.vh-invocation-message[data-role="user"]').map(message => message.get(".vh-invocation-message__body").text()))
+      .toEqual(["Run it.", "Run it."]);
+    expect(wrapper.findAll(".vh-invocation-work__activities .vh-invocation-message[data-role=user]")).toHaveLength(1);
+    expect(wrapper.text()).toContain("First answer.");
+    expect(wrapper.text()).toContain("Second answer.");
+    wrapper.unmount();
+  });
+
   it.each([true, false])("hides a repeated prompt record only with a shared identity=%s", async (sharedIdentity) => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {

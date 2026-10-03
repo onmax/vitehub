@@ -15,6 +15,7 @@ import type {
   ResolvedBoxPlan,
   ResolvedBoxRequirementInput,
 } from "../index.ts"
+import { listCommandFiles } from "./file-listing.ts"
 import { materializeGitCheckout } from "./git-checkout.ts"
 import {
   boxRequirementError,
@@ -768,32 +769,11 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
     },
     async listFiles({ abortSignal, path, recursive = false }: { abortSignal?: AbortSignal, path: string, recursive?: boolean }) {
       const target = resolveSessionPath(state.root, path)
-      const command = [
-        "find",
-        shellQuote(target),
-        "-mindepth 1",
-        ...(recursive ? [] : ["-maxdepth 1"]),
-        "-printf '%y\\t%s\\t%p\\0'",
-      ].join(" ")
-      const result = await this.run({ abortSignal: stateAbortSignal(state, abortSignal), command })
-      if (result.exitCode !== 0) throw crabboxError(`list ${path}`, result)
-      return result.stdout
-        .split("\0")
-        .filter(Boolean)
-        .map((line) => {
-          const [kind, size, entryPath] = line.split("\t")
-          if (!entryPath || !kind) throw boxErrorDiagnostics.BOX_R0107({ message: `[vitehub] Crabbox returned an invalid file entry for ${path}.` })
-          return {
-            path: entryPath,
-            size: kind === "f" ? Number(size) : undefined,
-            type: kind === "d"
-              ? "directory" as const
-              : kind === "l"
-                ? "symlink" as const
-                : "file" as const,
-          }
-        })
-        .sort((left, right) => left.path.localeCompare(right.path))
+      return await listCommandFiles(
+        options => this.run(options),
+        { abortSignal: stateAbortSignal(state, abortSignal), path: target, recursive },
+        result => crabboxError(`list ${path}`, result),
+      )
     },
     async makeDirectory({ abortSignal, path, recursive = false }: { abortSignal?: AbortSignal, path: string, recursive?: boolean }) {
       const target = resolveSessionPath(state.root, path)
@@ -840,21 +820,6 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
       finally {
         if (stagedPath) await runCrabbox(state.options, state.leaseId, { command: `rm -f -- ${shellQuote(stagedPath)}` }).catch(() => undefined)
       }
-    },
-    async readFile(options: { abortSignal?: AbortSignal, path: string }) {
-      const bytes = await this.readBinaryFile(options)
-      return bytes ? readableStream(bytes) : null
-    },
-    async readTextFile({ abortSignal, encoding = "utf8", endLine, path, startLine }: { abortSignal?: AbortSignal, encoding?: string, endLine?: number, path: string, startLine?: number }) {
-      const bytes = await this.readBinaryFile({ abortSignal, path })
-      if (!bytes) return null
-      // SAFETY: RuntimeSession accepts Node.js buffer encoding names through this string API.
-      const text = Buffer.from(bytes).toString(encoding as BufferEncoding)
-      if (startLine === undefined && endLine === undefined) return text
-      return text.split(/\r?\n/).slice((startLine || 1) - 1, endLine).join("\n")
-    },
-    restricted() {
-      return this
     },
     async run(runOptions: CrabboxRunOptions) {
       const child = spawnCrabboxRun(state, runOptions)
@@ -914,13 +879,6 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
       finally {
         await runCrabbox(state.options, state.leaseId, { command: `rm -f -- ${shellQuote(stagedPath)}` }).catch(() => undefined)
       }
-    },
-    async writeFile({ abortSignal, content, path }: { abortSignal?: AbortSignal, content: ReadableStream<Uint8Array>, path: string }) {
-      await this.writeBinaryFile({ abortSignal, content: await bytesFromStream(content), path })
-    },
-    async writeTextFile({ abortSignal, content, encoding = "utf8", path }: { abortSignal?: AbortSignal, content: string, encoding?: string, path: string }) {
-      // SAFETY: RuntimeSession accepts Node.js buffer encoding names through this string API.
-      await this.writeBinaryFile({ abortSignal, content: Buffer.from(content, encoding as BufferEncoding), path })
     },
   } satisfies RuntimeSession
   return session
@@ -1127,6 +1085,10 @@ function processHandle(child: ChildProcessWithoutNullStreams, abortSignal: Abort
       else resolvePromise({ exitCode: code ?? 1 })
     })
   })
+  // A background caller may not await immediately. Observe rejection now so
+  // cancellation and spawn failures cannot become process-level unhandled
+  // rejections before the caller reaches wait().
+  void wait.catch(() => undefined)
   let stdin: WritableStream<Uint8Array> | undefined
   return {
     pid: child.pid,
@@ -1214,14 +1176,6 @@ function remotePathsOverlap(first: string, second: string) {
 
 function isRemoteDescendant(path: string, parent: string) {
   return path.startsWith(parent === "/" ? "/" : `${parent}/`);
-}
-
-function readableStream(bytes: Uint8Array) {
-  return new Response(bytes).body!
-}
-
-async function bytesFromStream(stream: ReadableStream<Uint8Array>) {
-  return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
 async function collect(stream: ReadableStream<Uint8Array>) {
