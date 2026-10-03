@@ -47,6 +47,15 @@ it.each([
   expect(definition?.workspace).toBeUndefined()
 })
 
+it("rejects global conversion writes through TypeScript assertions", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts";
+(globalThis as object).String = () => getPortal().capabilities = [{ workspace: {} }];
+const ignored = \`\${String("id")}\`;
+export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it.each([
   "import('./other.ts')",
   "class { #portal = portal; get value() { return this.#portal } }",

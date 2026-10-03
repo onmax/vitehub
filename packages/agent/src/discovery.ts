@@ -2230,14 +2230,23 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // Returns the first-party Channel helper name for a call such as
   // `github(...)`, `channels.github(...)`, or an alias of either.
   function memberAccess(index: number): { name: string, end: number } | undefined {
-    if (tokens[index + 1] === ".") {
-      return { name: tokens[index + 2]!, end: index + 3 }
+    // TypeScript assertions can appear between a receiver and its member,
+    // for example `(globalThis as object).String`.
+    let receiverEnd = index + 1
+    if (tokens[receiverEnd] === "as") {
+      receiverEnd++
+      while (receiverEnd < tokens.length && tokens[receiverEnd] !== ")"
+        && tokens[receiverEnd] !== "." && tokens[receiverEnd] !== "[") receiverEnd++
+      if (tokens[receiverEnd] === ")") receiverEnd++
     }
-    if (tokens[index + 1] === "?" && tokens[index + 2] === "." && !["(", "["].includes(tokens[index + 3]!)) {
-      return { name: tokens[index + 3]!, end: index + 4 }
+    if (tokens[receiverEnd] === ".") {
+      return { name: tokens[receiverEnd + 1]!, end: receiverEnd + 2 }
     }
-    const bracketStart = tokens[index + 1] === "[" ? index + 1
-      : tokens[index + 1] === "?" && tokens[index + 2] === "." && tokens[index + 3] === "[" ? index + 3
+    if (tokens[receiverEnd] === "?" && tokens[receiverEnd + 1] === "." && !["(", "["].includes(tokens[receiverEnd + 2]!)) {
+      return { name: tokens[receiverEnd + 2]!, end: receiverEnd + 3 }
+    }
+    const bracketStart = tokens[receiverEnd] === "[" ? receiverEnd
+      : tokens[receiverEnd] === "?" && tokens[receiverEnd + 1] === "." && tokens[receiverEnd + 2] === "[" ? receiverEnd + 2
       : undefined
     if (bracketStart !== undefined && tokens[bracketStart + 2] === "]" && /^['"`]/.test(tokens[bracketStart + 1] ?? "")) {
       return { name: propertyName(tokens[bracketStart + 1]!), end: bracketStart + 3 }
