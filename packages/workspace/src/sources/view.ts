@@ -684,7 +684,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       // The descriptor directory is virtual and reserved by backing Stores.
       if (cwd !== ".vitehub/sources") {
         for (const entry of await store.glob(patterns, options)) {
-          result.set(entry.path, entry)
+          if (matches(entry.path)) result.set(entry.path, entry)
         }
       }
       for (const entry of descriptorPathEntries(cwd, { recursive: true })) {

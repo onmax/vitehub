@@ -22,6 +22,21 @@ afterEach(async () => {
 })
 
 describe("Workspace glob cwd", () => {
+  it("filters custom Store results when the Store ignores cwd", async () => {
+    const store = createMemoryWorkspaceStore()
+    await seedGlobCwdStore(store)
+    const glob = store.glob.bind(store)
+    vi.spyOn(store, "glob").mockImplementation(pattern => glob(pattern))
+    const workspace = createWorkspace({
+      name: "custom-store-glob-cwd",
+      store,
+    })
+
+    expect((await workspace.glob(["**/*.md", "**/*.mdx"], { cwd: "docs" })).map(entry => entry.path))
+      .toEqual(["docs/nested/guide.mdx", "docs/readme.md"])
+    expect(await workspace.glob("*.md", { cwd: "docs" })).toEqual([])
+  })
+
   it("matches relative patterns in the memory Store", async () => {
     const store = createMemoryWorkspaceStore()
     await seedGlobCwdStore(store)
