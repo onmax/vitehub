@@ -32,8 +32,7 @@ async function waitForGroupExit(child) {
       throw error
     }
   }
-  // A detached descendant can remain as a zombie after SIGKILL. Its parent
-  // process has exited, so there is nothing more this process can reap.
+  throw new Error(`process group ${child.pid} did not exit after SIGKILL`)
 }
 
 function signalChild(child, signal) {

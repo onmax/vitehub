@@ -41,6 +41,7 @@ it.skipIf(process.platform === "win32")("kills descendants after the group leade
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("descendant survived cleanup")), 2000) }),
     ])
     expect(child.exitCode).toBe(0)
+    expect(() => process.kill(-child.pid!, 0)).toThrow(/ESRCH/)
     await closed
   }
   finally {
