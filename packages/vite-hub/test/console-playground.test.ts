@@ -86,6 +86,15 @@ it("returns succeeded Schedule runs and consistent run history", async () => {
   ]) })
 })
 
+it("rejects unknown Agents without changing the Agent catalog or invocation history", async () => {
+  const agents = await playgroundRequest("/api/_vitehub/console/agents")
+  const invocations = await playgroundRequest("/api/_vitehub/console/invocations")
+  await expect(playgroundRequest("/api/_vitehub/console/agents/unknown/invocations", { prompt: "Hello" }, 404))
+    .resolves.toEqual({ error: "Agent invocation is not available." })
+  expect(await playgroundRequest("/api/_vitehub/console/agents")).toEqual(agents)
+  expect(await playgroundRequest("/api/_vitehub/console/invocations")).toEqual(invocations)
+})
+
 it("creates distinct IDs for simultaneous new chats", async () => {
   const endpoint = "/api/_vitehub/console/agents/interface-engineer/invocations"
   const [first, second] = await Promise.all([

@@ -23,6 +23,7 @@ import manifest from "./package.json" with { type: "json" }
 import { playgroundConsoleContributions } from "./sections.ts"
 
 const fixture = parseConsoleFixture(fixtureDocument)
+const agents = [...new Set(fixture.invocations.map(invocation => invocation.agentName))].sort()
 const store = createMemoryAgentInvocationStore()
 for (const record of fixture.invocations) {
   const { cursor: _cursor, ...input } = record
@@ -461,7 +462,6 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   }
 
   if (path === "/api/_vitehub/console/agents") {
-    const agents = [...new Set(fixture.invocations.map(invocation => invocation.agentName))].sort()
     json(response, {
       agents,
       // Every Agent accepts a new chat from the Console composer. The profiles are synthetic Invoker Profiles.
@@ -475,6 +475,10 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
   const newInvocation = /^\/api\/_vitehub\/console\/agents\/([^/]+)\/invocations$/.exec(path)
   if (newInvocation && request.method === "POST") {
     const agentName = decodeURIComponent(newInvocation[1]!)
+    if (!agents.includes(agentName)) {
+      json(response, { error: "Agent invocation is not available." }, 404)
+      return true
+    }
     const input = v.safeParse(v.object({
       files: v.optional(v.pipe(v.array(v.object({ url: v.string(), filename: v.optional(v.string(), "image") })), v.maxLength(10)), []),
       invokerProfileId: v.optional(v.string()),
