@@ -26,9 +26,14 @@ export interface WorkflowRunState<TResult = unknown> {
 
 // Execution retains its state through the completion callback. Inspection must
 // not keep an abandoned promise and its payload alive by itself.
-const runs = new Map<string, WeakRef<WorkflowRunState>>()
+type ActiveRunReference = WeakRef<WorkflowRunState> | WorkflowRunState
+const runs = new Map<string, ActiveRunReference>()
 let collectedRuns: FinalizationRegistry<{ key: string, reference: WeakRef<WorkflowRunState> }> | undefined
 const completedRuns = new Map<string, WorkflowRunState>()
+
+function isWeakReference(reference: ActiveRunReference): reference is WeakRef<WorkflowRunState> {
+  return typeof reference === "object" && reference !== null && "deref" in reference
+}
 
 function getRunKey(name: string, id: string): string {
   return `${name}\0${id}`
@@ -223,12 +228,14 @@ export function setWorkflowRun<TResult = unknown>(
 ): WorkflowRunState<TResult> {
   pruneWorkflowRuns()
   const key = getRunKey(name, id)
-  // Durable providers can load runtime state on hosts without these GC APIs.
-  collectedRuns ??= new FinalizationRegistry(({ key, reference }) => {
-    if (runs.get(key) === reference) runs.delete(key)
-  })
+  const canUseWeakReferences = typeof WeakRef === "function" && typeof FinalizationRegistry === "function"
+  if (canUseWeakReferences) {
+    collectedRuns ??= new FinalizationRegistry(({ key, reference }) => {
+      if (runs.get(key) === reference) runs.delete(key)
+    })
+  }
   const previous = runs.get(key)
-  if (previous) collectedRuns.unregister(previous)
+  if (previous && canUseWeakReferences) collectedRuns?.unregister(previous)
   completedRuns.delete(key)
   const state: WorkflowRunState<TResult> = {
     promise: promise.then((resolved) => {
@@ -236,9 +243,11 @@ export function setWorkflowRun<TResult = unknown>(
       state.result = resolved.result
       state.error = resolved.error
       state.expiresAt = Date.now() + RUNS_TTL_MS
-      if (runs.get(key)?.deref() === state) {
+      const active = runs.get(key)
+      const activeState = active && isWeakReference(active) ? active.deref() : active
+      if (activeState === state) {
         runs.delete(key)
-        collectedRuns?.unregister(reference)
+        if (isWeakReference(reference)) collectedRuns?.unregister(reference)
         completedRuns.set(key, state)
         pruneWorkflowRuns()
       }
@@ -246,9 +255,9 @@ export function setWorkflowRun<TResult = unknown>(
     }),
     status: "running",
   }
-  const reference = new WeakRef(state)
+  const reference: ActiveRunReference = canUseWeakReferences ? new WeakRef(state) : state
   runs.set(key, reference)
-  collectedRuns.register(state, { key, reference }, reference)
+  if (isWeakReference(reference)) collectedRuns?.register(state, { key, reference }, reference)
   return state
 }
 
@@ -256,10 +265,10 @@ export function getWorkflowRunState(name: string, id: string): WorkflowRunState 
   pruneWorkflowRuns()
   const key = getRunKey(name, id)
   const reference = runs.get(key)
-  const state = reference?.deref()
+  const state = reference && isWeakReference(reference) ? reference.deref() : reference
   if (reference && !state) {
     runs.delete(key)
-    collectedRuns?.unregister(reference)
+    if (isWeakReference(reference)) collectedRuns?.unregister(reference)
   }
   return state ?? completedRuns.get(key)
 }
@@ -271,7 +280,9 @@ export function resetWorkflowRuntime(): void {
   loadingRegistryEntries.clear()
   loadedRegistryEntries.clear()
   fallbackEvent = undefined
-  for (const reference of runs.values()) collectedRuns?.unregister(reference)
+  for (const reference of runs.values()) {
+    if (isWeakReference(reference)) collectedRuns?.unregister(reference)
+  }
   runs.clear()
   completedRuns.clear()
 }

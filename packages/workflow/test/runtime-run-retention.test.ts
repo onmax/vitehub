@@ -18,6 +18,26 @@ afterEach(() => {
 })
 
 describe("inline Workflow run retention", () => {
+  it("retains active runs when optional GC APIs are unavailable", async () => {
+    const globals = globalThis as unknown as {
+      WeakRef: WeakRefConstructor | undefined
+      FinalizationRegistry: FinalizationRegistryConstructor | undefined
+    }
+    const weakRef = globals.WeakRef
+    const finalizationRegistry = globals.FinalizationRegistry
+    globals.WeakRef = undefined
+    globals.FinalizationRegistry = undefined
+    try {
+      const state = setWorkflowRun("fallback", "active", Promise.resolve({ result: "done", status: "completed" as const }))
+      expect(getWorkflowRunState("fallback", "active")).toBe(state)
+      await expect(state.promise).resolves.toMatchObject({ status: "completed", result: "done" })
+      expect(getWorkflowRunState("fallback", "active")?.result).toBe("done")
+    } finally {
+      globals.WeakRef = weakRef
+      globals.FinalizationRegistry = finalizationRegistry
+    }
+  })
+
   it("releases abandoned executions while retaining reachable active runs", async () => {
     const stateModule = new URL("../dist/runtime/state.js", import.meta.url).href
     await promisify(execFile)(process.execPath, ["--expose-gc", "--input-type=module", "-e", `
