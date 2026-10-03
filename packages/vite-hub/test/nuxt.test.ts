@@ -1891,6 +1891,14 @@ describe("ViteHub Nuxt integration", () => {
     const config = nitroOptions(production.nuxt)
     await production.runNitroConfigHook(config)
 
+    const pages: Array<{ file: string; name: string; path: string }> = []
+    production.runPagesHook(pages)
+    expect(pages).toContainEqual(expect.objectContaining({
+      file: expect.stringContaining("pages/connections.vue"),
+      name: "vitehub-console-connections",
+      path: "/_vitehub/connections",
+    }))
+
     const actor = "/tmp/vitehub-nuxt/app/.vitehub/nitro/console/connections-actor.mjs"
     expect(config.alias).toMatchObject({ "#vitehub/console/connections-actor": actor })
     const generated = await readFile(actor, "utf8")

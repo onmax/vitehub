@@ -344,6 +344,9 @@ async function installConsole(
             path: "/_vitehub/blob",
           }]
         : []),
+      ...(sections.includes("connections")
+        ? [{ file: join(consoleRuntimeRoot, "pages/connections.vue"), name: "vitehub-console-connections", path: "/_vitehub/connections" }]
+        : []),
       ...(sections.includes("env") ? [{ file: join(consoleRuntimeRoot, "pages/env.vue"), name: "vitehub-console-env", path: "/_vitehub/env" }] : []),
       ...(sections.includes("kv")
         ? [{
