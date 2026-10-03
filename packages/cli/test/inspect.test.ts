@@ -225,6 +225,31 @@ export default ({ command, mode }) => ({
     expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json")).toMatchObject({ exists: false, owner: "cli" })
   })
 
+  it("preserves provisioned IDs under secret-like resource names and redacts credential values", async () => {
+    const rootDir = await createTempDir()
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({
+      cloudflare: {
+        d1: { tokens: "db-id", passwords: "password-db-id", vars: "vars-db-id", api_key: "api-db-id", unsafe: "Bearer secret-value" },
+      },
+      vercel: { blob: { tokens: "store-id" } },
+      api_key: "unknown-provider-secret",
+    }))
+
+    const result = await run(rootDir, ["inspect", "provider-output", "--json"])
+
+    expect(result.exitCode).toBe(0)
+    const parsed = JSON.parse(result.stdout)
+    expect(parsed.providerOutput.find((entry: { path: string }) => entry.path === ".vitehub/provision.json").content).toEqual({
+      cloudflare: {
+        d1: { tokens: "db-id", passwords: "password-db-id", vars: "vars-db-id", api_key: "api-db-id", unsafe: "[redacted]" },
+      },
+      vercel: { blob: { tokens: "store-id" } },
+    })
+    expect(result.stdout).not.toContain("secret-value")
+    expect(result.stdout).not.toContain("unknown-provider-secret")
+  })
+
   it("rejects unknown arguments", async () => {
     const rootDir = await createTempDir()
     const result = await run(rootDir, ["inspect", "provider-output", "--kind", "queue"])
