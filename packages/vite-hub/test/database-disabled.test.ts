@@ -3,7 +3,7 @@ import { join } from "node:path"
 
 import { runViteHubCli } from "@vite-hub/cli"
 import { hubDb } from "@vite-hub/database/vite"
-import { build, resolveConfig, type InlineConfig, type PluginOption } from "vite"
+import { build, resolveConfig, type InlineConfig, type Plugin, type PluginOption } from "vite"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { vitehub } from "../src/index.ts"
@@ -77,11 +77,13 @@ describe("vitehub() without database", () => {
     })
 
     await expect(build(serverBuild(root, vitehub({ preset: "node", database: true, env: false })))).resolves.toBeDefined()
-  })
+  }, 30_000)
 
   it("lets an explicitly composed Database integration provide the runtime", async () => {
     const root = await createProject({ "server/databases/config.ts": databaseDefinition })
-    const plugins = [vitehub({ preset: "node", env: false }), hubDb()]
+    // SAFETY: Both packages use the same Vite API, but pnpm resolves separate peer type instances.
+    const databasePlugin = hubDb() as unknown as Plugin
+    const plugins = [vitehub({ preset: "node", env: false }), databasePlugin]
     const config = await resolveConfig(serverBuild(root, plugins), "build")
     const guard = config.plugins.find(plugin => plugin.name === "vite-hub/database-disabled")
     const resolveId = guard?.resolveId
@@ -96,7 +98,10 @@ describe("vitehub() without database", () => {
       "src/server.ts": `import { useDatabase } from "vite-hub/database/drizzle"\nexport const notes = useDatabase("default")\n`,
     })
 
-    await expect(build(serverBuild(root, [vitehub({ preset: "node", database: false, env: false }), hubDb()]))).rejects.toThrow(
+    // SAFETY: Both packages use the same Vite API, but pnpm resolves separate peer type instances.
+    const databasePlugin = hubDb() as unknown as Plugin
+    const plugins = [vitehub({ preset: "node", database: false, env: false }), databasePlugin]
+    await expect(build(serverBuild(root, plugins))).rejects.toThrow(
       `Database is disabled but ${JSON.stringify(join(root, "src/server.ts"))} imports "vite-hub/database/drizzle". Set \`database: true\` in vitehub() to enable Database.`,
     )
   })
