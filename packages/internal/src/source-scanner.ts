@@ -353,7 +353,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // Function and constructor assertion types place their return reference
   // after `=>`, so the generic is not directly adjacent to the assertion
   // keyword. Treat that return type as part of the assertion as well.
-  if (/=>\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
+  if (/=>\s*(?:asserts\s+[A-Za-z_$][\w$]*\s+is\s+)?(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(prefix)) return true
   if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
@@ -632,6 +632,9 @@ export function findDefaultExportCall(source: string, names: string[], options: 
           while (isIdentifierChar(value[index + 1])) index += 1
           const previous = previousCodeIndex(value, start - 1, controlFlowRegexes)
           if (value.slice(start, index + 1) === "extends" && value[previous] !== ".") {
+            // `infer R extends Constraint` constrains the inferred name; it
+            // does not begin another conditional branch.
+            if (/\binfer\s+[A-Za-z_$][\w$]*\s*$/.test(value.slice(0, start))) continue
             conditionalBranches.push(false)
           }
         }
