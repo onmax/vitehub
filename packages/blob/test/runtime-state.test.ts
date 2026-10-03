@@ -100,8 +100,8 @@ describe("Blob runtime storage lifetime", () => {
   })
 
   it("tracks callback credentials wrapped in a Proxy", async () => {
-    const firstToken = new Proxy((() => "before") as () => string, {})
-    const secondToken = new Proxy((() => "after") as () => string, {})
+    const firstToken = new Proxy((() => "before") as () => string, { get: (target, property, receiver) => property === Symbol.toStringTag ? "Object" : Reflect.get(target, property, receiver) })
+    const secondToken = new Proxy((() => "after") as () => string, { get: (target, property, receiver) => property === Symbol.toStringTag ? "Object" : Reflect.get(target, property, receiver) })
     const config = { store: { accessToken: firstToken, driver: "dropbox" as const } }
     setBlobRuntimeConfig(config)
     const first = blob.store("assets")
