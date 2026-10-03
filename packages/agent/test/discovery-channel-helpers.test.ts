@@ -31,6 +31,8 @@ it.each([
   "({ portal() { return input.id } })",
   "({ get portal() { return input.id } })",
   "({ set portal(value) { input.id = value } })",
+  "({ *portal() { return input.id } })",
+  "({ async *portal() { return input.id } })",
 ])("ignores object method keys in template expressions: %s", async expression => {
   const imported = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
@@ -777,6 +779,7 @@ it.each([
   'const globals = globalThis; Reflect.set(globals, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
   'const globals = globalThis; Object.defineProperty(globals, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'function globals() { return globalThis }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
+  'function globals() { return (globalThis) }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',

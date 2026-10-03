@@ -1268,8 +1268,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (closing === undefined || references[closing + 1] !== "{") return false
       const previous = references[index - 1]
       if (["{", ","].includes(previous ?? "")) return true
-      return ["get", "set", "async"].includes(previous ?? "")
-        && ["{", ","].includes(references[index - 2] ?? "")
+      return ["get", "set", "async", "*"].includes(previous ?? "")
+        && ["{", ",", "async"].includes(references[index - 2] ?? "")
+        || previous === "*" && references[index - 2] === "async"
     }
     const bindingReference = (index: number) => isIdentifier(references[index])
       && references[index - 1] !== "."
@@ -1543,8 +1544,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (body === undefined || bodyEnd === undefined || tokens[body] !== "{") continue
       let cursor = body + 1
       while (cursor < bodyEnd && tokens[cursor] === ";") cursor++
-      if (tokens[cursor] !== "return" || tokens[cursor + 1] !== "globalThis") continue
-      cursor += 2
+      if (tokens[cursor] !== "return") continue
+      cursor++
+      while (tokens[cursor] === "(") cursor++
+      if (tokens[cursor] !== "globalThis") continue
+      cursor++
+      while (tokens[cursor] === ")") cursor++
       while (tokens[cursor] === ";") cursor++
       if (cursor === bodyEnd) return true
     }
