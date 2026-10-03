@@ -157,7 +157,6 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
   private controller?: string
   private attaching = false
   private detaching = false
-  private controllerReleaseInFlight = false
   private pendingControllerRelease?: () => Promise<void>
   private lastControllerSupportsHandoff = true
   private state: BrowserSessionState = "released"
@@ -206,36 +205,35 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       })
       let released = false
       let releasePromise: Promise<void> | undefined
+      const releaseControl = async (emitDetach: boolean): Promise<void> => {
+        if (releasePromise) return await releasePromise
+        if (released) return
+        this.detaching = true
+        const releasing = (async () => {
+          await attached.release()
+          released = true
+          this.detaching = false
+          if (this.state === "controlled") this.state = "released"
+          this.controller = undefined
+          if (this.pendingControllerRelease === control?.release) this.pendingControllerRelease = undefined
+          if (emitDetach) await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
+        })()
+        releasePromise = releasing
+        try {
+          await releasing
+        }
+        finally {
+          releasePromise = undefined
+        }
+      }
       control = {
         client: attached.client,
-        release: async () => {
-          if (releasePromise) return await releasePromise
-          if (released) return
-          this.detaching = true
-          this.controllerReleaseInFlight = true
-          const releasing = (async () => {
-            await attached.release()
-            released = true
-            this.detaching = false
-            if (this.state === "controlled") this.state = "released"
-            this.controller = undefined
-            if (this.pendingControllerRelease === control?.release) this.pendingControllerRelease = undefined
-            await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
-          })()
-          releasePromise = releasing
-          try {
-            await releasing
-          }
-          finally {
-            releasePromise = undefined
-            this.controllerReleaseInFlight = false
-          }
-        },
+        release: () => releaseControl(true),
       }
       this.attaching = false
       if (this.closing || this.state !== "released") {
         releaseAttempted = true
-        await releaseLateController(control.release())
+        await releaseLateController(releaseControl(false))
         throw browserSessionStateError("attach a controller to", this.state)
       }
       this.state = "controlled"
@@ -305,27 +303,12 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     this.closing = true
     const closing = (async () => {
       try {
-        if (this.pendingControllerRelease && !this.controllerReleaseInFlight) {
-          // A failed rollback must retry while its provider connection is still available.
+        if (this.pendingControllerRelease) {
+          // Rollback must finish while its provider connection is still available.
           await this.pendingControllerRelease()
         }
-        let closeError: unknown
-        try {
-          await releaseResource({ lease: this.lease, providerSession: this.providerSession })
-        }
-        catch (error) {
-          closeError = error
-        }
-        try {
-          await this.pendingControllerRelease?.()
-        }
-        catch (error) {
-          closeError = closeError
-            ? new AggregateError([closeError, error], "[vitehub:browser] Browser Session close and controller release failed.")
-            : error
-        }
-        if (!closeError) this.state = "closed"
-        if (closeError) throw closeError
+        await releaseResource({ lease: this.lease, providerSession: this.providerSession })
+        this.state = "closed"
       }
       finally {
         await this.owner.emit("browser.session.close", this)

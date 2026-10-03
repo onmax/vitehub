@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { ViteHubError } from "@vite-hub/runtime"
+import { type TraceEvent, ViteHubError } from "@vite-hub/runtime"
 
 import {
   createBrowser,
@@ -351,6 +351,29 @@ describe("Browser Sessions", () => {
     expect(session.inspect().state).toBe("closed")
   })
 
+  it("releases a canceled late attachment without detach tracing", async () => {
+    const { connection, controller, provider, release } = fixture()
+    let resolveAttachment!: (value: { client: TestConnection, release: () => void }) => void
+    controller.attach = vi.fn(async () => await new Promise<{ client: TestConnection, release: () => void }>(resolve => {
+      resolveAttachment = resolve
+    }))
+    const trace = vi.fn(async (event: TraceEvent) => {
+      if (event.name === "browser.controller.detach") throw new Error("unexpected detach trace")
+    })
+    const session = await createBrowser({ provider, trace }).open()
+    const attachment = session.attach(controller)
+    const result = expect(attachment).rejects.toMatchObject({ code: "BROWSER_SESSION_STATE" })
+    await session.close()
+    resolveAttachment({ client: connection, release })
+
+    await result
+    expect(release).toHaveBeenCalledOnce()
+    expect(trace.mock.calls.map(([event]) => event.name)).toEqual([
+      "browser.session.acquire",
+      "browser.session.close",
+    ])
+  })
+
   it("bounds stalled release of a late attachment", async () => {
     vi.useFakeTimers()
     try {
@@ -539,9 +562,11 @@ describe("Browser Sessions", () => {
     expect(release).toHaveBeenCalledTimes(2)
   })
 
-  it("allows provider cleanup while attachment rollback is pending", async () => {
+  it("waits for pending attachment rollback before provider closure invalidates the connection", async () => {
     const { close, controller, provider, release } = fixture()
     const traceError = new Error("attach trace failed")
+    let providerClosed = false
+    close.mockImplementation(async () => { providerClosed = true })
     const trace = vi.fn()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(traceError)
@@ -551,6 +576,8 @@ describe("Browser Sessions", () => {
     release.mockImplementation(async () => await new Promise<void>(resolve => {
       finishRelease = resolve
       releaseStarted()
+    }).then(() => {
+      if (providerClosed) throw new Error("controller connection closed")
     }))
     const session = await createBrowser({ provider, trace }).open()
     const attaching = session.attach(controller)
@@ -559,7 +586,7 @@ describe("Browser Sessions", () => {
 
     const closing = session.close()
     await Promise.resolve()
-    expect(close).toHaveBeenCalledOnce()
+    expect(close).not.toHaveBeenCalled()
     let closed = false
     void closing.then(() => { closed = true })
     await Promise.resolve()
@@ -567,6 +594,8 @@ describe("Browser Sessions", () => {
     finishRelease()
     await result
     await expect(closing).resolves.toBeUndefined()
+    expect(close).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
     expect(session.inspect().state).toBe("closed")
   })
 
