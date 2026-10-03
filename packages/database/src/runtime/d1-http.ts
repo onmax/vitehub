@@ -32,8 +32,9 @@ interface D1HttpErrorSource {
 
 function getD1HttpErrorDetail(...sources: Array<D1HttpErrorSource | undefined>) {
   const messages = sources.flatMap(source => [
-    ...(source?.error ? [source.error] : []),
-    ...(Array.isArray(source?.errors) ? source.errors : []).map(error => error.message),
+    ...(typeof source?.error === "string" ? [source.error] : []),
+    ...(Array.isArray(source?.errors) ? source.errors : [])
+      .map(error => typeof error?.message === "string" ? error.message : undefined),
   ]).filter((message): message is string => Boolean(message?.trim()))
   return messages.join("; ")
 }

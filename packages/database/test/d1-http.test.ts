@@ -52,4 +52,18 @@ describe("Cloudflare D1 HTTP resolver", () => {
     vi.stubEnv("DESIGN_D1_TOKEN", "")
     expect(getDatabase).toThrow("requires cloudflare.http.url and cloudflare.http.authToken")
   })
+
+  it("keeps malformed error fields within the D1 diagnostic", async () => {
+    vi.stubEnv("DESIGN_D1_TOKEN", "token")
+    vi.stubEnv("DESIGN_D1_URL", "https://d1.example.com/raw")
+    const request = vi.fn(async () => Response.json({
+      error: {},
+      errors: [{ message: 123 }],
+      success: false,
+    }, { status: 502 }))
+    const database = createCloudflareD1HttpResolver(configuration(), schema, request)()
+
+    const error = await database.select().from(schema.notes).then(() => undefined, error => error)
+    expect(error).toMatchObject({ cause: { message: "[vitehub] Cloudflare D1 request failed (502)." } })
+  })
 })
