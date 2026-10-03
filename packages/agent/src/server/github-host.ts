@@ -342,7 +342,7 @@ function createCheckoutPool(root: string) {
       await rm(quarantine, { force: true, recursive: true })
     }
     catch {
-      await rm(quarantine, { force: true, recursive: true }).catch(() => undefined)
+      // Leave uncertain custody untouched, including failures during inspection.
     }
   }
   const release = (repository: string, number: number, directory: string, adopted = false, submodules: Buffer[] = [], identity?: { dev: number, ino: number }) => {
