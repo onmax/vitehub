@@ -81,10 +81,12 @@ function errorMessage(value: unknown): string | undefined {
 async function runSelectedSchedule(): Promise<void> {
   const name = selectedRecord.value?.cells.schedule || selectedName.value;
   if (!name || !props.scheduleRunBase || !canRunSelected.value || runningSchedule.value) return;
-  runningSchedule.value = name;
+  const selection = selectedName.value;
+  if (!selection) return;
+  runningSchedule.value = selection;
   try {
     const run = await runConsoleScheduleDefinition(props.scheduleRunBase, name);
-    scheduleRuns.value = { ...scheduleRuns.value, [name]: run };
+    scheduleRuns.value = { ...scheduleRuns.value, [selection]: run };
   } finally {
     runningSchedule.value = undefined;
   }
