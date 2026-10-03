@@ -256,6 +256,26 @@ function addVueImports(nuxt: NuxtLike, from: string, names: string[]): void {
   }
 }
 
+type NitroAutoImport = { as?: string, from: string, name: string }
+
+/**
+ * Add entries only when server auto-imports are on. Nuxt sets `nitro.imports` to `false` when
+ * `experimental.nitroAutoImports` is off, and Nitro 3 leaves it unset by default.
+ */
+function addNitroImports(config: Record<string, unknown>, from: string, names: readonly string[]): void {
+  if (!isRecord(config.imports)) return
+  const options = config.imports
+  // SAFETY: Nitro's `imports.imports` is an unimport list of `{ name, as?, from }` entries.
+  const imports = (Array.isArray(options.imports) ? options.imports : (options.imports = [])) as NitroAutoImport[]
+  for (const name of names) {
+    const existing = imports.find(entry => (entry.as ?? entry.name) === name)
+    if (existing && existing.from !== from) {
+      throw viteHubErrorDiagnostics.VITE_HUB_B0008({ message: `[vitehub] Cannot auto-import ${name} in server code from ${from} because it is already configured from ${existing.from}.` })
+    }
+    if (!existing) imports.push({ from, name })
+  }
+}
+
 async function installConsole(
   nuxt: NuxtLike,
   projectRoot: string,
@@ -1261,6 +1281,9 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     }
     const alias = (config.alias ??= {}) as Record<string, string>
     for (const [name, path] of Object.entries(generatedAliases)) alias[name] ??= path
+    if (options.kv) addNitroImports(config, "vite-hub/kv", ["kv"])
+    if (options.blob) addNitroImports(config, "vite-hub/blob", ["blob"])
+    if (options.database) addNitroImports(config, "vite-hub/database/drizzle", ["db", "schema"])
   })
   if (options.agent) addVueImports(nuxt, "vite-hub/agent/vue", agentVueComposables)
   addVueImports(nuxt, "vite-hub/source/client", ["useCollection"])
