@@ -92,6 +92,21 @@ describe("Vercel Blob workspace store", () => {
     })
   })
 
+  it("requests uncached reads for public blobs", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ access: "public", provider: "vercel-blob", token: "token" }, "docs")
+
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    await store.readFile("readme.md")
+
+    expect(blobMock.get).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      access: "public",
+      headers: { "cache-control": "no-cache, no-store" },
+      useCache: false,
+    }))
+  })
+
   it("preserves unchanged legacy snapshots without file digests", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
