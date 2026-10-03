@@ -44,6 +44,22 @@ describe("AgentInvocationTimeline", () => {
     expect(wrapper.emitted("selectActivity")).toEqual([["tests"]]);
   });
 
+  it("orders rows by their computed start time", () => {
+    const overlapping: AgentInvocationView = {
+      ...invocation,
+      observations: [
+        { attributes: { "tool.durationMs": 1_000, "tool.id": "short", "tool.name": "short" }, name: "agent.tool.completed", sequence: 1, timestamp: "2026-08-23T09:00:03.000Z", trace, type: "run" },
+        { attributes: { "tool.durationMs": 4_000, "tool.id": "long", "tool.name": "long" }, name: "agent.tool.completed", sequence: 2, timestamp: "2026-08-23T09:00:05.000Z", trace, type: "run" },
+        { attributes: { "tool.durationMs": 5_000, "tool.id": "same-start", "tool.name": "same-start" }, name: "agent.tool.completed", sequence: 3, timestamp: "2026-08-23T09:00:06.000Z", trace, type: "run" },
+      ],
+    };
+    expect(invocationTimeline(overlapping).map(item => [item.id, item.offsetMs])).toEqual([
+      ["long", 1_000],
+      ["same-start", 1_000],
+      ["short", 2_000],
+    ]);
+  });
+
   it("shows an empty message or the empty slot without timed steps", () => {
     const empty = { ...invocation, observations: [] };
     expect(mount(AgentInvocationTimeline, { props: { invocation: empty } }).text()).toBe("No timed steps recorded.");
