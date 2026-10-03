@@ -11,10 +11,12 @@ let runtimeRegistry: WorkflowDefinitionRegistry | undefined
 const inlineRegistry = new Map<string, WorkflowDefinition>()
 const loadingRegistryEntries = new Map<string, Promise<WorkflowDefinition | undefined>>()
 const loadedRegistryEntries = new Map<string, WorkflowDefinition | undefined>()
+let runtimeRegistryGeneration = 0
 let fallbackEvent: unknown
 const eventStorage = new AsyncLocalStorage<unknown>()
 const loadingRegistryStorage = new AsyncLocalStorage<Set<string>>()
 const loadingInlineRegistryStorage = new AsyncLocalStorage<Map<string, WorkflowDefinition>>()
+const loadingGenerationStorage = new AsyncLocalStorage<number>()
 
 export interface WorkflowRunState<TResult = unknown> {
   error?: unknown
@@ -49,6 +51,7 @@ export function getWorkflowRuntimeConfig(): false | ResolvedWorkflowOptions | un
 
 export function setWorkflowRuntimeRegistry(registry: WorkflowDefinitionRegistry | undefined): void {
   if (runtimeRegistry !== registry) loadingRegistryEntries.clear()
+  runtimeRegistryGeneration++
   runtimeRegistry = registry
   loadedRegistryEntries.clear()
 }
@@ -125,13 +128,16 @@ export function registerInlineWorkflowDefinition(name: string, definition: Workf
   }
 
   const loadingDefinitions = loadingInlineRegistryStorage.getStore()
+  const loadingGeneration = loadingGenerationStorage.getStore()
   const existing = inlineRegistry.get(name)
   if (existing && existing !== definition) {
     if (!loadingDefinitions) {
       throw workflowErrorDiagnostics.WORKFLOW_R0024({ message: `Duplicate workflow name "${name}" from inline definitions.` })
     }
   }
-  inlineRegistry.set(name, definition)
+  if (loadingGeneration === undefined || loadingGeneration === runtimeRegistryGeneration) {
+    inlineRegistry.set(name, definition)
+  }
 
   loadingDefinitions?.set(name, definition)
 }
@@ -153,6 +159,7 @@ export async function runWithWorkflowRuntimeEvent<T>(event: unknown, run: () => 
 }
 
 export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefinition | undefined> {
+  const generation = runtimeRegistryGeneration
   const inlineDefinition = inlineRegistry.get(name)
   const entry = runtimeRegistry?.[name]
 
@@ -181,11 +188,12 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
   nextActiveLoads.add(name)
   const loadingEntry = Promise.resolve().then(() => loadingRegistryStorage.run(nextActiveLoads, async () => {
     const loadingInlineDefinitions = new Map<string, WorkflowDefinition>()
-    const loaded = await loadingInlineRegistryStorage.run(loadingInlineDefinitions, entry)
+    const loaded = await loadingGenerationStorage.run(generation, () => loadingInlineRegistryStorage.run(loadingInlineDefinitions, entry))
     if (!loaded || typeof loaded !== "object") {
       return undefined
     }
-    const registeredInlineDefinition = loadingInlineDefinitions.get(name) ?? consumeInlineWorkflowDefinition(name)
+    const registeredInlineDefinition = loadingInlineDefinitions.get(name)
+      ?? (generation === runtimeRegistryGeneration ? consumeInlineWorkflowDefinition(name) : undefined)
     if (registeredInlineDefinition) {
       consumeInlineWorkflowDefinition(name, registeredInlineDefinition)
       return registeredInlineDefinition
@@ -202,7 +210,7 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
   loadingRegistryEntries.set(name, loadingEntry)
   try {
     const loaded = await loadingEntry
-    if (loadingRegistryEntries.get(name) === loadingEntry) {
+    if (generation === runtimeRegistryGeneration && loadingRegistryEntries.get(name) === loadingEntry) {
       loadedRegistryEntries.set(name, loaded)
     }
     return loaded

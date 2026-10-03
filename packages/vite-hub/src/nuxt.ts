@@ -880,8 +880,10 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   addTypeScriptDefaults(nuxt.options, generatedTypes, generatedData)
   addTypeScriptDefaults((nuxt.options.nitro ??= {}), generatedTypes, generatedData)
   if (options.database) {
+    const nuxtDatabaseOptions = nuxt.options.database && typeof nuxt.options.database === "object" ? nuxt.options.database : {}
     const viteDatabaseOptions = viteConfig.database && typeof viteConfig.database === "object" ? viteConfig.database : {}
     const databaseOptions = {
+      ...nuxtDatabaseOptions,
       ...viteDatabaseOptions,
       ...(options.database === true ? {} : options.database),
     }
