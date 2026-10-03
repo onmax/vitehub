@@ -812,6 +812,9 @@ author and committer identity pass to the worker; credentials do not. On its
 first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
 earlier hand-wired Babysitter once.
 
+The built-in host keeps GitHub checkouts under `checkouts` in its process data directory.
+Each pull request reuses its own checkout, including ignored dependencies and build output.
+
 Each pass uses a disposable provider workspace with edit permission. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,
 metadata updates and thread resolution. Unless `merge` is `"auto"`, the worker

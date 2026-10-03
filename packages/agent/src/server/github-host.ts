@@ -6,7 +6,7 @@ import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
 import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 import { Diagnostic } from "nostics"
 
@@ -356,16 +356,27 @@ function createCheckoutPool(root: string) {
 
 type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal: AbortSignal }
 
+async function assertCheckoutDirectories(path: string) {
+  for (let directory = resolve(path); ; directory = dirname(directory)) {
+    const entry = await lstat(directory)
+    if (!entry.isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
+    if (dirname(directory) === directory) break
+  }
+}
+
 /**
  * Removes the state of the previous pull request from a pooled checkout. Ignored files stay.
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
 async function resetPooledCheckout(checkout: string, repository: string, commandOptions: GitHubCommandOptions) {
+  await assertCheckoutDirectories(checkout)
   const gitMetadata = join(checkout, ".git")
   const metadata = await lstat(gitMetadata).catch(() => undefined)
   if (!metadata?.isDirectory()) {
     throw new Error("Pooled checkout has unsafe Git metadata")
   }
+  const info = await lstat(join(gitMetadata, "info")).catch(() => undefined)
+  if (info && !info.isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
   for (const path of [
     ".git/hooks", ".git/index.lock", ".git/config.lock", ".git/config.worktree.lock", ".git/HEAD.lock", ".git/shallow.lock", ".git/packed-refs.lock",
     ".git/rebase-merge", ".git/rebase-apply", ".git/sequencer", ".git/CHERRY_PICK_HEAD", ".git/MERGE_HEAD", ".git/REVERT_HEAD",
@@ -920,6 +931,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       operation.close()
       if (keepCheckout && checkoutPool) checkoutPool.release(pullRequest.repository, pullRequest.number, checkout)
       else {
+        if (checkoutPool) await assertCheckoutDirectories(dirname(checkout))
         await rm(checkout, { force: true, recursive: true })
         if (checkoutPool) await rm(`${checkout}.meta.json`, { force: true })
       }

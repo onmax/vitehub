@@ -261,12 +261,42 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     throw new Error('must not run')
   })).rejects.toThrow('unsafe Git metadata')
 
+  // Cleanup must not traverse a linked checkout or an intermediate metadata directory.
+  for (const component of ['checkout', 'info']) {
+    const number = component === 'checkout' ? 3 : 4
+    let checkoutPath = ''
+    await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: oneSha }, async ({ path }) => {
+      checkoutPath = path
+    })
+    const outside = join(root, `outside-${component}`)
+    const replaced = component === 'checkout' ? checkoutPath : join(checkoutPath, '.git/info')
+    await rename(replaced, outside)
+    await writeFile(join(outside, 'exclude'), 'keep me')
+    await symlink(outside, replaced)
+    await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: oneSha }, async () => {
+      throw new Error('must not run')
+    })).rejects.toThrow('unsafe Git metadata')
+    expect(await readFile(join(outside, 'exclude'), 'utf8')).toBe('keep me')
+    if (component === 'checkout') expect(await git(outside, 'rev-parse', 'HEAD')).toBe(oneSha)
+    await expect(access(checkoutPath)).rejects.toThrow()
+  }
+
   // A checkout without a verified head leaves the pool.
   await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'one' }, async () => {
     throw new Error('must not run')
   })).rejects.toThrow('head changed')
   await expect(access(secondPath)).rejects.toThrow()
   expect(await readdir(pool)).toHaveLength(1)
+
+  // Reject a linked parent during both reset and failure cleanup.
+  const outsidePool = join(root, 'outside-pool')
+  await rename(pool, outsidePool)
+  await symlink(outsidePool, pool)
+  await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha }, async () => {
+    throw new Error('must not run')
+  })).rejects.toThrow('unsafe Git metadata')
+  expect(await git(firstPath, 'rev-parse', 'HEAD')).toBe(twoSha)
+  expect(await readFile(join(firstPath, 'node_modules/marker'), 'utf8')).toBe('warm')
 }, 30_000)
 
 it('clears initialized submodules when a pooled checkout changes its gitlink', async () => {
