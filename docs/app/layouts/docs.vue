@@ -18,12 +18,10 @@ const docsShellUi = {
 <template>
   <UMain>
     <UContainer v-if="isSupportMatrix">
-      <AnnouncementBanner />
       <slot />
     </UContainer>
 
     <div v-else-if="isLanding" class="vh-docs-landing">
-      <AnnouncementBanner />
       <slot />
     </div>
 
@@ -36,8 +34,7 @@ const docsShellUi = {
       </template>
 
       <div class="vh-docs-main">
-        <AnnouncementBanner />
-        <slot />
+          <slot />
       </div>
     </UPage>
   </UMain>

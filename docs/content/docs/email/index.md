@@ -6,20 +6,30 @@ navigation.order: 1
 icon: i-lucide-mail
 ---
 
-::product-hero{tagline="One message contract for transactional email: the Vite config selects Resend or Cloudflare Email, and routes stay unchanged."}
+::product-hero{tagline="One message contract for transactional email: the Vite config selects Resend or Cloudflare Email, and routes stay unchanged." providers="Resend, Cloudflare Email"}
   :::code-group
-  ```ts [Route]
-  import { defineEventHandler } from 'h3'
+  ```ts [Send]
+  import renderWelcome from '#vitehub/emails/welcome'
+  import { renderEmailMarkdown } from 'vite-hub/email/markdown'
   import { email } from 'vite-hub/email/server'
 
-  export default defineEventHandler(async () => {
+  export async function sendWelcome(name: string, to: string) {
+    const markdown = await renderWelcome({ user: { name } })
+    const body = await renderEmailMarkdown(markdown)
+
     return await email.send({
+      ...body,
       from: 'verified-sender@example.com',
-      to: 'you@example.com',
-      subject: 'Welcome',
-      text: 'Welcome to ViteHub.',
+      to,
+      subject: 'Your workspace is ready',
     })
-  })
+  }
+  ```
+
+  ```md [Template]
+  # Welcome {{ data.user.name }}
+
+  Your workspace is ready.
   ```
 
   ```ts [vite.config.ts]
@@ -36,12 +46,6 @@ icon: i-lucide-mail
       },
     })],
   })
-  ```
-
-  ```md [Template]
-  # Welcome {{ data.user.name }}
-
-  Your workspace is ready.
   ```
 
   ```ts [Agent]
@@ -65,28 +69,41 @@ icon: i-lucide-mail
   :::
 ::
 
+::product-flow{caption="The route never names the provider; in vite dev the outbox records each send."}
+  :::product-flow-step{label="Template" detail="#vitehub/emails/welcome"}
+  :::
+  :::product-flow-step{label="Render" detail="renderEmailMarkdown()"}
+  :::
+  :::product-flow-step{label="Send" detail="email.send()"}
+  :::
+  :::product-flow-step{label="Driver" detail="resend · cloudflare-email"}
+  :::
+  :::product-flow-step{label="Delivery or outbox" detail="id · driver · outbox-1"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Config picks the driver, runtime keeps the secret" icon="i-lucide-sliders-horizontal" to="/docs/email/configure" link-label="Configure Email"}
-  Set `driver` to `resend` or `cloudflare-email`, and the API key resolves in the server runtime, not in build output.
+  :::product-feature-item{title="Config picks the driver, runtime keeps the secret" icon="i-lucide-sliders-horizontal" to="/docs/email/configure"}
+  `driver` is `resend` or `cloudflare-email`; the key resolves at runtime.
   :::
 
-  :::product-feature-item{title="Markdown files in server/emails become typed imports" icon="i-lucide-files" to="/docs/email/server-api#compose-dynamic-markdown" link-label="Compose dynamic Markdown"}
-  Each file becomes a `#vitehub/emails/<name>` import, and `renderEmailMarkdown()` renders it to `html` and `text` without sanitizing authored HTML.
+  :::product-feature-item{title="Markdown files in server/emails become typed imports" icon="i-lucide-files" to="/docs/email/server-api#compose-dynamic-markdown"}
+  Each file becomes a typed `#vitehub/emails/<name>` import.
   :::
 
-  :::product-feature-item{title="Every send in vite dev is recorded" icon="i-lucide-terminal" to="/docs/email/hosts#development-outbox" link-label="Development outbox"}
-  The outbox records each `email.send()` in `vite dev`, and `deliver: false` skips the provider request.
+  :::product-feature-item{title="Every send in vite dev is recorded" icon="i-lucide-terminal" to="/docs/email/hosts#development-outbox"}
+  The outbox records each `email.send()`; `deliver: false` skips the provider.
   :::
 
-  :::product-feature-item{title="A test client captures messages without delivery" icon="i-lucide-play-circle" to="/docs/email/server-api#test-without-delivery" link-label="Test without delivery"}
-  `createTestEmail()` from `@vite-hub/email/test` returns a client with an isolated in-memory mailbox.
+  :::product-feature-item{title="A test client captures messages without delivery" icon="i-lucide-play-circle" to="/docs/email/server-api#test-without-delivery"}
+  `createTestEmail()` returns a client with an isolated in-memory mailbox.
   :::
 
-  :::product-feature-item{title="An Agent sends plain text to allowed addresses" icon="i-lucide-bot" to="/docs/email/agent-capability" link-label="Email capability"}
-  The `email()` Capability fixes the sender and denies the whole call when a recipient is not in the `recipients` allowlist.
+  :::product-feature-item{title="An Agent sends plain text to allowed addresses" icon="i-lucide-bot" to="/docs/email/agent-capability"}
+  The sender is fixed; recipients outside `recipients` deny the call.
   :::
 
-  :::product-feature-item{title="Retries belong in Queue or Workflows" icon="i-lucide-circle-alert" to="/docs/queue" link-label="Compare Queue"}
-  Email maps failures to `EMAIL_*` codes but does not retry, so put retry and idempotency policy in Queue or Workflows.
+  :::product-feature-item{title="Retries belong in Queue or Workflows" icon="i-lucide-circle-alert" to="/docs/queue"}
+  Email maps failures to `EMAIL_*` codes and does not retry.
   :::
 ::

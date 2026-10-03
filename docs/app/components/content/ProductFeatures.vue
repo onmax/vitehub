@@ -18,7 +18,7 @@ defineProps<{
 
 <style scoped>
 .vh-features {
-  padding: 3rem 0 0;
+  padding: 2.5rem 0 0;
 }
 
 .vh-features-title {

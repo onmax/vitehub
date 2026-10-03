@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-terminal
 ---
 
-::product-hero{tagline="Run Unix-like commands from server code through Just Bash, Cloudflare, or a custom Execution Provider."}
+::product-hero{tagline="Run Unix-like commands from server code through Just Bash, Cloudflare, or a custom Execution Provider." providers="Just Bash, Cloudflare, Custom"}
   :::code-group
   ```ts [Runtime]
   import { createShellRuntime } from '@vite-hub/shell'
@@ -68,28 +68,39 @@ icon: i-lucide-terminal
   :::
 ::
 
+::product-flow{caption="Every command returns an Observation; a policy denial returns exit code 126."}
+  :::product-flow-step{label="Command" detail="session.exec(command)" loop}
+  :::
+  :::product-flow-step{label="Session policy" detail="maxShellCalls · timeout"}
+  :::
+  :::product-flow-step{label="Execution Provider" detail="just-bash · cloudflare"}
+  :::
+  :::product-flow-step{label="Observation" detail="exitCode · stdout · stderr"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Each command returns a Shell Observation" icon="i-lucide-terminal" to="/docs/shell/server-api" link-label="Shell server API"}
-  An Observation holds the exit code, stdout, stderr, and truncation and timeout flags, and a policy denial returns exit code `126` instead of throwing.
+  :::product-feature-item{title="Each command returns a Shell Observation" icon="i-lucide-terminal" to="/docs/shell/server-api"}
+  Exit code, stdout, and stderr; a policy denial returns `126`.
   :::
 
-  :::product-feature-item{title="A Session keeps one policy across commands" icon="i-lucide-gauge" to="/docs/shell/server-api#use-shell-sessions" link-label="Use Shell sessions"}
-  A Shell Session applies one call budget, output size, timeout, and process budget to repeated commands.
+  :::product-feature-item{title="A Session keeps one policy across commands" icon="i-lucide-gauge" to="/docs/shell/server-api#use-shell-sessions"}
+  One call budget, output limit, and timeout for repeated commands.
   :::
 
-  :::product-feature-item{title="Read the facts of a command first" icon="i-lucide-search" to="/docs/shell/server-api#analyze-commands" link-label="Analyze commands"}
-  `analyzeShellCommand()` reports executables and flags for pipelines, redirects, heredocs, and command substitution, and your code decides the policy.
+  :::product-feature-item{title="Read the facts of a command first" icon="i-lucide-search" to="/docs/shell/server-api#analyze-commands"}
+  `analyzeShellCommand()` reports executables, pipelines, and redirects; you decide.
   :::
 
-  :::product-feature-item{title="The provider sets the boundary" icon="i-lucide-shield-check" to="/docs/shell/configure" link-label="Configure Shell"}
-  The Execution Provider and its filesystem adapter, not command analysis, decide which commands, files, and network a command can reach.
+  :::product-feature-item{title="The provider sets the boundary" icon="i-lucide-shield-check" to="/docs/shell/configure"}
+  The Execution Provider, not analysis, limits commands, files, and network.
   :::
 
-  :::product-feature-item{title="Agents get Shell through the Workspace shell" icon="i-lucide-bot" to="/docs/workspace/agent-capability" link-label="Workspace Agent capability"}
-  `workspaceShell()` gives an Agent a `shell` tool, and with `commands` in write mode, a Provider Driver also gets `workspace_exec`.
+  :::product-feature-item{title="Agents get Shell through the Workspace shell" icon="i-lucide-bot" to="/docs/workspace/agent-capability"}
+  `workspaceShell()` gives an Agent a `shell` tool.
   :::
 
-  :::product-feature-item{title="Model-backed Agents run executables in Sandbox" icon="i-lucide-terminal-square" to="/docs/sandbox/agent-capability" link-label="Sandbox Agent capability"}
-  Instead of a raw Shell Runtime, give model-backed Agents allowlisted executables through the `sandbox()` Capability.
+  :::product-feature-item{title="Model-backed Agents run executables in Sandbox" icon="i-lucide-terminal-square" to="/docs/sandbox/agent-capability"}
+  Give model-backed Agents allowlisted executables through `sandbox()`.
   :::
 ::

@@ -6,13 +6,19 @@ navigation.order: 1
 icon: i-lucide-gauge
 ---
 
-::product-hero{tagline="One guard caps requests per client, user, or tenant, with atomic drivers: memory on Node, Cloudflare Rate Limiting on Cloudflare."}
+::product-hero{tagline="One guard caps requests per client, user, or tenant, with atomic drivers: memory on Node, Cloudflare Rate Limiting on Cloudflare." providers="memory, Cloudflare Rate Limiting"}
   :::code-group
   ```ts [Route]
+  import { auth } from '@vite-hub/auth/server'
   import { requireRateLimit } from 'vite-hub/rate-limit'
 
   export default defineEventHandler(async (event) => {
+    const session = await auth.api.getSession({ headers: new Headers(getRequestHeaders(event)) })
+
     await requireRateLimit(event, 'image-upload', {
+      enforcement: 'best-effort',
+      failure: 'deny',
+      key: session?.user.id,
       limit: 10,
       window: '1m',
     })
@@ -67,28 +73,41 @@ icon: i-lucide-gauge
   :::
 ::
 
+::product-flow{caption="Allowed requests reach the handler; limited requests get 429 before it runs."}
+  :::product-flow-step{label="Request" detail="key or client address"}
+  :::
+  :::product-flow-step{label="Guard" detail="requireRateLimit(event, 'image-upload')"}
+  :::
+  :::product-flow-step{label="Driver budget" detail="memory · cloudflare"}
+  :::
+  :::product-flow-step{label="Decision" detail="allowed · limited · unavailable"}
+  :::
+  :::product-flow-step{label="429 or handler" detail="HTTPError · retry-after"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Limited requests get a 429 from the guard" icon="i-lucide-shield-alert" to="/docs/rate-limit/server-api" link-label="Rate Limit server API"}
-  `requireRateLimit()` throws a `429` H3 `HTTPError`, and the budget uses the client address unless you pass `key`.
+  :::product-feature-item{title="Limited requests get a 429 from the guard" icon="i-lucide-shield-alert" to="/docs/rate-limit/server-api"}
+  `requireRateLimit()` throws `429`, keyed by client address unless you pass `key`.
   :::
 
-  :::product-feature-item{title="Read the decision for your own response" icon="i-lucide-code-2" to="/docs/rate-limit/server-api#use-a-direct-driver" link-label="Use a direct driver"}
-  `createRateLimiter()` returns a limiter whose `consume()` returns the decision and does not throw when the request is limited.
+  :::product-feature-item{title="Read the decision for your own response" icon="i-lucide-code-2" to="/docs/rate-limit/server-api#use-a-direct-driver"}
+  `limiter.consume()` returns the decision and does not throw.
   :::
 
-  :::product-feature-item{title="The preset selects the driver" icon="i-lucide-sliders-horizontal" to="/docs/rate-limit/get-started" link-label="Rate Limit get started"}
-  `node` uses process memory, `cloudflare` uses Cloudflare Rate Limiting, and `vercel`, `netlify`, and `deno` reject `rateLimit`.
+  :::product-feature-item{title="The preset selects the driver" icon="i-lucide-sliders-horizontal" to="/docs/rate-limit/get-started"}
+  `node` uses memory; `cloudflare` uses Cloudflare Rate Limiting.
   :::
 
-  :::product-feature-item{title="Budget each Agent Invocation before it runs" icon="i-lucide-bot" to="/docs/rate-limit/agent-capability" link-label="Rate Limit capability"}
-  `rateLimit()` consumes one unit before the Invocation starts, and a rejection throws `RATE_LIMIT_REJECTED`, which the handler maps to `429`.
+  :::product-feature-item{title="Budget each Agent Invocation before it runs" icon="i-lucide-bot" to="/docs/rate-limit/agent-capability"}
+  `rateLimit()` consumes one unit; a rejection maps to `429`.
   :::
 
-  :::product-feature-item{title="The build records what each provider guarantees" icon="i-lucide-cloud-cog" to="/docs/rate-limit/hosts" link-label="Rate Limit hosts"}
-  A generated manifest lists the enforcement, counter scope, and windows of each limit, and incompatible policies fail the build.
+  :::product-feature-item{title="The build records what each provider guarantees" icon="i-lucide-cloud-cog" to="/docs/rate-limit/hosts"}
+  `.vitehub/rate-limit/manifest.json` lists enforcement, scope, and windows per limit.
   :::
 
-  :::product-feature-item{title="Not a KV get followed by set" icon="i-lucide-git-branch" to="/docs/kv" link-label="Compare KV"}
-  Concurrent requests can read the same KV value, so use a Rate Limit driver with an atomic `consume()`.
+  :::product-feature-item{title="Not a KV get followed by set" icon="i-lucide-git-branch" to="/docs/kv"}
+  KV get then set races; Rate Limit drivers `consume()` atomically.
   :::
 ::

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ContentPage } from "../composables/useDocsPage";
-import { docsManifest, type DocsSection } from "~~/modules/vitehub-docs/runtime/utils/docs";
-import { getDocsRelatedSections, getDocsSectionSubpages, getDocsSidebarGroups } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+import type { DocsSection } from "~~/modules/vitehub-docs/runtime/utils/docs";
+import { getDocsSectionSubpages, getDocsSidebarGroups } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
 
 const props = defineProps<{
   page: ContentPage;
@@ -13,7 +13,6 @@ const props = defineProps<{
 const subpages = computed(() => getDocsSectionSubpages(props.section));
 // Sections with sidebar groups, such as Agents, list their pages by group instead of one card per page.
 const pageGroups = computed(() => getDocsSidebarGroups(props.section).filter(group => group.label));
-const related = computed(() => getDocsRelatedSections(docsManifest.sections, props.section));
 </script>
 
 <template>
@@ -59,20 +58,7 @@ const related = computed(() => getDocsRelatedSections(docsManifest.sections, pro
       </nav>
     </section>
 
-    <footer v-if="related.length" class="vh-product-related">
-      <h2 class="vh-product-related-heading">Related</h2>
-      <div class="vh-product-related-list">
-        <NuxtLink
-          v-for="relatedSection in related"
-          :key="relatedSection.id"
-          :to="relatedSection.path"
-          class="vh-product-related-link"
-        >
-          <UIcon :name="sidebarSectionIcon(relatedSection)" class="size-4 shrink-0" />
-          <span>{{ relatedSection.title }}</span>
-        </NuxtLink>
-      </div>
-    </footer>
+    <DocsProductFooter :current="section" />
   </article>
 </template>
 
@@ -88,7 +74,7 @@ const related = computed(() => getDocsRelatedSections(docsManifest.sections, pro
 }
 
 .vh-product-index {
-  padding-top: 3rem;
+  padding-top: 3.5rem;
 }
 
 .vh-product-index-head {
@@ -196,39 +182,6 @@ const related = computed(() => getDocsRelatedSections(docsManifest.sections, pro
   color: var(--ui-text-highlighted);
 }
 
-.vh-product-related {
-  margin-top: 3rem;
-  border-top: 1px solid var(--ui-border);
-  padding-top: 1.5rem;
-}
-
-.vh-product-related-heading {
-  margin: 0 0 0.75rem;
-  color: var(--ui-text-muted);
-  font-size: 0.75rem;
-  font-weight: 650;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.vh-product-related-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-}
-
-.vh-product-related-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--ui-text-muted);
-  font-size: 0.875rem;
-  transition: color 150ms ease;
-}
-
-.vh-product-related-link:hover {
-  color: var(--ui-text-highlighted);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .vh-product-page {

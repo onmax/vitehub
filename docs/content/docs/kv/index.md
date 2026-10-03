@@ -6,14 +6,20 @@ navigation.order: 1
 icon: i-lucide-database-zap
 ---
 
-::product-hero{tagline="One key-value import for settings, flags, cursors, and cache records, on every supported host."}
+::product-hero{tagline="One key-value import for settings, flags, cursors, and cache records, on every supported host." providers="File system, Cloudflare KV, Upstash, Vercel, Deno KV"}
   :::code-group
   ```ts [Route]
   import { kv } from '@vite-hub/kv'
 
+  const preferences = kv.store('tenant-preferences')
+
   export default defineEventHandler(async (event) => {
-    const [error] = await kv.set('settings', await readBody(event))
-    if (error) throw error
+    const tenantId = getRouterParam(event, 'tenant')!
+    const [readError, current] = await preferences.get(tenantId)
+    if (readError) throw readError
+
+    const [writeError] = await preferences.set(tenantId, { ...current, ...(await readBody(event)) })
+    if (writeError) throw writeError
     return { ok: true }
   })
   ```
@@ -54,28 +60,41 @@ icon: i-lucide-database-zap
   :::
 ::
 
+::product-flow{caption="kv.set() resolves to [error, value] on every host; the route never names the driver."}
+  :::product-flow-step{label="Route" detail="kv.set('settings', body)"}
+  :::
+  :::product-flow-step{label="Runtime helper" detail="@vite-hub/kv"}
+  :::
+  :::product-flow-step{label="Driver" detail="fs-lite · cloudflare-kv · upstash"}
+  :::
+  :::product-flow-step{label="Store" detail="default or kv.store(name)"}
+  :::
+  :::product-flow-step{label="Result" detail="[error, value]"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Every call returns a result, not a throw" icon="i-lucide-code-2" to="/docs/kv/server-api" link-label="KV server API"}
-  Each method returns `[error, value]`, with the operation, the store, and the provider cause on the error.
+  :::product-feature-item{title="Every call returns a result, not a throw" icon="i-lucide-code-2" to="/docs/kv/server-api"}
+  `[error, value]` on every method, with the provider cause attached.
   :::
 
-  :::product-feature-item{title="Pick the driver once, keep the import" icon="i-lucide-sliders-horizontal" to="/docs/kv/configure" link-label="Configure KV"}
-  The file system in development; Cloudflare KV, Upstash, Vercel, or Deno KV in production, behind the same `kv` import.
+  :::product-feature-item{title="Pick the driver once, keep the import" icon="i-lucide-sliders-horizontal" to="/docs/kv/configure"}
+  File system, Cloudflare KV, Upstash, Vercel, or Deno KV behind one import.
   :::
 
-  :::product-feature-item{title="Named stores keep tenants apart" icon="i-lucide-database-zap" to="/docs/kv/configure#configuration-options" link-label="Define named stores"}
-  Declare extra stores in config and select one with `kv.store(name)`. Upstash adds atomic counters and single-use reads.
+  :::product-feature-item{title="Named stores keep tenants apart" icon="i-lucide-database-zap" to="/docs/kv/configure#configuration-options"}
+  Declare stores in config, select one with `kv.store(name)`.
   :::
 
-  :::product-feature-item{title="The same store, as a tool for an Agent" icon="i-lucide-bot" to="/docs/kv/agent-capability" link-label="KV Agent capability"}
-  The KV Capability gives an Agent `kv_read`, and in write mode `kv_edit`, limited to one named store and gated by a policy.
+  :::product-feature-item{title="The same store, as a tool for an Agent" icon="i-lucide-bot" to="/docs/kv/agent-capability"}
+  `kv_read` and `kv_edit` tools, limited to one store, gated by policy.
   :::
 
-  :::product-feature-item{title="Read and write the running app's store from a terminal" icon="i-lucide-terminal" to="/docs/kv/hosts" link-label="KV hosts and CLI"}
-  The development CLI uses the same storage as the app. The build emits the binding, variable, or path the host needs.
+  :::product-feature-item{title="Read and write the running app's store from a terminal" icon="i-lucide-terminal" to="/docs/kv/hosts"}
+  The CLI uses the app's storage; the build emits the host binding.
   :::
 
-  :::product-feature-item{title="Not for relations, large objects, or file trees" icon="i-lucide-git-branch" to="/docs/database" link-label="Compare Database"}
-  Use Database when data needs constraints, Blob for large objects, and Workspace for file trees.
+  :::product-feature-item{title="Not for relations, large objects, or file trees" icon="i-lucide-git-branch" to="/docs/database"}
+  Use Database, Blob, or Workspace for those.
   :::
 ::

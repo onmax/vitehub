@@ -1,28 +1,25 @@
 <script setup lang="ts">
-// One feature of a product landing page: a claim, one sentence in the default slot, and a link
-// whose label names the page it opens. Lives inside `::product-features`.
+// One feature of a product landing page: a claim and one line of 12 words or fewer. The card is
+// the link to the page that explains the feature. Lives inside `::product-features`.
 defineProps<{
   title: string;
   /** Icon shown above the title. */
   icon?: string;
   /** Docs page that explains the feature in full. */
   to: string;
-  /** Link text. Name the destination, for example "KV server API". */
-  linkLabel: string;
 }>();
 </script>
 
 <template>
   <NuxtLink :to="to" class="vh-feature-item group">
     <UIcon v-if="icon" :name="icon" class="size-4 shrink-0 text-muted transition-colors group-hover:text-highlighted" />
-    <h3 class="vh-feature-item-title">{{ title }}</h3>
+    <h3 class="vh-feature-item-title">
+      <span>{{ title }}</span>
+      <UIcon name="i-lucide-arrow-right" class="landing-cta-arrow size-3.5 shrink-0 text-muted transition-transform duration-200 motion-reduce:transition-none" aria-hidden="true" />
+    </h3>
     <div class="vh-feature-item-body">
       <slot />
     </div>
-    <span class="vh-feature-item-link">
-      {{ linkLabel }}
-      <UIcon name="i-lucide-arrow-right" class="landing-cta-arrow size-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none" aria-hidden="true" />
-    </span>
   </NuxtLink>
 </template>
 
@@ -33,7 +30,7 @@ defineProps<{
   gap: 0.5rem;
   border-right: 1px solid var(--ui-border);
   border-bottom: 1px solid var(--ui-border);
-  padding: 1.25rem;
+  padding: 1.125rem 1.25rem;
   transition: background-color 200ms ease;
 }
 
@@ -53,37 +50,28 @@ defineProps<{
 }
 
 .vh-feature-item-title {
-  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0.25rem 0 0;
   color: var(--ui-text-highlighted);
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 0.9375rem;
+  font-weight: 500;
   letter-spacing: -0.01em;
-  line-height: 1.5rem;
-  text-wrap: balance;
+  line-height: 1.375rem;
 }
 
 .vh-feature-item-body,
 .vh-feature-item-body :deep(p) {
   margin: 0;
   color: var(--ui-text-muted);
-  font-size: 0.875rem;
-  line-height: 1.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
   text-wrap: pretty;
 }
 
 .vh-feature-item-body :deep(code) {
-  font-size: 0.8125rem;
-}
-
-.vh-feature-item-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-top: auto;
-  padding-top: 0.5rem;
-  color: var(--ui-text-highlighted);
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: 0.75rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

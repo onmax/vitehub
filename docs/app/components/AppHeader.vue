@@ -1,7 +1,12 @@
 <script setup lang="ts">
+import { docsManifest, normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
+import { isDocsLandingPath } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+
 const route = useRoute();
 // On docs routes the brand opens the product catalog, like a docs site logo. Elsewhere it opens the home page.
 const isDocsRoute = computed(() => route.path.startsWith("/docs"));
+// A product landing page starts with its hero. The catalog, docs subpages, and the home page keep the header.
+const isProductLanding = computed(() => normalizeDocsPath(route.path) !== "/docs" && isDocsLandingPath(docsManifest.sections, route.path));
 const isSupportMatrix = computed(
   () => route.path.replace(/\/+$/, "") === "/docs/frameworks-hosts/support-matrix",
 );
@@ -30,7 +35,7 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
 </script>
 
 <template>
-  <div class="sticky top-0 z-50">
+  <div v-if="!isProductLanding" class="sticky top-0 z-50">
     <UHeader
       :ui="{
         // Docs pages pin the sidebar to the left edge, so the docs header spans the full width.

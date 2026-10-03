@@ -6,17 +6,8 @@ navigation.order: 1
 icon: i-lucide-plug
 ---
 
-::product-hero{tagline="Call provider APIs as an app-owned account: OAuth 2 or API key, sealed in the app database, checked per call."}
+::product-hero{tagline="Call provider APIs as an app-owned account: OAuth 2 or API key, sealed in the app database, checked per call." providers="Google, OAuth 2, API key"}
   :::code-group
-  ```ts [Route]
-  import { useConnection } from 'vite-hub/connections/server'
-
-  export default defineEventHandler(async (event) => {
-    const connection = useConnection('google')
-    return await connection.gmail.users.labels.list()
-  })
-  ```
-
   ```ts [Definition]
   import { useServerEnv } from '#vitehub/env/server'
   import { defineConnection } from 'vite-hub/connections'
@@ -26,14 +17,23 @@ icon: i-lucide-plug
     provider: google({
       clientId: () => useServerEnv().google.clientId,
       clientSecret: () => useServerEnv().google.clientSecret.unseal(),
-      scopes: ['https://www.googleapis.com/auth/gmail.modify'],
     }),
+    scopes: ['https://www.googleapis.com/auth/gmail.modify'],
     access: {
       server: { write: ['gmail.*'] },
       agents: {
         labeller: { write: ['gmail.messages.*', 'gmail.labels.list', 'gmail.drafts.create'], approve: true },
       },
     },
+  })
+  ```
+
+  ```ts [Route]
+  import { useConnection } from 'vite-hub/connections/server'
+
+  export default defineEventHandler(async (event) => {
+    const connection = useConnection('google')
+    return await connection.gmail.users.labels.list()
   })
   ```
 
@@ -56,28 +56,41 @@ icon: i-lucide-plug
   :::
 ::
 
+::product-flow{caption="Each call is checked, sent only to declared origins, and recorded without bodies or tokens."}
+  :::product-flow-step{label="Route" detail="useConnection('google')"}
+  :::
+  :::product-flow-step{label="Access rule" detail="read · write · approve"}
+  :::
+  :::product-flow-step{label="Provider origin" detail="https://*.googleapis.com"}
+  :::
+  :::product-flow-step{label="Provider API" detail="refresh · retry once on 401" loop}
+  :::
+  :::product-flow-step{label="Activity" detail="vitehub_connection_activity"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Writes are denied until a rule allows them" icon="i-lucide-shield-check" to="/docs/connections/configure#access-rules" link-label="Connections access rules"}
-  Each rule sets `read`, `write`, and `approve`; with an `access` map, actors without a matching rule are denied.
+  :::product-feature-item{title="Writes are denied until a rule allows them" icon="i-lucide-shield-check" to="/docs/connections/configure#access-rules"}
+  With an `access` map, actors without a matching rule are denied.
   :::
 
-  :::product-feature-item{title="The credential goes only to declared origins" icon="i-lucide-shield-alert" to="/docs/connections/configure#provider-origins" link-label="Provider origins"}
-  A request to another origin fails with `CONNECTIONS_ORIGIN_NOT_ALLOWED`, is recorded as denied, and does not receive the credential.
+  :::product-feature-item{title="The credential goes only to declared origins" icon="i-lucide-shield-alert" to="/docs/connections/configure#provider-origins"}
+  Other origins fail with `CONNECTIONS_ORIGIN_NOT_ALLOWED` and get no credential.
   :::
 
-  :::product-feature-item{title="API keys get the same rules and activity" icon="i-lucide-key-round" to="/docs/connections/configure#api-key-connections" link-label="API key Connections"}
-  `apiKey()` seals a static key like an OAuth grant, and an admin sets it at runtime in the Console or CLI.
+  :::product-feature-item{title="API keys get the same rules and activity" icon="i-lucide-key-round" to="/docs/connections/configure#api-key-connections"}
+  `apiKey()` seals a static key; set it in the Console or CLI.
   :::
 
-  :::product-feature-item{title="Every write, denial, and failure is recorded" icon="i-lucide-activity" to="/docs/connections/server-api" link-label="Connections server API"}
-  Activity records the actor, Operation id, outcome, and provider status, and never request bodies, response bodies, headers, or tokens.
+  :::product-feature-item{title="Every write, denial, and failure is recorded" icon="i-lucide-activity" to="/docs/connections/server-api"}
+  Activity stores actor, Operation, and outcome, never bodies or tokens.
   :::
 
-  :::product-feature-item{title="Agents call it under their own rule" icon="i-lucide-bot" to="/docs/agents/capabilities/gmail" link-label="Gmail Capability"}
-  An `approve` match fails server code with `CONNECTIONS_APPROVAL_REQUIRED` and makes an Agent tool ask for approval.
+  :::product-feature-item{title="Agents call it under their own rule" icon="i-lucide-bot" to="/docs/agents/capabilities/gmail"}
+  An `approve` match makes the Agent tool ask for approval.
   :::
 
-  :::product-feature-item{title="Not for static secrets without access rules" icon="i-lucide-git-branch" to="/docs/env" link-label="Compare Env"}
-  Use Env for static secrets that do not need access rules, approvals, or activity.
+  :::product-feature-item{title="Not for static secrets without access rules" icon="i-lucide-git-branch" to="/docs/env"}
+  Use Env for static secrets without access rules or activity.
   :::
 ::

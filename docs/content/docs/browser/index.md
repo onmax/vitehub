@@ -6,25 +6,25 @@ navigation.order: 1
 icon: i-lucide-monitor
 ---
 
-::product-hero{tagline="Name a browser operation and run it from a route, Queue, or Workflow, with no Cloudflare imports or credentials."}
+::product-hero{tagline="Name a browser operation and run it from a route, Queue, or Workflow, with no Cloudflare imports or credentials." providers="Cloudflare"}
   :::code-group
-  ```ts [Route]
+  ```ts [Definition and route]
+  // server/browsers/page-title.ts
+  import { defineBrowser } from 'vite-hub/browser'
+
+  export default defineBrowser(async (input: { url: string }, { browser }) => {
+    const session = await browser.open()
+    await session.page.goto(input.url)
+    await session.page.locator('main').waitFor()
+    return await session.page.locator('h1').count()
+  })
+
+  // server/api/page-title.post.ts
   import { runBrowser } from 'vite-hub/browser'
 
   export default defineEventHandler(async (event) => {
     const input = await readBody<{ url: string }>(event)
-    return await runBrowser('page-html', input)
-  })
-  ```
-
-  ```ts [Definition]
-  import { defineBrowser } from 'vite-hub/browser'
-
-  export default defineBrowser(async (
-    input: { url: string },
-    { browser },
-  ) => {
-    return await browser.content(input.url)
+    return await runBrowser('page-title', input)
   })
   ```
 
@@ -58,28 +58,41 @@ icon: i-lucide-monitor
   :::
 ::
 
+::product-flow{caption="runBrowser() returns a native Response, and ViteHub closes the page session."}
+  :::product-flow-step{label="Route" detail="runBrowser(name, input)"}
+  :::
+  :::product-flow-step{label="Definition" detail="defineBrowser(handler)"}
+  :::
+  :::product-flow-step{label="Page session" detail="browser.open() · page.goto()" loop}
+  :::
+  :::product-flow-step{label="Browser Run" detail="binding: 'BROWSER'"}
+  :::
+  :::product-flow-step{label="Response" detail="Response"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="One file per browser operation" icon="i-lucide-code-2" to="/docs/browser/server-api" link-label="Browser server API"}
-  Definitions in `server/browsers/` or `*.browser.ts` get an inferred input type, and `runBrowser()` returns a native `Response`.
+  :::product-feature-item{title="One file per browser operation" icon="i-lucide-code-2" to="/docs/browser/server-api"}
+  `runBrowser()` runs a Definition with inferred input and returns a `Response`.
   :::
 
-  :::product-feature-item{title="Several interactions share one page" icon="i-lucide-monitor" to="/docs/browser/server-api#keep-a-page-session-open" link-label="Keep a page session open"}
-  `browser.open()` gives a Definition a page session that ViteHub closes when the handler exits, or sooner with `session.close()`.
+  :::product-feature-item{title="Several interactions share one page" icon="i-lucide-monitor" to="/docs/browser/server-api#keep-a-page-session-open"}
+  `browser.open()` gives a page session that ViteHub closes for you.
   :::
 
-  :::product-feature-item{title="One stateless call needs no Definition" icon="i-lucide-play-circle" to="/docs/browser/server-api#browser-actions" link-label="Browser actions"}
-  Run content, Markdown, links, screenshot, PDF, and other Browser Run actions directly when the operation needs no page session.
+  :::product-feature-item{title="One stateless call needs no Definition" icon="i-lucide-play-circle" to="/docs/browser/server-api#browser-actions"}
+  Content, Markdown, links, screenshot, or PDF through `runBrowserAction()`.
   :::
 
-  :::product-feature-item{title="Enable it on the Cloudflare preset" icon="i-lucide-cloud-cog" to="/docs/browser/configure" link-label="Configure Browser"}
-  `browser: true` enables Browser Run, and the build writes its binding and the `nodejs_compat` flag to `wrangler.json`.
+  :::product-feature-item{title="Enable it on the Cloudflare preset" icon="i-lucide-cloud-cog" to="/docs/browser/configure"}
+  `browser: true` writes the Browser Run binding to `wrangler.json`.
   :::
 
-  :::product-feature-item{title="A Provider Agent gets its own browser CLI" icon="i-lucide-bot" to="/docs/browser/agent-capability" link-label="Browser Agent capability"}
-  The `browser()` Capability gives a Provider Agent the `agent-browser` CLI, Chromium, and the official browser Skill.
+  :::product-feature-item{title="A Provider Agent gets its own browser CLI" icon="i-lucide-bot" to="/docs/browser/agent-capability"}
+  `browser()` gives a Provider Agent the `agent-browser` CLI and Chromium.
   :::
 
-  :::product-feature-item{title="Model-backed Agents need a custom Capability" icon="i-lucide-plug" to="/docs/agents/capabilities/custom" link-label="Custom capabilities"}
-  The `browser()` Capability does not call Browser Definitions, so give a model-backed Agent a custom Capability that calls `runBrowser()`.
+  :::product-feature-item{title="Model-backed Agents need a custom Capability" icon="i-lucide-plug" to="/docs/agents/capabilities/custom"}
+  Write a custom Capability that calls `runBrowser()`.
   :::
 ::

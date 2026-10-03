@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-files
 ---
 
-::product-hero{tagline="One object-storage import for uploads and generated files on the local file system, Cloudflare R2, Vercel Blob, and S3."}
+::product-hero{providers="Local filesystem, Cloudflare R2, Vercel Blob, Netlify Blobs, S3, Google Cloud Storage" tagline="One object-storage import for uploads and generated files on the local file system, Cloudflare R2, Vercel Blob, and S3."}
   :::code-group
   ```ts [Route]
   import { blob } from '@vite-hub/blob'
@@ -65,28 +65,41 @@ icon: i-lucide-files
   :::
 ::
 
+::product-flow{caption="blob.put() stores the object with contentType and customMetadata; blob.head() reads them back."}
+  :::product-flow-step{label="Route" detail="blob.put(pathname, body)"}
+  :::
+  :::product-flow-step{label="Store" detail="default or blob.store(name)"}
+  :::
+  :::product-flow-step{label="Driver" detail="fs · cloudflare-r2 · vercel-blob · s3"}
+  :::
+  :::product-flow-step{label="Object" detail="contentType · customMetadata"}
+  :::
+  :::product-flow-step{label="Result" detail="[error, value]"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Every method returns an error and a value" icon="i-lucide-code-2" to="/docs/blob/server-api" link-label="Blob server API"}
-  `put`, `get`, `head`, `list`, `del`, and `sign` return `[error, value]`, with a `BLOB_*` code on provider failures.
+  :::product-feature-item{title="Every method returns an error and a value" icon="i-lucide-code-2" to="/docs/blob/server-api"}
+  `put`, `get`, `head`, `list`, `del`, and `sign` return `[error, value]`.
   :::
 
-  :::product-feature-item{title="Validate and store uploads in one call" icon="i-lucide-shield-check" to="/docs/blob/server-api#upload-files" link-label="Upload files"}
-  `blob.handleUpload()` checks each form file for size and type, and a failed check stops the request before anything is stored.
+  :::product-feature-item{title="Validate and store uploads in one call" icon="i-lucide-shield-check" to="/docs/blob/server-api#upload-files"}
+  `blob.handleUpload()` checks size and type before anything is stored.
   :::
 
-  :::product-feature-item{title="Pick a driver per store, keep the import" icon="i-lucide-sliders-horizontal" to="/docs/blob/configure" link-label="Configure Blob"}
-  Without a `driver`, ViteHub infers R2, Netlify Blobs, Vercel Blob, or the file system from the host; set one for S3 or Azure.
+  :::product-feature-item{title="Pick a driver per store, keep the import" icon="i-lucide-sliders-horizontal" to="/docs/blob/configure"}
+  Set `driver` for S3 or Azure; otherwise the host selects it.
   :::
 
-  :::product-feature-item{title="An Agent can publish the files it creates" icon="i-lucide-bot" to="/docs/blob/agent-capability" link-label="Blob Agent capability"}
-  With `assetPaths`, ViteHub publishes the files that an Agent's final answer links and rewrites those links to public URLs.
+  :::product-feature-item{title="An Agent can publish the files it creates" icon="i-lucide-bot" to="/docs/blob/agent-capability"}
+  `assetPaths` publishes linked files and rewrites the links to public URLs.
   :::
 
-  :::product-feature-item{title="Manage the running app's objects from a terminal" icon="i-lucide-terminal" to="/docs/blob/hosts" link-label="Blob hosts and CLI"}
-  The development CLI calls the same storage as the app, and the build emits the binding or bucket config the host needs.
+  :::product-feature-item{title="Manage the running app's objects from a terminal" icon="i-lucide-terminal" to="/docs/blob/hosts"}
+  The CLI uses the app's storage; the build emits the binding.
   :::
 
-  :::product-feature-item{title="Not for file trees or rich queries" icon="i-lucide-git-branch" to="/docs/workspace" link-label="Compare Workspace"}
-  Use Workspace when files need paths, snapshots, or diffs, and KV or Database for catalogs and richer queries.
+  :::product-feature-item{title="Not for file trees or rich queries" icon="i-lucide-git-branch" to="/docs/workspace"}
+  Use Workspace for paths and diffs, KV or Database for queries.
   :::
 ::

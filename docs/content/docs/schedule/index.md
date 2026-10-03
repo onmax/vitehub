@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-calendar-clock
 ---
 
-::product-hero{tagline="Run server code at cron times from a file that builds to Cloudflare, Vercel, or Deno cron output."}
+::product-hero{providers="Cloudflare, Vercel, Deno, Node.js" tagline="Run server code at cron times from a file that builds to Cloudflare, Vercel, or Deno cron output."}
   :::code-group
   ```ts [Definition]
   import { defineSchedule } from '@vite-hub/schedule'
@@ -59,28 +59,39 @@ icon: i-lucide-calendar-clock
   :::
 ::
 
+::product-flow{caption="Static schedules run in UTC; Runtime Schedules can follow an IANA timeZone."}
+  :::product-flow-step{label="Schedule" detail="defineSchedule · schedules.create()"}
+  :::
+  :::product-flow-step{label="Wake" detail="Cloudflare · Vercel · Deno.cron · process" loop}
+  :::
+  :::product-flow-step{label="Handler" detail="handler({ scheduledAt, waitUntil })"}
+  :::
+  :::product-flow-step{label="Run record" detail="vitehub schedule runs"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="The file is the schedule, in UTC" icon="i-lucide-code-2" to="/docs/schedule/configure#define-a-static-schedule" link-label="Define a static schedule"}
-  A Static Schedule Definition deploys with the app, and `manual: true` lets the CLI or the Console run it outside its cron.
+  :::product-feature-item{title="The file is the schedule, in UTC" icon="i-lucide-code-2" to="/docs/schedule/configure#define-a-static-schedule"}
+  Deploys with the app; `manual: true` allows runs outside the cron.
   :::
 
-  :::product-feature-item{title="Create recurring work while the app runs" icon="i-lucide-calendar-clock" to="/docs/schedule/server-api" link-label="Schedule server API"}
-  `schedules.create()` stores a cron schedule for an opted-in target, with an IANA `timeZone` when it must follow local time.
+  :::product-feature-item{title="Create recurring work while the app runs" icon="i-lucide-calendar-clock" to="/docs/schedule/server-api"}
+  `schedules.create()` stores a cron for an opted-in target, with `timeZone`.
   :::
 
-  :::product-feature-item{title="An Agent can schedule its own turns" icon="i-lucide-bot" to="/docs/schedule/agent-capability" link-label="Schedule Agent capability"}
-  The Schedule Capability gives an Agent one `cronjob` tool, limited by `targets` and gated by `policy`, and `allowSelfTarget` lets it target itself.
+  :::product-feature-item{title="An Agent can schedule its own turns" icon="i-lucide-bot" to="/docs/schedule/agent-capability"}
+  One `cronjob` tool, limited by `targets` and gated by `policy`.
   :::
 
-  :::product-feature-item{title="One long-lived process runs every schedule" icon="i-lucide-cpu" to="/docs/schedule/configure#configure-the-vite-integration" link-label="Configure the Process Runtime"}
-  On Node without provider cron, the Process Runtime scans once per minute and needs exactly one long-lived process, never a serverless host.
+  :::product-feature-item{title="One long-lived process runs every schedule" icon="i-lucide-cpu" to="/docs/schedule/configure#configure-the-vite-integration"}
+  On Node, it scans once per minute; never use a serverless host.
   :::
 
-  :::product-feature-item{title="Inspect schedules and runs from the CLI" icon="i-lucide-terminal" to="/docs/schedule/hosts" link-label="Schedule hosts"}
-  The development CLI lists Runtime Schedules with their next due time and last run, and the Console Schedules page shows the same records.
+  :::product-feature-item{title="Inspect schedules and runs from the CLI" icon="i-lucide-terminal" to="/docs/schedule/hosts"}
+  Lists Runtime Schedules with their next due time and last run.
   :::
 
-  :::product-feature-item{title="Not for delays or multi-step work" icon="i-lucide-git-branch" to="/docs/workflows" link-label="Compare Workflows"}
-  Use Queue when a provider enqueue delay is enough, and Workflows for durable multi-step work.
+  :::product-feature-item{title="Not for delays or multi-step work" icon="i-lucide-git-branch" to="/docs/workflows"}
+  Use Queue for enqueue delays, Workflows for durable multi-step work.
   :::
 ::

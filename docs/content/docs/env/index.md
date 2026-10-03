@@ -6,22 +6,8 @@ navigation.order: 1
 icon: i-lucide-key-round
 ---
 
-::product-hero{tagline="Declare public, build-time, server, and secret values in the Vite config, and read them through generated typed imports."}
+::product-hero{tagline="Declare public, build-time, server, and secret values in the Vite config, and read them through generated typed imports." providers="Host env, Custom, Git, Build timestamp, package.json, Env provider"}
   :::code-group
-  ```ts [Server]
-  import { useServerEnv } from '#vitehub/env/server'
-
-  export async function listIssues() {
-    const { github } = useServerEnv()
-
-    return fetch('https://api.github.com/issues', {
-      headers: {
-        authorization: `Bearer ${github.token.unseal()}`,
-      },
-    })
-  }
-  ```
-
   ```ts [vite.config.ts]
   import { env, hubEnv } from '@vite-hub/env/vite'
   import { defineConfig } from 'vite'
@@ -43,6 +29,20 @@ icon: i-lucide-key-round
   })
   ```
 
+  ```ts [Server]
+  import { useServerEnv } from '#vitehub/env/server'
+
+  export async function listIssues() {
+    const { github } = useServerEnv()
+
+    return fetch('https://api.github.com/issues', {
+      headers: {
+        authorization: `Bearer ${github.token.unseal()}`,
+      },
+    })
+  }
+  ```
+
   ```bash [CLI]
   pnpm vitehub env inspect [--stage <name>] [--json]
   pnpm vitehub env check [--stage <name>] [--json]
@@ -50,28 +50,39 @@ icon: i-lucide-key-round
   :::
 ::
 
+::product-flow{caption="Server code reads typed values; a secret stays redacted until unseal()."}
+  :::product-flow-step{label="Declaration" detail="env({ secret: true })"}
+  :::
+  :::product-flow-step{label="Source" detail="env.source('GITHUB_TOKEN')"}
+  :::
+  :::product-flow-step{label="Typed accessor" detail="useServerEnv()"}
+  :::
+  :::product-flow-step{label="Secret" detail="github.token.unseal()"}
+  :::
+::
+
 ::product-features
-  :::product-feature-item{title="Host strings become typed values" icon="i-lucide-sliders-horizontal" to="/docs/env/configure" link-label="Configure Env"}
-  `env.boolean()`, `env.number()`, and `env.enum()` parse each value, and an invalid one fails with `ENV_RUNTIME_VALUE_INVALID` without the value.
+  :::product-feature-item{title="Host strings become typed values" icon="i-lucide-sliders-horizontal" to="/docs/env/configure"}
+  `env.boolean()`, `env.number()`, and `env.enum()` parse each value.
   :::
 
-  :::product-feature-item{title="Secrets stay on the server, redacted" icon="i-lucide-shield-check" to="/docs/env/server-api" link-label="Env server API"}
-  Public Env and define values ship in client code, while Secret Env stays in Server Env and redacted until `unseal()`.
+  :::product-feature-item{title="Secrets stay on the server, redacted" icon="i-lucide-shield-check" to="/docs/env/server-api"}
+  Secret Env stays redacted in Server Env until `unseal()`.
   :::
 
-  :::product-feature-item{title="Read credentials from external storage" icon="i-lucide-database" to="/docs/env/server-api#read-external-env-storage" link-label="Read external Env storage"}
-  An Env provider reads application-owned credentials outside the host, and each `loadServerEnv()` call returns a new snapshot with rotated values.
+  :::product-feature-item{title="Read credentials from external storage" icon="i-lucide-database" to="/docs/env/server-api#read-external-env-storage"}
+  Each `loadServerEnv()` call reads a fresh snapshot from an Env provider.
   :::
 
-  :::product-feature-item{title="Check a stage without printing values" icon="i-lucide-terminal" to="/docs/development/cli#inspect-server-env" link-label="Inspect Server Env from the CLI"}
-  `env inspect` lists each variable's status and source, and `env check` exits with `1` when Server Env would not load.
+  :::product-feature-item{title="Check a stage without printing values" icon="i-lucide-terminal" to="/docs/development/cli#inspect-server-env"}
+  `env check` exits `1` when Server Env would not load.
   :::
 
-  :::product-feature-item{title="Replace a credential without a redeploy" icon="i-lucide-key-round" to="/docs/env/bridge" link-label="Env Bridge"}
-  Env Bridge is an Env provider with a secret store, per-key grants, and a durable activity log.
+  :::product-feature-item{title="Replace a credential without a redeploy" icon="i-lucide-key-round" to="/docs/env/bridge"}
+  A secret store with per-key grants and a durable activity log.
   :::
 
-  :::product-feature-item{title="Not for connected account tokens" icon="i-lucide-plug" to="/docs/connections" link-label="Compare Connections"}
-  Env holds application-owned credentials, so use Connections for the OAuth tokens of connected accounts.
+  :::product-feature-item{title="Not for connected account tokens" icon="i-lucide-plug" to="/docs/connections"}
+  Use Connections for OAuth tokens of connected accounts.
   :::
 ::
