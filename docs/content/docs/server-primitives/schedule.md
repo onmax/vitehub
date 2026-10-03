@@ -237,7 +237,7 @@ One-time delayed execution is not part of the first-version Scheduling vocabular
 ```bash [Terminal]
 pnpm vitehub schedule list
 pnpm vitehub schedule runs weekday-report --limit 5 --json
-pnpm vitehub schedule run weekday-report
+pnpm vitehub schedule run-runtime weekday-report
 ```
 
 The commands use the same Schedule stores and registry as the running server. The list shows the enabled state, the next due time in the Schedule time zone, and the last run. When no wake driver is installed, the output says that due times do not start runs in this runtime. Read [CLI](/docs/development/cli#inspect-and-control-runtime-schedules) for every command and option.
