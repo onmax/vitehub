@@ -27,8 +27,68 @@ for (const record of fixture.invocations) {
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
-const sections = ["env", "connections", "agents", "usage", "database", "kv", "workflows", "queues"] as const
+const sections = ["env", "connections", "agents", "usage", "blob", "databases", "email", "kv", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const
 const definitions = {
+  "rate-limits": [
+    {
+      fields: [
+        { label: "Limit", value: "60" },
+        { label: "Window", value: "1m" },
+        { label: "Enforcement", value: "Strict" },
+        { label: "Provider failure", value: "Deny" },
+        { label: "Source location", value: "12:3" },
+      ],
+      file: "server/api/search.get.ts",
+      name: "api-search",
+      source: "require-rate-limit",
+    },
+    {
+      fields: [
+        { label: "Limit", value: "5" },
+        { label: "Window", value: "1h" },
+        { label: "Enforcement", value: "Best effort" },
+        { label: "Provider failure", value: "Allow" },
+        { label: "Source location", value: "8:3" },
+      ],
+      file: "server/api/invite.post.ts",
+      name: "invite",
+      source: "require-rate-limit",
+    },
+  ],
+  sandboxes: [
+    {
+      fields: [{ label: "Kind", value: "Definition" }],
+      file: "server/sandboxes/release-check.ts",
+      name: "release-check",
+      source: "sandbox",
+    },
+    {
+      fields: [{ label: "Kind", value: "Package entry" }],
+      file: "node_modules/@vite-hub/sandbox/dist/providers/node.js",
+      name: "node",
+      source: "sandbox",
+    },
+  ],
+  workspaces: [
+    {
+      fields: [
+        { label: "Kind", value: "Agent workspace" },
+        { label: "Source root", value: "." },
+      ],
+      file: "server/agents/interface-engineer.ts",
+      name: "vitehub",
+      source: "server-agent-workspaces",
+    },
+    {
+      fields: [
+        { label: "Kind", value: "Workspace Definition" },
+        { label: "Source root", value: "docs/content" },
+      ],
+      file: "server/workspaces/docs.ts",
+      name: "docs",
+      source: "workspace",
+    },
+  ],
   queues: [
     {
       fields: [],
@@ -116,6 +176,67 @@ const kvStores = {
     ["release:latest", { commit: "937d2ca", packages: 27, version: "0.0.1" }],
     ["session:interface-engineer", { active: true, invocationId: "ainv_console_navigation" }],
   ]),
+} as const
+
+const scheduleRecords = [
+  {
+    cells: { enabled: "Provider", kind: "Definition", lastRun: "Not in this table", nextRun: "Set by the provider", schedule: "nightly-digest", target: "-", timing: "0 6 * * *" },
+    fields: [
+      { label: "Kind", value: "Static schedule" },
+      { label: "Cron", value: "0 6 * * *" },
+      { label: "Time zone", value: "UTC" },
+      { label: "Manual", value: "Enabled" },
+      { label: "File", value: "server/schedules/nightly-digest.ts" },
+      { label: "Source", value: "schedule" },
+      { label: "Runs", value: "Use `vitehub schedule runs nightly-digest` to list runs that this runtime recorded." },
+    ],
+    id: "definition:nightly-digest",
+  },
+  {
+    cells: { enabled: "-", kind: "Target", lastRun: "-", nextRun: "-", schedule: "reindex-console", target: "reindex-console", timing: "-" },
+    fields: [
+      { label: "Kind", value: "Runtime target" },
+      { label: "Runtime schedules", value: "Allowed" },
+      { label: "File", value: "server/schedules/reindex-console.ts" },
+      { label: "Source", value: "schedule" },
+      { label: "Runs", value: "A Runtime Schedule that uses this target shows its runs in its own row." },
+    ],
+    id: "definition:reindex-console",
+  },
+  {
+    cells: { enabled: "Enabled", kind: "Runtime", lastRun: "completed at 2026-08-30T15:00:00.000Z", nextRun: "2026-08-30T19:00:00.000Z", schedule: "sched_console_reindex", target: "reindex-console", timing: "0 */4 * * *" },
+    fields: [
+      { label: "Target", value: "reindex-console" },
+      { label: "Cron", value: "0 */4 * * *" },
+      { label: "Time zone", value: "UTC" },
+      { label: "State", value: "Enabled" },
+      { label: "Next due time", value: "2026-08-30T19:00:00.000Z" },
+      { label: "Automatic runs", value: "A wake driver runs due Schedules in this runtime." },
+      { label: "Console dispatch", value: "Allowed by the record. The Console is read-only. Use `vitehub schedule run` in development." },
+      { label: "Input", value: "{\"sections\":[\"agents\",\"kv\"]}" },
+      { label: "Created", value: "2026-08-28T09:12:00.000Z" },
+      { label: "Updated", value: "2026-08-30T15:00:04.000Z" },
+      { label: "Run 1", value: "2026-08-30T15:00:00.000Z, completed, 1 attempt, run_01J6R8" },
+      { label: "Run 2", value: "2026-08-30T11:00:00.000Z, failed, 2 attempts, Console index store was locked., run_01J6QZ" },
+      { label: "Run 3", value: "2026-08-30T07:00:00.000Z, completed, 1 attempt, run_01J6QM" },
+    ],
+    id: "runtime:sched_console_reindex",
+  },
+]
+let scheduleRunCount = 0
+
+const blobStores = {
+  default: [
+    { contentType: "image/png", customMetadata: { agent: "interface-engineer", invocation: "ainv_console_empty_states" }, httpEtag: "\"7d3f1c9a\"", httpMetadata: { cacheControl: "public, max-age=31536000" }, pathname: "screenshots/console-empty-states/kv-dark.png", size: 184_320, uploadedAt: "2026-08-30T16:41:12.000Z", urlAvailable: true as const },
+    { contentType: "image/png", customMetadata: { agent: "interface-engineer", invocation: "ainv_console_empty_states" }, httpEtag: "\"5b2e0a44\"", httpMetadata: { cacheControl: "public, max-age=31536000" }, pathname: "screenshots/console-empty-states/kv-light.png", size: 176_128, uploadedAt: "2026-08-30T16:41:13.000Z", urlAvailable: true as const },
+    { contentType: "application/json", customMetadata: {}, httpEtag: "\"c01d2e3f\"", httpMetadata: {}, pathname: "exports/usage-2026-08.json", size: 24_576, uploadedAt: "2026-08-29T06:00:00.000Z" },
+    { contentType: "text/csv", customMetadata: { source: "billing" }, httpEtag: "\"9a8b7c6d\"", httpMetadata: { contentDisposition: "attachment; filename=\"usage-september.csv\"" }, pathname: "exports/usage-september.csv", size: 2_048, uploadedAt: "2026-09-01T06:00:00.000Z" },
+    { contentType: "application/pdf", customMetadata: {}, httpEtag: "\"e4f5a6b7\"", httpMetadata: {}, pathname: "invoices/inv_2026_09.pdf", size: 96_201, uploadedAt: "2026-09-01T06:00:04.000Z", urlAvailable: true as const },
+  ],
+  uploads: [
+    { contentType: "image/svg+xml", customMetadata: { attachment: "desktop-layout.svg" }, httpEtag: "\"11aa22bb\"", httpMetadata: {}, pathname: "attachments/ainv_image_previews/desktop-layout.svg", size: 1_842, uploadedAt: "2026-09-05T18:00:00.000Z", urlAvailable: true as const },
+    { contentType: "image/svg+xml", customMetadata: { attachment: "mobile-layout.svg" }, httpEtag: "\"33cc44dd\"", httpMetadata: {}, pathname: "attachments/ainv_image_previews/mobile-layout.svg", size: 1_311, uploadedAt: "2026-09-05T18:00:00.000Z", urlAvailable: true as const },
+  ],
 } as const
 
 function json(response: ServerResponse, value: unknown, status = 200): void {
@@ -483,11 +604,54 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       json(response, { kind: "record-table", records: readEmailOutboxConsoleRecords(), section })
       return true
     }
-    if (section !== "queues" && section !== "workflows") {
+    if (section === "schedules") {
+      json(response, { kind: "record-table", records: scheduleRecords, section })
+      return true
+    }
+    if (section !== "queues" && section !== "workflows" && section !== "rate-limits" && section !== "sandboxes" && section !== "workspaces") {
       json(response, { error: "A valid definition section is required" }, 400)
       return true
     }
     json(response, { definitions: definitions[section], kind: "definition-catalog", section })
+    return true
+  }
+
+  if (path === "/api/_vitehub/console/schedule-run" && request.method === "POST") {
+    // SAFETY: The playground validates the name immediately after decoding this local JSON request.
+    const input = await body(request) as { name?: unknown }
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The playground validates the untrusted request name before answering.
+    const name = typeof input.name === "string" && input.name ? input.name : undefined
+    if (!name) {
+      json(response, { message: "Schedule run requires a Schedule Definition name." }, 400)
+      return true
+    }
+    const startedAt = new Date()
+    json(response, { run: {
+      completedAt: new Date(startedAt.getTime() + 1_250).toISOString(),
+      id: `run_playground_${++scheduleRunCount}`,
+      scheduleId: name,
+      startedAt: startedAt.toISOString(),
+      status: "completed",
+    } })
+    return true
+  }
+
+  if (path === "/api/_vitehub/console/blob") {
+    const requested = url.searchParams.get("store") || "default"
+    const store = requested === "default" || requested === "uploads" ? requested : undefined
+    if (!store) {
+      json(response, { error: "Blob store not found." }, 404)
+      return true
+    }
+    const prefix = url.searchParams.get("prefix") || ""
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 250)
+    const offset = Math.max(Number(url.searchParams.get("cursor")) || 0, 0)
+    const matching = blobStores[store].filter(blob => blob.pathname.startsWith(prefix))
+    const page = matching.slice(offset, offset + limit)
+    const hasMore = offset + limit < matching.length
+    const result: Record<string, unknown> = { blobs: page, hasMore, limit, prefix, store, stores: Object.keys(blobStores) }
+    if (hasMore) result.cursor = String(offset + limit)
+    json(response, result)
     return true
   }
 
