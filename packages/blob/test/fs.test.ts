@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
+import { link, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -172,6 +172,19 @@ describe("fs blob driver", () => {
 
     await expect(readFile(join(outside, "secret.txt"), "utf8")).resolves.toBe("secret")
     await expect(readFile(join(outside, "created.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("rejects hard-linked blob targets", async () => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    const outside = await mkdtemp(join(tmpdir(), "vitehub-blob-outside-"))
+    tempDirs.push(base, outside)
+    await writeFile(join(outside, "shared.txt"), "outside")
+    await mkdir(join(base, "uploads"))
+    await link(join(outside, "shared.txt"), join(base, "uploads", "shared.txt"))
+
+    const driver = createDriver({ base, driver: "fs" })
+    await expect(driver.put("uploads/shared.txt", "attacker")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(readFile(join(outside, "shared.txt"), "utf8")).resolves.toBe("outside")
   })
 
   it("rejects symlinked internal state paths", async () => {

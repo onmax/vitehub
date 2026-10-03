@@ -84,8 +84,14 @@ async function assertNoSymlinkPath(root: string, path: string) {
   for (const component of ["", ...relativePath.split(sep).filter(Boolean)]) {
     current = resolve(current, component)
     try {
-      if ((await lstat(current)).isSymbolicLink()) {
+      const stats = await lstat(current)
+      if (stats.isSymbolicLink()) {
         throw blobErrorDiagnostics.BLOB_R0005({ message: `Blob pathname crosses a symbolic link: ${path}` })
+      }
+      // A multiply-linked regular file may have another name outside root. Reject it
+      // before writes so replacing a blob cannot mutate an external inode.
+      if (stats.isFile() && stats.nlink > 1) {
+        throw blobErrorDiagnostics.BLOB_R0005({ message: `Blob pathname crosses a hard link: ${path}` })
       }
     }
     catch (error) {
