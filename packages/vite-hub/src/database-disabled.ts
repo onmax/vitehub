@@ -11,9 +11,15 @@ const enableDatabase = "Set `database: true` in vitehub() to enable Database."
 
 interface DisabledDatabaseState {
   /** Another integration, such as a direct hubDb() or the Database Nuxt module, provides Database. */
-  provided: boolean
+  databasePlugin?: DatabasePlugin
+  databaseOption?: unknown
   root: string
   serverDirs?: string[]
+}
+
+interface DatabasePlugin {
+  name?: string
+  api?: { getConfig?: () => unknown }
 }
 
 /**
@@ -36,21 +42,22 @@ export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, strin
     },
     configResolved(config) {
       state = {
-        provided: config.plugins.some(plugin => plugin.name === databasePluginName),
+        databaseOption: (config as typeof config & { database?: unknown }).database,
+        databasePlugin: config.plugins.find(plugin => plugin.name === databasePluginName) as DatabasePlugin | undefined,
         root: config.root,
         serverDirs,
       }
     },
     resolveId(source, importer) {
       const specifier = runtimeImports.get(source)
-      if (!specifier || !state || state.provided) return
+      if (!specifier || !state || hasDatabasePlugin(state)) return
       throw viteHubErrorDiagnostics.VITE_HUB_B0013({
         message: `[vitehub] Database is disabled but ${importer ? JSON.stringify(importer) : "the application"} imports ${JSON.stringify(specifier)}. ${enableDatabase}`,
       })
     },
     vitehub: {
       cli: () => {
-        if (!state || state.provided || !hasDatabaseDefinitions(state)) return
+        if (!state || hasDatabasePlugin(state) || !hasDatabaseDefinitions(state)) return
         const run: ViteHubCliFeature["run"] = (_args, { stderr }) => {
           stderr.write(`[vitehub] Database is disabled, so ViteHub ignores the discovered Database Definitions. ${enableDatabase}\n`)
           return 1
@@ -68,6 +75,12 @@ export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, strin
       },
     },
   }
+}
+
+function hasDatabasePlugin(state: DisabledDatabaseState): boolean {
+  if (!state.databasePlugin || state.databaseOption === false) return false
+  const config = state.databasePlugin.api?.getConfig?.()
+  return config !== undefined || !state.databasePlugin.api?.getConfig
 }
 
 function hasDatabaseDefinitions(state: DisabledDatabaseState): boolean {

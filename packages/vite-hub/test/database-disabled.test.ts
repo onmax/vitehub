@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { runViteHubCli } from "@vite-hub/cli"
+import { hubDb } from "@vite-hub/database/vite"
 import { build, resolveConfig, type InlineConfig, type PluginOption } from "vite"
 import { afterEach, describe, expect, it } from "vitest"
 
@@ -80,14 +81,24 @@ describe("vitehub() without database", () => {
 
   it("lets an explicitly composed Database integration provide the runtime", async () => {
     const root = await createProject({ "server/databases/config.ts": databaseDefinition })
-    const plugins = [vitehub({ preset: "node", env: false }), { name: "@vite-hub/database/vite" }]
+    const plugins = [vitehub({ preset: "node", env: false }), hubDb()]
     const config = await resolveConfig(serverBuild(root, plugins), "build")
     const guard = config.plugins.find(plugin => plugin.name === "vite-hub/database-disabled")
     const resolveId = guard?.resolveId
     if (typeof resolveId !== "function") throw new TypeError("Expected the disabled Database guard.")
     // SAFETY: The guard reads only the import source and importer.
     expect(resolveId.call({} as never, "vite-hub/database/drizzle", join(root, "src/server.ts"), {} as never)).toBeUndefined()
-    expect((await runDb(root, plugins, ["db", "--help"])).stderr).toContain("Unknown ViteHub CLI namespace: db")
+    expect((await runDb(root, plugins, ["db", "--help"])).stdout).toContain("generate")
+  })
+
+  it("reports imports when a composed Database integration is explicitly disabled", async () => {
+    const root = await createProject({
+      "src/server.ts": `import { useDatabase } from "vite-hub/database/drizzle"\nexport const notes = useDatabase("default")\n`,
+    })
+
+    await expect(build(serverBuild(root, [vitehub({ preset: "node", database: false, env: false }), hubDb()]))).rejects.toThrow(
+      `Database is disabled but ${JSON.stringify(join(root, "src/server.ts"))} imports "vite-hub/database/drizzle". Set \`database: true\` in vitehub() to enable Database.`,
+    )
   })
 
   it("explains the db commands when Database Definitions exist", async () => {
