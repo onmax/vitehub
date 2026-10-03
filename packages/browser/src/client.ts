@@ -140,7 +140,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
   private controller?: string
   private attaching = false
   private detaching = false
-  private pendingControllerRelease?: () => Promise<void>
+  private pendingControllerRelease?: { release: () => Promise<void>, complete: () => Promise<void> }
   private lastControllerSupportsHandoff = true
   private state: BrowserSessionState = "released"
 
@@ -180,6 +180,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
 
     this.attaching = true
     let releaseController: (() => Promise<void>) | undefined
+    let releaseRollback: { release: () => Promise<void>, complete: () => Promise<void> } | undefined
     let releaseAttempted = false
     try {
       const attached = await controller.attach(this.providerSession.connection, {
@@ -187,9 +188,11 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
         sessionId: this.id,
       })
       let emitDetach = false
+      let detachStarted = false
       let released = false
       let releasePromise: Promise<void> | undefined
-      const releaseControl = async (emitDetach: boolean): Promise<void> => {
+      let tracedReleasePromise: Promise<void> | undefined
+      const releaseControl = async (): Promise<void> => {
         if (releasePromise) return await releasePromise
         if (released) return
         this.detaching = true
@@ -199,8 +202,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           this.detaching = false
           if (this.state === "controlled") this.state = "released"
           this.controller = undefined
-          if (this.pendingControllerRelease === releaseController) this.pendingControllerRelease = undefined
-          if (emitDetach) await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
+          if (this.pendingControllerRelease === releaseRollback) this.pendingControllerRelease = undefined
         })()
         releasePromise = releasing
         try {
@@ -210,11 +212,29 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           releasePromise = undefined
         }
       }
-      releaseController = () => releaseControl(emitDetach)
+      releaseController = async () => {
+        if (tracedReleasePromise) return await tracedReleasePromise
+        if (released && (!emitDetach || detachStarted)) return
+        const releasing = (async () => {
+          await releaseControl()
+          if (emitDetach) {
+            detachStarted = true
+            await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
+          }
+        })()
+        tracedReleasePromise = releasing
+        try {
+          await releasing
+        }
+        finally {
+          tracedReleasePromise = undefined
+        }
+      }
+      releaseRollback = { release: releaseControl, complete: releaseController }
       this.attaching = false
       if (this.closing || this.state !== "released") {
         releaseAttempted = true
-        await withBrowserTimeout(releaseControl(false), () => browserProviderError("browser", "release a late browser controller"))
+        await withBrowserTimeout(releaseControl(), () => browserProviderError("browser", "release a late browser controller"))
         throw browserSessionStateError("attach a controller to", this.state)
       }
       this.state = "controlled"
@@ -230,7 +250,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       this.attaching = false
       const errors = [error]
       if (releaseController && !releaseAttempted) {
-        this.pendingControllerRelease = releaseController
+        this.pendingControllerRelease = releaseRollback
         try {
           await releaseController()
         }
@@ -286,12 +306,14 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     this.closing = true
     const closing = (async () => {
       try {
-        if (this.pendingControllerRelease) {
+        const rollback = this.pendingControllerRelease
+        if (rollback) {
           // Rollback must finish while its provider connection is still available.
-          await this.pendingControllerRelease()
+          await rollback.release()
         }
         await releaseResource({ lease: this.lease, providerSession: this.providerSession })
         this.state = "closed"
+        await rollback?.complete()
       }
       finally {
         await this.owner.emit("browser.session.close", this)
