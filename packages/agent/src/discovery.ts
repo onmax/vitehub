@@ -646,63 +646,63 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   const callbackParameters: { start: number; end: number; names: Set<string> }[] = []
 
-  function callbackBindingNames(start: number, end: number, initializers?: Map<number, number>): Set<string> {
+  function callbackBindingNames(start: number, end: number, initializers?: Map<number, number>, sequence = tokens): Set<string> {
     const names = new Set<string>()
     let cursor = start
-    if (tokens[cursor] === "async") cursor++
-    if (tokens[cursor] === "function") cursor = tokens.indexOf("(", cursor)
+    if (sequence[cursor] === "async") cursor++
+    if (sequence[cursor] === "function") cursor = sequence.indexOf("(", cursor)
     // Method callbacks may point at their body after parameter scanning.
-    if (tokens[cursor] === "{" && tokens[cursor - 1] === ")") {
+    if (sequence[cursor] === "{" && sequence[cursor - 1] === ")") {
       let depth = 1
       cursor -= 2
       while (cursor >= 0 && depth) {
-        if (tokens[cursor] === ")") depth++
-        else if (tokens[cursor] === "(") depth--
+        if (sequence[cursor] === ")") depth++
+        else if (sequence[cursor] === "(") depth--
         if (depth) cursor--
       }
     }
     function skipValue(close: string) {
       let depth = 0
-      let type = tokens[cursor] === ":" || tokens[cursor] === "?"
+      let type = sequence[cursor] === ":" || sequence[cursor] === "?"
       for (; cursor < end; cursor++) {
-        const token = tokens[cursor]
+        const token = sequence[cursor]
         if (depth === 0 && (token === "," || token === close)) return
         if (depth === 0 && token === "=") type = false
         if (["(", "[", "{"].includes(token) || (type && token === "<")) depth++
-        else if ([")", "]", "}"].includes(token) || (type && token === ">" && tokens[cursor - 1] !== "=")) depth--
+        else if ([")", "]", "}"].includes(token) || (type && token === ">" && sequence[cursor - 1] !== "=")) depth--
       }
     }
     function binding() {
-      if (tokens[cursor] === "." && tokens[cursor + 1] === "." && tokens[cursor + 2] === ".") cursor += 3
-      const token = tokens[cursor]
+      if (sequence[cursor] === "." && sequence[cursor + 1] === "." && sequence[cursor + 2] === ".") cursor += 3
+      const token = sequence[cursor]
       if (token === "{" || token === "[") {
         const close = token === "{" ? "}" : "]"
         cursor++
-        while (cursor < end && tokens[cursor] !== close) {
-          if (tokens[cursor] === ",") { cursor++; continue }
-          if (token === "{" && tokens[cursor] === "[") {
+        while (cursor < end && sequence[cursor] !== close) {
+          if (sequence[cursor] === ",") { cursor++; continue }
+          if (token === "{" && sequence[cursor] === "[") {
             // Computed property expressions do not introduce bindings.
             let depth = 1
             for (cursor++; cursor < end && depth; cursor++) {
-              if (tokens[cursor] === "[") depth++
-              else if (tokens[cursor] === "]") depth--
+              if (sequence[cursor] === "[") depth++
+              else if (sequence[cursor] === "]") depth--
             }
-            if (tokens[cursor] === ":") cursor++
-          } else if (token === "{" && tokens[cursor + 1] === ":") cursor += 2
+            if (sequence[cursor] === ":") cursor++
+          } else if (token === "{" && sequence[cursor + 1] === ":") cursor += 2
           binding()
           skipValue(close)
         }
         cursor++
       } else {
         if (isIdentifier(token ?? "")) names.add(token)
-        if (tokens[cursor + 1] === "=") initializers?.set(cursor, cursor + 2)
+        if (sequence[cursor + 1] === "=") initializers?.set(cursor, cursor + 2)
         cursor++
       }
     }
-    if (tokens[cursor] !== "(") { binding(); return names }
+    if (sequence[cursor] !== "(") { binding(); return names }
     cursor++
-    while (cursor < end && tokens[cursor] !== ")") {
-      if (tokens[cursor] === ",") { cursor++; continue }
+    while (cursor < end && sequence[cursor] !== ")") {
+      if (sequence[cursor] === ",") { cursor++; continue }
       binding()
       skipValue(")")
     }
@@ -1254,7 +1254,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (!template.startsWith("`") || !/(?<!\\)(?:\\\\)*\$\{/.test(template)) continue
     const referenceLineBreaks = new Set<number>()
     const references = templateReferences(template, referenceLineBreaks)
-    // Each arrow shadows names only within its own parameter list and body.
+    // Template locals shadow names only within their own scope.
     const templateLocalBindings: { start: number; end: number; names: Set<string> }[] = []
     const referenceOpenings = new Map<number, number>()
     const referenceStack: number[] = []
@@ -1265,6 +1265,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         if (opening !== undefined) referenceOpenings.set(index, opening)
       }
     }
+    const referenceClosings = new Map([...referenceOpenings].map(([closing, opening]) => [opening, closing]))
     for (let arrow = 0; arrow < references.length; arrow++) {
       if (references[arrow] !== "=" || references[arrow + 1] !== ">") continue
       const start = referenceOpenings.get(arrow - 1) ?? arrow - 1
@@ -1283,13 +1284,14 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       templateLocalBindings.push({ start, end, names })
     }
     const methodKey = (index: number) => {
+      if (["if", "for", "while", "switch", "catch", "with"].includes(references[index] ?? "")) return false
       if (references[index + 1] !== "(") return false
-      const closing = [...referenceOpenings.entries()].find(([, opening]) => opening === index + 1)?.[0]
+      const closing = referenceClosings.get(index + 1)
       if (closing === undefined || references[closing + 1] !== "{") return false
       const previous = references[index - 1]
-      if (["{", ","].includes(previous ?? "")) return true
+      if (["{", ",", ";", "}"].includes(previous ?? "")) return true
       return ["get", "set", "async", "*"].includes(previous ?? "")
-        && ["{", ",", "async"].includes(references[index - 2] ?? "")
+        && ["{", ",", ";", "}", "async"].includes(references[index - 2] ?? "")
         || previous === "*" && references[index - 2] === "async"
     }
     // Method parameters shadow module bindings throughout their method body.
@@ -1299,22 +1301,48 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     for (let index = 0; index < references.length; index++) {
       if (!methodKey(index)) continue
       const parameterOpen = index + 1
-      const parameterClose = [...referenceOpenings.entries()].find(([, opening]) => opening === parameterOpen)?.[0]
+      const parameterClose = referenceClosings.get(parameterOpen)
       if (parameterClose === undefined || references[parameterClose + 1] !== "{") continue
       const bodyOpen = parameterClose + 1
-      const bodyClose = [...referenceOpenings.entries()].find(([, opening]) => opening === bodyOpen)?.[0]
+      const bodyClose = referenceClosings.get(bodyOpen)
       if (bodyClose === undefined) continue
-      const names = new Set<string>()
-      for (let parameter = parameterOpen + 1; parameter < parameterClose; parameter++) {
-        if (!isIdentifier(references[parameter]!)) continue
-        if (references[parameter - 1] === "." || references[parameter + 1] === ":") continue
-        names.add(references[parameter]!)
-      }
+      const names = callbackBindingNames(parameterOpen, parameterClose, undefined, references)
       templateLocalBindings.push({ start: parameterOpen, end: bodyClose, names })
+    }
+    // Resolve body declarations in their lexical block, or function for var.
+    // Do not let a method local hide imported reads in another interpolation.
+    const templateFunctionScopes = [...templateLocalBindings]
+    for (let index = 0; index < references.length; index++) {
+      const keyword = references[index]!
+      if (!["const", "let", "var"].includes(keyword)
+        || !["{", ";", "}"].includes(references[index - 1] ?? "") && !referenceLineBreaks.has(index)) continue
+      const owner = templateFunctionScopes.filter(scope => index > scope.start && index < scope.end)
+        .sort((a, b) => b.start - a.start)[0]
+      if (!owner) continue
+      const block = [...referenceClosings].filter(([opening, closing]) =>
+        references[opening] === "{" && opening < index && closing > index)
+        .sort(([a], [b]) => b - a)[0]
+      if (!block) continue
+      const start = keyword === "var" ? owner.start : block[0]
+      const end = keyword === "var" ? owner.end : block[1]
+      const names = new Set<string>()
+      let binding = index + 1
+      while (binding < end) {
+        for (const name of callbackBindingNames(binding, end, undefined, references)) names.add(name)
+        let cursor = (referenceClosings.get(binding) ?? binding) + 1
+        for (; cursor < end; cursor++) {
+          const token = references[cursor]!
+          if ([",", ";", "}"].includes(token)
+            || referenceLineBreaks.has(cursor) && endsAgentExpression(references.slice(binding, cursor))) break
+          cursor = referenceClosings.get(cursor) ?? cursor
+        }
+        if (references[cursor] !== ",") break
+        binding = cursor + 1
+      }
+      templateLocalBindings.push({ start, end, names })
     }
     const classFieldKeys = new Set<number>()
     const classExpressionNames = new Set<number>()
-    const referenceClosings = new Map([...referenceOpenings].map(([closing, opening]) => [opening, closing]))
     for (let index = 0; index < references.length; index++) {
       if (references[index] !== "class" || references[index - 1] === "." || [":", "("].includes(references[index + 1] ?? "")) continue
       if (isIdentifier(references[index + 1])
@@ -1344,7 +1372,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       }
     }
     const bindingReference = (index: number) => isIdentifier(references[index])
-      && references[index - 1] !== "."
+      && ![".", "#"].includes(references[index - 1] ?? "")
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
       && !methodKey(index)
       && !classFieldKeys.has(index)
@@ -1408,7 +1436,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           && ![".", "?"].includes(sequence[cursor - 1] ?? "")))
     }
     const hiddenCode = references.some((token, index) =>
-      (bindingReference(index) && ["eval", "import"].includes(token))
+      (bindingReference(index) && (token === "eval" || token === "import" && references[index + 1] !== "."))
       || ((token === "(" || token.startsWith("`"))
         && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
         && !methodKey(index - 1)

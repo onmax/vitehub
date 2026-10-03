@@ -27,6 +27,40 @@ async function discover(agent: string, files: Record<string, string> = {}) {
 
 const imports = 'import { defineAgent } from "vite-hub/agent"; import { github, telegram, webChat } from "vite-hub/agent/channels";'
 
+it.each([
+  "import.meta.url",
+  "class { #portal; get value() { return this.#portal } }",
+  "class { #portal; has(value) { return #portal in value } }",
+  "({ render() { const portal = { id: input.id }; return portal.id } })",
+  "({ render() { let portal = input; return portal.id } })",
+  "({ render() { var portal = input; return portal.id } })",
+  "({ render() { const { id: portal } = input; return portal } })",
+  "({ render() { const [portal] = input; return portal } })",
+  "({ render() { const first = input, portal = input; return portal } })",
+  "({ render() { { const portal = input; return portal.id } } })",
+  "({ render() { { var portal = input } return portal } })",
+])("ignores unrelated template metadata and method locals: %s", async expression => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; export default defineAgent({ channels: { custom: portal }, driver: { instructions: () => \`${"${"}${expression}${"}"}\` } })`, {
+    "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
+  "import('./other.ts')",
+  "class { #portal = portal; get value() { return this.#portal } }",
+  "({ render() { const portal = input; return portal } }), portal",
+  "({ render() { { const portal = input } return portal } })",
+  "({ render() { const { portal: local } = input; return portal } })",
+  "({ render() { const local = portal; return local } })",
+  "({ render() { const portal = input; return portal } })}${portal",
+])("keeps imported reads outside template local scopes opaque: %s", async expression => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
 it("ignores object method parameters that shadow imported bindings in templates", async () => {
   const imported = await discover(`${imports} import portal from "../../portal.ts"; const template = \`${"${"}({ render(portal) { return portal.id } })${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
