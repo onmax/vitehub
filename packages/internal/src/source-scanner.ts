@@ -353,7 +353,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // Function and constructor assertion types place their return reference
   // after `=>`, so the generic is not directly adjacent to the assertion
   // keyword. Treat that return type as part of the assertion as well.
-  if (/=>\s*(?:asserts\s+[A-Za-z_$][\w$]*\s+is\s+)?(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
+  if (/=>\s*(?:(?:asserts\s+)?[A-Za-z_$][\w$]*\s+is\s+)?(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(prefix)) return true
   if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true

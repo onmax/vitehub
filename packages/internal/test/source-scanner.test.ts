@@ -115,6 +115,8 @@ describe("source scanner", () => {
     "as unknown as () => Result<string, unknown>",
     "as unknown as new () => Result<string, unknown>",
     "as unknown as (value: unknown) => asserts value is Result<string, unknown>",
+    "as unknown as (value: unknown) => value is Result<string, unknown>",
+    "as unknown as (value: unknown) => this is Result<string, unknown>",
     "as unknown as T extends infer R extends Pair<string, unknown> ? Definition : never",
     "as keyof /* type */ Record<string, unknown>",
     "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",
