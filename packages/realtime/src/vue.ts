@@ -33,10 +33,12 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
   const synced = ref(false)
   const checkpointRequests = ref(0)
   const pendingWorkspaceChanges: RealtimeWorkspaceChange[] = []
+  let connectedDocumentId: string | undefined
   let workspaceChangeTimer: ReturnType<typeof setTimeout> | undefined
   const enabled = () => options.enabled === undefined || toValue(options.enabled)
 
   function destroyDocument() {
+    connectedDocumentId = undefined
     provider.value?.destroy()
     document.value?.destroy()
     provider.value = undefined
@@ -118,7 +120,7 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
       const room = id.split("/").map(encodeURIComponent).join("/")
       const current = document.value
       for (let attempt = 0; ; attempt++) {
-        if (!current || document.value !== current || toValue(documentId) !== id || !enabled()) {
+        if (!current || connectedDocumentId !== id || document.value !== current || toValue(documentId) !== id || !enabled()) {
           throw realtimeErrorDiagnostics.REALTIME_R0011({ message: "The realtime document is no longer connected to this checkpoint." })
         }
         const response = await fetch(resolveRealtimeApplicationPath(`/api/_vitehub/realtime/${encodeURIComponent(definition)}/${room}?history=checkpoint`), {
@@ -161,6 +163,7 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
     nextProvider.on("sync", (value: boolean) => {
       if (provider.value === nextProvider) synced.value = value
     })
+    connectedDocumentId = id
     document.value = nextDocument
     provider.value = nextProvider
     status.value = "connecting"
