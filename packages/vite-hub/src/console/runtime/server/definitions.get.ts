@@ -31,7 +31,7 @@ function markRunnableSchedules(records: readonly ConsoleRecord[]): ConsoleRecord
   const runnable = getConsoleSchedules()
   return records.map(record => record.cells.kind === "Definition" && record.cells.schedule && Object.hasOwn(runnable, record.cells.schedule)
     ? { ...record, runnable: true }
-    : { ...record, runnable: undefined })
+    : record)
 }
 
 export default async function consoleDefinitionsHandler(event: ConsoleRequestEvent): Promise<ConsoleSectionContent & {

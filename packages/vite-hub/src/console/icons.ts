@@ -18,6 +18,7 @@ export const consoleIcons: readonly string[] = [
   "lucide:circle-alert",
   "lucide:circle-check",
   "lucide:circle-dot",
+  "lucide:circle-stop",
   "lucide:cloud-off",
   "lucide:copy",
   "lucide:database",

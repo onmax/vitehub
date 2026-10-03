@@ -154,6 +154,7 @@ function normalizedFilters(filters: WorkspaceCollectionQuery["filters"]): Record
   return Object.fromEntries(Object.entries(filters || {})
     .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined)
     .sort(([left], [right]) => left.localeCompare(right))
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection filters cross a JSON boundary.
     .map(([field, value]) => [field, typeof value === "object" && !Array.isArray(value)
       ? ["operator:empty"]
       : (Array.isArray(value) ? value : [value]).map(item => `value:${item.toLocaleLowerCase()}`).sort()]))
