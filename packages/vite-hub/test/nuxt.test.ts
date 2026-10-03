@@ -408,7 +408,7 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("installConsoleDefinitions")
   })
 
-  it("replays Markdown Template resolution during Nitro bundling", async () => {
+  it.each([undefined, "/tmp/custom-markdown-template-runtime.mjs"])("replays Markdown Template resolution with Nitro alias %s", async (configuredAlias) => {
     const defaultPlugins = mocks.vitehub()
     const resolveId = vi.fn((id: string) => id.endsWith("reply.template.md") ? `${id}?markdown-template` : undefined)
     const load = vi.fn((id: string) => id.endsWith("?markdown-template") ? "export default () => 'rendered'" : undefined)
@@ -427,10 +427,23 @@ describe("ViteHub Nuxt integration", () => {
     ])
     const { nuxt, runNitroConfigHook } = createNuxt()
     await viteHubNuxtModule({ preset: "cloudflare" }, nuxt)
-    const nitroConfig: Record<string, unknown> = {}
+    const existingPlugin: Plugin = { name: "existing-nitro-plugin" }
+    const nitroConfig: Record<string, unknown> = {
+      alias: configuredAlias ? { "@vite-hub/markdown-template": configuredAlias } : {},
+      rollupConfig: { plugins: existingPlugin },
+    }
     await runNitroConfigHook(nitroConfig)
-    expect((nitroConfig.alias as Record<string, string>)["@vite-hub/markdown-template"]).toBe("/tmp/markdown-template-runtime.mjs")
+    expect((nitroConfig.alias as Record<string, string>)["@vite-hub/markdown-template"]).toBe(configuredAlias)
     const plugins = (nitroConfig.rollupConfig as { plugins: Plugin[] }).plugins
+    expect(plugins).toContain(existingPlugin)
+    const exactAlias = plugins.find(plugin => plugin.name === "vite-hub/nuxt-exact-aliases")
+    if (configuredAlias) {
+      expect(exactAlias).toBeUndefined()
+    } else {
+      if (typeof exactAlias?.resolveId !== "function") throw new TypeError("Expected Nitro exact alias resolver.")
+      expect(await Reflect.apply(exactAlias.resolveId, {}, ["@vite-hub/markdown-template"])).toBe("/tmp/markdown-template-runtime.mjs")
+      expect(await Reflect.apply(exactAlias.resolveId, {}, ["@vite-hub/markdown-template/internal/composition"])).toBeUndefined()
+    }
     const resolver = plugins.find(plugin => plugin.name === "vite-hub/nuxt-runtime-resolver:@vite-hub/markdown-template/vite")
     expect(resolver).toBeDefined()
     const resolveHook = resolver?.resolveId

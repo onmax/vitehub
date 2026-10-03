@@ -230,18 +230,34 @@ function replayNitroAliases(configured: NonNullable<UserConfig["resolve"]>["alia
   if (!configured) return
   // SAFETY: Nitro's alias option maps module specifiers to string replacement paths.
   const aliases = (nitroConfig.alias ??= {}) as Record<string, string>
-  const entries = Array.isArray(configured)
+  const exactEntries = Array.isArray(configured)
     ? configured.flatMap((alias) => {
-        if (!(alias.find instanceof RegExp)) return [[alias.find, alias.replacement] as const]
+        if (!(alias.find instanceof RegExp)) return []
         const source = alias.find.source
         return source.startsWith("^") && source.endsWith("$")
           ? [[source.slice(1, -1).replaceAll("\\/", "/"), alias.replacement] as const]
           : []
       })
+    : []
+  const entries = Array.isArray(configured)
+    ? configured.flatMap((alias) => alias.find instanceof RegExp ? [] : [[alias.find, alias.replacement] as const])
     : Object.entries(configured)
   for (const [name, replacement] of entries) {
     if (allowed.has(name)) aliases[name] ??= replacement
   }
+  const exactAliases = exactEntries.filter(([name]) => allowed.has(name) && aliases[name] === undefined)
+  if (!exactAliases.length) return
+  const rollupConfig = (nitroConfig.rollupConfig ??= {}) as Record<string, unknown>
+  const configuredPlugins = rollupConfig.plugins as PluginOption | undefined
+  const plugins = Array.isArray(configuredPlugins) ? configuredPlugins : configuredPlugins ? [configuredPlugins] : []
+  rollupConfig.plugins = plugins
+  // Nitro's string aliases also match subpaths, so replay anchored aliases through an exact resolver.
+  plugins.push({
+    name: "vite-hub/nuxt-exact-aliases",
+    resolveId(id) {
+      return exactAliases.find(([name]) => name === id)?.[1]
+    },
+  })
 }
 
 function addTypeScriptDefaults(options: Record<string, unknown>, includes: string[], excludes: string[]): void {
