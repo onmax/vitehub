@@ -382,6 +382,7 @@ function createCheckoutPool(root: string) {
             break
           }
           catch (error: unknown) {
+            // SAFETY: Node filesystem errors expose their stable errno code through NodeJS.ErrnoException.
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
             checkout = idle.get(key(repository, number))?.pop()
           }
@@ -527,6 +528,7 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
       }
       const retained = await privateParent.stat()
       const current = await lstat(privateRoot).catch((error: unknown) => {
+        // SAFETY: Node filesystem errors expose their stable errno code through NodeJS.ErrnoException.
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
         throw error
       })
@@ -578,6 +580,7 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
         await assertCheckoutDirectories(target.subarray(0, Math.max(target.lastIndexOf(47), 1)), parkedCheckout)
       }
       catch (error: unknown) {
+        // SAFETY: Node filesystem errors expose their stable errno code through NodeJS.ErrnoException.
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
         throw error
       }
@@ -1162,6 +1165,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         let retainedCheckout = false
         if (keepCheckout && checkoutPool && pooled && checkoutIdentity) {
           const retained = await lstat(pooled.anchoredDirectory).catch((error: unknown) => {
+            // SAFETY: Node filesystem errors expose their stable errno code through NodeJS.ErrnoException.
             if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
             throw error
           })
