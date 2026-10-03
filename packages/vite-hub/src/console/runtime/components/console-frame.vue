@@ -27,7 +27,7 @@
 }
 
 /* The search entry is a ghost row in every sidebar, like T3 Code's search row. */
-.vitehub-console__search {
+.vitehub-console .vitehub-console__search {
   justify-content: flex-start !important;
   border: 0 !important;
   box-shadow: none !important;
@@ -39,11 +39,11 @@
   padding-inline: 0.5rem !important;
 }
 
-.vitehub-console__search:hover {
+.vitehub-console .vitehub-console__search:hover {
   color: var(--ui-text) !important;
 }
 
-.vitehub-console__search [data-slot="trailing"] {
+.vitehub-console .vitehub-console__search [data-slot="trailing"] {
   display: none;
 }
 
