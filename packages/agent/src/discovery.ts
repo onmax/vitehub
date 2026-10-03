@@ -1757,10 +1757,20 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function globalHelperCallEnd(index: number): number | undefined {
     const member = memberAccess(index)
-    const call = member && ["call", "apply"].includes(member.name) ? member.end : index + 1
+    const indirect = member && ["call", "apply", "bind"].includes(member.name)
+    const call = indirect ? member.end : index + 1
     if (tokens[call] !== "(") return undefined
     if (!functionGlobalHelper(tokens[index]!) && !arrowGlobalHelper(tokens[index]!)) return undefined
-    return [...openingDelimiters].find(([, opening]) => opening === call)?.[0]
+    const boundEnd = [...openingDelimiters].find(([, opening]) => opening === call)?.[0]
+    if (boundEnd === undefined) return undefined
+    // A bound helper is invoked by calling the function returned from bind,
+    // so follow the second call as well (for example globals.bind(null)()).
+    if (member?.name === "bind") {
+      const invocation = boundEnd + 1
+      if (tokens[invocation] !== "(") return undefined
+      return [...openingDelimiters].find(([, opening]) => opening === invocation)?.[0]
+    }
+    return boundEnd
   }
 
   function functionGlobalHelper(name: string): boolean {

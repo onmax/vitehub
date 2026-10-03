@@ -909,6 +909,7 @@ it.each([
   'const globals = globalThis; Reflect.set(globals, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
   'const globals = globalThis; Object.defineProperty(globals, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'function globals() { return globalThis }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
+  'function globals() { return globalThis }; globals.bind(null)().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const globals = () => (globalThis); globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const globals = () => ((globalThis)); globals().Number = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
   'function globals() { return (globalThis) }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
