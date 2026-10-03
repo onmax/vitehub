@@ -48,6 +48,7 @@ export function getWorkflowRuntimeConfig(): false | ResolvedWorkflowOptions | un
 }
 
 export function setWorkflowRuntimeRegistry(registry: WorkflowDefinitionRegistry | undefined): void {
+  if (runtimeRegistry !== registry) loadingRegistryEntries.clear()
   runtimeRegistry = registry
   loadedRegistryEntries.clear()
 }
@@ -201,11 +202,15 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
   loadingRegistryEntries.set(name, loadingEntry)
   try {
     const loaded = await loadingEntry
-    loadedRegistryEntries.set(name, loaded)
+    if (loadingRegistryEntries.get(name) === loadingEntry) {
+      loadedRegistryEntries.set(name, loaded)
+    }
     return loaded
   }
   finally {
-    loadingRegistryEntries.delete(name)
+    if (loadingRegistryEntries.get(name) === loadingEntry) {
+      loadingRegistryEntries.delete(name)
+    }
   }
 }
 

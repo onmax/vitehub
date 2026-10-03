@@ -128,6 +128,8 @@ export default defineAuth({
 });
 ```
 
+Generated route middleware uses `createAuthAccessHandler(routes, definition?)` from `@vite-hub/auth/server`. The handler owns path and method matching, overlapping rules, and required authorization callbacks. Manual hosts can use the same handler with a Web `Request` or `{ req: Request }`. Its route metadata must follow the Definition's `access.routes` order; set `authorize: true` for each route that requires a callback so a missing runtime callback returns `403`. Unmatched requests do not resolve Auth.
+
 ViteHub runs `authorize` only after authentication. Return `true` to allow the request, `false` for a `403`, or a `Response` for a custom result. The callback receives the authenticated `user`, `session`, and request; role semantics remain owned by the host.
 
 `authorizeRequest(input, authorize, definition?)` from `@vite-hub/auth/server` applies the same rule to one request. `authorize` is `true` for any session or a callback. It returns JSON `401` without a session and never redirects to sign-in. Blob serve routes and Source Collections use it for their `authorize` option.

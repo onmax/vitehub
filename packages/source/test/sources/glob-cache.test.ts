@@ -87,6 +87,49 @@ describe("@vite-hub/source glob source cache", () => {
     expect(tinyglobby).toHaveBeenCalledTimes(1)
   })
 
+  it("keeps concurrent listings separate for different contexts at the same root", async () => {
+    const root = await createRoot()
+    function pendingListing() {
+      let resolve!: (keys: string[]) => void
+      const promise = new Promise<string[]>((done) => { resolve = done })
+      return { promise, resolve }
+    }
+    const listings = [pendingListing(), pendingListing()]
+    vi.mocked(tinyglobby)
+      .mockImplementationOnce(() => listings[0]!.promise)
+      .mockImplementationOnce(() => listings[1]!.promise)
+    const docs = glob({ include: "**/*.md" })
+    const contexts = [{ rootDir: root }, { rootDir: root }]
+    const pending = contexts.map(ctx => docs.getKeys(ctx))
+
+    await vi.waitFor(() => expect(tinyglobby).toHaveBeenCalledTimes(2))
+    listings[1]!.resolve(["second.md"])
+    listings[0]!.resolve(["first.md"])
+    const results = await Promise.all(pending)
+    expect(results.map(keys => keys[0]).sort()).toEqual(["first.md", "second.md"])
+    await expect(Promise.all(contexts.map(ctx => docs.getKeys(ctx)))).resolves.toEqual(results)
+    expect(tinyglobby).toHaveBeenCalledTimes(2)
+  })
+
+  it("reprepares only the selected context", async () => {
+    const root = await createRoot()
+    vi.mocked(tinyglobby)
+      .mockResolvedValueOnce(["first.md"])
+      .mockResolvedValueOnce(["second.md"])
+      .mockResolvedValueOnce(["refreshed.md"])
+    const docs = glob({ include: "**/*.md" })
+    const first = { rootDir: root }
+    const second = { rootDir: root }
+
+    await docs.prepare?.(first)
+    await docs.prepare?.(second)
+    await docs.prepare?.(first)
+
+    await expect(docs.getKeys(first)).resolves.toEqual(["refreshed.md"])
+    await expect(docs.getKeys(second)).resolves.toEqual(["second.md"])
+    expect(tinyglobby).toHaveBeenCalledTimes(3)
+  })
+
   it("reuses live glob listings for item reads and refreshes missing keys", async () => {
     const root = await createRoot()
     await mkdir(join(root, "docs"), { recursive: true })
