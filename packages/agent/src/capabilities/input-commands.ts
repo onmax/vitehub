@@ -501,7 +501,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       const invocationCounts = new Map<string, InputCommandInvocationCounts>()
       const cacheInvocationCounts = (value: string, counts: InputCommandInvocationCounts): void => {
         invocationCounts.set(value, counts)
-        if (invocationCounts.size > 2) invocationCounts.delete(invocationCounts.keys().next().value!)
+        // Keep the budget, current, and next snapshots available for reuse.
+        if (invocationCounts.size > 3) invocationCounts.delete(invocationCounts.keys().next().value!)
       }
       const getInvocationCounts = (value: string): InputCommandInvocationCounts => {
         const cached = invocationCounts.get(value)
