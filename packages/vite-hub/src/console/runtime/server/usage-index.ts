@@ -5,6 +5,7 @@ import {
   emptyTotals,
   modelUsage,
   publicTotals,
+  compareUsageModels,
   stringValue,
   usageNode,
   usageSession,
@@ -326,10 +327,9 @@ export function createConsoleUsageIndex(
         buckets.push({
           start,
           ...publicTotals(periodGroups.get(start) ?? emptyTotals(), !incomplete),
-          models: [...groups(periodModelRows.get(start) ?? [], modelKey)].map(([model, total]) => ({
-            model,
-            ...publicTotals(total, !incomplete),
-          })),
+          models: [...groups(periodModelRows.get(start) ?? [], modelKey)]
+            .map(([model, total]) => ({ model, ...publicTotals(total, !incomplete) }))
+            .sort(compareUsageModels),
         });
       }
       const run = (row: UsageRow) => ({
@@ -358,10 +358,7 @@ export function createConsoleUsageIndex(
         totals: publicTotals(totals, !incomplete),
         models: [...groups(models.rows, modelKey)]
           .map(([model, total]) => ({ model, ...publicTotals(total, !incomplete) }))
-          .sort(
-            (left, right) =>
-              right.totalTokens - left.totalTokens || left.model.localeCompare(right.model),
-          ),
+          .sort(compareUsageModels),
         agents: [...groups(agents.rows)].map(([agent, total]) => ({
           agent,
           ...publicTotals(total, !incomplete),

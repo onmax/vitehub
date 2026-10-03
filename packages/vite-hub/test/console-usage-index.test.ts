@@ -1,7 +1,6 @@
 import { createClient } from "@libsql/client";
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server";
 import type { AgentInvocationRecord } from "@vite-hub/agent";
-import * as v from "valibot";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConsoleUsageIndex } from "../src/console/runtime/server/usage-index.ts";
 import type { Client } from "@libsql/client";
@@ -94,16 +93,11 @@ describe("Console persisted usage index", () => {
     await seed("irrelevant", { model: firstModel, ...priced("10") });
     await seed("selected-outside", { model: firstModel, ...priced("10") }, "2026-08-01T00:00:00.000Z");
     await index.rebuild();
-    const normalizeModels = (models: unknown) => v.parse(v.array(v.looseObject({ model: v.string() })), models)
-      .sort((left, right) => left.model.localeCompare(right.model));
-    const normalize = (buckets: unknown) => v.parse(v.array(v.looseObject({
-      start: v.string(), models: v.unknown(),
-    })), buckets).map(bucket => ({ ...bucket, models: normalizeModels(bucket.models) }));
     for (const filters of [{}, { agentName: "bot", status: "failed" as const, search: "selected" }]) {
       const options = { now, window, ...filters };
       const indexed = await index.query(options);
       const fallback = await createUsageSummary(invocations, options);
-      expect(normalize(indexed.buckets)).toEqual(normalize(fallback.buckets));
+      expect(indexed.buckets).toEqual(fallback.buckets);
       expect(indexed.totals).toEqual(fallback.totals);
       expect(indexed.models).toEqual(fallback.models);
     }
