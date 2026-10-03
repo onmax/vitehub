@@ -1353,7 +1353,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (!bindingReference(index) || isFunctionParameter(templateIndex, name)
         || callbackParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
         || expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))) continue
-      if (imported.has(name) || declarations.has(name) || visibleDeclaration(templateIndex, name) !== undefined) mutatedBindings.add(name)
+      const binding = visibleDeclaration(templateIndex, name)
+      // A local capture with the same name cannot mutate the module import or
+      // declaration. Keep the module-wide taint set tied to its resolved binding.
+      if (binding !== undefined && (imported.has(name) || declarations.has(name))) {
+        const declaration = variableDeclarations.get(binding)!
+        const scope = tokens[declaration] === "var" ? variableScope(declaration) : tokenScopes[declaration]
+        if (scope !== undefined) continue
+      }
+      if (imported.has(name) || declarations.has(name) || binding !== undefined) mutatedBindings.add(name)
     }
   }
   // Invoking an extracted member of an opaque result may mutate captured
@@ -1547,7 +1555,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (tokens[cursor] !== "return") continue
       cursor++
       while (tokens[cursor] === "(") cursor++
-      if (tokens[cursor] !== "globalThis") continue
+      if (tokens[cursor] !== "globalThis" || !globalBindingUnshadowed(cursor, "globalThis")) continue
       cursor++
       while (tokens[cursor] === ")") cursor++
       while (tokens[cursor] === ";") cursor++
@@ -1559,8 +1567,17 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   function arrowGlobalHelper(name: string): boolean {
     for (let index = 0; index + 5 < tokens.length; index++) {
       if (tokens[index] !== name || tokens[index + 1] !== "=" || tokens[index + 2] !== "(" || tokens[index + 3] !== ")"
-        || tokens[index + 4] !== "=" || tokens[index + 5] !== ">" || tokens[index + 6] !== "globalThis") continue
-      return true
+        || tokens[index + 4] !== "=" || tokens[index + 5] !== ">") continue
+      let cursor = index + 6
+      const parentheses: number[] = []
+      while (tokens[cursor] === "(") parentheses.push(cursor++)
+      if (tokens[cursor] !== "globalThis" || !globalBindingUnshadowed(cursor, "globalThis")) continue
+      cursor++
+      while (parentheses.length > 0 && openingDelimiters.get(cursor) === parentheses.at(-1)) {
+        parentheses.pop()
+        cursor++
+      }
+      if (parentheses.length === 0 && ([";", ",", ")", "]", "}", undefined].includes(tokens[cursor]) || startsStatement(cursor))) return true
     }
     return false
   }
@@ -1571,7 +1588,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function globalBindingUnshadowed(index: number, name: string): boolean {
     if (imported.has(name) || visibleDeclaration(index, name) !== undefined || isFunctionParameter(index, name)
-      || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(name))) return false
+      || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(name))
+      || expressionArrowParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(name))) return false
     for (let scope = tokenScopes[index]; ; scope = scopeParents.get(scope!)) {
       if (tokens.some((token, declaration) => ["function", "class"].includes(token)
         && tokens[declaration + 1] === name && tokenScopes[declaration] === scope)) return false

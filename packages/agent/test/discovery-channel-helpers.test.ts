@@ -729,6 +729,7 @@ it.each([
 
 it.each([
   'driver: { instructions: ({ input }) => `Review ${input.id}` }',
+  'driver: { instructions: ({ input }) => { const portal = { id: input.id }; return `${portal.id}` } }',
   'driver: { instructions: ({ input }) => `${input.portal}` }',
   'driver: { instructions: ({ input }) => `${input?.portal}` }',
   'driver: { instructions: ({ input }) => `${input["portal"]}` }',
@@ -779,6 +780,8 @@ it.each([
   'const globals = globalThis; Reflect.set(globals, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
   'const globals = globalThis; Object.defineProperty(globals, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'function globals() { return globalThis }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
+  'const globals = () => (globalThis); globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
+  'const globals = () => ((globalThis)); globals().Number = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
   'function globals() { return (globalThis) }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
@@ -820,6 +823,12 @@ it.each([
   'const globals = globalThis; globals.other = value;',
   'function configure(globalThis) { const globals = globalThis; globals.String = value; }',
   'const globals = globalThis.input; globals.String = value;',
+  'function globals(globalThis = {}) { return globalThis }; globals().String = value;',
+  'function globals(globalThis = {}) { return (globalThis) }; globals().String = value;',
+  'function configure(globalThis = {}) { const globals = () => (globalThis); globals().String = value; }',
+  'const globals = (globalThis = {}) => (globalThis); globals().String = value;',
+  'const configure = (globalThis = {}) => (() => globalThis)().String = value;',
+  'const globals = () => (globalThis).input; globals().String = value;',
 ])("ignores unrelated member writes when recognizing global conversion calls: %s", async setup => {
   const source = `${imports} import portal from "../../portal.ts"; ${setup} const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`
   const definition = await discover(source, {
@@ -1670,6 +1679,7 @@ it("preserves shadowed NaN Capability Workspace values", async () => {
 
 it.each([
   'driver: { instructions: ({ input }) => `Review ${input.id}` }',
+  'driver: { instructions: ({ input }) => { const portal = { id: input.id }; return `${portal.id}` } }',
   'driver: { instructions: ({ input }) => `${String(input.id)}` }',
   'driver: { instructions: ({ input }) => `${`${input.id}`}` }',
 ])("keeps local Channel options inspectable beside unrelated templates: %s", async settings => {
