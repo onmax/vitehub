@@ -497,9 +497,13 @@ async function assertGitObjectStore(path: string) {
 async function resetPooledCheckout(checkout: string, anchoredRoot: string, repository: string, submodules: Buffer[], commandOptions: GitHubCommandOptions, discardObjects = false) {
   // Relocate the entire checkout before reading any of its metadata. A rename
   // moves a replaced symlink itself, so validation below never traverses it.
-  // Keep reset state outside the pool: callback code can retain a cwd in the
-  // relocated checkout and traverse its parent while reset is in flight.
-  const privateRoot = await mkdtemp(join(tmpdir(), "vitehub-github-reset-"))
+  // Keep reset state in a private directory: callback code can retain a cwd in
+  // the relocated checkout and traverse its parent while reset is in flight.
+  // It must share the pool's filesystem because the checkout moves by rename;
+  // the system temporary directory is often a separate tmpfs. Adoption only
+  // claims `<repository>-pr-<number>-*` entries, so this one is never pooled.
+  // Create it through the retained pool descriptor so it follows that pool.
+  const privateRoot = await mkdtemp(join(anchoredRoot, ".vitehub-reset-"))
   const privateParent = await open(privateRoot, "r")
   const anchoredPrivateRoot = `/proc/${process.pid}/fd/${privateParent.fd}`
   const parkedCheckout = join(anchoredPrivateRoot, "checkout")

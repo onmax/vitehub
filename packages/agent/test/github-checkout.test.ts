@@ -636,6 +636,39 @@ it.each(['before allocation', 'during allocation'])('rejects a replaced pool roo
   expect((await readdir(displaced)).filter(name => name.includes('-pr-2-'))).toEqual([])
 }, 30_000)
 
+it('resets a pooled checkout when the pool is on a different filesystem from the temporary directory', async () => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: pool },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let checkout = ''
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = await realpath(path) })
+  // Treat the pool as its own mount: renaming anything out of it crosses devices.
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  const poolRoot = await realpath(pool)
+  vi.mocked(rename).mockImplementation(async (from, to) => {
+    const inPool = async (path: string) => (await realpath(dirname(path))).startsWith(poolRoot)
+    if (await inPool(String(from)) && !await inPool(String(to))) {
+      throw Object.assign(new Error(`EXDEV: cross-device link not permitted, rename '${from}' -> '${to}'`), { code: 'EXDEV' })
+    }
+    await fs.rename(from, to)
+  })
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => {
+    expect(await realpath(path)).toBe(checkout)
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
+  })
+  expect((await readdir(pool)).filter(entry => entry.startsWith('.vitehub-reset-'))).toEqual([])
+}, 30_000)
+
 it('keeps relocation in the retained pool when its parent is replaced by a directory', async () => {
   const { root, source, head } = await fixture()
   const pool = join(root, 'pool')
