@@ -349,7 +349,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // A conditional type's branch can begin with a generic reference. This
   // check runs before walking the qualified name because the preceding token
   // is `?`, rather than an assertion operator or a union delimiter.
-  if (/\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) return true
+  if (/\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*(?:(?:readonly|keyof|typeof)\s+)*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) return true
   if (/\b(?:extends|implements)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
@@ -414,7 +414,12 @@ function maskAssertionTypeArguments(source: string) {
   const output = source.split("")
   for (let index = 0; index < source.length; index++) {
     if (isQuote(source[index])) {
-      index = skipQuoted(source, index) - 1
+      const end = skipQuoted(source, index)
+      // Template-literal types can contain commas in `${...}` expressions.
+      // Mask them only when they begin at a type delimiter; a template after
+      // a complete assertion remains a runtime suffix and must stay visible.
+      if (source[index] === "`" && /[?:|&]\s*$/.test(source.slice(0, index))) output.fill(" ", index, end)
+      index = end - 1
       continue
     }
     if (source.startsWith("import", index) && !isIdentifierChar(source[index - 1])) {

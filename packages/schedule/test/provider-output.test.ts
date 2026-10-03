@@ -1120,6 +1120,8 @@ describe("schedule provider output", () => {
     "satisfies First<string, unknown> & Second<string, unknown>",
     "as First<string, unknown> | Second<string, unknown>",
     "as true extends true ? Options<string, unknown> : never",
+    "as true extends true ? readonly Other<string, unknown>[] : never",
+    'as true extends true ? ScheduleDefinitionInput : `${Extract<"a" | "b", string>}`',
     "as false extends true ? never : Options<string, unknown>",
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
