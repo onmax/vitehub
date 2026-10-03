@@ -1455,13 +1455,15 @@ function promptActivityIndex(activities: readonly InvocationActivity[]): number 
   return -1;
 }
 
-// Drivers record the prompt again as the first user message. The thread shows it once.
+// Hide a repeated prompt record only when its persisted message identity matches.
 function repeatsPrompt(activity: InvocationActivity, prompt: InvocationActivity | undefined): boolean {
-  return Boolean(prompt)
+  const promptMessageId = prompt && stringAttribute(prompt.attributes, "message.id");
+  return Boolean(promptMessageId)
     && activity !== prompt
     && activity.kind === "message"
     && activity.role === "user"
     && activity.attributes["input.mode"] !== "steer"
+    && stringAttribute(activity.attributes, "message.id") === promptMessageId
     && (activity.body?.trim() ?? "") === (prompt!.body?.trim() ?? "");
 }
 

@@ -1241,6 +1241,52 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.get('[role="status"]').text()).toBe("Message could not be copied");
   });
 
+  it.each([false, true])("preserves a distinct repeated user turn with commentary=%s", async (commentary) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      createdAt: timestamp, id: "repeated-user-turn", status: "completed", traceId: "trace", updatedAt: timestamp,
+      observations: [
+        { attributes: { "message.content": "Run it.", "message.id": "prompt", "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "First answer.", "message.id": "answer-1", "message.role": "assistant" }, name: "agent.message", sequence: 2, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Run it.", "message.id": "later-user", "message.role": "user" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Second answer.", "message.id": "answer-2", "message.role": "assistant" }, name: "agent.message", sequence: 4, timestamp, type: "lifecycle" },
+        ...(commentary ? [{ attributes: { "message.content": "Continuing.", "message.id": "commentary", "message.role": "assistant", "message.phase": "commentary" }, name: "agent.message", sequence: 5, timestamp, type: "lifecycle" as const }] : []),
+      ],
+    } satisfies AgentInvocationView;
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const work = wrapper.get(".vh-invocation-work__details");
+    if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+    work.element.open = true;
+    await work.trigger("toggle");
+
+    expect(wrapper.findAll('.vh-invocation-message[data-role="user"]').map(message => message.get(".vh-invocation-message__body").text()))
+      .toEqual(["Run it.", "Run it."]);
+    expect(work.text()).toContain("First answer.");
+    expect(wrapper.text()).toContain("Second answer.");
+    wrapper.unmount();
+  });
+
+  it.each([true, false])("hides a repeated prompt record only with a shared identity=%s", async (sharedIdentity) => {
+    const timestamp = "2026-08-22T00:00:00.000Z";
+    const invocation = {
+      createdAt: timestamp, id: "prompt-records", status: "completed", traceId: "trace", updatedAt: timestamp,
+      observations: [
+        { attributes: { "message.content": "Run it.", ...(sharedIdentity ? { "message.id": "prompt" } : {}), "message.role": "user" }, name: "agent.message", sequence: 1, timestamp, type: "lifecycle" },
+        { attributes: { "input.messages": [{ id: "prompt", role: "user", parts: [{ type: "text", text: "Run it." }] }] }, name: "agent.invocation.started", sequence: 2, timestamp, type: "lifecycle" },
+        { attributes: { "message.content": "Done.", "message.id": "answer", "message.role": "assistant" }, name: "agent.message", sequence: 3, timestamp, type: "lifecycle" },
+      ],
+    } satisfies AgentInvocationView;
+    const wrapper = mount(AgentInvocation, { props: { invocation } });
+    const work = wrapper.find(".vh-invocation-work__details");
+    if (work.exists()) {
+      if (!(work.element instanceof HTMLDetailsElement)) throw new TypeError("Expected work details");
+      work.element.open = true;
+      await work.trigger("toggle");
+    }
+    expect(wrapper.findAll('.vh-invocation-message[data-role="user"]')).toHaveLength(sharedIdentity ? 1 : 2);
+    wrapper.unmount();
+  });
+
   it("keeps adjacent completed lifecycle activities grouped", async () => {
     const timestamp = "2026-08-22T00:00:00.000Z";
     const invocation = {
