@@ -197,6 +197,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
 
     this.attaching = true
     let control: BrowserControl<TClient> | undefined
+    let releaseAttempted = false
     try {
       const attached = await controller.attach(this.providerSession.connection, {
         provider: this.owner.provider,
@@ -231,6 +232,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       this.pendingControllerRelease = control.release
       this.attaching = false
       if (this.closing || this.state !== "released") {
+        releaseAttempted = true
         await releaseLateController(control.release())
         throw browserSessionStateError("attach a controller to", this.state)
       }
@@ -244,7 +246,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     catch (error) {
       this.attaching = false
       const errors = [error]
-      if (control) {
+      if (control && !releaseAttempted) {
         try {
           await control.release()
         }
