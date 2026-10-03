@@ -783,6 +783,35 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
   })
 
+  it.each(["run", "stream"] as const)("rechecks remote cancellation before %s Driver dispatch", async kind => {
+    const backing = createMemoryAgentInvocationStore()
+    let cancelled = false
+    const store = {
+      ...backing,
+      async update(...args: Parameters<typeof backing.update>) {
+        const record = await backing.update(...args)
+        if (args[1].status === "running" && !cancelled) {
+          cancelled = true
+          await backing.update(args[0], {
+            cancelRequestedAt: new Date().toISOString(),
+            timestamp: new Date().toISOString(),
+          })
+        }
+        return record
+      },
+    }
+    const invocations = defineAgentInvocations({ store })
+    const driver = vi.fn(() => "Must not start")
+    const runId = `pre-dispatch-cancellation-${kind}`
+    const agent = defineAgent({ invocations, driver: { run: driver } })
+    const started = kind === "run" ? runAgent(agent, runtime(runId), {}) : streamAgent(agent, runtime(runId), {})
+    const settled = started.then(result => result, error => error)
+
+    expect(await settled).toBeInstanceOf(Error)
+    expect(driver).not.toHaveBeenCalled()
+    expect((await invocations.getSummary(await agentInvocationId(runId)))?.status).toBe("cancelled")
+  })
+
   it.each(["run", "stream"] as const)("rejects %s startup when cancellation lands after renewal and the initial read rejects", async kind => {
     const backing = createMemoryAgentInvocationStore()
     const entered = deferred()
