@@ -1292,6 +1292,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (["{", ",", ";", "}"].includes(previous ?? "")) return true
       return ["get", "set", "async", "*"].includes(previous ?? "")
         && ["{", ",", ";", "}", "async"].includes(references[index - 2] ?? "")
+        || previous === "static"
+        || ["get", "set", "async", "*"].includes(previous ?? "")
+          && references[index - 2] === "static"
         || previous === "*" && references[index - 2] === "async"
     }
     // Method parameters shadow module bindings throughout their method body.
@@ -2233,7 +2236,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // TypeScript assertions can appear between a receiver and its member,
     // for example `(globalThis as object).String`.
     let receiverEnd = index + 1
-    if (tokens[receiverEnd] === "as") {
+    if (tokens[receiverEnd] === "as" || tokens[receiverEnd] === "satisfies") {
       receiverEnd++
       while (receiverEnd < tokens.length && tokens[receiverEnd] !== ")"
         && tokens[receiverEnd] !== "." && tokens[receiverEnd] !== "[") receiverEnd++

@@ -53,6 +53,15 @@ it("rejects global conversion writes through TypeScript assertions", async () =>
 const ignored = \`\${String("id")}\`;
 export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
+})).rejects.toThrow("opaque Channel")
+})
+
+it("rejects global conversion writes through satisfies assertions", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts";
+(globalThis satisfies object).String = () => getPortal().capabilities = [{ workspace: {} }];
+const ignored = \`\${String("id")}\`;
+export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
   })).rejects.toThrow("opaque Channel")
 })
 
@@ -83,6 +92,8 @@ it.each([
   "({ set portal(value) { input.id = value } })",
   "({ *portal() { return input.id } })",
   "({ async *portal() { return input.id } })",
+  "class { static portal() { return input.id } }",
+  "class { static get portal() { return input.id } }",
 ])("ignores object method keys in template expressions: %s", async expression => {
   const imported = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
