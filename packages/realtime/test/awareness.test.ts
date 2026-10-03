@@ -93,4 +93,28 @@ describe("realtime awareness ownership", () => {
     expect(owners.apply(room, {}, update([1024]))).toEqual([1024])
     expect(owners.release(peer)).toHaveLength(1024)
   })
+
+  it.each([false, 0, "invalid", []])("rejects non-object identity state %j and releases its claim", (state) => {
+    const owners = createRealtimeAwarenessOwners()
+    const room = roomAwareness()
+    const peer = {}
+    const identity = { color: "#2563EB", id: "user", name: "Max" }
+
+    expect(() => owners.apply(room, peer, update([1], state), identity)).toThrow("Invalid awareness state")
+    expect(room.getStates().size).toBe(0)
+    expect(owners.release(peer)).toEqual([])
+    expect(owners.apply(room, {}, update([1]), identity)).toEqual([1])
+  })
+
+  it("preserves null identity state used to remove awareness", () => {
+    const owners = createRealtimeAwarenessOwners()
+    const room = roomAwareness()
+    const peer = {}
+    const identity = { color: "#2563EB", id: "user", name: "Max" }
+    owners.apply(room, peer, update([1]), identity)
+
+    owners.apply(room, peer, update([1], null, 2), identity)
+    expect(room.getStates().has(1)).toBe(false)
+    expect(owners.release(peer)).toEqual([1])
+  })
 })
