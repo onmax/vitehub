@@ -379,7 +379,7 @@ async function assertGitObjectStore(path: string) {
 async function resetPooledCheckout(checkout: string, repository: string, submodules: string[], commandOptions: GitHubCommandOptions) {
   // Relocate the entire checkout before reading any of its metadata. A rename
   // moves a replaced symlink itself, so validation below never traverses it.
-  const privateRoot = await mkdtemp(join(tmpdir(), "vitehub-github-reset-"))
+  const privateRoot = await mkdtemp(join(dirname(checkout), "vitehub-github-reset-"))
   const parkedCheckout = join(privateRoot, "checkout")
   const close = () => rm(privateRoot, { force: true, recursive: true })
   try {
