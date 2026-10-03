@@ -159,6 +159,44 @@ describe("hubDb", () => {
     expect(plugin.vitehub?.inspect?.()?.providerOutput?.map(output => output.description)).toEqual(["Generated Cloudflare Database worker"])
   })
 
+  it("merges discovered D1 bindings and migrations into Cloudflare Nitro output", async () => {
+    const rootDir = await createTempProject()
+    const serverDir = join(rootDir, ".output", "server")
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: "binding: 'DB', databaseName: 'app', databaseId: 'database-id'," })
+    await mkdir(join(rootDir, "server/databases/migrations"), { recursive: true })
+    await writeFile(join(rootDir, "server/databases/migrations/0001_init.sql"), "create table notes (title text);\n")
+    const compiledHooks: Array<() => Promise<void>> = []
+    const createNitro = (preset: string) => {
+      const options: { cloudflare?: { wrangler?: { d1_databases?: unknown } }, output: { serverDir: string }, preset: string } = { output: { serverDir }, preset }
+      return { hooks: { hook: (_name: "compiled", callback: () => Promise<void>) => void compiledHooks.push(callback) }, options }
+    }
+    const cloudflareNitro = createNitro("cloudflare-module")
+    cloudflareNitro.options.cloudflare = {
+      wrangler: {
+        d1_databases: [
+          { binding: "DB", database_id: "stale-id", database_name: "app" },
+          { binding: "LEGACY", database_id: "legacy-id", database_name: "legacy" },
+        ],
+      },
+    }
+    const vercelNitro = createNitro("vercel")
+    const cloudflarePlugin = hubDb()
+    const vercelPlugin = hubDb()
+    cloudflarePlugin.nitro.setup(cloudflareNitro)
+    vercelPlugin.nitro.setup(vercelNitro)
+
+    await resolveConfigResolved(cloudflarePlugin)({ root: rootDir })
+    await resolveConfigResolved(vercelPlugin)({ root: rootDir })
+    await Promise.all(compiledHooks.map(hook => hook()))
+
+    expect(cloudflareNitro.options.cloudflare.wrangler?.d1_databases).toEqual([
+      { binding: "DB", database_id: "database-id", database_name: "app", migrations_dir: ".vitehub/database/migrations/DB" },
+      { binding: "LEGACY", database_id: "legacy-id", database_name: "legacy" },
+    ])
+    await expect(readFile(join(serverDir, ".vitehub/database/migrations/DB/0001_init.sql"), "utf8")).resolves.toBe("create table notes (title text);\n")
+    expect(vercelNitro.options.cloudflare).toBeUndefined()
+  })
+
   it("serializes shared Provider Output finalization", () => {
     expect(hubDb().closeBundle).toMatchObject({ order: "post", sequential: true })
   })
