@@ -129,6 +129,7 @@ function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | und
 function project<T>(item: unknown, select: string[] | undefined): T {
   // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Collection callers provide the item shape through their published generic contract.
   if (!select?.length) return item as T
+  // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Object.fromEntries preserves the selected field values for the caller's published generic contract.
   return Object.fromEntries(select.map(field => [field, valueAt(item, field)])) as T
 }
 
