@@ -40,6 +40,7 @@ export interface GitHubHostOptions {
   /**
    * Keeps pull request checkouts under `root` and reuses them per pull request. Reuse keeps ignored
    * files, such as dependencies and build output, resets everything else, and fetches only the new head.
+   * Reuse removes initialized submodules, including their ignored files. Initialize them again as needed.
    * Use it only when one process owns `root`.
    */
   checkouts?: { root: string }
@@ -377,6 +378,9 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     ["remote.origin.partialclonefilter", "blob:none"],
   ] as const) await exec("git", ["-C", checkout, "config", key, value], commandOptions)
   await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "reset", "-q", "--hard"], commandOptions)
+  // Match a fresh clone: remove nested repositories rather than keep stale gitlinks or configuration.
+  await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "submodule", "deinit", "--force", "--all"], commandOptions)
+  await rm(join(checkout, ".git/modules"), { force: true, recursive: true })
   await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
   // Drop refs and reflogs left by the previous repository before fetching the new head.
   // Keeping them would let provider-created refs or stale origin refs influence later Git work.
