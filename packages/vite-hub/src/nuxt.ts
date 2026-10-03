@@ -882,6 +882,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   if (options.database) {
     const databaseOptions = options.database === true ? {} : options.database
     const effectiveDatabaseOptions = {
+      ...(isRecord(nuxt.options.vite?.database) ? nuxt.options.vite.database : {}),
       ...(isRecord(nuxt.options.database) ? nuxt.options.database : {}),
       ...databaseOptions,
     }
