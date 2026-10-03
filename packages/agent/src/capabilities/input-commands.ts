@@ -586,6 +586,9 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             // Keep every generated edge after leading commands finish and are removed.
             // A cyclic edge can receive credit once, but cannot renew it indefinitely.
             let graphCreditBlocked = false
+            if (budgetDepth !== undefined && nextDepth !== undefined && (nextDepth >= budgetDepth || nextDepth === 0)) {
+              graphCreditBlocked = true
+            }
             if (changedRange) {
               const generatedNames = new Set<string>()
               const generatedText = text.slice(changedRange.start, changedRange.end)
