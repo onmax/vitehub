@@ -7982,11 +7982,13 @@ async function executeAgentInvocation<
   }
   if (invocationJournal) {
     context = invocationJournal.context
+    const callerAbortSignal = agentInvocationCallerAbortSignal(input)
     // A cancellation request aborts the capacity wait, the Driver run, and tool calls through the run abort signal.
     input = {
       ...input,
       abortSignal: input.abortSignal ? AbortSignal.any([input.abortSignal, invocationJournal.abortSignal]) : invocationJournal.abortSignal,
     }
+    markAgentInvocationCallerAbortSignal(input, callerAbortSignal)
   }
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
