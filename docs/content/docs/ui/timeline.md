@@ -21,7 +21,7 @@ Pass the emitted ID to `AgentInvocation`'s `selectedActivityId` to open the work
 
 ## How rows read
 
-- A blue dot marks a step the Agent ran. A green dot marks a step ViteHub ran for it: workspace preparation, Channel delivery, and the ViteHub tools. A red dot marks a failed step.
+- A solid blue dot marks a step the Agent ran. A green ring marks a step ViteHub ran for it: workspace preparation, Channel delivery, and the ViteHub tools. A red cross and a red title mark a failed step.
 - The title is the same sentence the thread shows, for example **Ran command**. The detail after it is the command, the path, or the recorded detail.
 - The time reads **+2m 49s · 41.2s**: the offset from the Invocation start, then the duration when the trace recorded an end. The first step reads **start**.
 - Messages are not steps, so the list leaves them out.
@@ -70,7 +70,7 @@ interface AgentInvocationTimelineItem {
 ## Accessibility
 
 - Each row is a native button. Its `title` holds the full step name and detail, so truncated rows stay readable.
-- The owner and the failed state are also in `data-owner` and `data-status`, not only in the dot color.
+- Each row starts with hidden text that screen readers hear: **Agent:**, **ViteHub:**, or **Agent, failed:**. The marks differ by shape as well as color, and `data-owner` and `data-status` carry the same state for styling.
 
 ## Related
 
