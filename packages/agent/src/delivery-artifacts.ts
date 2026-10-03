@@ -78,7 +78,8 @@ function replaceMarkdownArtifactDestinations(
     }
   }).filter((entry): entry is readonly [string, PublishedAgentDeliveryArtifact] => Boolean(entry)))
   if (!byPath.size) return body
-  return body.replace(/(!?\[[^\]\r\n]*\]\(\s*)<?([^\s)<>]+)>?(\s*\))/g, (match, start: string, destination: string, end: string) => {
+  return body.replace(/(!?\[[^\]\r\n]*\]\(\s*)(?:<([^<>\r\n]*)>|([^\s)<>]+))(\s*\))/g, (match, start: string, bracketedDestination: string | undefined, plainDestination: string | undefined, end: string) => {
+    const destination = bracketedDestination ?? plainDestination ?? ""
     const workspaceRelative = destination.startsWith("/workspace/")
       ? destination.slice("/workspace/".length)
       : undefined
