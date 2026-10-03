@@ -74,6 +74,20 @@ describe("Runtime Schedule inspection", () => {
     expect((await schedules.get("digest"))?.enabled).toBe(operation === "enable")
   })
 
+  it.each([9, 10, 11, 12])("shows an older-run hint only when %i runs exceed the visible history", async (count) => {
+    installTargets()
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    for (let index = 0; index < count; index++) {
+      await schedules.run("digest", { scheduledAt: new Date(now.getTime() - index * 60_000) })
+    }
+
+    const record = (await readScheduleConsoleRecords())[0]!
+    expect(record.fields.filter(field => /^Run \d+$/.test(field.label))).toHaveLength(Math.min(count, 10))
+    expect(record.fields.find(field => field.label === "Older runs")).toEqual(count > 10
+      ? { label: "Older runs", value: "More runs are available. Use `vitehub schedule runs digest`." }
+      : undefined)
+  })
+
   it("finds the next due minute in the Schedule time zone", () => {
     expect(nextRuntimeScheduleRunAt(scheduleRecord("30 9 * * *", "Europe/Copenhagen"), now)?.toISOString()).toBe("2026-05-24T07:30:00.000Z")
     expect(nextRuntimeScheduleRunAt(scheduleRecord("0 9 * * *"), now)?.toISOString()).toBe("2026-05-23T09:00:00.000Z")

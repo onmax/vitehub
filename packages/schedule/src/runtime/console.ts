@@ -271,7 +271,7 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
     {
       label: "Console dispatch",
       value: summary.console.dispatch
-        ? "Allowed by the record. The Console is read-only. Use `vitehub schedule run` in development."
+        ? "Allowed by the record. The Console is read-only. Use `vitehub schedule run-runtime` in development."
         : "Not allowed by the record.",
     },
     ...(summary.input !== undefined ? [{ label: "Input", value: formatInput(summary.input) }] : []),
@@ -285,7 +285,7 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
     fields.push({ label: `Run ${index + 1}`, value: formatRun(run) })
   })
   if (runs.length > consoleRunHistoryLimit) {
-    fields.push({ label: "Older runs", value: `${runs.length - consoleRunHistoryLimit} more. Use \`vitehub schedule runs ${summary.id}\`.` })
+    fields.push({ label: "Older runs", value: `More runs are available. Use \`vitehub schedule runs ${summary.id}\`.` })
   }
   return {
     cells: {
@@ -308,7 +308,7 @@ function consoleRecord(summary: RuntimeScheduleSummary, runs: readonly ScheduleR
  */
 export async function readScheduleConsoleRecords(): Promise<ViteHubConsoleRecord[]> {
   const now = new Date()
-  const state = await readRuntimeScheduleState(consoleRunHistoryLimit, true)
+  const state = await readRuntimeScheduleState(consoleRunHistoryLimit + 1, true)
   const automaticRuns = isScheduleWakeDriverActive()
   return state.schedules
     .map(schedule => {
