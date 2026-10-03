@@ -765,6 +765,7 @@ it.each([
   'const globals = (globalThis); globals.Boolean = () => getPortal().capabilities = []; const ignored = `${Boolean("id")}`',
   'const globals = globalThis; Reflect.set(globals, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
   'const globals = globalThis; Object.defineProperty(globals, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
+  'function globals() { return globalThis }; globals().String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',

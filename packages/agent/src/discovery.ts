@@ -1242,6 +1242,20 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && references[index - 1] !== "."
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
     const reassignedGlobalConversions = new Set<string>()
+    // Calls to local helpers that directly return globalThis can hide a
+    // conversion write behind the call expression.
+    for (let index = 0; index < tokens.length; index++) {
+      if (tokens[index] !== "function" || !tokens[index + 1]) continue
+      const name = tokens[index + 1]!
+      const end = tokens.indexOf("}", index + 2)
+      if (end < 0 || !tokens.slice(index, end).includes("globalThis")) continue
+      for (let cursor = 0; cursor + 4 < tokens.length; cursor++) {
+        if (tokens[cursor] === name && tokens[cursor + 1] === "(" && tokens[cursor + 2] === ")" && tokens[cursor + 3] === ".") {
+          const property = tokens[cursor + 4]
+          if (["String", "Number", "Boolean"].includes(property!)) reassignedGlobalConversions.add(property!)
+        }
+      }
+    }
     for (let index = 0; index < tokens.length; index++) {
       const objectEnd = intrinsicObjectEnd(index)
       const reflectEnd = intrinsicReflectEnd(index)
@@ -1273,8 +1287,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     for (let index = 0; index < tokens.length; index++) {
       // Member writes mark globalThis and its aliases mutated. Follow their
       // direct initializers without requiring globalBindingAvailable().
-      if (!globalThisReceiver(index)) continue
-      const member = memberAccess(index)
+      const call = tokens[index + 1] === "(" ? memberCallEnd(index) : index
+      const helperGlobal = tokens[index + 1] === "(" && tokens[call] === ")"
+        && tokens[call + 1] === "." && [...tokens].some((token, declaration) =>
+          token === "function" && tokens[declaration + 1] === tokens[index]
+          && tokens.slice(declaration, tokens.indexOf("}", declaration + 2)).includes("globalThis"))
+      if (!globalThisReceiver(index) && !helperGlobal) continue
+      const member = helperGlobal ? memberAccess(call) : memberAccess(index)
       if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
         reassignedGlobalConversions.add(member.name)
       }
@@ -1458,6 +1477,35 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     seen.add(index)
     if (tokens[index] === "globalThis") return globalBindingUnshadowed(index, "globalThis")
     if (isFunctionParameter(index) || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]!))) return false
+
+    // A local helper can return the intrinsic global object without having an
+    // initializer for this traversal to follow (for example,
+    // `function globals() { return globalThis }`). Treat only a direct,
+    // unmodified function declaration with that exact return expression as an
+    // alias; arbitrary helper calls remain opaque.
+    if (!mutatedBindings.has(tokens[index]!) && tokens[index + 1] === "(") {
+      for (let declaration = 0; declaration + 1 < tokens.length; declaration++) {
+        if (tokens[declaration] !== "function" || tokens[declaration + 1] !== tokens[index]) continue
+        const close = tokens.indexOf("}", declaration + 2)
+        if (close > declaration && tokens.slice(declaration, close).includes("globalThis")) return true
+      }
+      for (let declaration = 0; declaration + 3 < tokens.length; declaration++) {
+        if (tokens[declaration] !== "function" || tokens[declaration + 1] !== tokens[index]) continue
+        const parameters = declaration + 2
+        if (tokens[parameters] !== "(") continue
+        const parameterEnd = [...openingDelimiters].find(([, opening]) => opening === parameters)?.[0]
+        const body = parameterEnd === undefined ? undefined : parameterEnd + 1
+        const bodyEnd = body === undefined ? undefined : [...openingDelimiters].find(([, opening]) => opening === body)?.[0]
+        if (body === undefined || bodyEnd === undefined || tokens[body] !== "{") continue
+        let cursor = body + 1
+        while (cursor < bodyEnd && tokens[cursor] === ";") cursor++
+        if (tokens[cursor] !== "return" || tokens[cursor + 1] !== "globalThis"
+          || tokens[cursor] === ".") continue
+        cursor += 2
+        while (tokens[cursor] === ";") cursor++
+        if (cursor === bodyEnd) return true
+      }
+    }
     const binding = visibleDeclaration(index)
     const initializer = binding === undefined ? undefined : declaratorInitializers.get(binding + 1)
     if (initializer === undefined) return false
