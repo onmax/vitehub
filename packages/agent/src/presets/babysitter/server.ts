@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import { isRuntimeRecord } from "../../internal/runtime-type.ts"
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
@@ -674,9 +675,21 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               Reflect.deleteProperty(workerChannel, Symbol.for("vitehub.githubChannelIdentity"));
               // Keep the base Agent's configured Workspace sources, loaders, and
               // instruction bindings while replacing the checkout-owned fields.
-              const baseWorkspace = isRuntimeRecord(workerSettings.workspace)
-                ? { ...workerSettings.workspace }
-                : {};
+              const configuredWorkspace = workerSettings.workspace;
+              let baseWorkspace: Record<string, unknown> = {};
+              if (typeof configuredWorkspace === "string") {
+                baseWorkspace = { ...await resolveRegisteredWorkspaceDefinition(configuredWorkspace) };
+              }
+              else if (isRuntimeRecord(configuredWorkspace)) {
+                const workspaceName = typeof configuredWorkspace.name === "string" ? configuredWorkspace.name : undefined;
+                const registeredWorkspace = workspaceName
+                  ? await resolveRegisteredWorkspaceDefinition(workspaceName)
+                  : undefined;
+                baseWorkspace = {
+                  ...(registeredWorkspace ?? {}),
+                  ...configuredWorkspace,
+                };
+              }
               // Named Workspace references cannot be combined with owned fields.
               // The checkout below replaces the reference with its prepared workspace.
               Reflect.deleteProperty(baseWorkspace, "name");
