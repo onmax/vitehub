@@ -997,13 +997,19 @@ function processHandle(
         return;
       }
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let timedOut = false;
       try {
         await Promise.race([
           settled,
-          new Promise((resolvePromise) => { timer = setTimeout(resolvePromise, 250); }),
+          new Promise((resolvePromise) => {
+            timer = setTimeout(() => {
+              timedOut = true;
+              resolvePromise(undefined);
+            }, 250);
+          }),
         ]);
         // Descendants can survive even after the process-group leader exits.
-        signalProcessTree(child, "SIGKILL");
+        if (timedOut) signalProcessTree(child, "SIGKILL");
         await settled;
       } finally {
         clearTimeout(timer);
