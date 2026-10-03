@@ -277,10 +277,14 @@ describe("Agent Invocation cancel", () => {
     const running = runAgent(agent, runtime("capacity-first"), { prompt: "First" })
     await firstStarted.promise
     const queued = runAgent(agent, runtime("capacity-second"), { prompt: "Second" })
+    const queuedRejection = expect(queued).rejects.toThrow("Cancellation was requested")
     const { id } = await recordWithStatus(invocations, "capacity-second", "pending")
 
-    expect(await invocations.cancel(id)).toMatchObject({ delivery: "local", id, outcome: "requested", status: "pending" })
-    await expect(queued).rejects.toThrow("Cancellation was requested")
+    expect([
+      { delivery: "local", id, outcome: "requested", status: "pending" },
+      { delivery: "local", id, outcome: "terminal", status: "cancelled" },
+    ]).toContainEqual(await invocations.cancel(id))
+    await queuedRejection
     expect((await invocations.get(id))?.status).toBe("cancelled")
 
     first.resolve("First.")
@@ -762,7 +766,10 @@ describe("Agent Invocation cancel", () => {
     try {
       await entered.promise
       const cancellation = await invocations.cancel(id)
-      expect(cancellation).toMatchObject({ delivery: "local", outcome: "requested", status: "running" })
+      expect([
+        { delivery: "local", id, outcome: "requested", status: "running" },
+        { delivery: "local", id, outcome: "terminal", status: "cancelled" },
+      ]).toContainEqual(cancellation)
       expect(cancellation).not.toHaveProperty("notEnforcedBy")
       expect((await invocations.getSummary(id))?.cancelNotEnforcedBy).toBeUndefined()
       expect(driver).not.toHaveBeenCalled()
@@ -808,11 +815,9 @@ describe("Agent Invocation cancel", () => {
     } finally { releaseRenewal.resolve(); await settled }
   })
 
-  it.each(["rejected", "missing", "timeout"] as const)("reports uncertainty for remote custom cancellation after pre-dispatch running writes are %s", async failure => {
+  it.each(["rejected", "missing", "timeout"] as const)("prevents custom dispatch when pre-dispatch running writes are %s", async failure => {
     vi.useFakeTimers()
     const backing = createMemoryAgentInvocationStore()
-    const releaseDriver = deferred<string>()
-    const driverEntered = deferred()
     const writesEntered = deferred()
     const releaseWrites = deferred()
     const store = { ...backing, async update(...args: Parameters<typeof backing.update>) {
@@ -827,21 +832,21 @@ describe("Agent Invocation cancel", () => {
     const invocations = defineAgentInvocations({ store })
     const remote = defineAgentInvocations({ store: { ...backing } })
     const runId = `remote-pending-warning-${failure}`
-    const driver = vi.fn(async () => { driverEntered.resolve(); return await releaseDriver.promise })
+    const driver = vi.fn(() => "Must not start")
     const started = runAgent(defineAgent({ invocations, driver: { run: driver } }), runtime(runId), {})
     const settled = started.then(result => result, error => error)
     try {
       await writesEntered.promise
       if (failure === "timeout") await vi.advanceTimersByTimeAsync(1_000)
-      await driverEntered.promise
       const id = await agentInvocationId(runId)
-      const cancelResult = remote.cancel(id).then(result => result, error => error)
-      await vi.advanceTimersByTimeAsync(5_000)
-      expect(await cancelResult).toMatchObject({ code: "AGENT_R0974" })
-      expect(await backing.getSummary(id)).toMatchObject({ cancelRequestedAt: expect.any(String), cancelWarningPending: true, status: "pending" })
+      if (failure === "timeout") releaseWrites.resolve()
+      expect(await settled).toMatchObject({ message: "Could not persist the Invocation running state." })
+      expect(driver).not.toHaveBeenCalled()
+      expect(await remote.cancel(id)).toMatchObject({ outcome: "terminal", status: "failed" })
+      expect(await backing.getSummary(id)).toMatchObject({ status: "failed" })
+      expect((await backing.getSummary(id))?.cancelWarningPending).toBeUndefined()
     } finally {
       releaseWrites.resolve()
-      releaseDriver.resolve("Done")
       await settled
     }
   })
@@ -1232,7 +1237,7 @@ describe("Agent Invocation cancel", () => {
     driverRelease.resolve("Done.")
     await run
     requestRelease.resolve()
-    expect(await cancel).toEqual({ id, notEnforcedBy: "run", outcome: "terminal", status: "completed" })
+    expect(await cancel).toEqual({ delivery: "local", id, notEnforcedBy: "run", outcome: "terminal", status: "completed" })
   })
 
   it.each([true, false])("reports local delivery when the journal record is missing, enforced=%s", async enforced => {
