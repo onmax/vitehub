@@ -1111,10 +1111,16 @@ describe("schedule provider output", () => {
     expect(JSON.parse(await readFile(cloudflareConfig, "utf8")).triggers.crons).toEqual(["0 2 * * *"])
   })
 
-  it.each(["satisfies", "as"])("reads static provider cron from a generic %s assertion", async (assertion) => {
+  it.each([
+    "satisfies Record<string, unknown>",
+    "as Record<string, unknown>",
+    "satisfies { config: Record<string, unknown> }",
+    "satisfies (Record<string, unknown>)",
+    'satisfies import("types").Record<string, unknown>',
+  ])("reads static provider cron from a generic assertion: %s", async (assertion) => {
     const rootDir = await createTempProject("vitehub-schedule-output-assertion-cron-")
     await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),
-      `export default defineSchedule({ cron: '0 2 * * *', handler: () => 'ok' } ${assertion} Record<string, unknown>)\n`, "utf8")
+      `export default defineSchedule({ cron: '0 2 * * *', handler: () => 'ok' } ${assertion})\n`, "utf8")
 
     await generateProviderOutputs({ clientOutDir: "dist/client", rootDir })
 

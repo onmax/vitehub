@@ -345,7 +345,7 @@ export function findMatching(source: string, index: number, open: string, close:
   }
 }
 
-function isAssertionTypeArguments(source: string, index: number) {
+function isAssertionTypeArguments(source: string, index: number, assertionSuffix = false) {
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let current = previousCodeIndex(source, index - 1, controlFlowRegexes)
   let qualified = false
@@ -354,7 +354,12 @@ function isAssertionTypeArguments(source: string, index: number) {
     const end = current + 1
     while (isIdentifierChar(source[current])) current -= 1
     const identifier = source.slice(current + 1, end)
-    if (!/^[A-Za-z_$][\w$]*$/.test(identifier)) return false
+    if (!/^[A-Za-z_$][\w$]*$/.test(identifier)) {
+      // Import types qualify named references through import("module").Type.
+      if (!qualified || source[current] !== ")") return false
+      const prefix = source.slice(0, current + 1)
+      return assertionSuffix || /\b(?:as|satisfies)\s+import\s*\(\s*["'][^"']*["']\s*\)$/.test(prefix)
+    }
     typeName = identifier
     current = previousCodeIndex(source, current, controlFlowRegexes)
     if (source[current] !== ".") break
@@ -364,6 +369,9 @@ function isAssertionTypeArguments(source: string, index: number) {
   // Primitive type keywords end an assertion before a comparison, rather than
   // accepting type arguments like a named type reference does.
   if (!qualified && /^(?:any|bigint|boolean|const|false|never|null|number|object|string|symbol|this|true|undefined|unknown|void)$/.test(typeName)) return false
+  // Assertion validation already knows the type boundary. Named references
+  // can occur inside object, parenthesized, tuple, and import types there.
+  if (assertionSuffix) return true
   const end = current + 1
   while (isIdentifierChar(source[current])) current -= 1
   const keyword = source.slice(current + 1, end)
@@ -378,16 +386,41 @@ function maskAssertionTypeArguments(source: string) {
       index = skipQuoted(source, index) - 1
       continue
     }
+    if (source.startsWith("import", index) && !isIdentifierChar(source[index - 1])) {
+      const open = skipWhitespaceAndComments(source, index + 6)
+      if (source[open] === "(") {
+        const argument = skipWhitespaceAndComments(source, open + 1)
+        if (source[argument] === '"' || source[argument] === "'") {
+          const close = skipWhitespaceAndComments(source, skipQuoted(source, argument))
+          if (source[close] === ")") {
+            output.fill(" ", open, close + 1)
+            index = close
+            continue
+          }
+        }
+      }
+    }
     let end: number | undefined
     if (source[index] === "/" && source[index + 1] === "/") end = skipLineComment(source, index)
     else if (source[index] === "/" && source[index + 1] === "*") end = skipBlockComment(source, index)
-    else if (source[index] === "<" && isAssertionTypeArguments(source, index)) {
+    else if (source[index] === "<" && isAssertionTypeArguments(source, index, true)) {
       const close = findMatching(source, index, "<", ">")
       if (close !== undefined) end = close + 1
     }
     if (end === undefined) continue
     output.fill(" ", index, end)
     index = end - 1
+  }
+  // Nested type syntax may contain commas, property separators, or function
+  // signatures. Preserve its boundaries so runtime suffixes stay visible.
+  const masked = output.join("")
+  for (let index = 0; index < masked.length; index++) {
+    const close = masked[index] === "{" ? "}" : masked[index] === "[" ? "]" : masked[index] === "(" ? ")" : undefined
+    if (!close) continue
+    const end = findMatching(masked, index, masked[index]!, close)
+    if (end === undefined) continue
+    output.fill(" ", index + 1, end)
+    index = end
   }
   return output.join("")
 }
@@ -568,7 +601,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.
       if (/(?:\||&|\^)\s*(?:true|false|null|undefined|\d+(?:\.\d+)?|["'`])/.test(value)) return false
-      if (/\b[A-Za-z_$][\w$]*\s*\(/.test(value)) return false
+      if (/\b(?!(?:as|satisfies)\b)[A-Za-z_$][\w$]*\s*\(|[)}\]]\s*\(/.test(value)) return false
       return true
     }
     const firstArgument = stripBoundaryComments(call.arguments[0] || "")

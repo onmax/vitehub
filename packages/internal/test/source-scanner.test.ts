@@ -88,6 +88,19 @@ describe("source scanner", () => {
   })
 
   it.each([
+    "satisfies { config: Record<string, unknown>; extra: Map<string, unknown> }",
+    "as (Record<string, unknown>)",
+    "satisfies (Record<string, unknown>)",
+    "satisfies import(\"types\").Record<string, unknown>",
+    "as [Record<string, unknown>]",
+  ])("keeps nested generic assertion commas inside one argument: %s", (assertion) => {
+    const argument = `{ cron: '0 8 * * *' } ${assertion}`
+    expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])
+    expect(findDefaultExportCall(`export default defineSchedule(${argument})`, ["defineSchedule"])?.arguments)
+      .toEqual([argument])
+  })
+
+  it.each([
     "satisfies Record<string, unknown>",
     "as Record<string, unknown>",
     "as const satisfies Record<string, Map<string, unknown>>",
@@ -114,6 +127,16 @@ describe("source scanner", () => {
 
   it.each(["|| fallback", "+ extra", " > limit", "(argument)"])("rejects runtime suffixes after generic assertions: %s", (suffix) => {
     expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } satisfies Record<string, unknown>${suffix})`, ["defineSchedule"]))
+      .toBeUndefined()
+  })
+
+  it.each([
+    "satisfies (Record<string, unknown>)(argument)",
+    "as { config: Record<string, unknown> } || fallback",
+    'satisfies import("types").Record<string, unknown> + extra',
+    "as (number) < lower, upper > 0",
+  ])("rejects runtime suffixes after nested assertion types: %s", (assertion) => {
+    expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } ${assertion})`, ["defineSchedule"]))
       .toBeUndefined()
   })
 
