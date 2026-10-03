@@ -1147,6 +1147,7 @@ describe("schedule provider output", () => {
     "as unknown as (value: unknown) => asserts value is Result<string, unknown>",
     "as unknown as (value: unknown) => value is Result<string, unknown>",
     "as unknown as (value: unknown) => this is Result<string, unknown>",
+    "as unknown as (callback: (value: string) => void) => Result<string, unknown>",
     "as unknown as () => readonly Result<string, unknown>[]",
     "as unknown as () => keyof Result<string, unknown>",
     "as unknown as () => typeof shape<string, unknown>",

@@ -132,6 +132,7 @@ describe("source scanner", () => {
     "as unknown as () => typeof shape<string, unknown>",
     "as unknown as () => Result<string, unknown> & Types.Other<number, boolean>",
     "as unknown as () => Result<string, unknown> | Other<number, boolean>",
+    "as unknown as (callback: (value: string) => void) => Result<string, unknown>",
     "as unknown as T extends infer R extends Pair<string, unknown> ? Definition : never",
     "as keyof /* type */ Record<string, unknown>",
     "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",

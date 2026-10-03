@@ -628,7 +628,20 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Function and constructor signatures contain an arrow and parameter
       // syntax that are valid in types. Mask only that signature so the return
       // type and any runtime suffix still pass through every validation below.
-      value = value.replace(/(?:\bnew\s+)?\([^)]*\)\s*=>/g, signature => " ".repeat(signature.length))
+      // Find the closing parenthesis structurally so callback parameters can
+      // contain their own function signatures. Mask through each signature
+      // arrow, leaving the return type and any runtime suffix visible.
+      const signatureOutput = value.split("")
+      for (let index = 0; index < value.length; index++) {
+        if (value[index] !== "(") continue
+        const close = findMatching(value, index, "(", ")")
+        if (close === undefined) continue
+        const arrow = skipWhitespaceAndComments(value, close + 1)
+        if (!value.startsWith("=>", arrow)) continue
+        signatureOutput.fill(" ", index, arrow + 2)
+        index = close
+      }
+      value = signatureOutput.join("")
       // Each conditional type question mark must follow an `extends` clause.
       // Track nested true branches until their colon; a further question mark
       // in a completed false branch is a runtime ternary.
