@@ -313,7 +313,7 @@ export function parseGraphQLRateLimit(value: unknown, checkedAt: number = Date.n
  * Pull request identity is part of the pool key so ignored state cannot cross the trust boundary between pull requests.
  */
 function createCheckoutPool(root: string) {
-  const idle = new Map<string, { directory: string, adopted: boolean, submodules: string[] }[]>()
+  const idle = new Map<string, { directory: string, adopted: boolean, submodules: Buffer[] }[]>()
   let adopted: Promise<void> | undefined
   let rootIdentity: { dev: number, ino: number } | undefined
   const key = (repository: string, number: number) => `${repository}#${number}`
@@ -331,7 +331,7 @@ function createCheckoutPool(root: string) {
       return undefined
     }
   }
-  const release = (repository: string, number: number, directory: string, adopted = false, submodules: string[] = []) => {
+  const release = (repository: string, number: number, directory: string, adopted = false, submodules: Buffer[] = []) => {
     const poolKey = key(repository, number)
     idle.set(poolKey, [...idle.get(poolKey) ?? [], { directory, adopted, submodules }])
   }
@@ -410,23 +410,31 @@ function createCheckoutPool(root: string) {
 
 type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal: AbortSignal }
 
-function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Promise<string[]> {
+function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Promise<Buffer[]> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], {
       env: options.env,
       signal: options.signal,
       stdio: ["ignore", "pipe", "pipe"],
     })
-    const submodules: string[] = []
+    const submodules: Buffer[] = []
     let pending = Buffer.alloc(0)
     let stderr = ""
     let settled = false
+    let closed = false
+    let failure: unknown
     const fail = (error: unknown) => {
-      if (settled) return
-      settled = true
-      reject(error)
+      if (settled || failure !== undefined) return
+      failure = error
+      // A pipe can fail while Git is still traversing the checkout. Stop it
+      // and let the close event settle this promise before cleanup proceeds.
+      if (!closed) child.kill()
+      else {
+        settled = true
+        reject(error)
+      }
     }
-    const succeed = (value: string[]) => {
+    const succeed = (value: Buffer[]) => {
       if (settled) return
       settled = true
       resolve(value)
@@ -436,7 +444,7 @@ function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Pr
       let end = pending.indexOf(0)
       while (end !== -1) {
         const entry = pending.subarray(0, end)
-        if (entry.subarray(0, 7).toString() === "160000 ") submodules.push(entry.subarray(entry.indexOf(9) + 1).toString("latin1"))
+        if (entry.subarray(0, 7).toString() === "160000 ") submodules.push(Buffer.from(entry.subarray(entry.indexOf(9) + 1)))
         pending = pending.subarray(end + 1)
         end = pending.indexOf(0)
       }
@@ -446,18 +454,27 @@ function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Pr
     child.stderr.on("error", fail)
     child.on("error", fail)
     child.on("close", (code) => {
-      if (code === 0) succeed(submodules)
+      closed = true
+      if (failure !== undefined) {
+        if (!settled) {
+          settled = true
+          reject(failure)
+        }
+      }
+      else if (code === 0) succeed(submodules)
       else fail(new Error(`Git submodule scan failed (${code}): ${stderr}`))
     })
   })
 }
 
-async function assertCheckoutDirectories(path: string, boundary?: string) {
-  for (let directory = resolve(path); ; directory = dirname(directory)) {
-    if (directory === boundary) break
+async function assertCheckoutDirectories(path: string | Buffer, boundary?: string) {
+  for (let directory: string | Buffer = Buffer.isBuffer(path) ? path : resolve(path); ; directory = Buffer.isBuffer(directory)
+    ? directory.subarray(0, Math.max(directory.lastIndexOf(47), 1))
+    : dirname(directory)) {
+    if (directory === boundary || (Buffer.isBuffer(directory) && boundary !== undefined && directory.equals(Buffer.from(boundary)))) break
     const entry = await lstat(directory)
     if (!entry.isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
-    if (dirname(directory) === directory) break
+    if (Buffer.isBuffer(directory) ? directory.length <= 1 : dirname(directory) === directory) break
   }
 }
 
@@ -476,7 +493,7 @@ async function assertGitObjectStore(path: string) {
  * Removes the state of the previous pull request from a pooled checkout. Ignored files stay.
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
-async function resetPooledCheckout(checkout: string, anchoredRoot: string, repository: string, submodules: string[], commandOptions: GitHubCommandOptions, discardObjects = false) {
+async function resetPooledCheckout(checkout: string, anchoredRoot: string, repository: string, submodules: Buffer[], commandOptions: GitHubCommandOptions, discardObjects = false) {
   // Relocate the entire checkout before reading any of its metadata. A rename
   // moves a replaced symlink itself, so validation below never traverses it.
   // Keep reset state outside the pool: callback code can retain a cwd in the
@@ -556,9 +573,9 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
     // These paths came from the verified tree before the previous callback,
     // rather than its mutable index or the incoming head's ignore rules.
     for (const submodule of submodules) {
-      const target = join(parkedCheckout, submodule)
+      const target = Buffer.concat([Buffer.from(`${parkedCheckout}${sep}`), submodule])
       try {
-        await assertCheckoutDirectories(dirname(target), parkedCheckout)
+        await assertCheckoutDirectories(target.subarray(0, Math.max(target.lastIndexOf(47), 1)), parkedCheckout)
       }
       catch (error: unknown) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
@@ -1014,7 +1031,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     let keepCheckout = false
     let checkoutIdentity: { dev: number, ino: number } | undefined = pooled?.identity
     let reset: Awaited<ReturnType<typeof resetPooledCheckout>> | undefined
-    let submodules: string[] = []
+    let submodules: Buffer[] = []
     try {
       const baseAuth = await access({
         refresh: true,
@@ -1050,7 +1067,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       if (pooled?.reused) {
         for (const submodule of submodules) {
           // Keep the gitlink bytes intact. Git permits paths that are not valid UTF-8.
-          const target = Buffer.concat([Buffer.from(`${checkout}${sep}`), Buffer.from(submodule, "latin1")])
+          const target = Buffer.concat([Buffer.from(`${checkout}${sep}`), submodule])
           await rm(target, { force: true, recursive: true })
           await mkdir(target)
         }
