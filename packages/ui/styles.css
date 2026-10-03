@@ -2423,21 +2423,6 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
   margin: 0;
 }
 
-.vh-invocation-inspector__groups {
-  display: grid;
-  gap: 1.1rem;
-}
-
-.vh-invocation-inspector__group {
-  border: 0;
-  min-width: 0;
-  padding: 0;
-}
-
-.vh-invocation-inspector__group + .vh-invocation-inspector__group {
-  border-block-start: 0;
-}
-
 .vh-invocation-execution {
   display: grid;
   gap: 0;
