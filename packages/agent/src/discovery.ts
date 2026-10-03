@@ -143,9 +143,25 @@ function readAgentTemplate(source: string, start: number): { end: number, expres
   return { end: source.length, expressions }
 }
 
-function templateReferences(template: string): string[] {
-  return readAgentTemplate(template, 0).expressions.flatMap(expression =>
-    [...tokenizeAgentSource(expression).tokens.flatMap(token => token.startsWith("`") ? [token, ";", ...templateReferences(token)] : [token]), ";"])
+function templateReferences(template: string, lineBreaks = new Set<number>()): string[] {
+  const references: string[] = []
+  for (const expression of readAgentTemplate(template, 0).expressions) {
+    const parsed = tokenizeAgentSource(expression)
+    for (let index = 0; index < parsed.tokens.length; index++) {
+      if (parsed.lineBreaks.has(index)) lineBreaks.add(references.length)
+      const token = parsed.tokens[index]!
+      references.push(token)
+      if (token.startsWith("`")) {
+        references.push(";", "(")
+        const nestedBreaks = new Set<number>()
+        const nested = templateReferences(token, nestedBreaks)
+        for (const boundary of nestedBreaks) lineBreaks.add(references.length + boundary)
+        references.push(...nested, ")")
+      }
+    }
+    references.push(";")
+  }
+  return references
 }
 
 export function tokenizeAgentSource(source: string): { tokens: string[], lineBreaks: Set<number> } {
@@ -1236,7 +1252,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   for (let templateIndex = 0; templateIndex < tokens.length; templateIndex++) {
     const template = tokens[templateIndex]!
     if (!template.startsWith("`") || !/(?<!\\)(?:\\\\)*\$\{/.test(template)) continue
-    const references = templateReferences(template)
+    const referenceLineBreaks = new Set<number>()
+    const references = templateReferences(template, referenceLineBreaks)
     // Each arrow shadows names only within its own parameter list and body.
     const templateLocalBindings: { start: number; end: number; names: Set<string> }[] = []
     const referenceOpenings = new Map<number, number>()
@@ -1272,10 +1289,39 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && ["{", ",", "async"].includes(references[index - 2] ?? "")
         || previous === "*" && references[index - 2] === "async"
     }
+    const classFieldKeys = new Set<number>()
+    const referenceClosings = new Map([...referenceOpenings].map(([closing, opening]) => [opening, closing]))
+    for (let index = 0; index < references.length; index++) {
+      if (references[index] !== "class" || references[index - 1] === "." || [":", "("].includes(references[index + 1] ?? "")) continue
+      let body = index + 1
+      while (body < references.length && references[body] !== "{") {
+        body = (referenceClosings.get(body) ?? body) + 1
+      }
+      const end = referenceClosings.get(body)
+      if (end === undefined) continue
+      // Only member starts name fields. Initializers and computed keys still
+      // read bindings, including assignments to an imported Channel.
+      let memberStart = true
+      for (let cursor = body + 1; cursor < end; cursor++) {
+        const token = references[cursor]!
+        if (referenceLineBreaks.has(cursor) && endsAgentExpression(references.slice(0, cursor))) memberStart = true
+        if (token === ";") { memberStart = true; continue }
+        if (memberStart && ["static", "#"].includes(token) && isIdentifier(references[cursor + 1])) continue
+        if (memberStart && isIdentifier(token)
+          && (["=", ";", "}"].includes(references[cursor + 1] ?? "")
+            || referenceLineBreaks.has(cursor + 1) && (isIdentifier(references[cursor + 1]) || ["[", "#"].includes(references[cursor + 1] ?? "")))) classFieldKeys.add(cursor)
+        const closing = referenceClosings.get(cursor)
+        if (closing !== undefined) {
+          cursor = closing
+        }
+        memberStart = false
+      }
+    }
     const bindingReference = (index: number) => isIdentifier(references[index])
       && references[index - 1] !== "."
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
       && !methodKey(index)
+      && !classFieldKeys.has(index)
       && !templateLocalBindings.some(scope => index >= scope.start && index < scope.end && scope.names.has(references[index]!))
     const reassignedGlobalConversions = new Set<string>()
     for (let index = 0; index < tokens.length; index++) {

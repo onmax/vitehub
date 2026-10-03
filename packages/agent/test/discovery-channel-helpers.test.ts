@@ -41,6 +41,41 @@ it.each([
 })
 
 it.each([
+  "class { portal = input.id }",
+  "class Named { portal = input.id }",
+  "class { static portal = input.id }",
+  "class { #portal = input.id }",
+  "class { portal; }",
+  "class { other = input.id; portal = input.id }",
+  "class { other = input.id\n portal = input.id }",
+  "class { portal\n other = input.id }",
+  "class { portal = { portal: input.id } }",
+  "class extends Base { portal = input.id }",
+])("ignores class field keys in template expressions: %s", async expression => {
+  const imported = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
+  })
+  expect(imported?.workspace).toBeUndefined()
+})
+
+it.each([
+  "class { field = portal }",
+  "class { [portal] = input.id }",
+  "class { field = portal = input.id }",
+  "class { portal = portal }",
+  "class { static portal = portal }",
+  "class { field =\n portal = input.id }",
+  "class { field = input.id +\n portal }",
+  "class { field = `${portal}` }",
+  "class { field = `${portal = input.id}` }",
+  "class extends portal { field = input.id }",
+])("keeps class expression binding reads opaque: %s", async expression => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; const template = \`${"${"}${expression}${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
+it.each([
   ['channels', 'export default { review: github({ pullRequest: true }) }'],
   ['{ channels }', 'export const channels = { review: github({ pullRequest: true }) }'],
 ])("rejects relative Channel-map imports: %s", async (binding, declaration) => {
