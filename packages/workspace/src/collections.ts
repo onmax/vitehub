@@ -223,6 +223,7 @@ function filterItems(items: unknown[], query: WorkspaceCollectionQuery): unknown
       const leftScalar = Array.isArray(leftValue) ? leftValue.flat(Infinity).find(value => value !== null && value !== undefined && typeof value !== "object") : leftValue
       // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Sorting narrows opaque collection values to scalar representations.
       const rightScalar = Array.isArray(rightValue) ? rightValue.flat(Infinity).find(value => value !== null && value !== undefined && typeof value !== "object") : rightValue
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Sorting narrows opaque collection values to scalar representations.
       if (typeof leftScalar === "number" && typeof rightScalar === "number") return (leftScalar - rightScalar) * direction
       return String(leftScalar ?? "").localeCompare(String(rightScalar ?? "")) * direction
     })
