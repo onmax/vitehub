@@ -362,7 +362,7 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
-  it.each(["9".repeat(400), "9007199254740992"])("bounds cycles with an unsafe numeric argument %s", async (depth) => {
+  it.each(["9".repeat(400), "9007199254740991", "9007199254740992"])("bounds cycles with an unsafe numeric argument %s", async (depth) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     let calls = 0
