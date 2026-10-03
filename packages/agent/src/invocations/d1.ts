@@ -271,7 +271,15 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       throw agentDiagnostics.AGENT_R0918({ message: `[vitehub] D1 Agent Invocation ${JSON.stringify(id)} update exceeded 32 concurrent write retries.` })
     },
     async list(input = {}) {
-      const listOptions = normalizeAgentInvocationListOptions(input, { sequenceCursor: true })
+      const listOptions = normalizeAgentInvocationListOptions(input, {
+        sequenceCursor: true,
+        diagnostics: {
+          limit: agentDiagnostics.AGENT_R0919,
+          searchType: agentDiagnostics.AGENT_R0619,
+          searchLength: agentDiagnostics.AGENT_R0921,
+          cursor: agentDiagnostics.AGENT_R0920,
+        },
+      })
       const { limit: pageSize, search } = listOptions
       const before = listOptions.cursor === undefined ? undefined : Number(listOptions.cursor)
       const statuses = listOptions.status === undefined ? [] : Array.isArray(listOptions.status) ? listOptions.status : [listOptions.status]

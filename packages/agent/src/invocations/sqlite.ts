@@ -637,7 +637,15 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     async list(input: AgentInvocationListOptions = {}): Promise<AgentInvocationListResult> {
       await initialize()
       startSummaryBackfill()
-      const listOptions = normalizeAgentInvocationListOptions(input, { sequenceCursor: true })
+      const listOptions = normalizeAgentInvocationListOptions(input, {
+        sequenceCursor: true,
+        diagnostics: {
+          limit: agentDiagnostics.AGENT_R0629,
+          searchType: agentDiagnostics.AGENT_R0630,
+          searchLength: agentDiagnostics.AGENT_R0631,
+          cursor: agentDiagnostics.AGENT_R0635,
+        },
+      })
       const { limit, search } = listOptions
       const statuses = listOptions.status === undefined
         ? []
