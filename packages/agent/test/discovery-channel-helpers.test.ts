@@ -943,6 +943,20 @@ it("ignores reads through helper-returned global conversions", async () => {
   expect(definition?.workspace).toBeUndefined()
 })
 
+it("ignores shadowed conversion assignments in nested functions", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; function configure(String) { String = replacement }; configure(value); const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it("does not treat async global helpers as global object aliases", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; async function globals() { return globalThis }; globals().String = replacement; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
 it("stops conditional aliases at semicolon-free initializer boundaries", async () => {
   const definition = await discover(`import { defineAgent } from "vite-hub/agent"
 import { join } from "node:path"

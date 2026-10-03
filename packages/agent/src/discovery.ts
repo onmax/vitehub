@@ -1436,7 +1436,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && !reassignedGlobalConversions.has(name)
         && ![tokens, references].some(sequence => sequence.some((token, cursor) =>
           token === name && (assignmentOperator(cursor + 1, sequence) || ["+", "-"].includes(sequence[cursor + 1] ?? ""))
-          && ![".", "?"].includes(sequence[cursor - 1] ?? "")))
+          && ![".", "?"].includes(sequence[cursor - 1] ?? "")
+          && (sequence !== tokens || globalBindingUnshadowed(cursor, name))))
     }
     const hiddenCode = references.some((token, index) =>
       (bindingReference(index) && (token === "eval" || token === "import" && references[index + 1] !== "."))
@@ -1647,7 +1648,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function functionGlobalHelper(name: string): boolean {
     for (let declaration = 0; declaration + 3 < tokens.length; declaration++) {
-      if (tokens[declaration] !== "function" || tokens[declaration + 1] !== name) continue
+      if (tokens[declaration] !== "function" || tokens[declaration + 1] !== name || tokens[declaration - 1] === "async") continue
       const parameters = declaration + 2
       if (tokens[parameters] !== "(") continue
       const parameterEnd = [...openingDelimiters].find(([, opening]) => opening === parameters)?.[0]
