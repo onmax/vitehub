@@ -5,7 +5,7 @@ import { execFile, spawn } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign, randomUUID } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
-import { lstatSync, rmSync } from "node:fs"
+import { constants as fsConstants, lstatSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve, sep } from "node:path"
 import { promisify } from "node:util"
@@ -333,7 +333,12 @@ function createCheckoutPool(root: string) {
   }
   const release = (repository: string, number: number, directory: string, adopted = false, submodules: Buffer[] = []) => {
     const poolKey = key(repository, number)
-    idle.set(poolKey, [...idle.get(poolKey) ?? [], { directory, adopted, submodules }])
+    const entries = [...idle.get(poolKey) ?? [], { directory, adopted, submodules }]
+    while (entries.length > 4) {
+      const evicted = entries.shift()
+      if (evicted) rm(evicted.directory, { force: true, recursive: true }).catch(() => undefined)
+    }
+    idle.set(poolKey, entries)
   }
   const adopt = () => adopted ??= (async () => {
     await mkdir(root, { recursive: true })
@@ -346,9 +351,18 @@ function createCheckoutPool(root: string) {
       await parent.close()
     }
     for (const entry of await readdir(root, { withFileTypes: true })) {
+      if (entry.name.startsWith(".vitehub-reset-")) {
+        await rm(join(root, entry.name), { force: true, recursive: true }).catch(() => undefined)
+        continue
+      }
       const match = /^(.+)-pr-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name)
       const repository = match ? decodeRepository(match[1]!) : undefined
-      if (entry.isDirectory() && repository && match) release(repository, Number(match[2]), join(root, entry.name), true)
+      if (entry.isDirectory() && repository && match) {
+        const directory = join(root, entry.name)
+        const valid = await lstat(join(directory, ".git")).then(stat => stat.isDirectory()).catch(() => false)
+        if (valid) release(repository, Number(match[2]), directory, true)
+        else await rm(directory, { force: true, recursive: true }).catch(() => undefined)
+      }
     }
   })().catch((error: unknown) => {
     adopted = undefined
@@ -413,7 +427,7 @@ type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal:
 
 function checkoutSubmodules(checkout: string, options: GitHubCommandOptions): Promise<Buffer[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], {
+    const child = spawn("git", ["-C", checkout, "ls-tree", "-r", "-z", "HEAD"], {
       env: options.env,
       signal: options.signal,
       stdio: ["ignore", "pipe", "pipe"],
@@ -504,7 +518,13 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
   // claims `<repository>-pr-<number>-*` entries, so this one is never pooled.
   // Create it through the retained pool descriptor so it follows that pool.
   const privateRoot = await mkdtemp(join(anchoredRoot, ".vitehub-reset-"))
-  const privateParent = await open(privateRoot, "r")
+  const privateParent = await open(privateRoot, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW)
+  const privateIdentity = await privateParent.stat()
+  const privatePathIdentity = await lstat(privateRoot)
+  if (privateIdentity.dev !== privatePathIdentity.dev || privateIdentity.ino !== privatePathIdentity.ino) {
+    await privateParent.close()
+    throw new Error("Pooled checkout reset directory was replaced")
+  }
   const anchoredPrivateRoot = `/proc/${process.pid}/fd/${privateParent.fd}`
   const parkedCheckout = join(anchoredPrivateRoot, "checkout")
   let closed = false
