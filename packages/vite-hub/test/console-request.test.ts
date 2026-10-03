@@ -356,12 +356,12 @@ describe("Console requests", () => {
     expect(mocks.call).toHaveBeenCalledTimes(1)
   })
 
-  it("loads independent auth availability in the navigation response", async () => {
-    mocks.call.mockResolvedValue({ ok: true, value: { auth: true, sections: ["kv"] } })
+  it.each([true, "cloudflare-access"] as const)("loads auth mode %s in the navigation response", async (auth) => {
+    mocks.call.mockResolvedValue({ ok: true, value: { auth, sections: ["kv"] } })
 
     await expect(
-      loadConsoleNavigation("/auth-navigation-test/api/_vitehub/console/sections"),
-    ).resolves.toEqual({ auth: true, contributions: {}, sections: ["kv"] })
+      loadConsoleNavigation(`/auth-navigation-test-${auth}/api/_vitehub/console/sections`),
+    ).resolves.toEqual({ auth, contributions: {}, sections: ["kv"] })
   })
 
   it("keeps only valid contributed sections in the navigation response", async () => {

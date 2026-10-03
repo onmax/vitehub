@@ -397,9 +397,17 @@ async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
   })
   const result: unknown = await response.json().catch(() => undefined)
   if (!response.ok) throw new Error(isRuntimeRecord(result) && "error" in result ? String(Reflect.get(result, "error")) : `Agent Invocation cancel failed (${response.status}).`)
+  const outcome: unknown = isRuntimeRecord(result) ? Reflect.get(result, "outcome") : undefined
+  if (outcome !== "requested" && outcome !== "terminal" && outcome !== "not-found" && outcome !== "unavailable") {
+    throw new Error("Agent Invocation cancel returned an invalid outcome.")
+  }
   if (parsed.json) context.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-  else context.stdout.write(`Cancellation requested for ${parsed.id}.\n`)
-  return 0
+  else if (outcome === "requested") context.stdout.write(`Cancellation requested for ${parsed.id}.\n`)
+  else if (outcome === "terminal") context.stdout.write(`Agent Invocation ${parsed.id} is already terminal.\n`)
+  else context.stderr.write(outcome === "not-found"
+    ? `Agent Invocation ${parsed.id} was not found.\n`
+    : `Cancellation is unavailable for Agent Invocation ${parsed.id}.\n`)
+  return outcome === "requested" || outcome === "terminal" ? 0 : 1
 }
 
 export async function runAgentInvocationsCli(

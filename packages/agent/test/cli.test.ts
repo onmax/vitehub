@@ -1435,7 +1435,7 @@ describe("agent CLI", () => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-cli-"))
     const token = await refreshWorkspaceDevToken(rootDir, { serverId: workspaceDevTokenServerId("5173") })
     try {
-      const fetchInvocations = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ id: "invocation-1" }))
+      const fetchInvocations = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ id: "invocation-1", outcome: "requested" }))
       const stderr = stream()
       const exitCode = await runAgentInvocationsCli([
         "cancel", "invocation-1", ...(url ? ["--url", url] : []),
@@ -1448,6 +1448,40 @@ describe("agent CLI", () => {
         headers: expect.objectContaining({ [workspaceDevTokenHeader]: token }),
         method: "POST",
       }))
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["requested", "terminal", "not-found", "unavailable", "invalid"])("reports cancellation outcome %s in human and JSON output", async (outcome) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-outcome-"))
+    await refreshWorkspaceDevToken(rootDir, { serverId: workspaceDevTokenServerId("5173") })
+    try {
+      for (const json of [false, true]) {
+        const stdout = stream()
+        const stderr = stream()
+        const result = { id: "invocation-1", outcome }
+        const exitCode = await runAgentInvocationsCli([
+          "cancel", "invocation-1", ...(json ? ["--json"] : []),
+        ], { env: {}, rootDir, stderr, stdout }, { fetch: async () => Response.json(result) })
+
+        expect(exitCode).toBe(outcome === "requested" || outcome === "terminal" ? 0 : 1)
+        if (outcome === "invalid") {
+          expect(stdout.output()).toBe("")
+          expect(stderr.output()).toContain("invalid outcome")
+        }
+        else if (json) {
+          expect(JSON.parse(stdout.output())).toEqual(result)
+          expect(stderr.output()).toBe("")
+        }
+        else if (outcome === "requested") expect(stdout.output()).toContain("Cancellation requested")
+        else if (outcome === "terminal") expect(stdout.output()).toContain("already terminal")
+        else {
+          expect(stdout.output()).toBe("")
+          expect(stderr.output()).toContain(outcome === "not-found" ? "was not found" : "unavailable")
+        }
+      }
     }
     finally {
       await rm(rootDir, { force: true, recursive: true })
