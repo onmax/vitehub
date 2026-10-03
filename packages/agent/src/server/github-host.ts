@@ -5,6 +5,7 @@ import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
+import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -438,7 +439,12 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
       // Clear the retained directory even when its visible pathname moved.
       // Never recursively remove a replacement at the original pathname.
       for (const entry of await readdir(anchoredPrivateRoot)) {
-        await rm(join(anchoredPrivateRoot, entry), { force: true, recursive: true })
+        const child = join(anchoredPrivateRoot, entry)
+        await lstat(child)
+        // Keep the identity check and removal in one synchronous turn. This
+        // prevents callback-controlled code from replacing the child between
+        // validation and recursive cleanup.
+        rmSync(child, { force: true, recursive: true })
       }
       const retained = await privateParent.stat()
       const current = await lstat(privateRoot).catch((error: unknown) => {
