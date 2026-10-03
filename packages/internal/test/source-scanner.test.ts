@@ -141,6 +141,7 @@ describe("source scanner", () => {
     "as unknown as T extends infer 类型 extends Pair<string, unknown> ? Definition : never",
     "as unknown as T extends infer 类型 extends 命名空间.类型<string, unknown> ? Definition : never",
     "as unknown as T extends infer R extends Pair<string, unknown> ? Definition : never",
+    "as unknown as T extends infer \\u0052 extends Pair<string, unknown> ? Definition : never",
     "as unknown as T extends 类型<string, unknown> ? Definition : never",
     "as unknown as T extends 命名空间.类型<string, unknown> ? Definition : never",
     "as unknown as T extends keyof /* constraint */ 命名空间.类型<string, unknown> ? Definition : never",

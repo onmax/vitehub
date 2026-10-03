@@ -724,7 +724,10 @@ export function findDefaultExportCall(source: string, names: string[], options: 
           if (value.slice(start, end) === "extends" && value[previous] !== ".") {
             // `infer R extends Constraint` constrains the inferred name; it
             // does not begin another conditional branch.
-            if (/\binfer\s+[\p{ID_Start}_$][\p{ID_Continue}$]*\s*$/u.test(value.slice(0, start))) continue
+            // Escaped Unicode identifier names are valid after `infer` too.
+            // Keep their constraint's `extends` from opening a conditional
+            // branch just like ordinary inferred names.
+            if (/\binfer\s+(?:(?:\\u\{[\da-f]{1,6}\}|\\u[\da-f]{4})|[\p{ID_Start}_$])(?:(?:\\u\{[\da-f]{1,6}\}|\\u[\da-f]{4})|[\p{ID_Continue}$])*\s*$/iu.test(value.slice(0, start))) continue
             conditionalBranches.push(false)
           }
         }
