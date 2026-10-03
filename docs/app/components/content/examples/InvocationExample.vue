@@ -140,13 +140,12 @@ const invocation: AgentInvocationView = {
     },
     {
       attributes: {
-        "usage.record": {
-          cost: { display: "$0.12", estimated: true, source: "catalog", usd: "0.12" },
-          model: "gpt-5.6",
-          usage: { inputTokens: 31_400, outputTokens: 2_100, totalTokens: 33_500 },
-        },
+        "usage.inputTokens": 31_400,
+        "usage.outputTokens": 2_100,
+        "usage.reasoningTokens": 180,
+        "usage.totalTokens": 33_500,
       },
-      name: "agent.invocation.finish",
+      name: "agent.usage.recorded",
       sequence: 9,
       timestamp: "2026-08-23T09:04:12.000Z",
       trace,
@@ -157,6 +156,13 @@ const invocation: AgentInvocationView = {
   status: "completed",
   title: "Fix invocation list overflow",
   traceId: "trace_docs_preview",
+  usage: {
+    cost: { display: "$0.12", estimated: true, source: "catalog" },
+    inputTokens: 31_400,
+    outputTokens: 2_100,
+    reasoningTokens: 180,
+    totalTokens: 33_500,
+  },
   updatedAt: "2026-08-23T09:04:12.000Z",
 };
 </script>
