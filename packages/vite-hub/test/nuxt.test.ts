@@ -408,6 +408,31 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("installConsoleDefinitions")
   })
 
+  it("replays Markdown Template resolution during Nitro bundling", async () => {
+    const defaultPlugins = mocks.vitehub()
+    const resolveId = vi.fn((id: string, importer?: string) => id.endsWith("reply.template.md") ? `${id}?markdown-template` : undefined)
+    const load = vi.fn((id: string) => id.endsWith("?markdown-template") ? "export default () => 'rendered'" : undefined)
+    mocks.vitehub.mockReturnValueOnce([
+      defaultPlugins,
+      {
+        name: "@vite-hub/markdown-template/vite",
+        load,
+        resolveId,
+      },
+    ])
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    await viteHubNuxtModule({ preset: "cloudflare" }, nuxt)
+    const nitroConfig: Record<string, unknown> = {}
+    await runNitroConfigHook(nitroConfig)
+    const plugins = (nitroConfig.rollupConfig as { plugins: Plugin[] }).plugins
+    const resolver = plugins.find(plugin => plugin.name === "vite-hub/nuxt-runtime-resolver:@vite-hub/markdown-template/vite")
+    expect(resolver).toBeDefined()
+    expect(await resolver?.resolveId?.("/tmp/vitehub-nuxt/server/agents/reply.template.md", "/tmp/vitehub-nuxt/server/agents/agent.ts")).toBe("/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template")
+    expect(await resolver?.load?.("/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template")).toBe("export default () => 'rendered'")
+    expect(resolveId).toHaveBeenCalled()
+    expect(load).toHaveBeenCalled()
+  })
+
   it("resolves Blob and KV virtual runtime modules during Nitro bundling", async () => {
     let resolvedKv: unknown
     let resolvedBlob: unknown

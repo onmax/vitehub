@@ -146,6 +146,7 @@ const nitroRuntimeResolverNames = new Set([
   "@vite-hub/blob/vite",
   "@vite-hub/email/vite",
   "@vite-hub/kv/vite",
+  "@vite-hub/markdown-template/vite",
 ])
 
 const nitroConfigResolvedNames = new Set([
