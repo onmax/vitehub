@@ -14,6 +14,7 @@ const props = defineProps<{
   exclude?: ConsoleSectionId[];
   sectionsBase: string;
 }>();
+const emit = defineEmits<{ navigate: [] }>();
 
 const route = useRoute();
 const router = useRouter();
@@ -41,6 +42,7 @@ const items = computed(() =>
 async function openSection(section: ConsoleSectionId): Promise<void> {
   const details = resolveConsoleSectionDetails(installedNavigation.value, section);
   if (!details) return;
+  emit("navigate");
   await router.push({
     name: resolveConsoleRouteName(route.name, details.routeName),
   });

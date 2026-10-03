@@ -1171,6 +1171,7 @@ onBeforeUnmount(() => {
           <ConsolePrimitiveSwitcher
             :active="isUsageRoute ? 'usage' : 'agents'"
             :sections-base="sectionsBase"
+            @navigate="sessionsOpen = false"
           />
         </div>
       </template>
