@@ -609,6 +609,9 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               }
             } else if (!finiteSameCommandGrowth) {
               transitionLineage = []
+              const previousOwnRuns = previousCounts.byName.get(budgetCommand) || 0
+              const nextOwnRuns = nextCounts.byName.get(budgetCommand) || 0
+              if (!(previousOwnRuns > 1 && nextOwnRuns > 0)) creditedCyclicTransitions.clear()
             }
             if (!graphCreditBlocked && (!nextInvocation || cycleDetected || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
               && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth)) {

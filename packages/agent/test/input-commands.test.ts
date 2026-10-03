@@ -206,6 +206,45 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThanOrEqual(1_004)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("scopes cyclic credits to each command lineage through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let aCalls = 0
+    let bCalls = 0
+    const capability = inputCommands({
+      commands: {
+        a: {
+          call({ context, text }) {
+            aCalls++
+            const replacement = ""
+            if (mode === "replacement") return replacement
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const rewritten = prompt.replace(text, replacement)
+            if (mode === "mutation") context.input.set({ prompt: rewritten })
+            else return { prompt: rewritten }
+          },
+        },
+        b: {
+          call({ context, text }) {
+            bCalls++
+            const replacement = bCalls === 1 ? "" : Array.from({ length: 1_001 }, () => "/a").join(" ")
+            if (mode === "replacement") return replacement
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const rewritten = prompt.replace(text, replacement)
+            if (mode === "mutation") context.input.set({ prompt: rewritten })
+            else return { prompt: rewritten }
+          },
+        },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a /b /b" })
+    expect(aCalls).toBe(1_002)
+    expect(bCalls).toBe(2)
+  })
+
   it("bounds cycles longer than two commands that introduce more commands", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
