@@ -1161,7 +1161,22 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       // traverse a different checkout before custody is released.
       const publicCheckout = pooled?.anchoredDirectory ?? checkout
       keepCheckout = Boolean(checkoutPool)
-      const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
+      const prepareWorkspace = async (target: string) => {
+        // Keep preparation anchored to the checkout directory itself. The pool
+        // parent descriptor protects its name, but a callback can still replace
+        // the child between pathname resolution and the first Git operation.
+        const directory = await open(checkout, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW)
+        try {
+          const current = await directory.stat()
+          if (checkoutIdentity && (current.dev !== checkoutIdentity.dev || current.ino !== checkoutIdentity.ino)) {
+            throw new Error("Pooled checkout was replaced")
+          }
+          await prepareGitHubPullRequestWorkspace(`/proc/${process.pid}/fd/${directory.fd}`, target, { signal: operation.signal })
+        }
+        finally {
+          await directory.close()
+        }
+      }
       let pushHead = pullRequest.headSha
       const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void> } = {}) => {
         const signal = options.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
