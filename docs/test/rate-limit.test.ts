@@ -16,7 +16,7 @@ function routeExists(route: string): boolean {
 
 describe("Rate Limit documentation", () => {
   it("teaches the canonical first success and owner-package escape hatch", () => {
-    const primitive = read("server-primitives/rate-limit.md")
+    const primitive = read("rate-limit/index.md")
 
     expect(primitive).toContain('vitehub({ preset: "node", rateLimit: true })')
     expect(primitive).toContain("import { requireRateLimit } from 'vite-hub/rate-limit'")
@@ -29,7 +29,7 @@ describe("Rate Limit documentation", () => {
   })
 
   it("keeps guarantees, identity, and backend limitations explicit", () => {
-    const primitive = read("server-primitives/rate-limit.md")
+    const primitive = read("rate-limit/index.md")
 
     expect(primitive).toMatch(/memory.*local Vite development/is)
     expect(primitive).toContain("Cloudflare native enforcement is best-effort")
@@ -49,7 +49,7 @@ describe("Rate Limit documentation", () => {
   })
 
   it("documents the Agent Capability as a consumer of the primitive", () => {
-    const capability = read("capabilities/rate-limit.md")
+    const capability = read("rate-limit/agent-capability.md")
 
     expect(capability).toContain("limiter: invocations")
     expect(capability).toContain("The Capability no longer owns `limit`, `window`, `action`, or `store`")
@@ -70,7 +70,7 @@ describe("Rate Limit documentation", () => {
   })
 
   it("keeps the new task routes resolvable", () => {
-    for (const relativePath of ["server-primitives/rate-limit.md", "capabilities/rate-limit.md"]) {
+    for (const relativePath of ["rate-limit/index.md", "rate-limit/agent-capability.md"]) {
       const routes = [...read(relativePath).matchAll(/\]\((\/docs(?:\/[^)#\s]*)?)(?:#[^)]+)?\)/g)]
         .map(match => match[1]!)
 

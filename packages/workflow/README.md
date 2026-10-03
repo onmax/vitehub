@@ -9,7 +9,7 @@
 
 `@vite-hub/workflow` discovers named long-running work and exposes one provider-neutral API for starting and inspecting runs.
 
-Use a Workflow when the application needs a run id, durable state, retries, cancellation, or resumable work. Use [Queue](https://vitehub.dev/docs/server-primitives/queue) when background delivery is enough and the application does not need to inspect a run.
+Use a Workflow when the application needs a run id, durable state, retries, cancellation, or resumable work. Use [Queue](https://vitehub.dev/docs/queue) when background delivery is enough and the application does not need to inspect a run.
 
 ## Install
 
@@ -222,7 +222,7 @@ async function transcribe(recordingId: string) {
 
 ## Documentation
 
-- [Workflow guide](https://vitehub.dev/docs/server-primitives/workflows)
+- [Workflow guide](https://vitehub.dev/docs/workflows)
 - [Runtime and host support](https://vitehub.dev/docs/frameworks-hosts/support-matrix)
 - [OpenWorkflow](https://openworkflow.dev/docs/overview)
 - [Cloudflare Workflows](https://developers.cloudflare.com/workflows/)

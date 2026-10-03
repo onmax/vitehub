@@ -2,7 +2,6 @@
 title: First Agent
 description: Define a server-side Agent, call it from H3, and see the response.
 navigation.order: 4
-navigation.lanes: [agents]
 icon: i-lucide-bot
 ---
 
@@ -159,5 +158,5 @@ The Agent returns the greeting:
 Add only what your Agent needs:
 
 - Read [Agent Definitions](/docs/agents/agent-definitions) to choose another Driver or add Channels, Workspace context, trusted caller settings, or hooks.
-- Read [Capabilities](/docs/capabilities) before you give a model tools, triggers, policy, metadata, or context values.
+- Read [Capabilities](/docs/agents/capabilities) before you give a model tools, triggers, policy, metadata, or context values.
 - Read [Invocations](/docs/agents/invocations) when the route needs streaming or failure handling.

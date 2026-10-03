@@ -10,13 +10,13 @@ icon: i-lucide-map
 
 ViteHub adds server features to Vite applications and lets Agents use selected features through Capabilities. These pages explain the terms that connect those two paths.
 
-For setup and API options, go to [Server primitives](/docs/server-primitives), [Agents](/docs/agents), [Capabilities](/docs/capabilities), or [Reference](/docs/reference).
+For setup and API options, go to [Server primitives](/docs/getting-started/server-primitives), [Agents](/docs/agents), [Capabilities](/docs/agents/capabilities), or [Reference](/docs/reference).
 
 ## Start here
 
 | Page | Read it when |
 | --- | --- |
-| [Server primitives](/docs/server-primitives) | You need storage, background work, auth, isolated execution, or another server feature. |
+| [Server primitives](/docs/getting-started/server-primitives) | You need storage, background work, auth, isolated execution, or another server feature. |
 | [Agents](/docs/agents) | You need a named actor that runs with a model, coding provider, or application code. |
 
 ## Core vocabulary
@@ -25,7 +25,7 @@ For setup and API options, go to [Server primitives](/docs/server-primitives), [
 | --- | --- |
 | [Definition discovery](/docs/concepts/definitions-and-discovery) | How ViteHub finds and names a definition file. |
 | [Agent Invocations](/docs/agents/invocations#what-happens-during-an-invocation) | What ViteHub resolves and records for one Agent request. |
-| [Capabilities](/docs/capabilities#choose-the-api-by-its-caller) | How an Agent receives a selected ability. |
+| [Capabilities](/docs/agents/capabilities#choose-the-api-by-its-caller) | How an Agent receives a selected ability. |
 | [Workspace and Sources](/docs/concepts/workspace-and-sources) | How a writable file tree differs from the read-only content mounted into it. |
 | [Auth Users and Agent Invokers](/docs/concepts/auth-users-and-agent-invokers) | How application identity becomes trusted invocation identity. |
 | [Channels](/docs/agents/channels#channels-and-invocations) | How messages and delivery facts reach an Agent. |
@@ -46,4 +46,4 @@ For setup and API options, go to [Server primitives](/docs/server-primitives), [
 
 ## Next steps
 
-Open [Installation](/docs/getting-started/installation) for a runnable project. If you already know what you need, go to [Server primitives](/docs/server-primitives) or [Agents](/docs/agents).
+Open [Installation](/docs/getting-started/installation) for a runnable project. If you already know what you need, go to [Server primitives](/docs/getting-started/server-primitives) or [Agents](/docs/agents).

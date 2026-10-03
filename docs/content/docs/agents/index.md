@@ -67,7 +67,7 @@ with `runAgent(support, runtimeContext, { prompt })`.
 | [Agent Definition](/docs/agents/agent-definitions) | The one object that names the Agent and holds every other part. |
 | [Agent Driver](/docs/agents/agent-drivers) | How one run executes: a model (`{ model }`), Codex or Claude Code (`'codex'`, `'claude-code'`), typed questions (`{ ask }`), or your function (`{ run }`). |
 | [Instructions](/docs/agents/instructions) | The durable guidance that a model or coding provider reads. |
-| [Capabilities](/docs/capabilities) | The operations the Agent receives, such as tools, chat behavior, and access policy. |
+| [Capabilities](/docs/agents/capabilities) | The operations the Agent receives, such as tools, chat behavior, and access policy. |
 | [Workspace context](/docs/agents/workspace-context) | The files and Sources that the Agent can reach. |
 | [Invocation](/docs/agents/invocations) | One run: its input, its result or stream, and its trace. |
 | [Agent Actor](/docs/agents/actors) | The trusted identity of the caller for one Invocation. |
@@ -103,7 +103,7 @@ the next group.
 2. **Configure.** Choose an [Agent Driver](/docs/agents/agent-drivers), write
    [Instructions](/docs/agents/instructions), and add
    [Workspace context](/docs/agents/workspace-context). Then select
-   [Capabilities](/docs/capabilities) for the operations the Agent needs.
+   [Capabilities](/docs/agents/capabilities) for the operations the Agent needs.
 3. **Connect.** Add [Channels](/docs/agents/channels) or
    [Triggers](/docs/agents/triggers). Pass a trusted
    [Agent Actor](/docs/agents/actors). Select prior messages with

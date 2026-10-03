@@ -38,7 +38,7 @@ function offset(index: number) {
             an Agent. Each one works without the others.
           </p>
           <NuxtLink
-            to="/docs/server-primitives"
+            to="/docs/getting-started/server-primitives"
             class="group mt-3 mr-5 inline-flex min-h-10 items-center gap-2 text-sm font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
           >
             Explore Server Primitives

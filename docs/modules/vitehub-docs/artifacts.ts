@@ -11,7 +11,6 @@ import {
   string,
 } from "valibot";
 import { listFiles, parseScalar, titleCase } from "./artifacts/common";
-import { docsLanes, parseDocsLanes } from "./docs-lanes";
 import { toRawMarkdown } from "./artifacts/raw-markdown";
 import type { CapabilityReferences } from "./capability-references";
 
@@ -406,7 +405,6 @@ function collectPages(rootDir: string, sectionId: string) {
       description: optionalString(meta.description),
       icon: optionalString(meta.icon),
       group: optionalString(meta["navigation.group"]),
-      lanes: parseDocsLanes(meta["navigation.lanes"]),
       navigation: meta.navigation !== false,
       order: pageOrderFromMeta(meta),
     };
@@ -441,7 +439,6 @@ function collectRootPage(localDocsRoot: string) {
     sourceTitle: optionalString(meta.title),
     description: optionalString(meta.description),
     icon: optionalString(meta.icon),
-    lanes: docsLanes,
     navigation: meta.navigation !== false,
     order: pageOrderFromMeta(meta),
   };
@@ -449,11 +446,7 @@ function collectRootPage(localDocsRoot: string) {
 
 function createDocsSection(sectionId: string, rootDir: string, order: number) {
   const navigation = parseNavigationFile(rootDir);
-  const lanes = parseDocsLanes(navigation.lanes) || [...docsLanes];
-  const pages = collectPages(rootDir, sectionId).map(page => ({
-    ...page,
-    lanes: page.lanes || lanes,
-  }));
+  const pages = collectPages(rootDir, sectionId);
   const overview = pages.find(page => page.id === "index");
 
   return {
@@ -462,7 +455,7 @@ function createDocsSection(sectionId: string, rootDir: string, order: number) {
     title: optionalString(navigation.title) || overview?.sourceTitle || titleCase(sectionId),
     description: overview?.description || null,
     icon: optionalString(navigation.icon) || overview?.icon || null,
-    lanes,
+    category: optionalString(navigation.category),
     order: optionalNumber(navigation.order) ?? order,
     pages,
   };

@@ -159,7 +159,7 @@ export default defineAgent({
 
 Do not let the model choose its own Actor or access scope. Authenticate first,
 normalize once, and let Capabilities use the trusted result. Read
-[Access](/docs/capabilities/access) for the scope options.
+[Access](/docs/agents/capabilities/access) for the scope options.
 
 ## API names
 

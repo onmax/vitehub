@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
-import { addServerHandler, defineNuxtModule } from "nuxt/kit";
+import { defineNuxtModule } from "nuxt/kit";
 import { writeDocsArtifacts } from "./artifacts";
-import { laneLlmsRoutes } from "./runtime/utils/lane-llms";
 import { createCapabilityReferences, writeCapabilityReferences } from "./capability-references";
 import { createDocsRedirectRouteRules } from "./redirects";
 
@@ -53,12 +52,8 @@ export default defineNuxtModule({
         writeDocsArtifacts({ capabilityReferences, docsRoot, outputDir });
       }
     });
-    addServerHandler({
-      route: "/llms/:lane",
-      handler: resolve(docsRoot, "modules/vitehub-docs/runtime/server/llms-lane.ts"),
-    });
     nuxt.hook("prerender:routes", (context) => {
-      for (const route of [...collectPrerenderRoutes(manifest), ...laneLlmsRoutes()]) {
+      for (const route of collectPrerenderRoutes(manifest)) {
         context.routes.add(route);
       }
     });
