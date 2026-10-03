@@ -2132,6 +2132,10 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
   color: var(--vh-ui-info);
 }
 
+.vh-invocation-inspector[data-status="running"] .vh-invocation-inspector__status-icon svg {
+  animation: vh-invocation-status-spin 800ms linear infinite;
+}
+
 .vh-invocation-inspector[data-status="completed"] .vh-invocation-inspector__status strong {
   border-color: color-mix(in oklab, var(--vh-ui-success) 40%, transparent);
   color: var(--vh-ui-success);
