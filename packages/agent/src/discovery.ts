@@ -1257,6 +1257,19 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const name = propertyName(tokens[property] ?? "")
       if (["String", "Number", "Boolean"].includes(name)) reassignedGlobalConversions.add(name)
     }
+    // Computed member assignments can replace a global conversion without
+    // exposing the property name as an identifier token (for example,
+    // `globalThis["String"] = replacement`). Treat these as opaque too.
+    for (let index = 0; index < tokens.length; index++) {
+      // `globalThis` itself may be marked mutated by the generic assignment
+      // scan, so check shadowing without requiring globalBindingAvailable().
+      if (tokens[index] !== "globalThis" || tokens[index - 1] === "."
+        || !globalBindingUnshadowed(index, "globalThis")) continue
+      const member = memberAccess(index)
+      if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
+        reassignedGlobalConversions.add(member.name)
+      }
+    }
     // Only unshadowed global conversions are known calls. Nested opaque calls
     // and imported arguments still invalidate imported Channels.
     const conversionCall = (index: number) => {
@@ -1430,7 +1443,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function globalBindingAvailable(index: number, name: string): boolean {
-    if (imported.has(name) || mutatedBindings.has(name) || visibleDeclaration(index, name) !== undefined || isFunctionParameter(index, name)
+    return !mutatedBindings.has(name) && globalBindingUnshadowed(index, name)
+  }
+
+  function globalBindingUnshadowed(index: number, name: string): boolean {
+    if (imported.has(name) || visibleDeclaration(index, name) !== undefined || isFunctionParameter(index, name)
       || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(name))) return false
     for (let scope = tokenScopes[index]; ; scope = scopeParents.get(scope!)) {
       if (tokens.some((token, declaration) => ["function", "class"].includes(token)
