@@ -218,6 +218,10 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   })
   await access(firstPath)
 
+  // Split indexes must not retain references to shared index files removed during reset.
+  await git(firstPath, 'update-index', '--split-index')
+  expect((await readdir(join(firstPath, '.git'))).some(name => name.startsWith('sharedindex.'))).toBe(true)
+
   // An interrupted Git command can leave locks behind when the host stops.
   const staleLocks = ['index.lock', 'config.lock', 'config.worktree.lock', 'HEAD.lock', 'shallow.lock', 'packed-refs.lock']
   for (const lock of staleLocks) await writeFile(join(firstPath, '.git', lock), '')
@@ -235,7 +239,9 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
     expect(await git(path, 'branch', '--show-current')).toBe('two')
     expect(await readFile(join(path, 'file'), 'utf8')).toBe('two')
-    expect(await readFile(join(path, 'node_modules/marker'), 'utf8')).toBe('warm')
+    await expect(access(join(path, 'node_modules/marker'))).rejects.toThrow()
+    await mkdir(join(path, 'node_modules'), { recursive: true })
+    await writeFile(join(path, 'node_modules/marker'), 'warm')
     await expect(access(join(path, 'untracked'))).rejects.toThrow()
     expect(await readFile(join(path, '.git/info/exclude'), 'utf8')).toBe('')
     await expect(access(join(path, '.git/hooks/post-checkout'))).rejects.toThrow()
@@ -244,6 +250,23 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     await expect(git(path, 'config', 'core.fsmonitor')).rejects.toThrow()
     expect(await git(path, 'config', 'remote.origin.pushurl')).toBe('https://github.com/base--owner/repo--name.git')
   })
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha }, async ({ path }) => {
+    expect(path).toBe(firstPath)
+    expect(await readFile(join(path, 'node_modules/marker'), 'utf8')).toBe('warm')
+  })
+  // A callback can rename its directory to impersonate another PR before restart.
+  const impersonated = firstPath.replace('-pr-1-', '-pr-3-')
+  await rename(firstPath, impersonated)
+  const nextHost = createGitHubHost(options)
+  await nextHost.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 3, headSha: oneSha }, async ({ path }) => {
+    expect(path).toBe(impersonated)
+    await expect(access(join(path, 'node_modules/marker'))).rejects.toThrow()
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
+  })
+  await rename(impersonated, firstPath)
+  await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha }, async () => {})
+  await mkdir(join(firstPath, 'node_modules'), { recursive: true })
+  await writeFile(join(firstPath, 'node_modules/marker'), 'warm')
   let secondPath = ''
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async ({ path }) => {
     secondPath = path

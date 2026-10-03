@@ -307,11 +307,11 @@ export function parseGraphQLRateLimit(value: unknown, checkedAt: number = Date.n
 /**
  * Reusable pull request checkouts under one root that one process owns. A checkout with a verified
  * head returns to its pull request's idle list with its ignored files. A restarted process adopts
- * the directories that a previous process left under the root. Pull request identity is part of
- * the pool key so ignored state cannot cross the trust boundary between pull requests.
+ * the directories that a previous process left under the root, clearing their ignored files.
+ * Pull request identity is part of the pool key so ignored state cannot cross the trust boundary between pull requests.
  */
 function createCheckoutPool(root: string) {
-  const idle = new Map<string, string[]>()
+  const idle = new Map<string, { directory: string, adopted: boolean }[]>()
   let adopted: Promise<void> | undefined
   const key = (repository: string, number: number) => `${repository}#${number}`
   const encodeRepository = (repository: string) => repository.split('/').map(part => Buffer.from(part).toString('base64url')).join('--')
@@ -328,27 +328,27 @@ function createCheckoutPool(root: string) {
       return undefined
     }
   }
-  const release = (repository: string, number: number, directory: string) => {
+  const release = (repository: string, number: number, directory: string, adopted = false) => {
     const poolKey = key(repository, number)
-    idle.set(poolKey, [...idle.get(poolKey) ?? [], directory])
+    idle.set(poolKey, [...idle.get(poolKey) ?? [], { directory, adopted }])
   }
   const adopt = () => adopted ??= (async () => {
     await mkdir(root, { recursive: true })
     for (const entry of await readdir(root, { withFileTypes: true })) {
       const match = /^(.+)-pr-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name)
       const repository = match ? decodeRepository(match[1]!) : undefined
-      if (entry.isDirectory() && repository && match) release(repository, Number(match[2]), join(root, entry.name))
+      if (entry.isDirectory() && repository && match) release(repository, Number(match[2]), join(root, entry.name), true)
     }
   })().catch((error: unknown) => {
     adopted = undefined
     throw error
   })
   return {
-    async acquire(repository: string, number: number): Promise<{ directory: string, reused: boolean }> {
+    async acquire(repository: string, number: number): Promise<{ directory: string, reused: boolean, adopted: boolean }> {
       await adopt()
-      const directory = idle.get(key(repository, number))?.pop()
-      if (directory) return { directory, reused: true }
-      return { directory: await mkdtemp(join(root, `${encodeRepository(repository)}-pr-${number}-`)), reused: false }
+      const checkout = idle.get(key(repository, number))?.pop()
+      if (checkout) return { ...checkout, reused: true }
+      return { directory: await mkdtemp(join(root, `${encodeRepository(repository)}-pr-${number}-`)), reused: false, adopted: false }
     },
     release,
   }
@@ -405,11 +405,10 @@ async function resetPooledCheckout(checkout: string, repository: string, command
   await assertGitObjectStore(join(gitQuarantine, "objects"))
   await mkdir(gitMetadata)
   await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
-  for (const name of ["HEAD", "index"]) {
-    await rename(join(gitQuarantine, name), join(gitMetadata, name)).catch((error: unknown) => {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    })
-  }
+  // Rebuild the index, including split-index state, from the incoming checkout.
+  await rename(join(gitQuarantine, "HEAD"), join(gitMetadata, "HEAD")).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  })
   await rm(gitQuarantine, { force: true, recursive: true })
   await quarantine(join(checkout, ".vitehub"))
   await quarantine(`${checkout}.meta.json`)
@@ -889,8 +888,9 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "--detach", "FETCH_HEAD"], commandOptions)
       }
-      // Clean after checkout so the incoming commit's ignore rules preserve dependencies and build output.
-      await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
+      // An adopted directory has no trusted PR identity: discard ignored state after
+      // checkout installs the verified incoming tree, even if its name matches this PR.
+      await exec("git", ["-C", checkout, "clean", pooled?.adopted ? "-ffdxq" : "-ffdq"], commandOptions)
       await exec("git", ["-C", checkout, "remote", "set-url", "origin", `https://github.com/${pullRequest.repository}.git`], commandOptions)
       const pushUrl = pullRequest.headRepository
         ? `https://github.com/${pullRequest.headRepository}.git`
