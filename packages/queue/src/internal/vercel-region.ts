@@ -10,10 +10,12 @@ function readHeader(headers: Headers | Record<string, unknown> | undefined, name
   }
 
   const value = headers[name] ?? headers[name.toLowerCase()]
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Host headers are untyped; accept only string values before parsing the region.
   if (typeof value === "string") {
     return value
   }
   if (Array.isArray(value)) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Repeated host headers use the first value only when it is a string.
     return typeof value[0] === "string" ? value[0] : undefined
   }
 }
@@ -32,20 +34,20 @@ export function resolveVercelQueueRegion(explicitRegion: string | undefined) {
     return { region: explicitRegion, requestScoped: false }
   }
 
-  if (typeof process.env.QUEUE_REGION === "string" && process.env.QUEUE_REGION) {
+  if (process.env.QUEUE_REGION) {
     return { region: process.env.QUEUE_REGION, requestScoped: false }
   }
 
-  if (typeof process.env.VERCEL_REGION === "string" && process.env.VERCEL_REGION) {
+  if (process.env.VERCEL_REGION) {
     return { region: process.env.VERCEL_REGION, requestScoped: false }
   }
 
+  // SAFETY: Queue host integrations supply Fetch or Nitro events; all host-specific header containers are optional and their values are checked below.
   const event = getQueueRuntimeEvent() as { node?: { req?: { headers?: Headers | Record<string, unknown> } }, req?: { headers?: Headers | Record<string, unknown> }, request?: Request } | undefined
   const requestHeaders = event?.request instanceof Request ? event.request.headers : event?.req?.headers ?? event?.node?.req?.headers
 
   return {
     region: readHeader(requestHeaders, "ce-vqsregion") || parseRegionFromVercelId(readHeader(requestHeaders, "x-vercel-id")),
-    requestScoped: typeof event !== "undefined",
+    requestScoped: event !== undefined,
   }
 }
-
