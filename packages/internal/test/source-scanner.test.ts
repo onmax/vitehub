@@ -188,11 +188,19 @@ describe("source scanner", () => {
     "value as true < lower, upper > false",
     "value as false < lower, upper > true",
     "value as this < lower, upper > true",
+    "value as 1n < lower, upper > 0n",
     "object.as.Record < lower, upper > 0",
     "object.satisfies.Record < lower, upper > 0",
     "value as const, left < lower, upper > 0",
   ])("does not treat comparisons after assertion-like tokens as generics: %s", (expression) => {
     expect(splitTopLevel(expression)).toEqual(expression.split(", "))
+  })
+
+  it("keeps generic arguments after a parenthesized conditional union assertion", () => {
+    const argument = `{ cron: '0 8 * * *' } as unknown as (true extends true ? Definition : Other) | Last<string, unknown>`
+    expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])
+    expect(findDefaultExportCall(`export default defineSchedule(${argument})`, ["defineSchedule"])?.arguments)
+      .toEqual([argument])
   })
 
   it.each(["|| fallback", "+ extra", " > limit", "(argument)", " ^ bar()", " ^ (bar())", " - (bar())"])("rejects runtime suffixes after generic assertions: %s", (suffix) => {

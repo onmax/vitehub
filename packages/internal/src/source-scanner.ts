@@ -362,6 +362,10 @@ export function findMatching(source: string, index: number, open: string, close:
 }
 
 function isAssertionTypeArguments(source: string, index: number, assertionSuffix = false) {
+  // A relational expression whose left operand is a bigint literal can look
+  // like a named generic (`1n < T, U >`). Reject it before backward scanning
+  // reaches the trailing `n` identifier.
+  if (/\d+n\s*$/u.test(source.slice(0, index))) return false
   // A conditional type constraint may be qualified (and may use a type
   // operator), for example `T extends Types.Promise<A, B>`. Keep the fast
   // path broad enough to mask its generic arguments before call splitting.
@@ -431,7 +435,7 @@ function hasAssertionTypePrefix(source: string) {
   // Mask completed type regions, including import arguments and comments,
   // before recognizing the continuation of a union or intersection.
   const prefix = maskAssertionTypeArguments(source)
-  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|[.\s()[\]{}&|])+$/u.test(prefix)
+  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|[.\s()[\]{}&|?:])+$/u.test(prefix)
 }
 
 function maskAssertionTypeArguments(source: string) {
