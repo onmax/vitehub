@@ -1801,6 +1801,24 @@ describe("agent CLI", () => {
     })
   })
 
+  it("ignores malformed Agent discovery entries", async () => {
+    const stderr = stream()
+    const fetchAgentStream = vi.fn(async () => Response.json({ agents: [null], root: "/repo" }))
+
+    const exitCode = await runAgentDevCli(["-p", "hello agent"], {
+      cwd: "/repo",
+      env: {},
+      rootDir: "/repo",
+      spawn: vi.fn(),
+      stderr,
+      stdout: stream(),
+    }, { fetch: fetchAgentStream as never })
+
+    expect(exitCode).toBe(1)
+    expect(stderr.output()).toBe("No Agents discovered.\n")
+    expect(fetchAgentStream).toHaveBeenCalledTimes(1)
+  })
+
   it("keeps --prompt input literal when it starts with !", async () => {
     const fetchAgentStream = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       if (init?.method === "POST") {

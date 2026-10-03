@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
@@ -756,6 +756,27 @@ async function loadDevPayload(payloadPath: string, rootDir: string, cwd: string)
   }
 }
 
+function parseAgentDevDiscovery(value: unknown): Partial<AgentDevLoopDiscoveryResponse> {
+  if (!isRuntimeRecord(value)) return {}
+  const agents = Array.isArray(value.agents)
+    ? value.agents.flatMap(agent => {
+      if (!isRuntimeRecord(agent) || !hasRuntimeType(agent.name, "string")) return []
+      const aliases = Array.isArray(agent.aliases)
+        ? agent.aliases.filter((alias): alias is string => hasRuntimeType(alias, "string"))
+        : undefined
+      const triggers = Array.isArray(agent.triggers)
+        ? agent.triggers.filter((trigger): trigger is string => hasRuntimeType(trigger, "string"))
+        : []
+      return [{ aliases, name: agent.name, triggers }]
+    })
+    : []
+  return {
+    agents,
+    ...(hasRuntimeType(value.root, "string") ? { root: value.root } : {}),
+    ...(hasRuntimeType(value.workspaceDevTokenServerId, "string") ? { workspaceDevTokenServerId: value.workspaceDevTokenServerId } : {}),
+  }
+}
+
 async function readDiscovery(
   parsed: ParsedDevArgs,
   context: AgentCliContext,
@@ -765,6 +786,7 @@ async function readDiscovery(
     endpoint: agentDevEndpoint,
     fetch: fetchImpl,
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
+    parseDiscovery: parseAgentDevDiscovery,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
     stderr: context.stderr,
