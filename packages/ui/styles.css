@@ -2127,10 +2127,6 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
   order: -1;
 }
 
-.vh-invocation-inspector__status-icon {
-  display: none;
-}
-
 .vh-invocation-inspector[data-status="running"] .vh-invocation-inspector__status strong {
   border-color: color-mix(in oklab, var(--vh-ui-info) 40%, transparent);
   color: var(--vh-ui-info);
@@ -2520,12 +2516,18 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
   white-space: nowrap;
 }
 
+.vh-invocation-inspector__badge > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 a.vh-invocation-inspector__badge:hover {
   border-color: var(--vh-ui-muted);
   color: var(--vh-ui-text);
 }
 
-.vh-invocation-inspector__badge svg { height: 0.75rem; width: 0.75rem; }
+.vh-invocation-inspector__badge svg { flex: none; height: 0.75rem; width: 0.75rem; }
 
 .vh-invocation-tool-list {
   border-block: 1px solid var(--vh-ui-border);
@@ -2590,6 +2592,13 @@ a.vh-invocation-inspector__badge:hover {
 .vh-invocation-inspector__groups {
   display: grid;
   gap: 0.75rem;
+  min-width: 0;
+}
+
+.vh-invocation-inspector__group {
+  border: 0;
+  min-width: 0;
+  padding: 0;
 }
 
 .vh-invocation-inspector__group-heading {
@@ -2986,6 +2995,27 @@ button.vh-agent-tool-list__count:focus-visible {
 
   .vh-invocation-inspector__list dd {
     text-align: start;
+  }
+
+  .vh-invocation-inspector__copy {
+    gap: 0.25rem 0.75rem;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-block: 0.25rem;
+  }
+
+  .vh-invocation-inspector__copy-label {
+    grid-column: 1;
+    overflow-wrap: anywhere;
+  }
+
+  .vh-invocation-inspector__copy-value {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .vh-invocation-inspector__copy-icon {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 }
 

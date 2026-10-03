@@ -50,7 +50,9 @@ export function timelineOwner(activity: InvocationActivity): AgentInvocationTime
 
 /** The timed, non-message activities of an Invocation in start order, with their offset from the start. */
 export function invocationTimeline(invocation: AgentInvocationView, activities = invocationActivities(invocation)): AgentInvocationTimelineItem[] {
-  const items = activities.filter(activity => activity.kind !== "message" && Number.isFinite(Date.parse(activity.startedAt ?? "")));
+  const items = activities
+    .filter(activity => activity.kind !== "message" && Number.isFinite(Date.parse(activity.startedAt ?? "")))
+    .sort((a, b) => Date.parse(a.startedAt ?? "") - Date.parse(b.startedAt ?? "") || a.sequence - b.sequence);
   if (!items.length) return [];
   const invocationStart = Date.parse(invocation.startedAt ?? invocation.createdAt ?? "");
   const observedStarts = items.map(activity => Date.parse(activity.startedAt ?? "")).filter(Number.isFinite);
