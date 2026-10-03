@@ -98,13 +98,17 @@ const sidebarPageIconMap = {
 } satisfies Record<string, string>;
 
 export function sidebarIcon(icon: string | null | undefined, fallback = "i-ph-file-text-light") {
-  return icon ? sidebarIconMap[icon] || (icon.startsWith("i-ph-") ? icon : fallback) : fallback;
+  return icon ? lookupIcon(sidebarIconMap, icon) || (icon.startsWith("i-ph-") ? icon : fallback) : fallback;
 }
 
 export function sidebarSectionIcon(section: Pick<DocsSection, "id" | "icon">) {
-  return sidebarSectionIconMap[section.id] || sidebarIcon(section.icon, "i-ph-folder-light");
+  return lookupIcon(sidebarSectionIconMap, section.id) || sidebarIcon(section.icon, "i-ph-folder-light");
 }
 
 export function sidebarPageIcon(page: Pick<DocsPage, "path" | "icon">) {
-  return sidebarPageIconMap[normalizeDocsPath(page.path)] || sidebarIcon(page.icon);
+  return lookupIcon(sidebarPageIconMap, normalizeDocsPath(page.path)) || sidebarIcon(page.icon);
+}
+
+function lookupIcon(icons: Record<string, string>, key: string) {
+  return icons[key];
 }
