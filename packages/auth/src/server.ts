@@ -21,6 +21,7 @@ import type {
   AuthRuntimeOptions,
   AuthRuntimeOptionsResolver,
   AuthSignInConfiguration,
+  ResolvedAuthAccessRoute,
   ViteHubAuth,
 } from "./types.ts"
 import { authErrorDiagnostics } from "./error-diagnostics.ts"
@@ -518,6 +519,36 @@ export async function authorizeRequest(
   if (!session) return Response.json({ error: "Unauthorized." }, { status: 401 })
   if (authorize === true) return
   return runAccessAuthorize(authorize, { request, session: session.session, user: session.user })
+}
+
+/** Bind discovered access routes to a Web Request or host request handler. */
+export function createAuthAccessHandler(
+  routes: readonly ResolvedAuthAccessRoute[],
+  definition?: AuthDefinition,
+): (input: AuthRequestInput) => Promise<Response | undefined> {
+  const rules = routes.map((route, index) => ({
+    index,
+    authorize: route.authorize === true,
+    method: route.method?.toUpperCase(),
+    path: route.route.endsWith("/**") ? route.route.slice(0, -3) : route.route,
+    recursive: route.route.endsWith("/**"),
+  }))
+
+  return async (input) => {
+    const request = unwrapAuthRequest(input)
+    const pathname = new URL(request.url).pathname
+    const method = request.method.toUpperCase()
+    const matched = rules.filter(rule => (!rule.method || rule.method === method)
+      && (pathname === rule.path || (rule.recursive && pathname.startsWith(`${rule.path}/`))))
+    if (matched.length === 0) return
+
+    return requireAuthRequest(
+      input,
+      definition ?? resolveDefaultDefinition(),
+      matched.map(rule => rule.index),
+      matched.filter(rule => rule.authorize).map(rule => rule.index),
+    )
+  }
 }
 
 export async function requireAuthAccessRoutes(
