@@ -608,21 +608,23 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
         json(response, { error: "Malformed invocation action." }, 400)
         return true
       }
-      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "cancel") {
+      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || !["cancel", "delete"].includes(String(Reflect.get(input, "action")))) {
         json(response, { error: "Unsupported invocation action." }, 400)
         return true
       }
-      const cancelOutcome = await invocations.cancel(id)
-      if (cancelOutcome.outcome === "not-found") {
-        json(response, { error: "Invocation not found" }, 404)
+      if (Reflect.get(input, "action") === "cancel") {
+        const cancelOutcome = await invocations.cancel(id)
+        if (cancelOutcome.outcome === "not-found") {
+          json(response, { error: "Invocation not found" }, 404)
+          return true
+        }
+        if (cancelOutcome.outcome === "terminal") {
+          json(response, { error: "Only pending or running invocations can be cancelled." }, 409)
+          return true
+        }
+        json(response, { id, outcome: cancelOutcome.outcome })
         return true
       }
-      if (cancelOutcome.outcome === "terminal") {
-        json(response, { error: "Only pending or running invocations can be cancelled." }, 409)
-        return true
-      }
-      json(response, { id, outcome: cancelOutcome.outcome })
-      return true
       const outcome = await invocations.delete(id)
       if (outcome === "not-found") {
         json(response, { error: "Invocation not found" }, 404)

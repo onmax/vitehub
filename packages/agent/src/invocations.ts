@@ -355,6 +355,7 @@ export interface AgentInvocationJournal<TRuntimeConfig extends AgentRuntimeConfi
   configuration?: TraceEventContentPolicy
   /** Whether this journal holds the store execution claim, lost it, or could not reach the store. */
   readonly createdNew: boolean
+  readonly reusedTerminal: boolean
   readonly claimStatus?: "owned" | "conflict" | "unavailable"
   context: AgentRuntimeContext<TRuntimeConfig>
   /** The stored `traceId`, available after creation confirms the record identity. */
@@ -2156,6 +2157,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       return {
         abortSignal: cancellation.signal,
         get createdNew() { return createdNew },
+        get reusedTerminal() { return finished && !createdNew },
         get claimStatus() { return ownsRecord ? "owned" : claimUnavailable ? "unavailable" : "conflict" },
         async getWorkflowDispatchAttempted() {
           const record = await boundedStoreOperation(() => store.getSummary(recordId))
