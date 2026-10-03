@@ -1,3 +1,4 @@
+import { normalizeAgentInvocationListOptions } from "./list-options.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { applyAgentInvocationStoreUpdate, byteBoundedObservations, isAppendedObservation, observationLimits } from "../invocations.ts"
 import { searchableAgentInvocationText } from "./search.ts"
@@ -269,14 +270,10 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       }
       throw agentDiagnostics.AGENT_R0918({ message: `[vitehub] D1 Agent Invocation ${JSON.stringify(id)} update exceeded 32 concurrent write retries.` })
     },
-    async list(listOptions = {}) {
-      const limit = listOptions.limit ?? 50
-      if (!Number.isInteger(limit) || limit < 1) throw agentDiagnostics.AGENT_R0919({ message: "[vitehub] Agent Invocation list limit must be a positive integer." })
-      const pageSize = Math.min(limit, 100)
+    async list(input = {}) {
+      const listOptions = normalizeAgentInvocationListOptions(input, { sequenceCursor: true })
+      const { limit: pageSize, search } = listOptions
       const before = listOptions.cursor === undefined ? undefined : Number(listOptions.cursor)
-      if (before !== undefined && (!Number.isSafeInteger(before) || before < 1 || String(before) !== listOptions.cursor)) throw agentDiagnostics.AGENT_R0920({ message: "[vitehub] Agent Invocation cursor is invalid." })
-      const search = listOptions.search?.trim()
-      if (search && search.length > 256) throw agentDiagnostics.AGENT_R0921({ message: "[vitehub] Agent Invocation search must be at most 256 characters." })
       const statuses = listOptions.status === undefined ? [] : Array.isArray(listOptions.status) ? listOptions.status : [listOptions.status]
       if (Array.isArray(listOptions.status) && !statuses.length) return { invocations: [] }
       const filters: string[] = []
