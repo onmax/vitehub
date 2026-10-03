@@ -8344,13 +8344,13 @@ packages:
     resolution: {integrity: sha512-V6Mnml8v09QALx6K0elJ7o9K/MkVDtW3t6L+7Ou/JcWtb3xwId2AH4FeOceySd2JaO87IMw4+6vSZxLm34LPbw==}
 
   '@t3tools/contracts@https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@f603ba290f3fba0706137f485bdda71e6a0dec7c':
-    resolution: {tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@f603ba290f3fba0706137f485bdda71e6a0dec7c}
+    resolution: {integrity: sha512-5/6KJ5SRsv8fU6r18GmIScaeHjo3nG6QVGXHy3cvTnBS1R7kBTOg7o6AyMih6sdi1EZ0QuD0qQ+80MpzfVGNEQ==, tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@f603ba290f3fba0706137f485bdda71e6a0dec7c}
     version: 0.0.38
     peerDependencies:
       effect: 4.0.0-beta.103
 
   '@t3tools/provider-runtime@https://pkg.pr.new/vite-hub/t3code/@t3tools/provider-runtime@f603ba290f3fba0706137f485bdda71e6a0dec7c':
-    resolution: {tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/provider-runtime@f603ba290f3fba0706137f485bdda71e6a0dec7c}
+    resolution: {integrity: sha512-7Avm6+BxhQSoJ5cUjyPnfp82T+U2izQOVGdC/EYaklxC6DG8GQgPJYpTKQJJv9rG58wq15jot6n34pCaFUgGhA==, tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/provider-runtime@f603ba290f3fba0706137f485bdda71e6a0dec7c}
     version: 0.0.33
     engines: {node: ^22.16 || ^23.11 || >=24.10}
 
@@ -10883,7 +10883,7 @@ packages:
     engines: {node: '>=18'}
 
   docus@https://pkg.pr.new/docus@986a334:
-    resolution: {tarball: https://pkg.pr.new/docus@986a334}
+    resolution: {integrity: sha512-ie4nvZMauP8xRR+W626SLTI31madGy0yna71O1PRGVW+ZwYe4AS3/9bW6AlcJahb1KoUVQ66hTFWuhY4u5zwpQ==, tarball: https://pkg.pr.new/docus@986a334}
     version: 5.12.3
     peerDependencies:
       better-sqlite3: 12.x
