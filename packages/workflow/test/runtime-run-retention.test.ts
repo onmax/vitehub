@@ -18,20 +18,37 @@ afterEach(() => {
 })
 
 describe("inline Workflow run retention", () => {
-  it("retains active runs when optional GC APIs are unavailable", async () => {
+  it.each(["WeakRef", "FinalizationRegistry", "both"] as const)("bounds active inspection without %s", async (missing) => {
     const globals = globalThis as unknown as {
       WeakRef: WeakRefConstructor | undefined
       FinalizationRegistry: FinalizationRegistryConstructor | undefined
     }
     const weakRef = globals.WeakRef
     const finalizationRegistry = globals.FinalizationRegistry
-    globals.WeakRef = undefined
-    globals.FinalizationRegistry = undefined
+    if (missing !== "FinalizationRegistry") globals.WeakRef = undefined
+    if (missing !== "WeakRef") globals.FinalizationRegistry = undefined
     try {
-      const state = setWorkflowRun("fallback", "active", Promise.resolve({ result: "done", status: "completed" as const }))
+      const evicted = gate()
+      const old = setWorkflowRun("fallback", "old", evicted.promise.then(() => ({ status: "completed" as const })))
+      for (let index = 0; index < 1_024; index++) {
+        setWorkflowRun("fallback", String(index), new Promise(() => {}))
+      }
+      expect(getWorkflowRunState("fallback", "old")).toBeUndefined()
+      expect(getWorkflowRunState("fallback", "0")?.status).toBe("running")
+      const active = gate()
+      const state = setWorkflowRun("fallback", "active", active.promise.then(() => ({ result: "done", status: "completed" as const })))
+      expect(getWorkflowRunState("fallback", "0")).toBeUndefined()
+      expect(getWorkflowRunState("fallback", "1")?.status).toBe("running")
       expect(getWorkflowRunState("fallback", "active")).toBe(state)
+      evicted.resolve()
+      await old.promise
+      expect(getWorkflowRunState("fallback", "old")).toBeUndefined()
+      active.resolve()
       await expect(state.promise).resolves.toMatchObject({ status: "completed", result: "done" })
       expect(getWorkflowRunState("fallback", "active")?.result).toBe("done")
+      // Completed history must not consume the fallback active-run budget.
+      await setWorkflowRun("fallback", "done", Promise.resolve({ status: "completed" })).promise
+      expect(getWorkflowRunState("fallback", "1")?.status).toBe("running")
     } finally {
       globals.WeakRef = weakRef
       globals.FinalizationRegistry = finalizationRegistry

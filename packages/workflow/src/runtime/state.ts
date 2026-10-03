@@ -24,10 +24,12 @@ export interface WorkflowRunState<TResult = unknown> {
   status: "running" | "completed" | "failed"
 }
 
-// Execution retains its state through the completion callback. Inspection must
-// not keep an abandoned promise and its payload alive by itself.
+// Execution retains its state through the completion callback. When GC APIs
+// exist, inspection does not keep an abandoned promise and its payload alive.
 type ActiveRunReference = WeakRef<WorkflowRunState> | WorkflowRunState
 const runs = new Map<string, ActiveRunReference>()
+// Without GC APIs, bound strong inspection ownership independently of history.
+const fallbackRunKeys = new Set<string>()
 let collectedRuns: FinalizationRegistry<{ key: string, reference: WeakRef<WorkflowRunState> }> | undefined
 const completedRuns = new Map<string, WorkflowRunState>()
 
@@ -236,6 +238,7 @@ export function setWorkflowRun<TResult = unknown>(
   }
   const previous = runs.get(key)
   if (previous && canUseWeakReferences) collectedRuns?.unregister(previous)
+  fallbackRunKeys.delete(key)
   completedRuns.delete(key)
   const state: WorkflowRunState<TResult> = {
     promise: promise.then((resolved) => {
@@ -247,6 +250,7 @@ export function setWorkflowRun<TResult = unknown>(
       const activeState = active && isWeakReference(active) ? active.deref() : active
       if (activeState === state) {
         runs.delete(key)
+        fallbackRunKeys.delete(key)
         if (isWeakReference(reference)) collectedRuns?.unregister(reference)
         completedRuns.set(key, state)
         pruneWorkflowRuns()
@@ -258,6 +262,14 @@ export function setWorkflowRun<TResult = unknown>(
   const reference: ActiveRunReference = canUseWeakReferences ? new WeakRef(state) : state
   runs.set(key, reference)
   if (isWeakReference(reference)) collectedRuns?.register(state, { key, reference }, reference)
+  else {
+    fallbackRunKeys.add(key)
+    while (fallbackRunKeys.size > RUNS_LIMIT) {
+      const oldest = fallbackRunKeys.values().next().value!
+      fallbackRunKeys.delete(oldest)
+      runs.delete(oldest)
+    }
+  }
   return state
 }
 
@@ -284,5 +296,6 @@ export function resetWorkflowRuntime(): void {
     if (isWeakReference(reference)) collectedRuns?.unregister(reference)
   }
   runs.clear()
+  fallbackRunKeys.clear()
   completedRuns.clear()
 }
