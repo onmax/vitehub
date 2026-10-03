@@ -418,7 +418,7 @@ function hasAssertionTypePrefix(source: string) {
   // Mask completed type regions, including import arguments and comments,
   // before recognizing the continuation of a union or intersection.
   const prefix = maskAssertionTypeArguments(source)
-  return /(?:^|[^\w$.])(?:as|satisfies)\s+(?:[A-Za-z_$][\w$]*|[.\s()[\]{}&|])+$/.test(prefix)
+  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|[.\s()[\]{}&|])+$/u.test(prefix)
 }
 
 function maskAssertionTypeArguments(source: string) {
