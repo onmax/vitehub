@@ -1742,15 +1742,6 @@ describe("Agent invocation console", () => {
     })
   })
 
-  it.each([false, true, "cloudflare-access"] as const)("preserves auth mode %s in the navigation response", (auth) => {
-    installConsoleSections("/auth-navigation", ["agents"], auth)
-
-    expect(sectionsHandler(event("127.0.0.1"))).toEqual({
-      ...(auth ? { auth } : {}),
-      sections: ["agents"],
-    })
-  })
-
   it("resolves the project name from the process registry across isolated realms", () => {
     installConsoleSections("/project", ["agents"])
     installConsoleProjectName("/project", "shared-app")

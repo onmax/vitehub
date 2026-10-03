@@ -224,6 +224,7 @@ function addContributedRoutes(navigation) {
         definitionsBase: "/api/_vitehub/console/definitions",
         details,
         kvBase: "/api/_vitehub/console/kv",
+        scheduleRunBase: "/api/_vitehub/console/schedule-run",
         searchBase: "/api/_vitehub/console/search",
         sectionsBase,
       },

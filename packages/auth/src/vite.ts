@@ -1,7 +1,7 @@
 import { resolve } from "node:path"
 import { Readable } from "node:stream"
 
-import { createNoExternalAddition, isServerEnvironment, mergeGeneratedViteHubWatchIgnored, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { createNoExternalAddition, generatedViteHubWatchIgnoredAddition, isServerEnvironment, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { summarizeDefinitions } from "@vite-hub/internal/inspect"
@@ -62,15 +62,17 @@ export function createAuthNitroConfig(plugin: AuthVitePlugin, options: {
   serverDirs?: string[]
   viteAuth?: AuthModuleOptions
 }): Record<string, unknown> {
-  const viteConfigResult = plugin.config && typeof plugin.config === "function"
-    ? plugin.config.call({} as never, {
-        root: options.projectRoot,
-        nitro: options.nitro,
-        auth: options.viteAuth,
-        ...(options.serverDirs ? { [VITEHUB_SERVER_DIRS]: options.serverDirs } : {}),
-      } as UserConfig & { nitro: Record<string, unknown> }, { command: "build", isPreview: false, isSsrBuild: true, mode: "production" })
-    : undefined
-  return (viteConfigResult && typeof viteConfigResult === "object" && "nitro" in viteConfigResult ? viteConfigResult.nitro : options.nitro) as Record<string, unknown>
+  const viteConfig: UserConfig & { nitro: Record<string, unknown> } = {
+    root: options.projectRoot,
+    nitro: options.nitro,
+    auth: options.viteAuth,
+    ...(options.serverDirs ? { [VITEHUB_SERVER_DIRS]: options.serverDirs } : {}),
+  }
+  // SAFETY: This hook mutates the supplied Nitro config because Vite concatenates returned arrays.
+  if (plugin.config && typeof plugin.config === "function") {
+    plugin.config.call({} as never, viteConfig, { command: "build", isPreview: false, isSsrBuild: true, mode: "production" })
+  }
+  return viteConfig.nitro
 }
 
 interface InternalAuthModuleOptions {
@@ -317,18 +319,17 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
       const authConfig = resolveAuthViteConfig((config as { auth?: AuthModuleOptions }).auth ?? options, configRoot, { serverDirs })
       const nitro = mergeNitroAuthHandler((config as { nitro?: unknown }).nitro, authConfig)
       const hasNitroHandlers = Boolean(authConfig && (authConfig.route !== false || authConfig.access.routes.length > 0))
+      if (hasNitroHandlers) {
+        // Replace Nitro in place because Vite concatenates arrays from returned config hooks.
+        ;(config as { nitro?: unknown }).nitro = nitro
+      }
       return {
         ssr: {
           noExternal: mergeNoExternal(config.ssr?.noExternal),
         },
-        ...(hasNitroHandlers
-          ? {
-              nitro,
-            }
-          : {}),
         server: {
           watch: {
-            ignored: mergeGeneratedViteHubWatchIgnored(config.server?.watch?.ignored),
+            ignored: generatedViteHubWatchIgnoredAddition(config.server?.watch?.ignored),
           },
         },
       }
