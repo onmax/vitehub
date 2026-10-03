@@ -357,6 +357,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   })).rejects.toThrow('unsafe Git metadata')
 
   // Cleanup must not traverse a linked checkout or an intermediate metadata directory.
+  const retainedPaths = [basename(firstPath)]
   for (const [index, component] of ['checkout', 'info', 'objects', 'objects/pack'].entries()) {
     const number = index + 3
     let checkoutPath = ''
@@ -370,13 +371,27 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     await writeFile(join(outside, 'exclude'), 'keep me')
     await symlink(outside, replaced)
     const outsideEntries = await readdir(outside, { recursive: true })
-    await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }, async () => {
-      throw new Error('must not run')
-    })).rejects.toThrow('unsafe Git metadata')
+    const request = { repository: 'base--owner/repo--name', number, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }
+    if (component === 'checkout') {
+      await restarted.withPullRequestCheckout(request, async ({ path }) => {
+        const freshPath = await realpath(path)
+        expect(freshPath).not.toBe(outside)
+        expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
+        retainedPaths.push(basename(checkoutPath), basename(freshPath))
+      })
+    }
+    else {
+      await expect(restarted.withPullRequestCheckout(request, async () => {
+        throw new Error('must not run')
+      })).rejects.toThrow('unsafe Git metadata')
+    }
     expect(await readFile(join(outside, 'exclude'), 'utf8')).toBe('keep me')
     expect(await readdir(outside, { recursive: true })).toEqual(outsideEntries)
-    if (component === 'checkout') expect(await git(outside, 'rev-parse', 'HEAD')).toBe(oneSha)
-    await expect(access(checkoutPath)).rejects.toThrow()
+    if (component === 'checkout') {
+      expect(await git(outside, 'rev-parse', 'HEAD')).toBe(oneSha)
+      expect(await realpath(checkoutPath)).toBe(outside)
+    }
+    else await expect(access(checkoutPath)).rejects.toThrow()
   }
 
   // A checkout without a verified head leaves the pool.
@@ -384,7 +399,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     throw new Error('must not run')
   })).rejects.toThrow('head changed')
   await expect(access(secondPath)).rejects.toThrow()
-  expect(await readdir(pool)).toHaveLength(1)
+  expect((await readdir(pool)).sort()).toEqual(retainedPaths.sort())
 
   // A callback-created HEAD symlink must be discarded so the reset can recover.
   const outsideHead = join(root, 'outside-head')
@@ -470,6 +485,40 @@ it.each(['directory', 'symlink'])('preserves a callback replacement %s and its m
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
   })
   expect(await readFile(join(checkout, 'marker'), 'utf8')).toBe('untouched')
+}, 30_000)
+
+it.each(['directory', 'symlink'])('preserves an idle checkout replacement %s when acquiring again', async (replacement) => {
+  const { root, source, head } = await fixture()
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: join(root, 'pool') },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let checkout = ''
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = await realpath(path) })
+  // Replace after release, as a process retained by the callback could do.
+  await rename(checkout, join(root, 'displaced'))
+  if (replacement === 'symlink') {
+    const outside = join(root, 'outside')
+    await mkdir(outside)
+    await symlink(outside, checkout)
+  }
+  else await mkdir(checkout)
+  await writeFile(join(checkout, 'marker'), 'untouched')
+  await writeFile(`${checkout}.meta.json`, 'replacement metadata')
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => {
+    expect(await realpath(path)).not.toBe(await realpath(checkout))
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
+  })
+  expect(await readdir(checkout)).toEqual(['marker'])
+  expect(await readFile(join(checkout, 'marker'), 'utf8')).toBe('untouched')
+  expect(await readFile(`${checkout}.meta.json`, 'utf8')).toBe('replacement metadata')
 }, 30_000)
 
 it('keeps reset Git operations private when the checkout path is replaced', async () => {

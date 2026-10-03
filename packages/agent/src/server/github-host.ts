@@ -422,20 +422,20 @@ function createCheckoutPool(root: string) {
         while (checkout) {
           anchoredDirectory = join(anchoredRoot, basename(checkout.directory))
           try {
-            await lstat(anchoredDirectory)
-            break
+            const current = await lstat(anchoredDirectory)
+            if (current.dev === checkout.identity.dev && current.ino === checkout.identity.ino) break
           }
           catch (error: unknown) {
             // SAFETY: Node filesystem errors expose their stable errno code through NodeJS.ErrnoException.
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-            checkout = idle.get(key(repository, number))?.pop()
           }
+          checkout = idle.get(key(repository, number))?.pop()
         }
         if (!checkout) anchoredDirectory = await mkdtemp(join(anchoredRoot, `${encodeRepository(repository)}-pr-${number}-`))
         return {
           directory: join(root, basename(anchoredDirectory)),
           anchoredDirectory,
-          identity: await lstat(anchoredDirectory),
+          identity: checkout?.identity ?? await lstat(anchoredDirectory),
           anchoredRoot,
           reused: Boolean(checkout),
           adopted: checkout?.adopted ?? false,
