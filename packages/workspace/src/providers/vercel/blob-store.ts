@@ -80,10 +80,13 @@ async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) 
       await blob.del(key, auth(options))
     },
     async download(key: string): Promise<Blob> {
-      const result = await blob.get(key, {
+      const readKey = access === "public"
+        ? `${key}?vitehubCacheBust=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+        : key
+      const result = await blob.get(readKey, {
         access,
-        // The SDK only adds its cache-bypass query for private blobs. A
-        // no-cache request header also bypasses the CDN for public blobs.
+        // The SDK only adds its cache-bypass query for private blobs. Public
+        // reads use a unique query so the CDN cannot reuse stale bytes.
         headers: { "cache-control": "no-cache, no-store" },
         useCache: false,
         ...auth(options),

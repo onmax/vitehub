@@ -7,9 +7,9 @@ declare global {
 const blobMock = vi.hoisted(() => {
   const store = new Map<string, { body: Uint8Array, uploadedAt: Date }>()
   const cache = new Map<string, { body: Uint8Array, uploadedAt: Date }>()
-  const pathnameFromUrl = (input: string) => input.startsWith("https://blob.example/")
+  const pathnameFromUrl = (input: string) => (input.startsWith("https://blob.example/")
     ? input.slice("https://blob.example/".length)
-    : input
+    : input).split("?")[0]
 
   return {
     clear() {
@@ -19,10 +19,12 @@ const blobMock = vi.hoisted(() => {
     del: vi.fn(async (input: string | string[]) => {
       for (const item of Array.isArray(input) ? input : [input]) store.delete(pathnameFromUrl(item))
     }),
-    get: vi.fn(async (input: string, options: { useCache?: boolean } = {}) => {
+    get: vi.fn(async (input: string, options: { access?: "private" | "public", useCache?: boolean } = {}) => {
       const pathname = pathnameFromUrl(input)
-      const current = options.useCache === false ? store.get(pathname) : cache.get(pathname) || store.get(pathname)
-      if (current && options.useCache !== false) cache.set(pathname, current)
+      const hasPublicCacheBust = input.includes("?vitehubCacheBust=")
+      const bypassCache = options.useCache === false && (options.access !== "public" || hasPublicCacheBust)
+      const current = bypassCache ? store.get(pathname) : cache.get(pathname) || store.get(pathname)
+      if (current && !bypassCache) cache.set(pathname, current)
       return current
         ? { blob: { contentType: "application/octet-stream", size: current.body.byteLength }, statusCode: 200, stream: new Response(current.body).body }
         : { statusCode: 404, stream: null }
@@ -105,6 +107,21 @@ describe("Vercel Blob workspace store", () => {
       headers: { "cache-control": "no-cache, no-store" },
       useCache: false,
     }))
+    expect(blobMock.get.mock.calls[0]?.[0]).toMatch(/\?vitehubCacheBust=/)
+  })
+
+  it("detects equal-size rewrites for public blobs despite CDN caching", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ access: "public", provider: "vercel-blob", token: "token" }, "docs")
+
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    const snapshot = await store.snapshot()
+    await store.writeFile("readme.md", { path: "readme.md", content: "after!" })
+
+    await expect(store.diff({ from: snapshot })).resolves.toMatchObject({
+      entries: [{ path: "readme.md", type: "modified" }],
+    })
   })
 
   it("preserves unchanged legacy snapshots without file digests", async () => {
