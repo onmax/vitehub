@@ -12,7 +12,6 @@ import {
 import { loadConsoleNavigation, resolveConsoleSectionDetails } from "../client/sections";
 import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
-import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
 import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
@@ -122,9 +121,6 @@ onBeforeUnmount(() => request++);
         </p>
       </template>
 
-      <template #footer="{ collapsed }">
-        <ConsolePrimitiveSwitcher :collapsed="collapsed" :sections-base="sectionsBase" />
-      </template>
     </UDashboardSidebar>
 
     <ConsoleSearch

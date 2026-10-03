@@ -9,7 +9,6 @@ import { requestConsole } from "../client/request";
 import { rememberConsoleSection } from "../sections";
 import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
-import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
 import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import ConsoleEnvDetails from "./console-env-details.vue";
@@ -181,12 +180,6 @@ onBeforeUnmount(() => request?.abort());
         </div>
         <ConsoleSectionNav active="env" :collapsed="collapsed" :sections-base="sectionsBase" @navigate="sidebarOpen = false" />
       </template>
-      <template #footer="{ collapsed }"
-        ><ConsolePrimitiveSwitcher
-          active="env"
-          :collapsed="collapsed"
-          :sections-base="sectionsBase"
-      /></template>
     </UDashboardSidebar>
     <ConsoleSearch
       :agents-base="agentsBase"
