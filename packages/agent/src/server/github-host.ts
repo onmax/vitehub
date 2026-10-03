@@ -373,10 +373,20 @@ function createCheckoutPool(root: string) {
       }
       try {
         await validate()
-        const checkout = idle.get(key(repository, number))?.pop()
-        const anchoredDirectory = checkout
-          ? join(anchoredRoot, basename(checkout.directory))
-          : await mkdtemp(join(anchoredRoot, `${encodeRepository(repository)}-pr-${number}-`))
+        let checkout = idle.get(key(repository, number))?.pop()
+        let anchoredDirectory = ""
+        while (checkout) {
+          anchoredDirectory = join(anchoredRoot, basename(checkout.directory))
+          try {
+            await lstat(anchoredDirectory)
+            break
+          }
+          catch (error: unknown) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+            checkout = idle.get(key(repository, number))?.pop()
+          }
+        }
+        if (!checkout) anchoredDirectory = await mkdtemp(join(anchoredRoot, `${encodeRepository(repository)}-pr-${number}-`))
         return {
           directory: join(root, basename(anchoredDirectory)),
           anchoredDirectory,
