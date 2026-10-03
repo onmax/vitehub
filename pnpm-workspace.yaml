@@ -49,7 +49,7 @@ catalogs:
     drizzle-kit: ^0.31.11
     drizzle-orm: ^0.45.3
   effect:
-    effect: 4.0.0
+    effect: 4.0.0-rc.112
   esbuild-v27:
     esbuild: ^0.27.7
   h3-v1-compat:
@@ -79,7 +79,7 @@ catalogs:
     "@tiptap/starter-kit": ^3.31.4
     "@tiptap/y-tiptap": ^3.0.9
     lib0: ^0.2.119
-    marked: 18.0.14
+    marked: 17.0.6
     y-protocols: ^1.0.7
     y-websocket: ^3.1.0
     yjs: ^13.6.33
