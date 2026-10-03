@@ -389,9 +389,16 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   if (/\?\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) {
     return /\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
   }
-  const end = current + 1
-  while (isIdentifierChar(source[current])) current -= 1
-  const keyword = source.slice(current + 1, end)
+  // Unary type operators can precede the generic reference. Walk back to
+  // the assertion boundary with the same comment-aware token handling.
+  let keyword: string
+  do {
+    const end = current + 1
+    while (isIdentifierChar(source[current])) current -= 1
+    keyword = source.slice(current + 1, end)
+    if (keyword !== "keyof" && keyword !== "readonly") break
+    current = previousCodeIndex(source, current, controlFlowRegexes)
+  } while (current >= 0)
   return (keyword === "as" || keyword === "satisfies")
     && source[previousCodeIndex(source, current, controlFlowRegexes)] !== "."
 }
@@ -594,6 +601,31 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // punctuation that is valid inside TypeScript type expressions (for
       // example generic arguments and tuple types).
       if (!assertion) return false
+      // Each conditional type question mark must follow an `extends` clause.
+      // Track nested true branches until their colon; a further question mark
+      // in a completed false branch is a runtime ternary.
+      const conditionalBranches: boolean[] = []
+      for (let index = 0; index < value.length; index++) {
+        if (isQuote(value[index])) {
+          index = skipQuoted(value, index) - 1
+          continue
+        }
+        if (isIdentifierChar(value[index])) {
+          const start = index
+          while (isIdentifierChar(value[index + 1])) index += 1
+          if (value.slice(start, index + 1) === "extends" && value[start - 1] !== ".") {
+            conditionalBranches.push(false)
+          }
+        }
+        else if (value[index] === "?") {
+          if (conditionalBranches.at(-1) !== false) return false
+          conditionalBranches[conditionalBranches.length - 1] = true
+        }
+        else if (value[index] === ":") {
+          if (conditionalBranches.pop() !== true) return false
+        }
+      }
+      if (conditionalBranches.length) return false
       // `const` is a complete assertion type by itself. Any operator after it
       // therefore belongs to the runtime expression (including operators whose
       // right-hand side is an identifier rather than a literal).

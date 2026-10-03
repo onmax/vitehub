@@ -97,6 +97,8 @@ describe("source scanner", () => {
     "as First<string, unknown> | Second<string, unknown>",
     "as true extends true ? Options<string, unknown> : never",
     "as false extends true ? never : Options<string, unknown>",
+    "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
+    "as keyof /* type */ Record<string, unknown>",
     "as Options<string, unknown> extends Base<string, unknown> ? (Options<string, unknown>) : [Options<string, unknown>]",
     "as true extends true ? false extends true ? never : Options<string, unknown> : never",
     'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
@@ -144,6 +146,9 @@ describe("source scanner", () => {
     'satisfies import("types").Record<string, unknown> + extra',
     "as (number) < lower, upper > 0",
     "as Options<string, unknown> ? (bar()) : fallback",
+    "as Definition ? fallback : fallback",
+    "as Options<string, unknown> ? fallback : fallback",
+    "as true extends true ? Definition : never ? fallback : fallback",
     "as true extends true ? Options<string, unknown> : never ? (bar()) : fallback",
   ])("rejects runtime suffixes after nested assertion types: %s", (assertion) => {
     expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } ${assertion})`, ["defineSchedule"]))
