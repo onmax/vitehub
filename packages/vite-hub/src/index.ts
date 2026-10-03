@@ -37,7 +37,7 @@ import { consoleConnectionsActorId } from "./console/auth-build.ts"
 import { agentChannelEnvPlugin } from "./agent-channel-env.ts"
 import { consoleInvocationRootPlugin, consoleVitePlugin, type ConsoleOptions } from "./console/vite.ts"
 import { observabilityVitePlugin, type ObservabilityOptions } from "./observability-vite.ts"
-import { isConsoleConnectionsEnabled, resolveConsoleSectionIds } from "./console/runtime/sections.ts"
+import { resolveConsoleSectionIds } from "./console/runtime/sections.ts"
 
 import type { AgentModuleOptions } from "@vite-hub/agent"
 import type { AuthModuleOptions } from "@vite-hub/auth"
@@ -821,7 +821,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     ? Object.keys(resolvedConsoleBlob.stores || { default: resolvedConsoleBlob.store })
     : []
   const workflowEnabled = options.workflow !== false && Boolean(options.agent || options.workflow)
-  const consoleSections = resolveConsoleSectionIds({ ...options, connections: isConsoleConnectionsEnabled(options) ? options.connections : false, env: options.env !== false, blob: blobEnabled, preset: plan.preset, sandbox: sandboxEnabled })
+  const consoleSections = resolveConsoleSectionIds({ ...options, env: options.env !== false, blob: blobEnabled, preset: plan.preset, sandbox: sandboxEnabled })
   const plugins: unknown[] = [hubMarkdownTemplate()]
   const requestedServices: DeploymentService[] = []
   if (options.blob !== undefined && options.blob !== false && !hasExplicitBlobStore(options.blob)) requestedServices.push("blob")
@@ -879,6 +879,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     plugins.push(consoleVitePlugin({
       blobStores: consoleBlobStores,
       console: options.console === true ? true : options.console,
+      connections: options.connections,
       resolveD1Binding: (root, serverDirs) => consoleD1Binding(plan.preset, options.database, { root, serverDirs }),
       databaseUrl: consoleDatabaseUrl(options),
       databaseDiscoveryRoot: options.database && options.database !== true ? options.database.projectRoot : undefined,

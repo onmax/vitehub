@@ -24,10 +24,12 @@ function memoryStorage(initial?: string) {
 
 describe("Console section preferences", () => {
   it("only advertises Connections when management is mounted", () => {
-    expect(isConsoleConnectionsEnabled({ connections: true, console: true })).toBe(true)
-    expect(isConsoleConnectionsEnabled({ connections: { management: true }, console: { access: "auth" } })).toBe(true)
-    expect(isConsoleConnectionsEnabled({ connections: true, console: { access: "auth" } })).toBe(false)
-    expect(isConsoleConnectionsEnabled({ connections: { management: false }, console: { access: "auth" } })).toBe(false)
+    expect(isConsoleConnectionsEnabled({ connections: true }, true)).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: { management: false } }, true)).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: false }, true)).toBe(false)
+    expect(isConsoleConnectionsEnabled({ connections: { management: true } })).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: true })).toBe(false)
+    expect(isConsoleConnectionsEnabled({ connections: { management: false } })).toBe(false)
   })
 
   it("derives enabled primitive sections, including Agent-enabled Workflow", () => {

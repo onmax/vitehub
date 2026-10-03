@@ -796,7 +796,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   const effectiveWorkflow = nuxt.options.vite?.workflow ?? options.workflow
   const consoleSections = resolveConsoleSectionIds({
     ...options,
-    connections: isConsoleConnectionsEnabled(options) ? options.connections : false,
+    connections: isConsoleConnectionsEnabled(options, nuxt.options.dev === true) ? options.connections : false,
     env: options.env !== false,
     blob: consoleBlobEnabled,
     kv: effectiveKV,
@@ -1168,7 +1168,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       )
       const resolvedSections = resolveConsoleSectionIds({
         ...options,
-        connections: isConsoleConnectionsEnabled(options) ? options.connections : false,
+        connections: isConsoleConnectionsEnabled(options, nuxt.options.dev === true) ? options.connections : false,
         env: options.env !== false,
         blob: replayedBlobEnabled,
         database: replayConfig.database ?? options.database,
