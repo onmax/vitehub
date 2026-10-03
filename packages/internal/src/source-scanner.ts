@@ -364,7 +364,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // keyword. Treat that return type as part of the assertion as well.
   if (/=>\s*(?:(?:asserts\s+)?[A-Za-z_$][\w$]*\s+is\s+)?(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(prefix)) return true
-  if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*$/.test(prefix)
+  if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[\p{ID_Start}_$][\p{ID_Continue}$]*\s*\.\s*)*[\p{ID_Start}_$][\p{ID_Continue}$]*$/u.test(prefix)
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let current = previousCodeIndex(source, index - 1, controlFlowRegexes)
