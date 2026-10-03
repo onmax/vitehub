@@ -5,7 +5,7 @@ import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
-import type { AgentCapabilityDefinition, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
+import type { AgentCapabilitiesResolver, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -643,13 +643,24 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // channel-scoped capabilities needed by repair passes.
               const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
               const baseChannels = isRuntimeRecord(_baseChannels) ? _baseChannels : {};
-              const baseCapabilities = Array.isArray(workerSettings.capabilities)
-                ? workerSettings.capabilities as AgentCapabilityDefinition[]
-                : [];
-              const workerCapabilities = [
-                ...baseCapabilities.filter(capability => capability.id !== "babysitter.github"),
-                repairCapability(operations, merge.mode === "auto"),
-              ];
+              const workerBaseChannels = Object.fromEntries(Object.entries(baseChannels).map(([name, channel]) => {
+                if (!isRuntimeRecord(channel) || channel.kind !== "github") return [name, channel];
+                const sanitized = { ...channel };
+                // A GitHub channel under any key can otherwise reintroduce host credentials.
+                Reflect.deleteProperty(sanitized, Symbol.for("vitehub.githubChannelIdentity"));
+                return [name, sanitized];
+              }));
+              const baseCapabilities = workerSettings.capabilities;
+              const repair = repairCapability(operations, merge.mode === "auto");
+              const workerCapabilities = typeof baseCapabilities === "function"
+                ? async (context: Parameters<AgentCapabilitiesResolver>[0]) => [
+                  ...(await baseCapabilities(context)).filter(capability => capability.id !== "babysitter.github"),
+                  repair,
+                ]
+                : [
+                  ...(Array.isArray(baseCapabilities) ? baseCapabilities : []).filter(capability => capability.id !== "babysitter.github"),
+                  repair,
+                ];
               copyDefinitionDecorations(asMetadataTarget(baseAgent), asMetadataTarget(workerSettings));
               const workerChannel = { ...github.channel({
                 activity: activityEnabled,
@@ -669,7 +680,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 // GitHub authority stays in the broker operations above;
                 // attaching the host here would expose its token to the driver.
                 channels: {
-                  ...baseChannels,
+                  ...workerBaseChannels,
                   github: workerChannel,
                 },
                 // SAFETY: workerCapabilities preserves validated base capability definitions and appends the broker capability.
