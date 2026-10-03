@@ -408,6 +408,53 @@ describe("ViteHub Nuxt integration", () => {
     expect(result.outputFiles?.[0]?.text).toContain("installConsoleDefinitions")
   })
 
+  it.each([undefined, "/tmp/custom-markdown-template-runtime.mjs"])("replays Markdown Template resolution with Nitro alias %s", async (configuredAlias) => {
+    const defaultPlugins = mocks.vitehub()
+    const resolveId = vi.fn((id: string) => id.endsWith("reply.template.md") ? `${id}?markdown-template` : undefined)
+    const load = vi.fn((id: string) => id.endsWith("?markdown-template") ? "export default () => 'rendered'" : undefined)
+    mocks.vitehub.mockReturnValueOnce([
+      defaultPlugins,
+      {
+        name: "@vite-hub/markdown-template/vite",
+        config: () => ({
+          resolve: {
+            alias: [{ find: /^@vite-hub\/markdown-template$/, replacement: "/tmp/markdown-template-runtime.mjs" }],
+          },
+        }),
+        load,
+        resolveId,
+      },
+    ])
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    await viteHubNuxtModule({ preset: "cloudflare" }, nuxt)
+    const existingPlugin: Plugin = { name: "existing-nitro-plugin" }
+    const nitroConfig: Record<string, unknown> = {
+      alias: configuredAlias ? { "@vite-hub/markdown-template": configuredAlias } : {},
+      rollupConfig: { plugins: existingPlugin },
+    }
+    await runNitroConfigHook(nitroConfig)
+    expect((nitroConfig.alias as Record<string, string>)["@vite-hub/markdown-template"]).toBe(configuredAlias)
+    const plugins = (nitroConfig.rollupConfig as { plugins: Plugin[] }).plugins
+    expect(plugins).toContain(existingPlugin)
+    const exactAlias = plugins.find(plugin => plugin.name === "vite-hub/nuxt-exact-aliases")
+    if (configuredAlias) {
+      expect(exactAlias).toBeUndefined()
+    } else {
+      if (typeof exactAlias?.resolveId !== "function") throw new TypeError("Expected Nitro exact alias resolver.")
+      expect(await Reflect.apply(exactAlias.resolveId, {}, ["@vite-hub/markdown-template"])).toBe("/tmp/markdown-template-runtime.mjs")
+      expect(await Reflect.apply(exactAlias.resolveId, {}, ["@vite-hub/markdown-template/internal/composition"])).toBeUndefined()
+    }
+    const resolver = plugins.find(plugin => plugin.name === "vite-hub/nuxt-runtime-resolver:@vite-hub/markdown-template/vite")
+    expect(resolver).toBeDefined()
+    const resolveHook = resolver?.resolveId
+    const loadHook = resolver?.load
+    if (typeof resolveHook !== "function" || typeof loadHook !== "function") throw new TypeError("Expected Nitro Markdown Template resolver hooks.")
+    expect(await Reflect.apply(resolveHook, {}, ["/tmp/vitehub-nuxt/server/agents/reply.template.md", "/tmp/vitehub-nuxt/server/agents/agent.ts", { ssr: true, isEntry: false }])).toBe("/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template")
+    expect(await Reflect.apply(loadHook, {}, ["/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template"])).toBe("export default () => 'rendered'")
+    expect(resolveId).toHaveBeenCalled()
+    expect(load).toHaveBeenCalled()
+  })
+
   it("resolves Blob and KV virtual runtime modules during Nitro bundling", async () => {
     let resolvedKv: unknown
     let resolvedBlob: unknown

@@ -146,6 +146,7 @@ const nitroRuntimeResolverNames = new Set([
   "@vite-hub/blob/vite",
   "@vite-hub/email/vite",
   "@vite-hub/kv/vite",
+  "@vite-hub/markdown-template/vite",
 ])
 
 const nitroConfigResolvedNames = new Set([
@@ -223,6 +224,40 @@ function installNitroRuntimeResolvers(config: Record<string, unknown>, plugins: 
   for (const resolver of resolvers) {
     if (!nitroPlugins.some(candidate => pluginOptionHasName(candidate, resolver.name))) nitroPlugins.push(resolver)
   }
+}
+
+function replayNitroAliases(configured: NonNullable<UserConfig["resolve"]>["alias"], nitroConfig: Record<string, unknown>, allowed: ReadonlySet<string>): void {
+  if (!configured) return
+  // SAFETY: Nitro's alias option maps module specifiers to string replacement paths.
+  const aliases = (nitroConfig.alias ??= {}) as Record<string, string>
+  const exactEntries = Array.isArray(configured)
+    ? configured.flatMap((alias) => {
+        if (!(alias.find instanceof RegExp)) return []
+        const source = alias.find.source
+        return source.startsWith("^") && source.endsWith("$")
+          ? [[source.slice(1, -1).replaceAll("\\/", "/"), alias.replacement] as const]
+          : []
+      })
+    : []
+  const entries = Array.isArray(configured)
+    ? configured.flatMap((alias) => alias.find instanceof RegExp ? [] : [[alias.find, alias.replacement] as const])
+    : Object.entries(configured)
+  for (const [name, replacement] of entries) {
+    if (allowed.has(name)) aliases[name] ??= replacement
+  }
+  const exactAliases = exactEntries.filter(([name]) => allowed.has(name) && aliases[name] === undefined)
+  if (!exactAliases.length) return
+  const rollupConfig = (nitroConfig.rollupConfig ??= {}) as Record<string, unknown>
+  const configuredPlugins = rollupConfig.plugins as PluginOption | undefined
+  const plugins = Array.isArray(configuredPlugins) ? configuredPlugins : configuredPlugins ? [configuredPlugins] : []
+  rollupConfig.plugins = plugins
+  // Nitro's string aliases also match subpaths, so replay anchored aliases through an exact resolver.
+  plugins.push({
+    name: "vite-hub/nuxt-exact-aliases",
+    resolveId(id) {
+      return exactAliases.find(([name]) => name === id)?.[1]
+    },
+  })
 }
 
 function addTypeScriptDefaults(options: Record<string, unknown>, includes: string[], excludes: string[]): void {
@@ -698,6 +733,7 @@ async function applyNitroConfig(
   await finalizeNitroReplayPlugins(plugins, config)
 
   if (config.nitro) {
+    replayNitroAliases(config.resolve?.alias, config.nitro, new Set(["@vite-hub/markdown-template"]))
     installVitePluginNitroModules(config.nitro, plugins)
     Object.assign(nitroConfig, config.nitro)
   }
