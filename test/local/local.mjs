@@ -2,13 +2,13 @@
 // Local Provider Run orchestrator: executes built Provider Output on a local
 // runtime and runs every Primitive Suite against it. Exceptions to local
 // coverage are logged loudly, never skipped silently.
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { resolve } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 
-import { stopChild } from "./process.mjs"
+import { manageChild } from "./process.mjs"
 
 import { buildPlayground } from "./build-playground.mjs"
 
@@ -36,12 +36,16 @@ async function waitForProbe(url, timeoutMs = 60_000) {
   throw new Error(`[e2e:local] App at ${url} never became healthy: ${lastError}`)
 }
 
-function runSuite(name, command, args, env = {}) {
+async function runSuite(name, command, args, env = {}) {
   log(`suite ${name}: ${command} ${args.join(" ")}`)
-  const result = spawnSync(command, args, { cwd: repoRoot, env: { ...process.env, ...env }, stdio: "inherit" })
-  if (result.status !== 0) {
-    throw new Error(`[e2e:local] Primitive Suite "${name}" failed (exit ${result.status}).`)
-  }
+  const child = spawn(command, args, { cwd: repoRoot, env: { ...process.env, ...env }, stdio: "inherit" })
+  await new Promise((resolve, reject) => {
+    child.once("error", reject)
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolve()
+      else reject(new Error(`[e2e:local] Primitive Suite "${name}" failed (exit ${code ?? signal}).`))
+    })
+  })
 }
 
 function suiteRunner(provider, url) {
@@ -68,21 +72,22 @@ async function runCloudflare() {
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
     stdio: ["ignore", "inherit", "inherit"],
   })
+  const stop = manageChild(dev)
   try {
     await waitForProbe(url)
     const run = suiteRunner("cloudflare", url)
-    run.pkg("kv")
-    run.pkg("rate-limit")
-    run.script("queue")
-    run.script("schedule", ["--timeout", "90000"])
-    run.script("workflow")
-    run.pkg("workspace")
-    run.blob()
-    run.database()
+    await run.pkg("kv")
+    await run.pkg("rate-limit")
+    await run.script("queue")
+    await run.script("schedule", ["--timeout", "90000"])
+    await run.script("workflow")
+    await run.pkg("workspace")
+    await run.blob()
+    await run.database()
     log("EXCEPTION (runtime): sandbox is live-only - it needs real containers.")
   }
   finally {
-    await stopChild(dev)
+    await stop()
   }
 }
 
@@ -115,19 +120,20 @@ async function runVercel() {
     env: { ...process.env, ...bridgeEnv },
     stdio: ["ignore", "inherit", "inherit"],
   })
+  const stop = manageChild(bridge)
   try {
     await waitForProbe(url)
     const run = suiteRunner("vercel", url)
     if (hasUpstash) {
-      run.pkg("kv")
-      run.script("schedule", ["--timeout", "90000"])
+      await run.pkg("kv")
+      await run.script("schedule", ["--timeout", "90000"])
     }
     else {
       log("EXCEPTION (env): kv and schedule on vercel-local need an Upstash-compatible endpoint (KV_REST_API_URL/TOKEN, e.g. serverless-redis-http). Suites NOT run - CI provides SRH services.")
     }
-    run.script("workflow")
+    await run.script("workflow")
     if (hasRemoteDatabase) {
-      run.database()
+      await run.database()
     }
     else {
       log("EXCEPTION (env): database on vercel-local needs a remote-shaped libSQL URL (TURSO_DATABASE_URL, e.g. a local sqld container). Suite NOT run - CI provides an sqld service.")
@@ -137,7 +143,7 @@ async function runVercel() {
     log("EXCEPTION (runtime): sandbox is live-only - it needs real containers.")
   }
   finally {
-    await stopChild(bridge)
+    await stop()
   }
 }
 

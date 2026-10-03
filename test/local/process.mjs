@@ -30,3 +30,30 @@ function signalChild(child, signal) {
     if (error.code !== "ESRCH") throw error
   }
 }
+
+// Keep signal cleanup active until the provider has been reaped.
+export function manageChild(child) {
+  let cleanup
+  let interrupted = false
+  const stop = () => {
+    cleanup ??= stopChild(child).finally(() => {
+      process.off("SIGINT", onSignal)
+      process.off("SIGTERM", onSignal)
+    })
+    return cleanup
+  }
+  const onSignal = async signal => {
+    if (interrupted) return
+    interrupted = true
+    try {
+      await stop()
+    }
+    finally {
+      // Restore Node's default signal termination, including its exit status.
+      process.kill(process.pid, signal)
+    }
+  }
+  process.on("SIGINT", onSignal)
+  process.on("SIGTERM", onSignal)
+  return stop
+}
