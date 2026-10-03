@@ -226,10 +226,10 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           }
           finally {
             releasePromise = undefined
+            if (this.pendingControllerRelease === control?.release) this.pendingControllerRelease = undefined
           }
         },
       }
-      this.pendingControllerRelease = control.release
       this.attaching = false
       if (this.closing || this.state !== "released") {
         releaseAttempted = true
@@ -247,6 +247,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       this.attaching = false
       const errors = [error]
       if (control && !releaseAttempted) {
+        this.pendingControllerRelease = control.release
         try {
           await control.release()
         }
