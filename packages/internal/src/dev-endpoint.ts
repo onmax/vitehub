@@ -173,8 +173,27 @@ async function writeResponse(res: ServerResponse, response: Response, stream = f
     await pipeline(Readable.fromWeb(response.body), res, { signal })
   }
   else {
-    const body = await response.arrayBuffer()
-    if (body.byteLength) res.write(Buffer.from(body))
+    const chunks: Uint8Array[] = []
+    const reader = response.body?.getReader()
+    if (reader) {
+      const abort = () => { void reader.cancel(signal?.reason).catch(() => {}) }
+      signal?.addEventListener("abort", abort, { once: true })
+      try {
+        signal?.throwIfAborted()
+        while (true) {
+          const { done, value } = await reader.read()
+          signal?.throwIfAborted()
+          if (done) break
+          chunks.push(value)
+        }
+      }
+      finally {
+        signal?.removeEventListener("abort", abort)
+        reader.releaseLock()
+      }
+    }
+    if (signal?.aborted || res.destroyed) return
+    if (chunks.length) res.write(Buffer.concat(chunks))
     res.end()
   }
 }
