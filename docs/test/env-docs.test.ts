@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 
 const docsRoot = resolve(import.meta.dirname, "..");
 const canonicalPages = [
-  "content/docs/server-primitives/env.md",
+  "content/docs/env/index.md",
   "content/docs/reference/config-options.md",
 ] as const;
 

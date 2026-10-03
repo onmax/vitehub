@@ -31,11 +31,11 @@ describe("docs page actions", () => {
   });
 
   it("opens ChatGPT and Claude with a prompt that references the canonical raw URL", () => {
-    const links = pageActionLinks("/docs/server-primitives/kv/");
-    const prompt = pageChatPrompt("https://vitehub.dev/raw/docs/server-primitives/kv.md");
+    const links = pageActionLinks("/docs/kv/");
+    const prompt = pageChatPrompt("https://vitehub.dev/raw/docs/kv.md");
 
     expect(prompt).toBe(
-      "Read https://vitehub.dev/raw/docs/server-primitives/kv.md from the ViteHub documentation. Use it as context to answer my questions and to help me apply it in my project.",
+      "Read https://vitehub.dev/raw/docs/kv.md from the ViteHub documentation. Use it as context to answer my questions and to help me apply it in my project.",
     );
     expect(links?.prompt).toBe(prompt);
 
@@ -98,7 +98,7 @@ describe("docs page actions", () => {
     for (const label of labels.slice(0, 5)) expect(guide).toContain(`| ${label} |`);
     expect(guide).toContain("| Add MCP server to Cursor or VS Code |");
     expect(component).toContain('to: "/docs/ai-resources/mcp-server"');
-    expect(guide).toContain(pageChatPrompt("https://vitehub.dev/raw/docs/server-primitives/kv.md"));
+    expect(guide).toContain(pageChatPrompt("https://vitehub.dev/raw/docs/kv.md"));
   });
 
   it("uses the generated MCP endpoint and server name in every setup snippet", () => {

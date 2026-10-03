@@ -152,5 +152,5 @@ The two first-success guides include complete build and runtime commands:
 ## Next steps
 
 - Read [Vite Integrations and Provider Output](/docs/concepts/vite-integrations-and-provider-output) to understand integration ownership.
-- Open [Server Primitives](/docs/server-primitives) to choose infrastructure.
+- Open [Server Primitives](/docs/getting-started/server-primitives) to choose infrastructure.
 - Open [Agents](/docs/agents) to choose an Agent Driver and Capabilities.

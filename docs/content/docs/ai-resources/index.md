@@ -42,15 +42,13 @@ Each index lists documentation pages and links every page to its raw Markdown ve
 | URL | Content |
 | --- | --- |
 | `https://vitehub.dev/llms.txt` | Every docs page, plus blog, trust, and developer resources. Start here. |
-| `https://vitehub.dev/llms/agents.txt` | Only the pages in the Agents lane of the sidebar. |
-| `https://vitehub.dev/llms/server-primitives.txt` | Only the pages in the Server Primitives lane of the sidebar. |
 | `https://vitehub.dev/llms-full.txt` | The complete documentation in one file. |
 
-Give the agent the smallest index that covers the task.
-For example, an application that uses KV and Queue without Agents needs only the Server Primitives index:
+Give the agent the index, then let it pick only the product pages the task needs.
+For example, an application that uses KV and Queue without Agents needs only those two product pages:
 
 ```txt [Agent flow]
-1. Read https://vitehub.dev/llms/server-primitives.txt.
+1. Read https://vitehub.dev/llms.txt.
 2. Choose the smallest raw Markdown page for the task.
 3. Inspect the application's installed ViteHub exports and types.
 4. Keep the source URL with any copied context.

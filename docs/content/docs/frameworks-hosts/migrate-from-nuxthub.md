@@ -12,7 +12,7 @@ Database needs more care: ViteHub supports SQLite only, and it tracks migrations
 in a different table.
 
 After the move, the same KV, Blob, and Database APIs are also available to
-[Agents](/docs/agents) through [Capabilities](/docs/capabilities).
+[Agents](/docs/agents) through [Capabilities](/docs/agents/capabilities).
 
 ## Compare the features
 
@@ -30,7 +30,7 @@ After the move, the same KV, Blob, and Database APIs are also available to
 
 NuxtHub v0.10 removed `hubAI()`, AutoRAG, Vectorize, and `hubBrowser()`.
 ViteHub has no AI or Vectorize feature either. For browser work on Cloudflare,
-read [Browser](/docs/server-primitives/browser).
+read [Browser](/docs/browser).
 
 ## Replace the module
 
@@ -82,7 +82,7 @@ instead of throwing, so check the error.
 
 `get`, `set`, `has`, `del`, `keys`, and `clear` keep their names. `set` passes
 its options, such as `ttl`, to the store driver, so TTL support depends on the
-driver. Read [KV](/docs/server-primitives/kv) for named stores and paginated
+driver. Read [KV](/docs/kv) for named stores and paginated
 `list()`.
 
 ## Move Blob calls
@@ -109,8 +109,8 @@ return `[error, value]`. `handleUpload()` takes `formKey`, `multiple`, `ensure`,
 and `put` options. The multipart route uses an `[action]/[...pathname]` route,
 and the composables send ViteHub's request format. In Nuxt,
 `useUpload()` and `useMultipartUpload()` are auto-imported when `blob` is
-enabled, as in NuxtHub. Read [Upload files](/docs/server-primitives/blob#upload-files)
-and [Multipart uploads](/docs/server-primitives/blob#multipart-uploads).
+enabled, as in NuxtHub. Read [Upload files](/docs/blob#upload-files)
+and [Multipart uploads](/docs/blob#multipart-uploads).
 
 Multipart uploads work with the `fs`, `cloudflare-r2` (binding), and
 `vercel-blob` drivers. Direct `PUT` uploads with `blob.sign()` on Cloudflare
@@ -216,7 +216,7 @@ changes. Drizzle compares them with the retained baseline snapshot, so the next
 migration contains only those changes. Review that SQL, rebuild, and apply it
 with Wrangler. Keep the baseline SQL and `meta/` files in version control.
 This no-op baseline is for the existing database; it does not create the schema
-for a new empty database. Read [Database](/docs/server-primitives/database).
+for a new empty database. Read [Database](/docs/database).
 
 ## Keep the cache
 
@@ -300,5 +300,5 @@ feature.
 
 ## Next steps
 
-- Give an Agent the same data with the [KV](/docs/capabilities/kv), [Blob](/docs/capabilities/blob), and [Database](/docs/capabilities/db) Capabilities.
-- Read [Server primitives](/docs/server-primitives) for Queue, Workflow, Schedule, Auth, and the other APIs that NuxtHub does not provide.
+- Give an Agent the same data with the [KV](/docs/kv/agent-capability), [Blob](/docs/blob/agent-capability), and [Database](/docs/database/agent-capability) Capabilities.
+- Read [Server primitives](/docs/getting-started/server-primitives) for Queue, Workflow, Schedule, Auth, and the other APIs that NuxtHub does not provide.

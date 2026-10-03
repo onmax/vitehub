@@ -1,4 +1,4 @@
 title: Concepts
 icon: i-lucide-map
-order: 30
-lanes: [agents, server-primitives]
+order: 70
+category: Platform

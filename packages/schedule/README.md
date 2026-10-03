@@ -216,7 +216,7 @@ This is a breaking import change. Move existing execution, store, and state help
 
 ## Documentation and support
 
-- Read the [Schedule guide](https://vitehub.dev/docs/server-primitives/schedule) for every public import, Runtime Helper, store, wake driver, and Vite option.
+- Read the [Schedule guide](https://vitehub.dev/docs/schedule) for every public import, Runtime Helper, store, wake driver, and Vite option.
 - Check [Provider Output](https://vitehub.dev/docs/reference/provider-output) for generated files and deployment inspection.
 - Check [runtime and host support](https://vitehub.dev/docs/frameworks-hosts/support-matrix) for current proof and host qualifications.
 - Report package problems in the [ViteHub issue tracker](https://github.com/vite-hub/vitehub/issues).

@@ -76,7 +76,7 @@ server/
             review.sh
 ```
 
-This convention needs no `skills()` Capability declaration. Use [`skills()`](/docs/capabilities/skills) when the Skill comes from a Workspace or external Source instead of the Agent folder.
+This convention needs no `skills()` Capability declaration. Use [`skills()`](/docs/agents/capabilities/skills) when the Skill comes from a Workspace or external Source instead of the Agent folder.
 
 ## Markdown templates
 

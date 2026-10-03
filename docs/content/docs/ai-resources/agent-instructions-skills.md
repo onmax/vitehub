@@ -96,6 +96,6 @@ Keep them separate, so that repository guidance does not leak into runtime Agent
 | Repository `AGENTS.md` | Coding agents that contribute to a repository | Defines local development rules and project boundaries. |
 | [Agent Driver Instructions](/docs/agents/instructions) | Agents that run inside an application | Defines model-facing runtime behavior. |
 | Agent-local `skills/` | Provider-backed Agent Invocations | Installs Skills that a folder Agent Definition owns. |
-| [`skills()` Capability](/docs/capabilities/skills) | ViteHub Agent Invocations | Makes Workspace-backed or external Source Skills available to the Agent. |
+| [`skills()` Capability](/docs/agents/capabilities/skills) | ViteHub Agent Invocations | Makes Workspace-backed or external Source Skills available to the Agent. |
 
 Agent-local Skills require a folder Definition. Put them beside `server/agents/<name>/agent.ts` under `server/agents/<name>/skills/<skill>/SKILL.md`. ViteHub materializes them in the Agent Workspace at `.agents/skills/<skill>/SKILL.md`. A flat Definition such as `server/agents/review.ts` cannot own a sibling Skill tree. Move it to `server/agents/review/agent.ts` when it needs colocated Skills.

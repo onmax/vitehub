@@ -192,7 +192,7 @@ Do not import from `src`, `dist`, or ViteHub's `_internal` paths.
 - [Runtime policy, approvals, and traces](https://vitehub.dev/docs/concepts/runtime-policy-approvals-and-traces)
 - [Runtime events](https://vitehub.dev/docs/reference/runtime-events)
 - [Stable import paths](https://vitehub.dev/docs/reference/import-paths)
-- [Node Runtime diagnostics](https://vitehub.dev/docs/capabilities/diagnostics)
+- [Node Runtime diagnostics](https://vitehub.dev/docs/agents/capabilities/diagnostics)
 - [Report a Runtime issue](https://github.com/vite-hub/vitehub/issues/new)
 
 ### Work checkpoints
