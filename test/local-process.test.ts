@@ -25,7 +25,7 @@ it.skipIf(process.platform === "win32")("reaps a child that ignores SIGTERM", as
   }
 })
 
-it.skipIf(process.platform === "win32")("kills descendants after the group leader exits", async () => {
+it.skipIf(process.platform !== "linux")("kills descendants after the group leader exits", async () => {
   const child = spawn(process.execPath, ["-e", `
     const { spawn } = require('node:child_process')
     spawn(process.execPath, ['-e', 'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => {}, 1000)'], { stdio: ['ignore', 'inherit', 'inherit'] })
