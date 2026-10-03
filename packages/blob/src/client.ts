@@ -59,6 +59,7 @@ function multipartUrl(baseURL: string, action: string, pathname: string, query: 
   return `${baseURL.replace(/\/+$/, "")}/${action}/${path}${search ? `?${search}` : ""}`
 }
 
+// doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- The matching upload route defines each response shape at its call site.
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const message = await response.text().catch(() => "")

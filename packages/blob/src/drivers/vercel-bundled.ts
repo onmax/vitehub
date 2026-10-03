@@ -103,6 +103,7 @@ export function createBundledVercelBlobDriver(options: ResolvedVercelBlobStoreCo
         return toBlobObject(await head(result.url, auth))
       },
       async uploadPart(partNumber, body) {
+        // SAFETY: The multipart protocol passes a Blob-compatible body to the Vercel SDK.
         const part = await uploadPart(pathname, body as Parameters<typeof uploadPart>[1], { ...partOptions, partNumber })
         return { etag: part.etag, partNumber: part.partNumber }
       },

@@ -248,6 +248,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       const dir = resolveMultipartDir(root, uploadId)
       let state: FsMultipartState
       try {
+        // doctor-disable-next-line typescript/boundaries/no-unvalidated-deserialization,typescript/strict/require-safety-comment-for-type-assertion -- The state file is written by this driver and its pathname and upload ID are checked below.
         state = JSON.parse(await readFile(resolve(dir, "state.json"), "utf8")) as FsMultipartState
       }
       catch (error) {
