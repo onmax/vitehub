@@ -509,7 +509,7 @@ describe("framework package contract", () => {
       /\.session-inspector__tabs \{[\s\S]*?flex: 0 1 auto;[\s\S]*?max-width: calc\(100% - 2rem\);[\s\S]*?width: max-content;/,
     );
     expect(consoleSessionCss).toMatch(
-      /\.session-inspector__tabs \[data-slot="list"\] \{[\s\S]*?min-width: 0;[\s\S]*?width: max-content;/,
+      /\.session-inspector__tabs \[data-slot="list"\] \{[^}]*?display: flex;[^}]*?min-width: 0;[^}]*?width: max-content;/,
     );
     const sessionTrace = readFileSync(
       `${packageRoot}/dist/console/runtime/components/console-session-trace.vue`,
