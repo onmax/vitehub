@@ -1292,6 +1292,26 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && ["{", ",", "async"].includes(references[index - 2] ?? "")
         || previous === "*" && references[index - 2] === "async"
     }
+    // Method parameters shadow module bindings throughout their method body.
+    // Keep these names local to the template interpolation so an unrelated
+    // method such as `render(portal) { return portal.id }` cannot taint an
+    // imported `portal` binding.
+    for (let index = 0; index < references.length; index++) {
+      if (!methodKey(index)) continue
+      const parameterOpen = index + 1
+      const parameterClose = [...referenceOpenings.entries()].find(([, opening]) => opening === parameterOpen)?.[0]
+      if (parameterClose === undefined || references[parameterClose + 1] !== "{") continue
+      const bodyOpen = parameterClose + 1
+      const bodyClose = [...referenceOpenings.entries()].find(([, opening]) => opening === bodyOpen)?.[0]
+      if (bodyClose === undefined) continue
+      const names = new Set<string>()
+      for (let parameter = parameterOpen + 1; parameter < parameterClose; parameter++) {
+        if (!isIdentifier(references[parameter]!)) continue
+        if (references[parameter - 1] === "." || references[parameter + 1] === ":") continue
+        names.add(references[parameter]!)
+      }
+      templateLocalBindings.push({ start: parameterOpen, end: bodyClose, names })
+    }
     const classFieldKeys = new Set<number>()
     const classExpressionNames = new Set<number>()
     const referenceClosings = new Map([...referenceOpenings].map(([closing, opening]) => [opening, closing]))

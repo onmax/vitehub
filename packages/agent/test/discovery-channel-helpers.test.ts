@@ -27,6 +27,13 @@ async function discover(agent: string, files: Record<string, string> = {}) {
 
 const imports = 'import { defineAgent } from "vite-hub/agent"; import { github, telegram, webChat } from "vite-hub/agent/channels";'
 
+it("ignores object method parameters that shadow imported bindings in templates", async () => {
+  const imported = await discover(`${imports} import portal from "../../portal.ts"; const template = \`${"${"}({ render(portal) { return portal.id } })${"}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
+  })
+  expect(imported?.workspace).toBeUndefined()
+})
+
 it.each([
   "({ portal() { return input.id } })",
   "({ get portal() { return input.id } })",
