@@ -284,6 +284,23 @@ describe("inputCommands", () => {
     expect(bCalls).toBe(1_005)
   })
 
+  it("does not renew a recursive cycle when removing a sibling", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        a: { call: () => { calls++; return "/b /remove" } },
+        b: { call: () => "/a" },
+        remove: { call() {} },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a /remove" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
   it("bounds cycles longer than two commands that introduce more commands", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

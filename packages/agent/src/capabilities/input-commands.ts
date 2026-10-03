@@ -539,6 +539,21 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         for (const [name, count] of added.byName) byName.set(name, (byName.get(name) || 0) + count)
         cacheInvocationCounts(next, { byName, total: previousCounts.total - removed.total + added.total })
       }
+      const canReenterLineage = (value: string): boolean => {
+        if (!transitionLineage.length) return false
+        const reachesLineage = (name: string, seen: Set<string>): boolean => {
+          if (transitionLineage.includes(name)) return true
+          if (seen.has(name)) return false
+          seen.add(name)
+          return [...(transitionGraph.get(name) || [])].some(successor => reachesLineage(successor, seen))
+        }
+        let invocation = findInputCommandInvocation(value, trigger, commands)
+        while (invocation) {
+          if (reachesLineage(invocation.name, new Set())) return true
+          invocation = findInputCommandInvocation(value, trigger, commands, Math.max(invocation.end, invocation.start + 1))
+        }
+        return false
+      }
       while (cursor <= text.length) {
         // Each registered command can credit growth or a new rewrite stage only once.
         // Repeated or alternating recursive handlers cannot keep raising the allowance.
@@ -809,12 +824,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             budgetText = undefined
             budgetCommand = undefined
           }
-          // A removed command ends its recursive lineage. Do not let credits from
-          // that branch suppress a later independent sibling branch.
-          transitionLineage = []
-          blockedTransitions.clear()
-          creditedCyclicTransitions.clear()
-          numericTransitionDepths.clear()
           input = removeInputCommandText(input, target, invocation)
           context.input.set(input)
           target = getInputCommandTarget(input)
@@ -826,6 +835,14 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             cacheInvocationCounts(target.text, { byName, total: previousCounts.total - 1 })
           }
           text = target.text
+          // Preserve recursive tracking while a remaining sibling can re-enter
+          // the active lineage. Reset only at a proven independent boundary.
+          if (!canReenterLineage(text)) {
+            transitionLineage = []
+            blockedTransitions.clear()
+            creditedCyclicTransitions.clear()
+            numericTransitionDepths.clear()
+          }
           // SAFETY: Input command parsing establishes the asserted command contract.
           await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
           cursor = 0
