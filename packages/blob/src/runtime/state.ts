@@ -67,7 +67,7 @@ export function getNamedBlobRuntimeStorage(name: string): BlobStorage | undefine
 
 export function setBlobRuntimeConfig(config: false | ResolvedBlobModuleOptions | undefined): void {
   const snapshot = config === undefined ? undefined : JSON.stringify(config, (_key, value: unknown) => {
-    if (!(value instanceof Function)) return value
+    if (typeof value !== "function") return value
     let id = functionIds.get(value)
     if (id === undefined) {
       id = ++nextFunctionId
