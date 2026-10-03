@@ -4,6 +4,7 @@ import type {
   BoxExecOptions,
   BoxFileEntry,
   BoxProcess,
+  BoxResolvedToolchain,
   BoxRuntimeOpenOptions,
   BoxSession,
 } from "../index.ts";
@@ -49,18 +50,6 @@ export interface RuntimeSession {
     abortSignal?: AbortSignal;
     path: string;
   }): Promise<Uint8Array | null>;
-  readFile?(options: {
-    abortSignal?: AbortSignal;
-    path: string;
-  }): Promise<ReadableStream<Uint8Array> | null>;
-  readTextFile?(options: {
-    abortSignal?: AbortSignal;
-    encoding?: string;
-    endLine?: number;
-    path: string;
-    startLine?: number;
-  }): Promise<string | null>;
-  restricted?(): RuntimeSession;
   removeFile(options: {
     abortSignal?: AbortSignal;
     path: string;
@@ -73,20 +62,11 @@ export interface RuntimeSession {
   }>;
   spawn?(options: RuntimeCommandOptions): Promise<RuntimeProcess>;
   stop(): Promise<void>;
+  /** Set by the shared toolchain step before requirement checks. */
+  toolchain?: BoxResolvedToolchain;
   writeBinaryFile(options: {
     abortSignal?: AbortSignal;
     content: Uint8Array;
-    path: string;
-  }): Promise<void>;
-  writeFile?(options: {
-    abortSignal?: AbortSignal;
-    content: ReadableStream<Uint8Array>;
-    path: string;
-  }): Promise<void>;
-  writeTextFile?(options: {
-    abortSignal?: AbortSignal;
-    content: string;
-    encoding?: string;
     path: string;
   }): Promise<void>;
 }
@@ -225,6 +205,9 @@ export function createBoxSession(
       },
     },
     id: runtime.id,
+    get toolchain() {
+      return runtime.toolchain;
+    },
     ...(runtime.inspectionConcurrency === undefined
       ? {}
       : { inspectionConcurrency: runtime.inspectionConcurrency }),

@@ -12,9 +12,11 @@ import type {
 import { channelsErrorDiagnostics } from "../error-diagnostics.ts"
 
 let registryOverride: ChannelDefinitionRegistry | undefined
+let channels = new Map<string, Promise<ChannelClient>>()
 
 export function setChannelRuntimeRegistry(registry: ChannelDefinitionRegistry | undefined): void {
   registryOverride = registry
+  channels = new Map()
 }
 
 function getRegistry(): ChannelDefinitionRegistry {
@@ -35,12 +37,24 @@ async function loadChannelDefinition(name: string): Promise<ChannelDefinition | 
   return undefined
 }
 
-async function resolveChannel<TConnectors extends ChannelConnectorMap>(name: string): Promise<ChannelClient<TConnectors>> {
+async function resolveChannel(name: string): Promise<ChannelClient> {
   const definition = await loadChannelDefinition(name)
   if (!definition) {
     throw channelsErrorDiagnostics.CHANNELS_R0002({ message: `[vitehub] No Channel Definition was discovered for "${name}".` })
   }
-  return createChannel(name, definition as unknown as ChannelDefinition<TConnectors>)
+  return createChannel(name, definition)
+}
+
+function resolveCachedChannel(name: string): Promise<ChannelClient> {
+  const cache = channels
+  const existing = cache.get(name)
+  if (existing) return existing
+  const pending = resolveChannel(name).catch((cause: unknown) => {
+    if (cache.get(name) === pending) cache.delete(name)
+    throw cause
+  })
+  cache.set(name, pending)
+  return pending
 }
 
 export function useChannel<const TName extends ChannelDefinitionName>(name: TName): ChannelClient<
@@ -55,16 +69,11 @@ export function useChannel<TConnectors extends ChannelConnectorMap = ChannelConn
     throw channelsErrorDiagnostics.CHANNELS_R0003({ message: "`useChannel()` requires a non-empty channel name." })
   }
 
-  let resolved: Promise<ChannelClient<TConnectors>> | undefined
   return {
     name,
     async send(text, options) {
       try {
-        resolved ||= resolveChannel<TConnectors>(name).catch((cause: unknown) => {
-          resolved = undefined
-          throw cause
-        })
-        return await (await resolved).send(text, options)
+        return await (await resolveCachedChannel(name)).send(text, options)
       }
       catch (cause) {
         return [toChannelSendError(cause), null]

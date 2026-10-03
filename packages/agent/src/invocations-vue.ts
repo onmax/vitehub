@@ -8,7 +8,7 @@ import type {
   AgentInvocationSummary,
 } from "./invocations.ts";
 import { agentDiagnostics } from "./agent-diagnostics.ts"
-import { hasRuntimeType } from "./internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 export interface AgentInvocationRequestOptions {
   signal?: AbortSignal;

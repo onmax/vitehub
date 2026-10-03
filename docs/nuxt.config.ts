@@ -110,6 +110,8 @@ export default defineNuxtConfig({
         "lucide:code-2",
         "lucide:copy",
         "lucide:hash",
+        "lucide:hard-drive-download",
+        "lucide:hard-drive-upload",
         "lucide:lightbulb",
         "lucide:menu",
         "lucide:paperclip",

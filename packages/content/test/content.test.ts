@@ -141,6 +141,28 @@ describe("contentSource", () => {
     expect(prepared.at(-1)).toBe("2")
   })
 
+  it("keeps separate Content instances on their own adapted Source loads", async () => {
+    let revision = 0
+    const source = contentSource(() => ({
+      async items() {
+        return [{ content: `---\ntitle: Revision ${++revision}\n---\n# Content`, key: "index.md" }]
+      },
+    }), { prefix: "/docs" })
+    const first = defineContent({ source })
+    const second = defineContent({ source })
+
+    await first.init()
+    await second.init()
+    await expect(first.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 1" } })])
+    await expect(second.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 2" } })])
+
+    await first.cache.refresh("default")
+    await expect(first.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 3" } })])
+    await expect(second.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 2" } })])
+    expect(revision).toBe(3)
+    await Promise.all([first.dispose(), second.dispose()])
+  })
+
   it("keeps each adapted source on one revision while async init parsers read", async () => {
     const revisions = { first: 0, second: 0 }
     const parsed: string[] = []

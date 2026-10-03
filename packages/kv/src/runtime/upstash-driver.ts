@@ -3,6 +3,7 @@ import createDriver from "unstorage/drivers/upstash"
 import type { KVListOptions, KVListPage, ResolvedUpstashKVStoreConfig } from "../types.ts"
 import type { KVRuntimeDriver } from "./driver.ts"
 import { kvErrorDiagnostics } from "../error-diagnostics.ts"
+import { createKVContinuations } from "./continuations.ts"
 
 interface UpstashClient {
   eval: (script: string, keys: string[], args: string[]) => Promise<number>
@@ -46,9 +47,7 @@ interface UpstashCursor {
 }
 
 interface UpstashContinuation extends UpstashCursor {
-  bytes: number
   keys: string[]
-  timeout: ReturnType<typeof setTimeout>
 }
 
 function decodeCursor(cursor?: string): UpstashCursor {
@@ -77,10 +76,14 @@ function escapeRedisGlob(value: string): string {
 export default function createUpstashKVDriver(options: ResolvedUpstashKVStoreConfig): KVRuntimeDriver {
   // SAFETY: The unstorage Upstash driver exposes getInstance and this adapter installs listKeys before returning.
   const driver = createDriver(options) as KVRuntimeDriver & { getInstance: () => UpstashClient }
-  const continuations = new Map<string, UpstashContinuation>()
-  const maximumContinuations = 32
   const maximumContinuationBytes = 1024 * 1024
-  let continuationBytes = 0
+  const expired = () => Object.assign(kvErrorDiagnostics.KV_R0011({ message: "Invalid or expired Upstash KV cursor." }), { code: "KV_CURSOR_EXPIRED" })
+  const continuations = createKVContinuations<UpstashContinuation>({ expired, maximumBytes: maximumContinuationBytes })
+  const dispose = driver.dispose
+  driver.dispose = async () => {
+    try { await continuations.dispose() }
+    finally { await dispose?.call(driver) }
+  }
 
   driver.getAndDeleteItem = async key => driver.getInstance().getdel(key)
   driver.incrementItem = async (key, ttl) => {
@@ -89,44 +92,20 @@ export default function createUpstashKVDriver(options: ResolvedUpstashKVStoreCon
     return value
   }
 
-  function releaseContinuation(cursor: string): void {
-    const continuation = continuations.get(cursor)
-    if (!continuation) return
-    clearTimeout(continuation.timeout)
-    continuationBytes -= continuation.bytes
-    continuations.delete(cursor)
-  }
-
-  function retainContinuation(keys: string[], providerCursor: string): string {
+  function retainContinuation(keys: string[], providerCursor: string): Promise<string> {
     const encoder = new TextEncoder()
     const bytes = keys.reduce((total, key) => total + encoder.encode(key).byteLength, 0)
     if (bytes > maximumContinuationBytes) {
       throw kvErrorDiagnostics.KV_R0010({ message: "Upstash KV scan overflow exceeds the continuation size limit." })
     }
-    while (continuationBytes + bytes > maximumContinuationBytes) {
-      const oldestCursor = continuations.keys().next().value
-      if (!oldestCursor) break
-      releaseContinuation(oldestCursor)
-    }
-    const cursor = globalThis.crypto.randomUUID()
-    const timeout = setTimeout(() => releaseContinuation(cursor), 15 * 60_000)
-    // SAFETY: Node timers expose unref while web-runtime timers are numbers; the optional call keeps both hosts valid.
-    ;(timeout as { unref?: () => void }).unref?.()
-    continuations.set(cursor, { bytes, cursor: providerCursor, keys, timeout })
-    continuationBytes += bytes
-    while (continuations.size > maximumContinuations) {
-      const oldestCursor = continuations.keys().next().value
-      if (oldestCursor) releaseContinuation(oldestCursor)
-    }
-    return cursor
+    return continuations.retain({ cursor: providerCursor, keys }, bytes)
   }
 
   driver.listKeys = async ({ cursor, limit, prefix = "" }: KVListOptions): Promise<KVListPage> => {
-    const retained = cursor ? continuations.get(cursor) : undefined
+    const retained = cursor ? continuations.take(cursor) : undefined
     if (cursor && !retained && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(cursor)) {
-      throw Object.assign(kvErrorDiagnostics.KV_R0011({ message: "Invalid or expired Upstash KV cursor." }), { code: "KV_CURSOR_EXPIRED" })
+      throw expired()
     }
-    if (retained && cursor) releaseContinuation(cursor)
     let providerCursor: string
     let keys: string[]
     if (retained) {
@@ -146,7 +125,7 @@ export default function createUpstashKVDriver(options: ResolvedUpstashKVStoreCon
     const pageKeys = keys.slice(0, limit)
     const overflow = keys.slice(limit)
     if (overflow.length > 0) {
-      return { keys: pageKeys, cursor: retainContinuation(overflow, providerCursor) }
+      return { keys: pageKeys, cursor: await retainContinuation(overflow, providerCursor) }
     }
     if (providerCursor === "0") return { keys: pageKeys }
     return { keys: pageKeys, cursor: encodeCursor({ cursor: providerCursor }) }

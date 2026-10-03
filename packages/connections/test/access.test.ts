@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
-import { connectionActions, decide, envActor, matchesPattern } from "../src/policy.ts"
+import { decide, envActor } from "../src/policy.ts"
+import { connectionActions, matchesPattern } from "../src/catalog.ts"
 import { google } from "../src/google.ts"
 import { defineConnection } from "../src/definition.ts"
 

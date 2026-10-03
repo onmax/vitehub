@@ -6,7 +6,7 @@ import { createWorkspaceStoreFromProvider } from "../storage/provider.ts"
 import { forwardWorkspaceRevisionMaterializer } from "../storage/materialization.ts"
 import { forwardWorkspaceStoreTarget } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { getCachedWorkspaceStore } from "./workspace-cache.ts"
 import type {
   Workspace,

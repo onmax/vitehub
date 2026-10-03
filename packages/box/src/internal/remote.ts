@@ -95,7 +95,8 @@ export async function openRemoteBox(
     initialize?: (session: BoxSession, context: { signal?: AbortSignal }) => Promise<void>;
     signal?: AbortSignal;
   },
-  environment: Readonly<Record<string, string>>,
+  /** Base environment of the runtime session. Toolchain provisioning sets its PATH. */
+  environment: Record<string, string>,
 ) {
   assertRemoteInput(input, options.runtime);
   const session = createBoxSession(runtimeSession, {
@@ -147,7 +148,7 @@ async function materializeRemotePlan(
   input: BoxRuntimeInput,
   session: RuntimeSession,
   options: Pick<RemoteRuntimeOptions, "home" | "workspace" | "preserveWorkspace"> & { signal?: AbortSignal },
-  environment: Readonly<Record<string, string>>,
+  environment: Record<string, string>,
 ) {
   const home = options.home ?? "/home/vitehub";
   const workspace = options.workspace ?? "/workspace";
@@ -189,6 +190,7 @@ async function materializeRemotePlan(
       },
     });
   }
+  if (input.toolchain) await provisionRemoteToolchain(input, session, { abortSignal, home, workspace }, environment);
   await validateRequirements(
     session,
     input.requirements,
@@ -196,6 +198,44 @@ async function materializeRemotePlan(
     abortSignal,
     diagnosticSecrets,
   );
+}
+
+/**
+ * Remote Boxes do not share a cache. Reuse an exact image node, otherwise upload
+ * the verified toolchain into the Box Home cache for this session.
+ */
+async function provisionRemoteToolchain(
+  input: BoxRuntimeInput,
+  session: RuntimeSession,
+  options: { abortSignal?: AbortSignal; home: string; workspace: string },
+  environment: Record<string, string>,
+) {
+  const { abortSignal, home, workspace } = options;
+  const { provisionToolchain, readProjectFilesWithShell, verifyToolchain } = await import("./toolchain.ts");
+  const run = async (script: string) => await session.run({
+    abortSignal,
+    command: `sh -c ${shellQuote(script)}`,
+    workingDirectory: workspace,
+  });
+  const basePath = await run(`printf '%s' "$PATH"`);
+  if (basePath.exitCode !== 0) throw boxErrorDiagnostics.BOX_R0154({ message: `[vitehub] Box toolchain could not read the Box PATH: ${basePath.stderr.trim()}` });
+  const cacheRoot = joinRemotePath(home, ".cache/vitehub/toolchains");
+  const toolchain = await provisionToolchain(input.toolchain!, {
+    abortSignal,
+    cacheRoot,
+    readProjectFiles: async paths => await readProjectFilesWithShell(run, workspace, paths),
+    reuseExactNode: true,
+    run,
+    scratch: cacheRoot,
+    async write(path, content) {
+      await session.makeDirectory({ abortSignal, path: dirnameRemotePath(path), recursive: true });
+      await session.writeBinaryFile({ abortSignal, content, path });
+    },
+  });
+  environment.PATH = [...toolchain.bin, basePath.stdout].filter(Boolean).join(":");
+  // Runtime sessions read the shared environment object, so this check uses the final PATH.
+  await verifyToolchain(toolchain, cacheRoot, async script => await session.run({ abortSignal, command: script, workingDirectory: workspace }));
+  session.toolchain = toolchain;
 }
 
 function joinRemotePath(...parts: string[]) {

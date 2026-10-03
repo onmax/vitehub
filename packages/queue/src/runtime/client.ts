@@ -7,6 +7,7 @@ import {
   normalizePublicQueueIdentifier,
   runQueueProviderOperation,
 } from "../errors.ts"
+import { resolveVercelQueueRegion } from "../internal/vercel-region.ts"
 import { getCloudflareQueueBindingName } from "../integrations/cloudflare.ts"
 import { getVercelQueueTopicName } from "../integrations/vercel.ts"
 
@@ -69,14 +70,6 @@ function getActiveQueueConfig(): false | ResolvedQueueOptions {
   return config || normalizeQueueOptions(undefined, { hosting: "vercel" })!
 }
 
-function hasRequestScopedVercelRegion(config: ResolvedQueueOptions): boolean {
-  return config.provider === "vercel"
-    && !config.region
-    && !process.env.QUEUE_REGION
-    && !process.env.VERCEL_REGION
-    && typeof getQueueRuntimeEvent() !== "undefined"
-}
-
 async function createNamedQueueClient(name: string): Promise<QueueClient> {
   const config = getActiveQueueConfig()
   if (config === false) {
@@ -98,7 +91,7 @@ async function getDynamicQueue(name: string): Promise<QueueClient> {
   }
 
   const config = getActiveQueueConfig()
-  const bypassCache = definition.options?.cache === false || config === false || config.cache === false || config.provider === "cloudflare" || hasRequestScopedVercelRegion(config)
+  const bypassCache = definition.options?.cache === false || config === false || config.cache === false || config.provider === "cloudflare" || (config.provider === "vercel" && resolveVercelQueueRegion(config.region).requestScoped)
   if (bypassCache) {
     return await createNamedQueueClient(name)
   }

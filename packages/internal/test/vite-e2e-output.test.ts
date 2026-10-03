@@ -7,7 +7,7 @@ import { promisify } from "node:util"
 import { resolveConfig } from "vite"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
-import { collectViteHubProvisionSteps } from "../src/cli.ts"
+import { collectViteHubCliContribution } from "../src/cli.ts"
 
 const execFileAsync = promisify(execFile)
 const playgroundDir = resolve(import.meta.dirname, "../../../playground/vite")
@@ -127,7 +127,7 @@ describe("unified vite e2e hosted outputs", () => {
 
     await withEnv(env, async () => {
       const config = await resolveConfig({ root: rootDir }, "serve", "development")
-      const stepIds = (await collectViteHubProvisionSteps(config.plugins)).map(step => step.id)
+      const stepIds = (await collectViteHubCliContribution(config.plugins)).provision.map(step => step.id)
 
       expect(stepIds).toEqual(expect.arrayContaining([
         "database:cloudflare-d1",

@@ -196,21 +196,21 @@ ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern match
 
 ## Use from Agents
 
-Agent Capabilities call a Connection with the Agent name as the actor. The rule in `access.agents.<name>` applies. Tools check access before they run.
+Agent Capabilities call a Connection with `agent:<name>` as the actor. The rule in `access['agent:<name>']` applies. Connections checks access before each request runs.
 
 | Capability | Option | Operation ids |
 | --- | --- | --- |
-| [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.messages.list`, `gmail.messages.get`, `gmail.drafts.create` |
-| [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `openapi.<operationId>` |
-| [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `mcp.<server>.tools.<tool>`, `mcp.<server>.rpc.<method>` |
+| [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.users.messages.list`, `gmail.users.messages.get`, `gmail.users.messages.attachments.get`, `gmail.users.drafts.create` |
+| [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `fetch` |
+| [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `fetch` |
 
-`gmail.drafts.create`, OpenAPI operations other than `GET` and `HEAD`, and all MCP tool calls are writes. Without a matching rule they are denied, so allow or approve them in the Agent rule.
+Gmail drafts use the Connection action `gmail.users.drafts.create` as a write. Grant it with `write: ['gmail.users.drafts.create']` in the Agent rule. OpenAPI operations other than `GET` and `HEAD` and MCP POST requests use the Connection `fetch` action as writes, so they need `write: ['fetch']`. Without a matching write rule, these requests are denied. MCP also requires `approve: false` because its transport needs each response in the active session.
 
 ## Activity
 
 ViteHub stores activity in the `vitehub_connection_activity` table. Each entry has the actor, action (`call`, `connect`, `refresh`, `disconnect`), Operation id, effect, outcome, provider status, duration, target host and path, and trace ids. Activity never contains request bodies, response bodies, headers, or tokens.
 
-Agent tools record every call, reads included. MCP protocol messages are recorded only when they are denied or fail. The Console shows activity for each Connection.
+Agent tools record every call, reads included. MCP protocol messages record successful, denied, and failed requests. The Console shows activity for each Connection.
 
 ## Storage and security
 

@@ -10,11 +10,13 @@ import type {
   BoxRuntimePlan,
   BoxRuntime,
   BoxRuntimeInput,
+  BoxToolchainInput,
   ResolvedBoxCheckout,
   ResolvedBoxFile,
   ResolvedBoxPlan,
   ResolvedBoxRequirementInput,
 } from "../index.ts"
+import { listCommandFiles } from "./file-listing.ts"
 import { materializeGitCheckout } from "./git-checkout.ts"
 import {
   boxRequirementError,
@@ -40,6 +42,7 @@ interface CrabboxSandboxOptions extends CrabboxOptions {
   checkout?: ResolvedBoxCheckout
   plan: ResolvedBoxPlan;
   requirements: readonly ResolvedBoxRequirementInput[]
+  toolchain?: BoxToolchainInput
   workspace?: string
 }
 
@@ -141,6 +144,7 @@ export function createCrabboxRuntime(options: CrabboxOptions = {}): BoxRuntime {
           ...(input.checkout ? { checkout: input.checkout } : {}),
           plan: input.plan,
           requirements: input.requirements,
+          ...(input.toolchain ? { toolchain: input.toolchain } : {}),
           ...(workspace ? { workspace } : {}),
         })
       let initializedSession: ReturnType<typeof createBoxSession> | undefined
@@ -282,6 +286,17 @@ function createCrabboxProvider(options: CrabboxSandboxOptions) {
           const probeCleanup = await session.run({ abortSignal: createOptions.abortSignal,
             command: `rm -- ${shellQuote(posix.join(root, ".vitehub-copy-probe"))}` })
           if (probeCleanup.exitCode !== 0) throw crabboxError("remove Crabbox copy probe", probeCleanup)
+          if (options.toolchain) {
+            await provisionCrabboxToolchain(options.toolchain, session, {
+              abortSignal: bootstrapSignal,
+              environment: materialized.environment,
+              environmentFile: materialized.environmentFile,
+              leaseId,
+              options: sessionOptions,
+              root,
+              workspace: remoteWorkspace,
+            })
+          }
           await validateRequirements(
             session,
             options.requirements,
@@ -405,7 +420,7 @@ async function materializePlan(
   }
   appendFiles(script, home, files, cleanup);
 
-  const assignments = Object.entries({
+  const assignments = {
     HOME: home,
     LANG: "C.UTF-8",
     LOGNAME: remoteUser,
@@ -418,11 +433,8 @@ async function materializePlan(
     XDG_STATE_HOME: posix.join(home, ".local", "state"),
     ...environment,
     [crabboxSessionEnvironmentKey]: root,
-  })
-    .map(([name, value]) => `${name}=${shellQuote(value)}`)
-    .join(" ");
-  const wrapper = `#!/bin/sh\nexec env -i ${assignments} "$@"\n`;
-  appendFile(script, environmentFile, new TextEncoder().encode(wrapper), 0o700, cleanup);
+  };
+  appendFile(script, environmentFile, environmentWrapper(assignments), 0o700, cleanup);
   if (cleanup.length) {
     script.splice(
       2,
@@ -433,6 +445,7 @@ async function materializePlan(
   }
   await runCrabboxScript(options, leaseId, { abortSignal, script: `${script.join("\n")}\n` });
   return {
+    environment: assignments,
     environmentFile,
     initializedState: [...missingState].map((index) =>
       remoteStatePath(options.stateRoot!, options.plan.state[index].key)
@@ -443,6 +456,55 @@ async function materializePlan(
       ...[...seeds.values()].flatMap(seed => seed.map(file => file.contents)),
     ]),
   };
+}
+
+function environmentWrapper(assignments: Readonly<Record<string, string>>) {
+  const values = Object.entries(assignments).map(([name, value]) => `${name}=${shellQuote(value)}`).join(" ")
+  return new TextEncoder().encode(`#!/bin/sh\nexec env -i ${values} "$@"\n`)
+}
+
+/**
+ * Install into the shared target cache, then rewrite the command wrapper so
+ * every Box command sees the toolchain first on PATH.
+ */
+async function provisionCrabboxToolchain(
+  toolchain: BoxToolchainInput,
+  session: RuntimeSession,
+  context: {
+    abortSignal: AbortSignal | undefined
+    environment: Readonly<Record<string, string>>
+    environmentFile: string
+    leaseId: string
+    options: CrabboxSessionOptions
+    root: string
+    workspace: string
+  },
+) {
+  const { abortSignal, leaseId, options } = context
+  const { provisionToolchain, readProjectFilesWithShell, verifyToolchain } = await import("./toolchain.ts")
+  const run = async (script: string) => await runCrabbox(options, leaseId, { abortSignal, command: `sh -c ${shellQuote(script)}` })
+  let cacheRoot = options.stateRoot && posix.isAbsolute(options.stateRoot) ? posix.join(options.stateRoot, "toolchains") : undefined
+  if (!cacheRoot) {
+    const result = await run(`printf '%s' "\${XDG_CACHE_HOME:-$HOME/.cache}/vitehub/toolchains"`)
+    if (result.exitCode !== 0 || !posix.isAbsolute(result.stdout)) throw crabboxError("resolve the toolchain cache", result)
+    cacheRoot = result.stdout
+  }
+  const provisioned = await provisionToolchain(toolchain, {
+    abortSignal,
+    cacheRoot,
+    readProjectFiles: async paths => await readProjectFilesWithShell(run, context.workspace, paths),
+    run,
+    scratch: context.root,
+    async write(path, content) {
+      await session.writeBinaryFile({ abortSignal, content, path })
+    },
+  })
+  const environment = { ...context.environment, PATH: [...provisioned.bin, context.environment.PATH].filter(Boolean).join(":") }
+  const script = ["set -eu", "umask 077"]
+  appendFile(script, context.environmentFile, environmentWrapper(environment), 0o700, [])
+  await runCrabboxScript(options, leaseId, { abortSignal, script: `${script.join("\n")}\n` })
+  await verifyToolchain(provisioned, cacheRoot, async script => await session.run({ abortSignal, command: script }))
+  session.toolchain = provisioned
 }
 
 function appendProjectionReconciliation(
@@ -768,32 +830,11 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
     },
     async listFiles({ abortSignal, path, recursive = false }: { abortSignal?: AbortSignal, path: string, recursive?: boolean }) {
       const target = resolveSessionPath(state.root, path)
-      const command = [
-        "find",
-        shellQuote(target),
-        "-mindepth 1",
-        ...(recursive ? [] : ["-maxdepth 1"]),
-        "-printf '%y\\t%s\\t%p\\0'",
-      ].join(" ")
-      const result = await this.run({ abortSignal: stateAbortSignal(state, abortSignal), command })
-      if (result.exitCode !== 0) throw crabboxError(`list ${path}`, result)
-      return result.stdout
-        .split("\0")
-        .filter(Boolean)
-        .map((line) => {
-          const [kind, size, entryPath] = line.split("\t")
-          if (!entryPath || !kind) throw boxErrorDiagnostics.BOX_R0107({ message: `[vitehub] Crabbox returned an invalid file entry for ${path}.` })
-          return {
-            path: entryPath,
-            size: kind === "f" ? Number(size) : undefined,
-            type: kind === "d"
-              ? "directory" as const
-              : kind === "l"
-                ? "symlink" as const
-                : "file" as const,
-          }
-        })
-        .sort((left, right) => left.path.localeCompare(right.path))
+      return await listCommandFiles(
+        options => this.run(options),
+        { abortSignal: stateAbortSignal(state, abortSignal), path: target, recursive },
+        result => crabboxError(`list ${path}`, result),
+      )
     },
     async makeDirectory({ abortSignal, path, recursive = false }: { abortSignal?: AbortSignal, path: string, recursive?: boolean }) {
       const target = resolveSessionPath(state.root, path)
@@ -840,21 +881,6 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
       finally {
         if (stagedPath) await runCrabbox(state.options, state.leaseId, { command: `rm -f -- ${shellQuote(stagedPath)}` }).catch(() => undefined)
       }
-    },
-    async readFile(options: { abortSignal?: AbortSignal, path: string }) {
-      const bytes = await this.readBinaryFile(options)
-      return bytes ? readableStream(bytes) : null
-    },
-    async readTextFile({ abortSignal, encoding = "utf8", endLine, path, startLine }: { abortSignal?: AbortSignal, encoding?: string, endLine?: number, path: string, startLine?: number }) {
-      const bytes = await this.readBinaryFile({ abortSignal, path })
-      if (!bytes) return null
-      // SAFETY: RuntimeSession accepts Node.js buffer encoding names through this string API.
-      const text = Buffer.from(bytes).toString(encoding as BufferEncoding)
-      if (startLine === undefined && endLine === undefined) return text
-      return text.split(/\r?\n/).slice((startLine || 1) - 1, endLine).join("\n")
-    },
-    restricted() {
-      return this
     },
     async run(runOptions: CrabboxRunOptions) {
       const child = spawnCrabboxRun(state, runOptions)
@@ -914,13 +940,6 @@ function createCrabboxSession(state: CrabboxSessionState, sessionId: string | un
       finally {
         await runCrabbox(state.options, state.leaseId, { command: `rm -f -- ${shellQuote(stagedPath)}` }).catch(() => undefined)
       }
-    },
-    async writeFile({ abortSignal, content, path }: { abortSignal?: AbortSignal, content: ReadableStream<Uint8Array>, path: string }) {
-      await this.writeBinaryFile({ abortSignal, content: await bytesFromStream(content), path })
-    },
-    async writeTextFile({ abortSignal, content, encoding = "utf8", path }: { abortSignal?: AbortSignal, content: string, encoding?: string, path: string }) {
-      // SAFETY: RuntimeSession accepts Node.js buffer encoding names through this string API.
-      await this.writeBinaryFile({ abortSignal, content: Buffer.from(content, encoding as BufferEncoding), path })
     },
   } satisfies RuntimeSession
   return session
@@ -1127,6 +1146,10 @@ function processHandle(child: ChildProcessWithoutNullStreams, abortSignal: Abort
       else resolvePromise({ exitCode: code ?? 1 })
     })
   })
+  // A background caller may not await immediately. Observe rejection now so
+  // cancellation and spawn failures cannot become process-level unhandled
+  // rejections before the caller reaches wait().
+  void wait.catch(() => undefined)
   let stdin: WritableStream<Uint8Array> | undefined
   return {
     pid: child.pid,
@@ -1214,14 +1237,6 @@ function remotePathsOverlap(first: string, second: string) {
 
 function isRemoteDescendant(path: string, parent: string) {
   return path.startsWith(parent === "/" ? "/" : `${parent}/`);
-}
-
-function readableStream(bytes: Uint8Array) {
-  return new Response(bytes).body!
-}
-
-async function bytesFromStream(stream: ReadableStream<Uint8Array>) {
-  return new Uint8Array(await new Response(stream).arrayBuffer())
 }
 
 async function collect(stream: ReadableStream<Uint8Array>) {

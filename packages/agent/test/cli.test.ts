@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
