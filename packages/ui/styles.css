@@ -2341,20 +2341,45 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
   outline-offset: -2px;
 }
 
+/* Owner and outcome use shape as well as color: a solid dot for the Agent, a ring for ViteHub, a cross for a failure. */
 .vh-invocation-timeline__dot {
   background: var(--vh-ui-info);
   border-radius: 999px;
+  box-sizing: border-box;
   display: block;
-  height: 0.375rem;
-  width: 0.375rem;
+  height: 0.5rem;
+  width: 0.5rem;
 }
 
 .vh-invocation-timeline__row[data-owner="vitehub"] .vh-invocation-timeline__dot {
-  background: var(--vh-ui-success);
+  background: transparent;
+  border: 2px solid var(--vh-ui-success);
 }
 
 .vh-invocation-timeline__row[data-status="failed"] .vh-invocation-timeline__dot {
-  background: var(--vh-ui-error);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--vh-ui-error);
+  position: relative;
+}
+
+.vh-invocation-timeline__row[data-status="failed"] .vh-invocation-timeline__dot::before,
+.vh-invocation-timeline__row[data-status="failed"] .vh-invocation-timeline__dot::after {
+  background: currentColor;
+  content: "";
+  height: 2px;
+  inset: 50% 0 auto;
+  position: absolute;
+  transform: rotate(45deg);
+}
+
+.vh-invocation-timeline__row[data-status="failed"] .vh-invocation-timeline__dot::after {
+  transform: rotate(-45deg);
+}
+
+.vh-invocation-timeline__row[data-status="failed"] .vh-invocation-timeline__heading strong {
+  color: var(--vh-ui-error);
 }
 
 .vh-invocation-timeline__heading {
@@ -2396,6 +2421,21 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
   color: var(--vh-ui-dimmed);
   font-size: 0.75rem;
   margin: 0;
+}
+
+.vh-invocation-inspector__groups {
+  display: grid;
+  gap: 1.1rem;
+}
+
+.vh-invocation-inspector__group {
+  border: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.vh-invocation-inspector__group + .vh-invocation-inspector__group {
+  border-block-start: 0;
 }
 
 .vh-invocation-execution {
