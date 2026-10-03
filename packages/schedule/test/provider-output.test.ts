@@ -1174,6 +1174,8 @@ describe("schedule provider output", () => {
     "as unknown as T extends infer 𐀀Type extends Pair<string, unknown> ? Definition : never",
     "as unknown as (value: unknown) => value is (Result<string, unknown>)",
     "as \\u0066oo<string, unknown>",
+    "as f\\u006Fo<string, unknown>",
+    "as foo\\u{006f}<string, unknown>",
     "as 类型<string, unknown>",
     "as 类型<string, unknown> | Other<string, unknown>",
     "satisfies 类型<string, unknown> & Other<string, unknown>",

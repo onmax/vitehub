@@ -178,6 +178,11 @@ describe("source scanner", () => {
     "as Record<string, unknown>",
     "as const satisfies Record<string, Map<string, unknown>>",
     "satisfies /* type */ Types.Record /* args */ <string, unknown>",
+    "satisfies f\\u006Fo<string, unknown>",
+    "satisfies foo\\u006f<string, unknown>",
+    "satisfies foo\\u{006f}<string, unknown>",
+    "satisfies f\\u{006f}o<string, unknown>",
+    "satisfies \\u{010000}Type<string, unknown>",
   ])("keeps generic assertion commas inside one argument: %s", (assertion) => {
     const argument = `{ cron: '0 8 * * *', handler: () => {} } ${assertion}`
     expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])
@@ -192,6 +197,7 @@ describe("source scanner", () => {
     "value as false < lower, upper > true",
     "value as this < lower, upper > true",
     "value as 1n < lower, upper > 0n",
+    "value as foo\\u{110000}<lower, upper>0",
     "object.as.Record < lower, upper > 0",
     "object.satisfies.Record < lower, upper > 0",
     "value as const, left < lower, upper > 0",

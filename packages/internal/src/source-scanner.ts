@@ -105,9 +105,9 @@ function isIdentifierStart(char: string | undefined) {
 }
 
 function decodeIdentifier(identifier: string) {
-  return identifier.replace(/\\u\{([\da-f]{1,6})\}|\\u([\da-f]{4})/gi, (_, braced, plain) => {
+  return identifier.replace(/\\u\{([\da-f]{1,6})\}|\\u([\da-f]{4})/gi, (escape, braced, plain) => {
     const codePoint = Number.parseInt(braced ?? plain, 16)
-    return Number.isInteger(codePoint) ? String.fromCodePoint(codePoint) : ""
+    return Number.isInteger(codePoint) && codePoint <= 0x10FFFF ? String.fromCodePoint(codePoint) : escape
   })
 }
 
@@ -121,6 +121,13 @@ function identifierCodePoint(source: string, index: number) {
 
 function isIdentifierCharAt(source: string, index: number) {
   return isIdentifierChar(identifierCodePoint(source, index))
+}
+
+function previousIdentifierIndex(source: string, index: number) {
+  // Escapes occupy up to ten source characters but form one identifier code point.
+  const escape = /\\u(?:\{[\da-f]{1,6}\}|[\da-f]{4})$/iu.exec(source.slice(Math.max(0, index - 9), index + 1))
+  if (escape) return index - escape[0].length
+  return isIdentifierCharAt(source, index) ? index - (identifierCodePoint(source, index)?.length ?? 1) : undefined
 }
 
 function isRegexLiteralStart(previousSignificant: string) {
@@ -396,10 +403,12 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   let typeName = ""
   while (current >= 0) {
     const end = current + 1
-    while (current >= 0 && isIdentifierCharAt(source, current)) current -= identifierCodePoint(source, current)?.length ?? 1
-    const identifierStart = source[current] === "\\" && source[current + 1] === "u" ? current : current + 1
-    const identifier = source.slice(identifierStart, end)
-    if (identifierStart === current) current -= 1
+    while (current >= 0) {
+      const previous = previousIdentifierIndex(source, current)
+      if (previous === undefined) break
+      current = previous
+    }
+    const identifier = source.slice(current + 1, end)
     const decodedIdentifier = decodeIdentifier(identifier)
     if (!isIdentifierStart([...decodedIdentifier][0]) || [...decodedIdentifier].slice(1).some(char => !isIdentifierChar(char))) {
       // Import types qualify named references through import("module").Type.
