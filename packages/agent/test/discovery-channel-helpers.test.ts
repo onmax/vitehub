@@ -1977,6 +1977,12 @@ it.each([
   })).rejects.toThrow("opaque Channel")
 })
 
+it("rejects mutations in callback arrows passed to calls and invoked afterward", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = \`${"${consume(() => portal.capabilities = [])()}"}\`; export default defineAgent({ channels: { custom: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it.each([
   'function globals() { return { value: globalThis } }',
   'function globals() { const value = globalThis; return {} }',
