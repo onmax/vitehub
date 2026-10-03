@@ -414,8 +414,11 @@ async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCli
   const result: unknown = await response.json().catch(() => undefined)
   if (!response.ok) {
     const error = isRuntimeRecord(result) ? Reflect.get(result, "error") : undefined
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- HTTP error messages are untrusted JSON; only strings can enter CLI diagnostics.
     const message = isRuntimeRecord(error) && typeof Reflect.get(error, "message") === "string"
+      // SAFETY: The record check and string check validate the message before this assertion.
       ? Reflect.get(error, "message") as string
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- HTTP errors may also be strings; only string values can enter CLI diagnostics.
       : typeof error === "string" ? error : undefined
     throw new Error(message || `Agent Invocation cancel failed (${response.status}).`)
   }

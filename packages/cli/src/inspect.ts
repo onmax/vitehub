@@ -175,6 +175,7 @@ async function runProviderOutput(args: string[], context: InspectContext, plugin
 
   if (parsed.json) {
     const providerOutput = reports.map(report => {
+      // SAFETY: Redaction preserves the report structure and replaces only sensitive values with strings.
       const redacted = redactInspectionValue(report) as ProviderOutputReport
       if (report.path === PROVISION_STATE_FILE && report.type === "file" && report.content !== "[unreadable JSON]") {
         redacted.content = redactProvisionState(readProvisionStateSync(context.rootDir))
