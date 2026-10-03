@@ -1213,6 +1213,10 @@ function providerToolchainCommandsFor(options: ProviderAgentAdapterOptions): Rea
   if (options.toolchain === undefined) return new Set()
   const commands = new Set(["node", "npm", "npx"])
   const packageManager = options.toolchain === "project" ? "project" : options.toolchain.packageManager
+  if (packageManager === "project") {
+    for (const command of ["pnpm", "pnpx", "yarn", "yarnpkg"]) commands.add(command)
+    return commands
+  }
   if (packageManager && packageManager !== "project" && packageManager !== false) {
     const name = packageManager.split("@", 1)[0]
     if (name === "pnpm") for (const command of ["pnpm", "pnpx"]) commands.add(command)

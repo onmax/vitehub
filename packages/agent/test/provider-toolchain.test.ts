@@ -118,7 +118,7 @@ describe("driver.toolchain", () => {
     inspectProvider.mockResolvedValue({ enabled: true, installed: true, status: "ready", version: "1", checkedAt: new Date().toISOString(), auth: { status: "authenticated" } })
     const status = await inspectAgentProvider({
       provider: "codex",
-      requirements: ["node", "pnpm", "vitehub-missing-command"],
+      requirements: ["node", "pnpm", "pnpx", "yarn", "yarnpkg", "vitehub-missing-command"],
       toolchain: "project",
     }, {
       agentIdentity: { name: "bot" },
