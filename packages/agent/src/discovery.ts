@@ -1273,7 +1273,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       let depth = 0
       for (; end < references.length; end++) {
         const token = references[end]!
-        if (depth === 0 && [";", ",", ")", "]", "}"].includes(token)) break
+        // An unparenthesized arrow in a conditional only owns the consequent.
+        // Stop before the alternate branch so its references are not treated
+        // as parameters of the arrow.
+        if (depth === 0 && [";", ",", ":", ")", "]", "}"].includes(token)) break
         if (["(", "[", "{"].includes(token)) depth++
         else if ([")", "]", "}"].includes(token)) depth--
       }

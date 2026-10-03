@@ -1730,6 +1730,7 @@ it.each([
   '`${portal => portal}${portal.capabilities = []}`',
   '`${[portal => portal, portal.capabilities = []]}`',
   '`${((portal) => portal)}${portal.capabilities = []}`',
+  '`${input.enabled ? portal => input.id : portal.capabilities = [storage]}`',
 ])("keeps imported template mutations outside arrow parameter scopes opaque: %s", async expression => {
   await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = ${expression}; export default defineAgent({ channels: { custom: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
