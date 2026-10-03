@@ -41,7 +41,7 @@ const primitiveCapabilities = {
 } satisfies Record<string, string>;
 
 /** Concept and AI resource pages that moved into the Start section as groups. */
-const startGroups: Record<string, string[]> = {
+const startGroups = {
   "ai-resources": ["agent-instructions-skills", "markdown-pages", "mcp-server"],
   "concepts": [
     "auth-users-and-agent-invokers",
@@ -52,7 +52,7 @@ const startGroups: Record<string, string[]> = {
     "vite-integrations-and-provider-output",
     "workspace-and-sources",
   ],
-};
+} satisfies Record<string, string[]>;
 
 /** Capability pages that have no primitive and moved under the Agents section. */
 const agentCapabilities = {

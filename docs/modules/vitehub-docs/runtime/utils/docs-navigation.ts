@@ -99,6 +99,7 @@ export function getDocsRelatedSections(sections: DocsSection[], section: DocsSec
 
 /** Categories whose section Overview renders as a product landing page without the sidebar. */
 export const docsLandingCategories: readonly DocsCategory[] = ["Data", "Compute", "Access", "Delivery", "Files", "Agents"];
+const docsLandingCategorySet = new Set<string>(docsLandingCategories);
 
 /** Sections whose Overview stays a regular docs page even though their category is a product category. */
 const docsPageOverviewSections = new Set(["ui"]);
@@ -112,7 +113,8 @@ export function isDocsLandingPath(sections: DocsSection[], path: string) {
   if (!section || normalizedPath !== normalizeDocsPath(section.path)) return false;
 
   return !docsPageOverviewSections.has(section.id)
-    && docsLandingCategories.includes(section.category as DocsCategory);
+    && section.category !== null
+    && docsLandingCategorySet.has(section.category);
 }
 
 /** Pages of a product section other than its Overview, in sidebar order. The landing page lists them as cards. */

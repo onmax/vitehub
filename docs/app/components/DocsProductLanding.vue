@@ -9,7 +9,7 @@ const props = defineProps<{
 }>();
 
 /** Products that share a looping scene with the landing page grid. */
-const scenes: Record<string, string> = {
+const scenes = {
   agents: "agent",
   connections: "connections",
   content: "content",
@@ -20,7 +20,7 @@ const scenes: Record<string, string> = {
   sandbox: "sandbox",
   source: "source",
   workflows: "workflow",
-};
+} satisfies Record<string, string>;
 
 const scene = computed(() => scenes[props.section.id] ?? null);
 const subpages = computed(() => getDocsSectionSubpages(props.section));
