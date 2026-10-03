@@ -453,6 +453,18 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
     && source[previousCodeIndex(source, current, controlFlowRegexes)] !== "."
 }
 
+function isNamedAssertionComparison(source: string, index: number, genericEnd: number) {
+  const contents = source.slice(index + 1, genericEnd)
+  // `as Foo < lower, upper > 0` is a relational expression. The spaces
+  // around the apparent type arguments are a useful signal, while real type
+  // continuations begin with punctuation such as `|`, `&`, or `[`.
+  if (!/^\s/.test(contents) || !/\s$/.test(contents)) return false
+  const prefix = source.slice(0, index)
+  if (!/\b(?:as|satisfies)\s+[\p{ID_Start}_$][\p{ID_Continue}$]*(?:\s*\.\s*[\p{ID_Start}_$][\p{ID_Continue}$]*)*\s*$/u.test(prefix)) return false
+  const suffix = source.slice(genericEnd + 1).replace(/^(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*/, "")
+  return /^[\p{ID_Start}_$\d"'`]/u.test(suffix)
+}
+
 function hasAssertionTypePrefix(source: string) {
   // Mask completed type regions, including import arguments and comments,
   // before recognizing the continuation of a union or intersection.
@@ -553,7 +565,8 @@ export function splitTopLevel(source: string, separator = ",") {
     }
     if (char === "<") {
       const genericEnd = findMatching(source, index, "<", ">")
-      if (genericEnd !== undefined && (nextNonWhitespace(source, genericEnd + 1) === "(" || isAssertionTypeArguments(source, index))) {
+      if (genericEnd !== undefined && !isNamedAssertionComparison(source, index, genericEnd)
+        && (nextNonWhitespace(source, genericEnd + 1) === "(" || isAssertionTypeArguments(source, index))) {
         index = genericEnd
         previousSignificant = ">"
         continue

@@ -192,6 +192,7 @@ describe("source scanner", () => {
 
   it.each([
     "value as number < lower, upper > 0",
+    "value as Foo < lower, upper > 0",
     "value satisfies number < lower, upper > 0",
     "value as true < lower, upper > false",
     "value as false < lower, upper > true",
