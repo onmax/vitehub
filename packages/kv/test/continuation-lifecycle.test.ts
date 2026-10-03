@@ -179,3 +179,14 @@ it("continues releasing retained resources when one cleanup fails", async () => 
   expect(release).toHaveBeenCalledTimes(2)
   expect(vi.getTimerCount()).toBe(0)
 })
+
+it("surfaces late cleanup failures to a listing that finishes after disposal", async () => {
+  const cause = new Error("directory close failed")
+  const continuations = createKVContinuations({
+    expired: () => new Error("expired"),
+    release: async (_resource: string) => { throw cause },
+  })
+
+  await continuations.dispose()
+  await expect(continuations.retain("late")).rejects.toBe(cause)
+})

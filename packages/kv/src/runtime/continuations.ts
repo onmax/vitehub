@@ -25,10 +25,11 @@ export function createKVContinuations<T>(options: {
     return entry.value
   }
 
-  function release(value: T): Promise<void> {
-    const pending = Promise.resolve().then(() => options.release?.(value)).then(() => {}, (error: unknown) => {
+  function release(value: T, surfaceFailure = false): Promise<void> {
+    const pending = Promise.resolve().then(() => options.release?.(value)).catch((error: unknown) => {
       // Retain one cleanup failure until disposal, without growing with abandoned listings.
       if (failures.length === 0) failures.push(error)
+      if (surfaceFailure) throw error
     }).finally(() => { releases.delete(pending) })
     releases.add(pending)
     return pending
@@ -43,7 +44,7 @@ export function createKVContinuations<T>(options: {
     take,
     async retain(value: T, size = 0): Promise<string> {
       if (disposed) {
-        await release(value)
+        await release(value, true)
         throw options.expired()
       }
       while (entries.size >= 32 || bytes + size > (options.maximumBytes ?? Number.POSITIVE_INFINITY)) {
