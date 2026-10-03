@@ -21,8 +21,12 @@ interface D1DatabaseLike {
 }
 
 interface LibsqlClientFactory {
-  createClient: (options: { authToken?: string, url: string }) => unknown
+  createClient: (options: { authToken?: string, url: string }) => LibsqlClient
   drizzle: (config: { casing?: "snake_case" | "camelCase", client: unknown, schema: Record<string, unknown> }) => unknown
+}
+
+interface LibsqlClient {
+  close?: () => void
 }
 
 interface DrizzleSqliteAdapterOptions {
@@ -177,6 +181,7 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
   let libsqlInstance: RuntimeDrizzleDatabase<TSchema> | undefined
   let libsqlInstanceToken: string | undefined
   let libsqlInstanceUrl: string | undefined
+  let libsqlClient: LibsqlClient | undefined
 
   function getDb() {
     const bindingName = config.cloudflare?.binding
@@ -227,15 +232,27 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
       return libsqlInstance
     }
 
-    // SAFETY: The injected libSQL adapters expose the same Drizzle database contract as the runtime schema generic.
-    libsqlInstance = options.libsql.drizzle({
-      casing: config.drizzle.casing,
-      client: options.libsql.createClient({
-        authToken,
-        url: options.resolveLocalUrl ? options.resolveLocalUrl(url) : url,
-      }),
-      schema,
-    }) as RuntimeDrizzleDatabase<TSchema>
+    const client = options.libsql.createClient({
+      authToken,
+      url: options.resolveLocalUrl ? options.resolveLocalUrl(url) : url,
+    })
+    let instance: RuntimeDrizzleDatabase<TSchema>
+    try {
+      // SAFETY: The injected libSQL adapters expose the same Drizzle database contract as the runtime schema generic.
+      instance = options.libsql.drizzle({
+        casing: config.drizzle.casing,
+        client,
+        schema,
+      }) as RuntimeDrizzleDatabase<TSchema>
+    }
+    catch (error) {
+      client.close?.()
+      throw error
+    }
+
+    libsqlClient?.close?.()
+    libsqlClient = client
+    libsqlInstance = instance
     libsqlInstanceToken = authToken
     libsqlInstanceUrl = url
 

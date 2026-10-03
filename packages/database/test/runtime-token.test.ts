@@ -8,7 +8,12 @@ afterEach(() => vi.unstubAllEnvs())
 describe("libSQL runtime credentials", () => {
   it.each([false, true])("refreshes changed credentials with requireRemoteUrl=%s", (requireRemoteUrl) => {
     vi.stubEnv("VITEHUB_TEST_DATABASE_TOKEN", "first-token")
-    const createClient = vi.fn((options: { authToken?: string, url: string }) => options)
+    const clients: Array<{ authToken?: string, close: ReturnType<typeof vi.fn>, url: string }> = []
+    const createClient = vi.fn((options: { authToken?: string, url: string }) => {
+      const client = { ...options, close: vi.fn() }
+      clients.push(client)
+      return client
+    })
     const drizzle = vi.fn(() => ({ run: vi.fn() }))
     const db = createDrizzleSqliteAdapter({
       connection: {
@@ -32,11 +37,15 @@ describe("libSQL runtime credentials", () => {
     db.run("select 1")
     expect(createClient).toHaveBeenCalledTimes(2)
     expect(createClient).toHaveBeenLastCalledWith({ authToken: "second-token", url: "libsql://database.example" })
+    expect(clients[0]!.close).toHaveBeenCalledOnce()
+    expect(clients[1]!.close).not.toHaveBeenCalled()
 
     vi.stubEnv("VITEHUB_TEST_DATABASE_TOKEN", undefined)
     db.run("select 1")
     db.run("select 1")
     expect(createClient).toHaveBeenCalledTimes(3)
     expect(createClient).toHaveBeenLastCalledWith({ authToken: undefined, url: "libsql://database.example" })
+    expect(clients[1]!.close).toHaveBeenCalledOnce()
+    expect(clients[2]!.close).not.toHaveBeenCalled()
   })
 })
