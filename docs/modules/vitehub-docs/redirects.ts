@@ -27,7 +27,7 @@ const movedServerPrimitives = [
 ];
 
 /** Capability pages that now live inside the product section of the primitive they expose. */
-const primitiveCapabilities: Record<string, string> = {
+const primitiveCapabilities = {
   "blob": "blob",
   "browser": "browser",
   "channel-delivery": "channels",
@@ -38,10 +38,10 @@ const primitiveCapabilities: Record<string, string> = {
   "sandbox": "sandbox",
   "schedule": "schedule",
   "workspace-shell": "workspace",
-};
+} satisfies Record<string, string>;
 
 /** Capability pages that have no primitive and moved under the Agents section. */
-const agentCapabilities: Record<string, string> = {
+const agentCapabilities = {
   "access": "access",
   "chat": "chat",
   "chat-summary": "chat-summary",
@@ -65,9 +65,9 @@ const agentCapabilities: Record<string, string> = {
   "transcribe": "transcribe",
   "usage": "usage",
   "web-search": "web-search",
-};
+} satisfies Record<string, string>;
 
-export const docsPageRedirects: Record<string, string> = {
+export const docsPageRedirects = {
   "/docs/agents/evlog": "/docs/agents/observability",
   "/docs/capabilities": "/docs/agents/capabilities",
   "/docs/concepts/agent-invocations": "/docs/agents/invocations",
@@ -84,7 +84,7 @@ export const docsPageRedirects: Record<string, string> = {
   ...Object.fromEntries(movedServerPrimitives.map(id => [`/docs/server-primitives/${id}`, `/docs/${id}`])),
   ...Object.fromEntries(Object.entries(primitiveCapabilities).map(([id, section]) => [`/docs/capabilities/${id}`, `/docs/${section}/agent-capability`])),
   ...Object.fromEntries(Object.entries(agentCapabilities).map(([id, page]) => [`/docs/capabilities/${id}`, `/docs/agents/capabilities/${page}`])),
-};
+} satisfies Record<string, string>;
 
 function rawMarkdownPath(path: string) {
   return `/raw${path}.md`;

@@ -23,7 +23,7 @@ export type DocsCatalogGroup = {
 export const docsRootSectionId = "getting-started";
 
 function isDocsCategory(value: string | null): value is DocsCategory {
-  return docsCategoryOrder.includes(value as DocsCategory);
+  return value !== null && docsCategoryOrder.some(category => category === value);
 }
 
 /** Groups sections by their `.navigation.yml` category. Sections without a known category are skipped. */
