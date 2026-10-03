@@ -1,6 +1,5 @@
 export async function stopChild(child, graceMs = 500) {
   const exited = child.exitCode !== null || child.signalCode !== null
-  if (exited) return
   const closed = exited ? Promise.resolve() : new Promise(resolve => child.once("close", resolve))
   signalChild(child, "SIGTERM")
   let timer
