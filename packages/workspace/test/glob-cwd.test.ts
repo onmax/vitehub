@@ -79,4 +79,21 @@ describe("Workspace glob cwd", () => {
     expect((await view.glob("**/*.json")).map(entry => entry.path)).toEqual([".vitehub/sources/status.json", "docs/data.json"])
     expect(request).not.toHaveBeenCalled()
   })
+
+  it("allows the exposed request descriptor directory as cwd", async () => {
+    const store = createMemoryWorkspaceStore()
+    const querySchema = {
+      "~standard": {
+        jsonSchema: { input: () => ({ type: "object", properties: {} }) },
+        validate: () => ({ value: {} }),
+      },
+    }
+    const view = createWorkspaceSourceView({
+      name: "descriptor-cwd",
+      sources: { status: fetchSource({ url: "https://example.invalid/status", querySchema }) },
+    }, store)
+
+    expect((await view.glob("*.json", { cwd: ".vitehub/sources" })).map(entry => entry.path))
+      .toEqual([".vitehub/sources/status.json"])
+  })
 })
