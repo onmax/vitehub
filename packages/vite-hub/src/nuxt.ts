@@ -780,8 +780,16 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   nuxt.options.vite ??= {}
   nuxt.options.vite.root ??= rootDir
   const viteRoot = resolve(rootDir, typeof nuxt.options.vite?.root === "string" ? nuxt.options.vite.root : rootDir)
-  const configuredDatabaseDiscoveryRoot = configuredProjectRoot(viteRoot, nuxt.options.vite?.database)
-    ?? configuredProjectRoot(rootDir, options.database)
+  const databaseOptions = options.database && options.database !== true ? options.database : {}
+  const configuredDatabaseDiscoveryRoot = configuredProjectRoot(rootDir, databaseOptions)
+    ?? configuredProjectRoot(rootDir, nuxt.options.database)
+    ?? configuredProjectRoot(viteRoot, nuxt.options.vite?.database)
+  const effectiveDatabaseOptions = {
+    ...(isRecord(nuxt.options.vite?.database) ? nuxt.options.vite.database : {}),
+    ...(isRecord(nuxt.options.database) ? nuxt.options.database : {}),
+    ...databaseOptions,
+    ...(configuredDatabaseDiscoveryRoot ? { projectRoot: configuredDatabaseDiscoveryRoot } : {}),
+  }
   // SAFETY: ViteHub Blob extends Vite's open user config with the documented top-level `blob` key.
   const viteBlob = (nuxt.options.vite as UserConfig & { blob?: Parameters<typeof vitehub>[0]["blob"] }).blob
   const effectiveBlob = options.console ? viteBlob ?? options.blob : false
@@ -880,12 +888,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   addTypeScriptDefaults(nuxt.options, generatedTypes, generatedData)
   addTypeScriptDefaults((nuxt.options.nitro ??= {}), generatedTypes, generatedData)
   if (options.database) {
-    const databaseOptions = options.database === true ? {} : options.database
-    const effectiveDatabaseOptions = {
-      ...(isRecord(nuxt.options.vite?.database) ? nuxt.options.vite.database : {}),
-      ...(isRecord(nuxt.options.database) ? nuxt.options.database : {}),
-      ...databaseOptions,
-    }
     // A discovered Definition owns its Cloudflare binding. Keep the historical
     // implicit D1 resource only when no Definition is available to own it.
     const databaseRoot = resolveViteHubProjectRoot(rootDir, {
@@ -897,8 +899,8 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         : nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
     })
     await hubDatabaseNuxt({
-      ...databaseOptions,
-      ...(options.preset === "cloudflare" && !discoveredDatabase && !databaseOptions.driver
+      ...effectiveDatabaseOptions,
+      ...(options.preset === "cloudflare" && !discoveredDatabase && !effectiveDatabaseOptions.driver
         ? { driver: "d1" as const }
         : {}),
     })(undefined, nuxt)

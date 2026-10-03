@@ -336,23 +336,39 @@ describe("ViteHub Nuxt integration", () => {
     expect(nitroOptions(nuxt)).not.toHaveProperty("cloudflare.wrangler.d1_databases")
   })
 
-  it("probes a Database Definition from the configured Vite database root", async () => {
-    const definitionRoot = "/tmp/vitehub-nuxt/vite-database/server/databases"
-    await mkdir(definitionRoot, { recursive: true })
-    await writeFile(resolve(definitionRoot, "config.ts"), [
-      'export default defineDatabase({',
-      '  cloudflare: { binding: "DB", databaseId: "definition-id", databaseName: "application" },',
-      '  schema: {},',
-      '})',
-      '',
-    ].join("\n"))
-    const { nuxt, runNitroConfigHook } = createNuxt()
-    Object.assign(nuxt.options.vite, { database: { projectRoot: "vite-database" } })
+  it.each([["vite", false], ["vite", true], ["nuxt", true], ["module", true]] as const)("uses the %s Database root for discovery and generated runtime (separate Vite root: %s)", async (source, separateViteRoot) => {
+    const directory = await mkdtemp("/tmp/vitehub-nuxt-database-root-")
+    try {
+      const viteRoot = separateViteRoot ? resolve(directory, "vite-app") : directory
+      const databaseRoot = resolve(source === "vite" ? viteRoot : directory, "data")
+      const definitionRoot = resolve(databaseRoot, "server/databases")
+      await mkdir(definitionRoot, { recursive: true })
+      await writeFile(resolve(definitionRoot, "config.ts"), [
+        'export default defineDatabase({',
+        '  cloudflare: { binding: "DB", databaseId: "definition-id", databaseName: "application" },',
+        '  schema: {},',
+        '})',
+        '',
+      ].join("\n"))
+      const { nuxt, runNitroConfigHook } = createNuxt()
+      nuxt.options.rootDir = directory
+      nuxt.options.vite.root = viteRoot
+      // Lower-precedence roots must not replace the selected Nuxt root.
+      Object.assign(nuxt.options.vite, { database: { projectRoot: source === "vite" ? "data" : "unused" } })
+      if (source !== "vite") Object.assign(nuxt.options, { database: { projectRoot: source === "nuxt" ? "data" : "unused" } })
 
-    await viteHubNuxtModule({ database: true, preset: "cloudflare" }, nuxt)
+      await viteHubNuxtModule({ database: source === "module" ? { projectRoot: "data" } : true, preset: "cloudflare" }, nuxt)
 
-    await expect(runNitroConfigHook({ preset: "cloudflare_module" })).resolves.toBeUndefined()
-    expect(nitroOptions(nuxt)).not.toHaveProperty("cloudflare.wrangler.d1_databases")
+      const config = { preset: "cloudflare_module" }
+      await expect(runNitroConfigHook(config)).resolves.toBeUndefined()
+      expect(nuxt.options.vite).toHaveProperty("database.projectRoot", databaseRoot)
+      expect(config).not.toHaveProperty("cloudflare.wrangler.d1_databases")
+      expect(config).toHaveProperty('alias.@vite-hub/database/drizzle', resolve(databaseRoot, ".vitehub/database/cloudflare-runtime.mjs"))
+      await expect(readFile(resolve(databaseRoot, ".vitehub/database/cloudflare-runtime.mjs"), "utf8")).resolves.toContain("server/databases/config")
+    }
+    finally {
+      await rm(directory, { force: true, recursive: true })
+    }
   })
 
   it("preserves an explicit Nuxt D1 resource alongside a Cloudflare Database Definition", async () => {
