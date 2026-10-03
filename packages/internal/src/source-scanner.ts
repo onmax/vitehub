@@ -357,8 +357,7 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
     if (!/^[A-Za-z_$][\w$]*$/.test(identifier)) {
       // Import types qualify named references through import("module").Type.
       if (!qualified || source[current] !== ")") return false
-      const prefix = source.slice(0, current + 1)
-      return assertionSuffix || /\b(?:as|satisfies)\s+import\s*\(\s*["'][^"']*["']\s*\)$/.test(prefix)
+      return assertionSuffix || hasAssertionTypePrefix(source.slice(0, index))
     }
     typeName = identifier
     current = previousCodeIndex(source, current, controlFlowRegexes)
@@ -372,11 +371,21 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // Assertion validation already knows the type boundary. Named references
   // can occur inside object, parenthesized, tuple, and import types there.
   if (assertionSuffix) return true
+  if (source[current] === "&" || source[current] === "|") {
+    return hasAssertionTypePrefix(source.slice(0, index))
+  }
   const end = current + 1
   while (isIdentifierChar(source[current])) current -= 1
   const keyword = source.slice(current + 1, end)
   return (keyword === "as" || keyword === "satisfies")
     && source[previousCodeIndex(source, current, controlFlowRegexes)] !== "."
+}
+
+function hasAssertionTypePrefix(source: string) {
+  // Mask completed type regions, including import arguments and comments,
+  // before recognizing the continuation of a union or intersection.
+  const prefix = maskAssertionTypeArguments(source)
+  return /(?:^|[^\w$.])(?:as|satisfies)\s+(?:[A-Za-z_$][\w$]*|[.\s()[\]{}&|])+$/.test(prefix)
 }
 
 function maskAssertionTypeArguments(source: string) {
@@ -393,7 +402,7 @@ function maskAssertionTypeArguments(source: string) {
         if (source[argument] === '"' || source[argument] === "'") {
           const close = skipWhitespaceAndComments(source, skipQuoted(source, argument))
           if (source[close] === ")") {
-            output.fill(" ", open, close + 1)
+            output.fill(" ", index + 6, close + 1)
             index = close
             continue
           }
@@ -417,6 +426,8 @@ function maskAssertionTypeArguments(source: string) {
   for (let index = 0; index < masked.length; index++) {
     const close = masked[index] === "{" ? "}" : masked[index] === "[" ? "]" : masked[index] === "(" ? ")" : undefined
     if (!close) continue
+    const prefix = masked.slice(0, index).trimEnd()
+    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|])$/.test(prefix)) continue
     const end = findMatching(masked, index, masked[index]!, close)
     if (end === undefined) continue
     output.fill(" ", index + 1, end)
@@ -583,7 +594,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       }
       // Operators and call syntax after an assertion change the runtime value;
       // reject them while retaining union/intersection punctuation in types.
-      if (/(?:&&|\|\||\?\?|=>|\?\.|[+*/?;%=]|,)/.test(value)) return false
+      if (/(?:&&|\|\||\?\?|=>|\?\.|[+*/?;%=^]|,)/.test(value)) return false
       // A spaced subtraction after an assertion is runtime syntax. Hyphens
       // inside template-literal types remain allowed because they are not
       // surrounded by operator whitespace.

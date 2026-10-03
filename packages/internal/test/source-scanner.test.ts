@@ -93,6 +93,10 @@ describe("source scanner", () => {
     "satisfies (Record<string, unknown>)",
     "satisfies import(\"types\").Record<string, unknown>",
     "as [Record<string, unknown>]",
+    "satisfies First<string, unknown> & Second<string, unknown>",
+    "as First<string, unknown> | Second<string, unknown>",
+    'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
+    'as import // type\n ("types" /* module */).Record<string, unknown>',
   ])("keeps nested generic assertion commas inside one argument: %s", (assertion) => {
     const argument = `{ cron: '0 8 * * *' } ${assertion}`
     expect(splitTopLevel(`${argument}, second`)).toEqual([argument, "second"])
@@ -125,7 +129,7 @@ describe("source scanner", () => {
     expect(splitTopLevel(expression)).toEqual(expression.split(", "))
   })
 
-  it.each(["|| fallback", "+ extra", " > limit", "(argument)"])("rejects runtime suffixes after generic assertions: %s", (suffix) => {
+  it.each(["|| fallback", "+ extra", " > limit", "(argument)", " ^ bar()", " ^ (bar())", " - (bar())"])("rejects runtime suffixes after generic assertions: %s", (suffix) => {
     expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } satisfies Record<string, unknown>${suffix})`, ["defineSchedule"]))
       .toBeUndefined()
   })

@@ -1117,6 +1117,9 @@ describe("schedule provider output", () => {
     "satisfies { config: Record<string, unknown> }",
     "satisfies (Record<string, unknown>)",
     'satisfies import("types").Record<string, unknown>',
+    "satisfies First<string, unknown> & Second<string, unknown>",
+    "as First<string, unknown> | Second<string, unknown>",
+    'satisfies import /* type */ ("types" /* module */).Record<string, unknown>',
   ])("reads static provider cron from a generic assertion: %s", async (assertion) => {
     const rootDir = await createTempProject("vitehub-schedule-output-assertion-cron-")
     await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),
@@ -1142,6 +1145,17 @@ describe("schedule provider output", () => {
 
     const cloudflareConfig = join(createDefaultCloudflareOutputRoot(rootDir), "wrangler.json")
     expect(JSON.parse(await readFile(cloudflareConfig, "utf8")).triggers.crons).toEqual(["0 2 * * *"])
+  })
+
+  it("rejects parenthesized runtime calls after cron assertion types", async () => {
+    const rootDir = await createTempProject("vitehub-schedule-output-runtime-assertion-")
+    await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),
+      "export default defineSchedule({ cron: '0 2 * * *' } as Foo<string> ^ (bar()))\n", "utf8")
+
+    await expect(generateProviderOutputs({
+      clientOutDir: "dist/client",
+      rootDir,
+    })).rejects.toThrow(/Schedule discovery requires a direct default export/)
   })
 
   it("rejects raw default objects for provider cron extraction", async () => {
