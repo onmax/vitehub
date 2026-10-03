@@ -1162,6 +1162,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       const publicCheckout = pooled?.anchoredDirectory ?? checkout
       keepCheckout = Boolean(checkoutPool)
       const prepareWorkspace = async (target: string) => {
+        if (!pooled) return await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
         // Keep preparation anchored to the checkout directory itself. The pool
         // parent descriptor protects its name, but a callback can still replace
         // the child between pathname resolution and the first Git operation.
