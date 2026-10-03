@@ -34,6 +34,10 @@ const loadingRegistryStorage = new AsyncLocalStorage<{ names: Set<string>, state
 const loadingInlineRegistryStorage = new AsyncLocalStorage<{ definitions: Map<string, WorkflowDefinition>, state: RegistryState }>()
 
 export function setWorkflowRuntimeRegistry(registry: WorkflowDefinitionRegistry | undefined): void {
+  if (registryState.registry === registry) {
+    registryState.loaded.clear()
+    return
+  }
   // Partial inline registrations belong to the registry that is being retired.
   for (const definitions of registryState.inlineLoads) {
     for (const [name, definition] of definitions) {
