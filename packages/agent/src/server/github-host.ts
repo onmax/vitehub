@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -377,14 +377,32 @@ async function resetPooledCheckout(checkout: string, repository: string, command
   }
   const info = await lstat(join(gitMetadata, "info")).catch(() => undefined)
   if (info && !info.isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
-  for (const path of [
-    ".git/hooks", ".git/index.lock", ".git/config.lock", ".git/config.worktree.lock", ".git/HEAD.lock", ".git/shallow.lock", ".git/packed-refs.lock",
-    ".git/rebase-merge", ".git/rebase-apply", ".git/sequencer", ".git/CHERRY_PICK_HEAD", ".git/MERGE_HEAD", ".git/REVERT_HEAD",
-    ".git/config", ".git/config.worktree", ".git/info/exclude", ".vitehub",
-  ]) {
-    await rm(join(checkout, path), { force: true, recursive: true })
+  // Move the Git metadata tree out of the checkout atomically before changing it.
+  // This avoids following a path that a background process replaces after validation
+  // while retaining the object database for pooled fetches.
+  const quarantine = async (path: string, required = false) => {
+    const target = `${path}.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    try {
+      await rename(path, target)
+    }
+    catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT" && !required) return
+      throw error
+    }
+    await rm(target, { force: true, recursive: true })
   }
-  await rm(`${checkout}.meta.json`, { force: true })
+  const gitQuarantine = `${gitMetadata}.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  await rename(gitMetadata, gitQuarantine)
+  await mkdir(gitMetadata)
+  await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
+  for (const name of ["HEAD", "index"]) {
+    await rename(join(gitQuarantine, name), join(gitMetadata, name)).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    })
+  }
+  await rm(gitQuarantine, { force: true, recursive: true })
+  await quarantine(join(checkout, ".vitehub"))
+  await quarantine(`${checkout}.meta.json`)
   await exec("git", ["-C", checkout, "init", "-q", "--template="], commandOptions)
   await mkdir(join(checkout, ".git/info"), { recursive: true })
   await writeFile(join(checkout, ".git/info/exclude"), "")
@@ -399,7 +417,6 @@ async function resetPooledCheckout(checkout: string, repository: string, command
   // Match a fresh clone: remove nested repositories rather than keep stale gitlinks or configuration.
   await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "submodule", "deinit", "--force", "--all"], commandOptions)
   await rm(join(checkout, ".git/modules"), { force: true, recursive: true })
-  await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
   // Drop refs and reflogs left by the previous repository before fetching the new head.
   // Keeping them would let provider-created refs or stale origin refs influence later Git work.
   for (const path of [".git/refs", ".git/logs", ".git/packed-refs"]) {
@@ -862,6 +879,8 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "--detach", "FETCH_HEAD"], commandOptions)
       }
+      // Clean after checkout so the incoming commit's ignore rules preserve dependencies and build output.
+      await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
       await exec("git", ["-C", checkout, "remote", "set-url", "origin", `https://github.com/${pullRequest.repository}.git`], commandOptions)
       const pushUrl = pullRequest.headRepository
         ? `https://github.com/${pullRequest.headRepository}.git`
