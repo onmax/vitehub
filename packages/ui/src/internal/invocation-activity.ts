@@ -567,6 +567,11 @@ export function latestInvocationTokens(activities: readonly InvocationActivity[]
   return snapshots.length ? Math.max(...snapshots) : undefined;
 }
 
+/** The short detail of an activity: its command, path, or recorded detail. */
+export function invocationActivityDetail(activity: InvocationActivity): string | undefined {
+  return activity.preview ?? stringAttribute(activity.attributes, "vitehub.activity.detail");
+}
+
 export function invocationActivityTitle(activity: InvocationActivity): string {
   const explicit = activity.attributes["vitehub.activity.title"];
   if (hasRuntimeType(explicit, "string") && explicit.trim()) return explicit.trim();

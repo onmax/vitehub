@@ -87,9 +87,64 @@ export const agentStory = {
   ],
 } as const;
 
-// Ordered by importance to an Agent: what it works in and calls first, supporting primitives last.
+// One KV store, read from a route and from an Agent. Both panes must use the same primitive.
+export const sharedApi = {
+  primitiveTo: "/docs/server-primitives/kv",
+  capabilityTo: "/docs/capabilities/kv",
+  panes: [
+    {
+      id: "route",
+      label: "Route",
+      path: "server/api/notes.get.ts",
+      caption: "Your route calls kv.get().",
+      code: [
+        'import { kv } from "vite-hub/kv"',
+        "",
+        "export default defineEventHandler(async () => {",
+        '  const [error, notes] = await kv.get("notes")',
+        "  if (error) throw error",
+        "  return notes",
+        "})",
+      ],
+    },
+    {
+      id: "agent",
+      label: "Agent",
+      path: "server/agents/support.ts",
+      caption: "The Agent gets a kv_read tool for the same store.",
+      code: [
+        'import { defineAgent } from "vite-hub/agent"',
+        'import { kv } from "vite-hub/agent/capabilities"',
+        "",
+        "export default defineAgent({",
+        '  description: "Answers support questions.",',
+        '  driver: "codex",',
+        '  capabilities: [kv({ mode: "read" })],',
+        "})",
+      ],
+    },
+  ],
+} as const;
+
+export const nuxtHubMigration = {
+  to: "/docs/frameworks-hosts/migrate-from-nuxthub",
+  imports: [
+    { from: "@nuxthub/kv", to: "vite-hub/kv" },
+    { from: "@nuxthub/blob", to: "vite-hub/blob" },
+    { from: "@nuxthub/db", to: "vite-hub/database/drizzle" },
+  ],
+} as const;
+
+// The Agent leads because it composes the other primitives through Capabilities.
+// The rest are ordered by importance to an Agent: what it works in and calls first, supporting primitives last.
 // Realtime has only a reference page.
 export const landingPrimitives = [
+  {
+    id: "agent",
+    name: "Agent",
+    description: "A model with tools and files",
+    to: "/docs/agents",
+  },
   {
     id: "workspace",
     name: "Workspace",
