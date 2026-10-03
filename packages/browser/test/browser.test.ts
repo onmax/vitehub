@@ -585,6 +585,28 @@ describe("Browser Sessions", () => {
     expect(session.inspect().state).toBe("closed")
   })
 
+  it("keeps rollback completion retryable when detach tracing fails during closure", async () => {
+    const { close, controller, provider, release } = fixture()
+    const attachError = new Error("attach trace failed")
+    const detachError = new Error("detach trace failed")
+    release.mockRejectedValueOnce(new Error("rollback failed"))
+    const trace = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(attachError)
+      .mockRejectedValueOnce(detachError)
+      .mockResolvedValue(undefined)
+    const session = await createBrowser({ provider, trace }).open()
+
+    await expect(session.attach(controller)).rejects.toMatchObject({ errors: [attachError, { message: "rollback failed" }] })
+    await expect(session.close()).rejects.toBe(detachError)
+    expect(close).toHaveBeenCalledOnce()
+    expect(session.inspect().state).toBe("closed")
+
+    await expect(session.close()).resolves.toBeUndefined()
+    expect(close).toHaveBeenCalledOnce()
+    expect(session.inspect().state).toBe("closed")
+  })
+
   it("allows another controller after attachment rollback succeeds even if detach tracing fails", async () => {
     const { controller, provider, release } = fixture()
     const traceError = new Error("attach trace failed")

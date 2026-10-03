@@ -141,6 +141,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
   private attaching = false
   private detaching = false
   private pendingControllerRelease?: { release: () => Promise<void>, complete: () => Promise<void> }
+  private resourceReleased = false
   private lastControllerSupportsHandoff = true
   private state: BrowserSessionState = "released"
 
@@ -188,10 +189,10 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
         sessionId: this.id,
       })
       let emitDetach = false
-      let detachStarted = false
       let released = false
       let releasePromise: Promise<void> | undefined
       let tracedReleasePromise: Promise<void> | undefined
+      let detachCompleted = false
       const releaseControl = async (): Promise<void> => {
         if (releasePromise) return await releasePromise
         if (released) return
@@ -202,7 +203,6 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           this.detaching = false
           if (this.state === "controlled") this.state = "released"
           this.controller = undefined
-          if (this.pendingControllerRelease === releaseRollback) this.pendingControllerRelease = undefined
         })()
         releasePromise = releasing
         try {
@@ -214,12 +214,13 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
       }
       releaseController = async () => {
         if (tracedReleasePromise) return await tracedReleasePromise
-        if (released && (!emitDetach || detachStarted)) return
+        if (released && (!emitDetach || detachCompleted)) return
         const releasing = (async () => {
           await releaseControl()
           if (emitDetach) {
-            detachStarted = true
             await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
+            detachCompleted = true
+            if (this.pendingControllerRelease === releaseRollback) this.pendingControllerRelease = undefined
           }
         })()
         tracedReleasePromise = releasing
@@ -300,7 +301,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
 
   async close(): Promise<void> {
     if (this.closePromise) return await this.closePromise
-    if (this.state === "closed") return
+    if (this.state === "closed" && !this.pendingControllerRelease) return
     if (this.state === "handed-off") throw browserSessionStateError("close", this.state)
     if (this.state === "controlled" && !this.detaching) throw browserSessionStateError("close", this.state)
     this.closing = true
@@ -311,7 +312,10 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           // Rollback must finish while its provider connection is still available.
           await rollback.release()
         }
-        await releaseResource({ lease: this.lease, providerSession: this.providerSession })
+        if (!this.resourceReleased) {
+          await releaseResource({ lease: this.lease, providerSession: this.providerSession })
+          this.resourceReleased = true
+        }
         this.state = "closed"
         await rollback?.complete()
       }
