@@ -1363,10 +1363,20 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // Resolve body declarations in their lexical block, or function for var.
     // Do not let a method local hide imported reads in another interpolation.
     const templateFunctionScopes = [...templateLocalBindings]
+    for (let index = 0; index < references.length; index++) {
+      if (references[index] !== "catch" || references[index + 1] !== "(") continue
+      const close = referenceClosings.get(index + 1)
+      if (close === undefined || references[close + 1] !== "{") continue
+      const end = referenceClosings.get(close + 1)
+      if (end !== undefined) {
+        const names = callbackBindingNames(index + 1, close, undefined, references)
+        templateLocalBindings.push({ start: index + 1, end, names })
+      }
+    }
     const templateStatementEnd = (start: number): number => {
       const token = references[start]
       if (token === "{") return (referenceClosings.get(start) ?? start) + 1
-      if (["for", "if", "while", "with"].includes(token ?? "")) {
+      if (["for", "if", "while", "with", "switch"].includes(token ?? "")) {
         const parameters = token === "for" && references[start + 1] === "await" ? start + 2 : start + 1
         const close = referenceClosings.get(parameters)
         if (close !== undefined) {
@@ -1494,17 +1504,15 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // Member writes mark globalThis and its aliases mutated. Follow their
       // direct initializers and helpers with an exact globalThis return.
       // Reads through these receivers do not reassign conversions.
-      const call = tokens[index + 1] === "("
-        ? [...openingDelimiters].find(([, opening]) => opening === index + 1)?.[0] ?? index
-        : index
-      const helperGlobal = tokens[index + 1] === "(" && tokens[call] === ")"
-        && (functionGlobalHelper(tokens[index]!) || arrowGlobalHelper(tokens[index]!))
+      const call = globalHelperCallEnd(index)
+      const helperGlobal = call !== undefined
       if (!globalThisReceiver(index) && !helperGlobal) continue
-      const member = helperGlobal ? memberAccess(call) : memberAccess(index)
+      const member = call !== undefined ? memberAccess(call) : memberAccess(index)
+      const memberEnd = memberCallEnd(call ?? index)
       if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
         reassignedGlobalConversions.add(member.name)
       }
-      else if (!member && memberCallEnd(index) > index + 1 && assignmentOperator(memberCallEnd(index))) {
+      else if (!member && memberEnd > (call ?? index) + 1 && assignmentOperator(memberEnd)) {
         // Unknown computed writes may replace a conversion helper. A bare
         // alias declaration or assignment does not write a member.
         reassignedGlobalConversions.add("String")
@@ -1723,9 +1731,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // `function globals() { return globalThis }`). Treat only a direct,
     // unmodified function declaration with that exact return expression as an
     // alias; arbitrary helper calls remain opaque.
-    if (!mutatedBindings.has(tokens[index]!) && tokens[index + 1] === "(") {
-      if (functionGlobalHelper(tokens[index]!) || arrowGlobalHelper(tokens[index]!)) return true
-    }
+    if (!mutatedBindings.has(tokens[index]!) && globalHelperCallEnd(index) !== undefined) return true
     const binding = visibleDeclaration(index)
     const initializer = binding === undefined ? undefined : declaratorInitializers.get(binding + 1)
     if (initializer === undefined) return false
@@ -1738,6 +1744,14 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // actual member access or opaque helper results.
     if (![";", ",", ")", undefined, "!", "as", "satisfies"].includes(tokens[value + 1]) && !startsStatement(value + 1)) return false
     return globalThisReceiver(value, seen)
+  }
+
+  function globalHelperCallEnd(index: number): number | undefined {
+    const member = memberAccess(index)
+    const call = member && ["call", "apply"].includes(member.name) ? member.end : index + 1
+    if (tokens[call] !== "(") return undefined
+    if (!functionGlobalHelper(tokens[index]!) && !arrowGlobalHelper(tokens[index]!)) return undefined
+    return [...openingDelimiters].find(([, opening]) => opening === call)?.[0]
   }
 
   function functionGlobalHelper(name: string): boolean {

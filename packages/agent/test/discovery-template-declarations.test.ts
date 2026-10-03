@@ -33,6 +33,10 @@ it.each([
   "({ render() { class portal {}; return portal } })",
   "class { static { function portal() {}; portal } }",
   "function () { { class portal {}; portal } }",
+  "({ render() { try { throw 0 } catch (portal) { return portal.id } } })",
+  "function () { try { throw 0 } catch ({ value: portal }) { return portal.id } }",
+  "() => { try { throw 0 } catch ([portal]) { return portal.id } }",
+  "function () { for (const portal of []) switch (input.id) { default: portal.id } }",
 ])("keeps nested template declarations local: %s", async expression => {
   const definition = await discover(expression)
   expect(definition).toBeDefined()
@@ -46,6 +50,10 @@ it.each([
   "function () { const local = function portal() {}; return portal }",
   "function () { const local = class portal {}; return portal }",
   "function () { class Local extends portal {} }",
+  "({ render() { try { throw 0 } catch (portal) { portal.id } return portal } })",
+  "function () { try { throw 0 } catch ({ value: local = portal }) { return local } }",
+  "function () { for (const portal of []) switch (input.id) {} return portal }",
+  "function () { for (const portal of []) switch (input.id) { default: portal.id } portal.capabilities = [] }",
 ])("preserves imported template reads outside declaration scopes: %s", async expression => {
   await expect(discover(expression)).rejects.toThrow(/opaque Channel/)
 })

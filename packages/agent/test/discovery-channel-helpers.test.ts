@@ -1003,6 +1003,18 @@ it.each([
 })
 
 it.each([
+  'function globals() { return globalThis }; globals.call(null).String = replacement',
+  'function globals() { return globalThis }; globals.apply(null, []).String = replacement',
+  'const globals = () => globalThis; globals.call(null).String = replacement',
+  'const globals = () => { return globalThis }; globals.apply(null, []).String = replacement',
+  'const globals = () => globalThis; globals.call(null)[key] = replacement',
+])("rejects conversion writes through indirect global helpers: %s", async setup => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; ${setup}; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it.each([
   '(globalThis) => globalThis',
   'globalThis => globalThis',
   '(globalThis = {}) => globalThis',
