@@ -1,14 +1,14 @@
 import { execFile } from 'node:child_process'
-import { access, cp, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, cp, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createGitHubHost, prepareGitHubPullRequestWorkspace } from '../src/server/github.ts'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...fs, rename: vi.fn(fs.rename) }
+  return { ...fs, mkdtemp: vi.fn(fs.mkdtemp), rename: vi.fn(fs.rename) }
 })
 
 const exec = promisify(execFile)
@@ -442,7 +442,7 @@ process.exit(result.status ?? 1);
   expect(commands.some(args => args.includes('init'))).toBe(true)
   expect(commands.some(args => args.includes('fetch'))).toBe(true)
   expect(commands.some(args => args.includes('clean'))).toBe(true)
-  for (const args of commands) expect(args[1]).toMatch(/vitehub-github-reset-.*(?:replacement-|checkout)/)
+  for (const args of commands) expect(args[1]).toMatch(/^\/proc\/\d+\/fd\/\d+\/(?:replacement-|checkout)/)
   expect(await readdir(outside)).toEqual(['marker'])
   expect(await readFile(join(outside, 'marker'), 'utf8')).toBe('untouched')
   expect(await readdir(pool)).toEqual([])
@@ -470,7 +470,7 @@ it('rejects a checkout swapped for a symlink immediately before relocation', asy
   await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
   const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
   vi.mocked(rename).mockImplementationOnce(async (from, to) => {
-    expect(from).toBe(checkout)
+    expect(await realpath(from)).toBe(checkout)
     await fs.rename(checkout, join(root, 'displaced'))
     await symlink(outside, checkout)
     await fs.rename(from, to)
@@ -481,6 +481,77 @@ it('rejects a checkout swapped for a symlink immediately before relocation', asy
   expect(await readFile(join(outside, '.git/HEAD'), 'utf8')).toBe(outsideHead)
   expect(await readdir(outside)).toEqual(['.git'])
   expect(await readdir(pool)).toEqual([])
+}, 30_000)
+
+it.each(['before allocation', 'during allocation'])('rejects a replaced pool root %s for a different PR', async (timing) => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const displaced = join(root, 'displaced-pool')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const credentials = vi.fn(() => ({ token: 'test-token', rateLimitKey: 'offline-test' }))
+  const host = createGitHubHost({ checkouts: { root: pool }, credentials })
+  await host.withPullRequestCheckout({ repository: 'acme/base', number: 1, headSha: head }, async () => {})
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  const replace = async () => {
+    await fs.rename(pool, displaced)
+    await mkdir(pool)
+    await writeFile(join(pool, 'marker'), 'untouched')
+  }
+  if (timing === 'before allocation') await replace()
+  else vi.mocked(mkdtemp).mockImplementationOnce(async (prefix, options) => {
+    await replace()
+    return await fs.mkdtemp(prefix, options)
+  })
+  credentials.mockClear()
+  const callback = vi.fn(async () => {})
+  await expect(host.withPullRequestCheckout({ repository: 'acme/base', number: 2, headSha: head }, callback)).rejects.toThrow('root was replaced')
+  expect(callback).not.toHaveBeenCalled()
+  if (timing === 'before allocation') expect(credentials).not.toHaveBeenCalled()
+  expect(await readdir(pool)).toEqual(['marker'])
+  expect(await readFile(join(pool, 'marker'), 'utf8')).toBe('untouched')
+  expect((await readdir(displaced)).filter(name => name.includes('-pr-2-'))).toEqual([])
+}, 30_000)
+
+it('keeps relocation in the retained pool when its parent is replaced by a directory', async () => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const displaced = join(root, 'displaced-pool')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: pool },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let checkout = ''
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(rename).mockImplementationOnce(async (from, to) => {
+    await fs.rename(pool, displaced)
+    await mkdir(pool)
+    // Mirror both visible names in the replacement parent. Path-based relocation
+    // would use these directories and reset the replacement checkout.
+    await cp(join(displaced, basename(checkout)), checkout, { recursive: true })
+    const privateName = (await readdir(displaced)).find(name => name.startsWith('vitehub-github-reset-'))!
+    await mkdir(join(pool, privateName))
+    await writeFile(join(checkout, 'untracked-marker'), 'untouched')
+    await fs.rename(from, to)
+  })
+  const callback = vi.fn(async () => {})
+  await expect(host.withPullRequestCheckout(pullRequest, callback)).rejects.toThrow('root was replaced')
+  expect(callback).not.toHaveBeenCalled()
+  expect(await readFile(join(checkout, 'untracked-marker'), 'utf8')).toBe('untouched')
+  expect(await git(checkout, 'rev-parse', 'HEAD')).toBe(head)
+  expect(await readdir(displaced)).toEqual([])
 }, 30_000)
 
 it('clears initialized submodules when a pooled checkout changes its gitlink', async () => {
