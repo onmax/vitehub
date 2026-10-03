@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events"
 import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Readable } from "node:stream"
+import { Readable, Writable } from "node:stream"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { createViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
@@ -397,19 +397,21 @@ async function call(middleware: Middleware, init: { body?: string, headers?: Rec
   const done = new EventEmitter()
   const chunks: Buffer[] = []
   const headers: Record<string, string> = {}
-  const res = {
-    end(chunk?: Buffer) {
-      if (chunk) chunks.push(chunk)
-      done.emit("end")
+  const res = Object.assign(new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(Buffer.from(chunk))
+      callback()
     },
+    final(callback) {
+      done.emit("end")
+      callback()
+    },
+  }), {
     setHeader(name: string, value: string) {
       headers[name] = value
     },
     statusCode: 200,
-    write(chunk: Buffer) {
-      chunks.push(chunk)
-    },
-  }
+  })
   const ended = new Promise(resolve => done.once("end", resolve))
   middleware(req, res as unknown as ServerResponse, () => done.emit("end"))
   await ended

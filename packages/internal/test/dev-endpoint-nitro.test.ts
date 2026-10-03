@@ -79,6 +79,75 @@ function nitroRequest(init: { headers?: Record<string, string>, method?: string 
 }
 
 describe("Nitro dev forwarding", () => {
+  it("aborts Nitro work when the client disconnects before the response", async () => {
+    const requestStarted = Promise.withResolvers<Request>()
+    const dispatchFetch = vi.fn((request: Request) => {
+      requestStarted.resolve(request)
+      return new Promise<Response>((_resolve, reject) => request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true }))
+    })
+    const { server, middlewares } = fakeServer({ nitro: { dispatchFetch } })
+    registerViteHubNitroDevEndpoint(server, { ...guard, route, runtimeRoute, streamResponse: true })
+    const req = incoming({ body: "{}", headers: json, method: "POST" })
+    const res = new Writable() as unknown as ServerResponse
+    middlewares[0]!(req, res, vi.fn())
+    const request = await requestStarted.promise
+    res.destroy()
+    await new Promise<void>(resolve => request.signal.addEventListener("abort", () => resolve(), { once: true }))
+    expect(request.signal.aborted).toBe(true)
+  })
+
+  it("cancels a runtime response that arrives after the client disconnects", async () => {
+    const requestStarted = Promise.withResolvers<void>()
+    const runtimeResponse = Promise.withResolvers<Response>()
+    const cancelled = Promise.withResolvers<void>()
+    const cancel = vi.fn(() => cancelled.resolve())
+    const { server, middlewares } = fakeServer({ nitro: { dispatchFetch: async () => {
+      requestStarted.resolve()
+      return runtimeResponse.promise
+    } } })
+    registerViteHubNitroDevEndpoint(server, { ...guard, route, runtimeRoute, streamResponse: true })
+    const req = incoming({ body: "{}", headers: json, method: "POST" })
+    const res = new Writable() as unknown as ServerResponse
+    middlewares[0]!(req, res, vi.fn())
+    await requestStarted.promise
+    res.destroy()
+    runtimeResponse.resolve(new Response(new ReadableStream({ cancel })))
+    await cancelled.promise
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it("cancels a stalled runtime stream when the client disconnects", async () => {
+    const firstChunk = Promise.withResolvers<void>()
+    const cancelled = Promise.withResolvers<void>()
+    const cancel = vi.fn(() => cancelled.resolve())
+    const pull = vi.fn(() => new Promise<void>(() => {}))
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("first"))
+      },
+      cancel,
+      pull,
+    }))
+    const dispatchFetch = vi.fn(async (_request: Request) => response)
+    const { server, middlewares } = fakeServer({ nitro: { dispatchFetch } })
+    registerViteHubNitroDevEndpoint(server, { ...guard, route, runtimeRoute, streamResponse: true })
+    const req = incoming({ body: "{}", headers: json, method: "POST" })
+    const res = Object.assign(new Writable({
+      write(_chunk, _encoding, callback) {
+        firstChunk.resolve()
+        callback()
+      },
+    }), { setHeader: vi.fn(), statusCode: 200 }) as unknown as ServerResponse
+    middlewares[0]!(req, res, vi.fn())
+    await firstChunk.promise
+    expect(pull).toHaveBeenCalledOnce()
+    expect(dispatchFetch.mock.calls[0]![0].signal.aborted).toBe(false)
+    res.destroy()
+    await cancelled.promise
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(dispatchFetch.mock.calls[0]![0].signal.aborted).toBe(true)
+  })
+
   it("forwards streamed bytes without buffering the response", async () => {
     const response = new Response(new ReadableStream({
       start(controller) {
