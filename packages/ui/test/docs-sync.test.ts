@@ -50,7 +50,7 @@ function documentedNames(page: string, heading: string): Set<string> {
 }
 
 describe("UI docs stay in sync with the public components", () => {
-  const components = Object.entries(ui).filter((entry): entry is [string, { emits?: Record<string, unknown> | string[]; name?: string; props?: Record<string, unknown> }] => isComponent(entry[1]));
+  const components = Object.entries(ui).flatMap(([name, component]) => isComponent(component) ? [[name, component] as const] : []);
 
   it("maps every public component to a docs page", () => {
     const pageNames = new Set(readdirSync(docsRoot).filter(file => file.endsWith(".md")).map(file => file.slice(0, -3)));
