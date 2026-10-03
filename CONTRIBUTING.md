@@ -146,4 +146,4 @@ Repository administrators must enable **Settings → Actions → General → All
 
 Pull request work belongs in a dedicated worktree. Reuse an isolated task worktree, or create one from the refreshed target base. Inspect collisions and preserve other agents' work.
 
-Do not commit temporary plans, raw thread exports, or scratch files. Use `.agents/research/` only for durable, cited research that supports a project decision. Remove task-created temporary files and worktrees after their remote state is safe; never remove pre-existing work without authorization.
+Do not commit temporary plans, raw thread exports, or scratch files. Keep durable, cited research in the issue or pull request that supports a project decision. Remove task-created temporary files and worktrees after their remote state is safe; never remove pre-existing work without authorization.

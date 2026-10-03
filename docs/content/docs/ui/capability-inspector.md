@@ -1,7 +1,7 @@
 ---
 title: Capability Inspector
 description: "Show what each Capability recorded for one Invocation, including MCP servers, tool contracts, and custom read-only views."
-navigation.order: 33
+navigation.order: 34
 navigation.group: Agent work
 icon: i-ph-plugs-connected-light
 ---
