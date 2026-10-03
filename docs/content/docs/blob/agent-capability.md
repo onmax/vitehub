@@ -2,13 +2,13 @@
 title: Blob capability
 description: Give an Agent a Blob read tool and, in write mode, a tool that puts or deletes objects.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-file-box
 ---
 
 `blob()` gives an Agent the `blob_read` tool for get, head, and list operations. In write mode, it also gives the `blob_edit` tool for put and delete operations.
 Both tools call the configured [Blob primitive](/docs/blob). For Provider-backed Agents, `assetPaths` also publishes files that the final answer references.
-The Blob primitive page covers application code. This page covers the Agent tools.
+The [Blob server API](/docs/blob/server-api) covers application code. This page covers the Agent tools.
 
 ## Configure Blob access
 
@@ -116,7 +116,7 @@ await blob_edit({
 - `policy` applies only to `blob_edit`. `blob_read` has no policy gate.
 - `policy` accepts `'allow'`, `'require-approval'`, `'deny'`, `'retryable-failure'`, or a function that receives `{ name, input }` and returns one of these values.
 - Without `policy`, `blob_edit` runs when the Agent calls it.
-- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The write runs only after approval. See [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces).
+- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The write runs only after approval. See [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces).
 - Published artifacts get public URLs. Declare only `assetPaths` whose files may be public.
 
 ## Driver support
@@ -147,4 +147,4 @@ await blob_edit({
 
 - [Blob primitive](/docs/blob)
 - [Official capabilities](/docs/agents/capabilities/official)
-- [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces)
+- [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces)

@@ -99,6 +99,12 @@ Keep changes small. Use existing code or a suitable library before building infr
 
 ViteHub is in active development. Breaking changes and removal of unused compatibility are welcome when they clarify the final contract. Use Better Auth as a composition reference and UnJS for host-independent behavior. Document public behavior in `docs/content/docs/` and the affected package README.
 
+### Documentation structure
+
+`docs/content/docs/` has one folder per product. Each Server Primitive folder is one docs section with its own sidebar and uses the same pages in the same order: `index.md` (the Overview, rendered as a landing page with a hero, page cards, and no sidebar), `get-started.md`, `configure.md`, `server-api.md`, `agent-capability.md` when the primitive has an Agent Capability, `hosts.md`, and `limits-and-errors.md`. Create a page only when the product has real content for it. Product-specific pages such as `env/bridge.md` come after the template pages. `.navigation.yml` declares the section `title`, `icon`, `order`, catalog `category`, and `related` section ids. Agent-only Capabilities live under `agents/capabilities/`. Start, Concepts, and AI resources live under `getting-started/`. When a page moves, add its old path to `docs/modules/vitehub-docs/redirects.ts` and update inbound links; `corepack pnpm exec vp run --filter vitehub-docs test:links` checks every internal link and anchor.
+
+
+
 ## Downstream patch loop
 
 Use `pnpm patch` in a consuming project to prove the smallest downstream fix:

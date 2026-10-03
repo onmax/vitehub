@@ -124,5 +124,5 @@ An independent provider `driver` runs with its own configuration, credentials, a
 - [Agent Drivers](/docs/agents/agent-drivers)
 - [Channels](/docs/agents/channels)
 - [Markdown templates](/docs/reference/markdown-templates)
-- [Markdown pages](/docs/ai-resources/markdown-pages)
+- [Markdown pages](/docs/getting-started/ai-resources/markdown-pages)
 - [Official Capabilities](/docs/agents/capabilities/official)

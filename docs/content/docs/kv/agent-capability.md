@@ -2,13 +2,13 @@
 title: KV capability
 description: Give an Agent a KV read tool and, in write mode, a tool that puts or deletes one key.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-key-round
 ---
 
 `kv()` gives an Agent the `kv_read` tool. In write mode, it also gives the `kv_edit` tool.
 Both tools call the configured [KV primitive](/docs/kv).
-The KV primitive page covers application code. This page covers the Agent tools.
+The [KV server API](/docs/kv/server-api) covers application code. This page covers the Agent tools.
 
 ## Configure KV access
 
@@ -70,7 +70,7 @@ When the KV handle returns an `[error, value]` tuple, the tool throws the error 
 - `policy` applies only to `kv_edit`. `kv_read` has no policy gate.
 - `policy` accepts `'allow'`, `'require-approval'`, `'deny'`, `'retryable-failure'`, or a function that receives `{ name, input }` and returns one of these values.
 - Without `policy`, `kv_edit` runs when the Agent calls it.
-- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The write runs only after approval. See [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces).
+- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The write runs only after approval. See [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces).
 
 ## Driver support
 
@@ -99,4 +99,4 @@ When the KV handle returns an `[error, value]` tuple, the tool throws the error 
 
 - [KV primitive](/docs/kv)
 - [Official capabilities](/docs/agents/capabilities/official)
-- [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces)
+- [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces)

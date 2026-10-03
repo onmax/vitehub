@@ -2,3 +2,4 @@ title: Sandbox
 icon: i-lucide-terminal-square
 order: 23
 category: Compute
+related: [shell, workspace]

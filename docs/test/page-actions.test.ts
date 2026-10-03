@@ -18,10 +18,10 @@ function read(path: string) {
 
 describe("docs page actions", () => {
   it("maps trailing-slash and bare docs routes to one raw Markdown page", () => {
-    for (const route of ["/docs/ai-resources/mcp-server", "/docs/ai-resources/mcp-server/"]) {
+    for (const route of ["/docs/getting-started/ai-resources/mcp-server", "/docs/getting-started/ai-resources/mcp-server/"]) {
       expect(pageActionLinks(route)).toMatchObject({
-        markdownPath: "/raw/docs/ai-resources/mcp-server.md",
-        markdownUrl: "https://vitehub.dev/raw/docs/ai-resources/mcp-server.md",
+        markdownPath: "/raw/docs/getting-started/ai-resources/mcp-server.md",
+        markdownUrl: "https://vitehub.dev/raw/docs/getting-started/ai-resources/mcp-server.md",
       });
     }
     expect(pageActionLinks("/docs/")?.markdownPath).toBe("/raw/docs.md");
@@ -81,7 +81,7 @@ describe("docs page actions", () => {
 
   it("documents every page action that the header renders", () => {
     const component = read("app/components/DocsPageHeaderLinks.vue");
-    const guide = read("content/docs/ai-resources/markdown-pages.md");
+    const guide = read("content/docs/getting-started/ai-resources/markdown-pages.md");
     const labels = [...component.matchAll(/label: "([^"]+)"/g)].map(match => match[1]!);
 
     expect(labels).toEqual([
@@ -97,12 +97,12 @@ describe("docs page actions", () => {
     expect(guide).toContain("| Copy page |");
     for (const label of labels.slice(0, 5)) expect(guide).toContain(`| ${label} |`);
     expect(guide).toContain("| Add MCP server to Cursor or VS Code |");
-    expect(component).toContain('to: "/docs/ai-resources/mcp-server"');
+    expect(component).toContain('to: "/docs/getting-started/ai-resources/mcp-server"');
     expect(guide).toContain(pageChatPrompt("https://vitehub.dev/raw/docs/kv.md"));
   });
 
   it("uses the generated MCP endpoint and server name in every setup snippet", () => {
-    const guide = read("content/docs/ai-resources/mcp-server.md");
+    const guide = read("content/docs/getting-started/ai-resources/mcp-server.md");
     const endpoints = [...guide.matchAll(/https:\/\/vitehub\.dev\/mcp\b[^\s"'`)]*/g)].map(match => match[0]);
 
     expect(endpoints.length).toBeGreaterThanOrEqual(6);
@@ -116,7 +116,7 @@ describe("docs page actions", () => {
   });
 
   it("installs only the ViteHub skill from the site URL for each documented agent", () => {
-    const guide = read("content/docs/ai-resources/agent-instructions-skills.md");
+    const guide = read("content/docs/getting-started/ai-resources/agent-instructions-skills.md");
     const commands = [...guide.matchAll(/npx skills add (\S+) --skill (\S+) --agent (\S+)/g)];
 
     expect(commands.map(match => match[3])).toEqual(["claude-code", "cursor", "github-copilot", "windsurf", "codex"]);

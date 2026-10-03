@@ -1,11 +1,12 @@
 ---
 title: Env Bridge
+navigation.title: Env Bridge
 description: Replace application credentials at runtime with scoped access and persistent activity.
-navigation.order: 2
+navigation.order: 8
 icon: i-lucide-key-round
 ---
 
-Env Bridge is an [Env provider](/docs/env#read-external-env-storage) that connects Server Env to a secret store, an access policy, and a durable activity log. Use it for credentials that administrators must replace while the application runs, for example an API token that rotates.
+Env Bridge is an [Env provider](/docs/env/server-api#read-external-env-storage) that connects Server Env to a secret store, an access policy, and a durable activity log. Use it for credentials that administrators must replace while the application runs, for example an API token that rotates.
 
 Each credential has its own grants. A user, Agent, or service gets only the permissions you grant for that key. Every read, replacement, and grant change is recorded. Host variables, including `process.env` and Worker bindings, stay read-only.
 
@@ -308,6 +309,6 @@ Keep the callback in trusted server code and return only the tool's intended res
 
 ## Next steps
 
-- Declare provider-backed values with [Env](/docs/env#read-external-env-storage).
+- Declare provider-backed values with [Env](/docs/env/server-api#read-external-env-storage).
 - Call third-party APIs for connected accounts with [Connections](/docs/connections).
 - Protect management with [Auth](/docs/auth) and the [Console](/docs/development/console#protect-the-console-route).

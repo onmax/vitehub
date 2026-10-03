@@ -102,7 +102,7 @@ describe("agent-ready HTTP contracts", () => {
   });
 
   it("documents only the llms indexes that the docs host serves", () => {
-    const resources = readFileSync(resolve(docsRoot, "content/docs/ai-resources/index.md"), "utf8");
+    const resources = readFileSync(resolve(docsRoot, "content/docs/getting-started/ai-resources/index.md"), "utf8");
     const documented = [...new Set([...resources.matchAll(/https:\/\/vitehub\.dev(\/llms[^\s)`]*\.txt)/g)].map(match => match[1]))];
 
     expect(documented.sort()).toEqual(["/llms-full.txt", "/llms.txt"]);
@@ -200,7 +200,7 @@ describe("trust and developer discovery content", () => {
 
   it("names the OpenAPI, skill, MCP, and npm CLI entry points", () => {
     const config = readFileSync(resolve(docsRoot, "nuxt.config.ts"), "utf8");
-    const resources = readFileSync(resolve(docsRoot, "content/docs/ai-resources/index.md"), "utf8");
+    const resources = readFileSync(resolve(docsRoot, "content/docs/getting-started/ai-resources/index.md"), "utf8");
     const combined = `${config}\n${resources}`;
 
     expect(combined).toContain("When to use ViteHub");

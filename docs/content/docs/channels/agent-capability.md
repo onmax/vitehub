@@ -2,11 +2,11 @@
 title: Channels capability
 description: Let an Agent send its result through a Channel to a recipient that the application selects.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-send
 ---
 
-`channelDelivery()` gives an Agent one tool, `send_message` by default. The tool sends a message through a [Channel](/docs/agents/channels) client to a recipient that the application selects. The model only writes the message.
+`channelDelivery()` gives an Agent one tool, `send_message` by default. The tool sends a message through a [Channel](/docs/channels/server-api) client to a recipient that the application selects. The model only writes the message.
 
 Use it when an Agent Invocation must deliver its result somewhere other than the Channel that started it. Examples are a Schedule that sends a report to a Teams user, or a webhook Agent that sends a draft to a reviewer.
 
@@ -107,7 +107,7 @@ Without `description`, the tool description names the Channel and states how man
 
 ## Related pages
 
-- [Channels](/docs/agents/channels)
+- [Agent Channels](/docs/agents/channels)
 - [Channels Server Primitive](/docs/channels)
 - [Schedule Capability](/docs/schedule/agent-capability)
 - [Schedule primitive](/docs/schedule)

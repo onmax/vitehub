@@ -380,6 +380,11 @@ function optionalString(value: unknown) {
   return result.success ? result.output : null;
 }
 
+function stringList(value: unknown) {
+  const result = safeParse(array(string()), value);
+  return result.success ? result.output : [];
+}
+
 function optionalNumber(value: unknown) {
   const result = safeParse(number(), value);
   return result.success ? result.output : null;
@@ -456,6 +461,7 @@ function createDocsSection(sectionId: string, rootDir: string, order: number) {
     description: overview?.description || null,
     icon: optionalString(navigation.icon) || overview?.icon || null,
     category: optionalString(navigation.category),
+    related: stringList(navigation.related),
     order: optionalNumber(navigation.order) ?? order,
     pages,
   };

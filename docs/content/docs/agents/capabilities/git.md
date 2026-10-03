@@ -9,7 +9,7 @@ icon: i-lucide-git-branch
 
 `git()` adds one model-facing `shell` tool that runs controlled Git commands in a [Workspace](/docs/workspace) Session. Read mode allows source-history inspection. Write mode also allows local `fetch`, `checkout`, and `switch`. Use it for review, source-history inspection, and local branch selection, not to publish repository history.
 
-The Workspace primitive page covers application code. This page covers the Agent tool.
+The [Workspace server API](/docs/workspace/server-api) covers application code. This page covers the Agent tool.
 
 ## Configure Git access
 
