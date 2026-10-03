@@ -1123,6 +1123,12 @@ describe("schedule provider output", () => {
     "as true extends true ? readonly Other<string, unknown>[] : never",
     'as true extends true ? ScheduleDefinitionInput : `${Extract<"a" | "b", string>}`',
     "as false extends true ? never : Options<string, unknown>",
+    "as false extends true ? never : Types.Options<string, unknown>",
+    "as true extends true ? keyof /* branch */ Types.Options<string, unknown> : never",
+    "as true extends true ? ScheduleDefinitionInput : { config: string, other: number }",
+    "as true extends true ? { config: string, other: number } : ScheduleDefinitionInput",
+    "as true extends true ? ScheduleDefinitionInput : [config: string, other: number]",
+    "as true extends true ? ScheduleDefinitionInput : ((config: string, other: number) => void)",
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
     "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
@@ -1160,6 +1166,8 @@ describe("schedule provider output", () => {
     "as Foo<string> ^ (bar())",
     "as Definition ? fallback : fallback",
     "as true extends true ? Definition : never ? fallback : fallback",
+    "as Definition ? { config: string, other: number } : fallback",
+    "as true extends true ? Definition : never ? (bar()) : fallback",
   ])("rejects runtime expressions after cron assertion types: %s", async (assertion) => {
     const rootDir = await createTempProject("vitehub-schedule-output-runtime-assertion-")
     await writeFile(join(rootDir, "src", "cleanup.schedule.ts"),

@@ -346,10 +346,6 @@ export function findMatching(source: string, index: number, open: string, close:
 }
 
 function isAssertionTypeArguments(source: string, index: number, assertionSuffix = false) {
-  // A conditional type's branch can begin with a generic reference. This
-  // check runs before walking the qualified name because the preceding token
-  // is `?`, rather than an assertion operator or a union delimiter.
-  if (/\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*(?:(?:readonly|keyof|typeof)\s+)*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) return true
   if (/\b(?:extends|implements)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
   const controlFlowRegexes: ControlFlowRegexCache = new Map()
@@ -380,15 +376,6 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   if (source[current] === "&" || source[current] === "|") {
     return hasAssertionTypePrefix(source.slice(0, index))
   }
-  // Conditional types introduce their true branch after `?`, which is also
-  // a valid boundary for a generic reference. Keep its commas inside the
-  // assertion while the complete-assertion validator checks the suffix.
-  if (source[current] === "?") {
-    return /\b(?:as|satisfies)\b[\s\S]*\?\s*$/.test(source.slice(0, index))
-  }
-  if (/\?\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))) {
-    return /\b(?:as|satisfies)\b[\s\S]*(?:\?|:)\s*[A-Za-z_$][\w$]*$/.test(source.slice(0, index))
-  }
   // Type operators can precede the generic reference. Walk back to
   // the assertion boundary with the same comment-aware token handling.
   let keyword: string
@@ -399,6 +386,12 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
     if (keyword !== "keyof" && keyword !== "readonly" && keyword !== "typeof") break
     current = previousCodeIndex(source, current, controlFlowRegexes)
   } while (current >= 0)
+  // Qualified names and unary operators have now been consumed. Both
+  // conditional branches can start here; suffix validation checks that the
+  // delimiters belong to a conditional type rather than a runtime ternary.
+  if (source[current] === "?" || source[current] === ":") {
+    return /\b(?:as|satisfies)\b/.test(source.slice(0, current))
+  }
   return (keyword === "as" || keyword === "satisfies")
     && source[previousCodeIndex(source, current, controlFlowRegexes)] !== "."
 }
@@ -462,7 +455,7 @@ function maskAssertionTypeArguments(source: string) {
     const close = masked[index] === "{" ? "}" : masked[index] === "[" ? "]" : masked[index] === "(" ? ")" : undefined
     if (!close) continue
     const prefix = masked.slice(0, index).trimEnd()
-    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|])$/.test(prefix)) continue
+    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|?:])$/.test(prefix)) continue
     const end = findMatching(masked, index, masked[index]!, close)
     if (end === undefined) continue
     output.fill(" ", index + 1, end)

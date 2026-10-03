@@ -100,6 +100,12 @@ describe("source scanner", () => {
     "as true extends true ? keyof Other<string, unknown> : never",
     'as true extends true ? ScheduleDefinitionInput : `${Extract<"a" | "b", string>}`',
     "as false extends true ? never : Options<string, unknown>",
+    "as false extends true ? never : Types.Options<string, unknown>",
+    "as true extends true ? keyof /* branch */ Types.Options<string, unknown> : never",
+    "as true extends true ? ScheduleDefinitionInput : { config: string, other: number }",
+    "as true extends true ? { config: string, other: number } : ScheduleDefinitionInput",
+    "as true extends true ? ScheduleDefinitionInput : [config: string, other: number]",
+    "as true extends true ? ScheduleDefinitionInput : ((config: string, other: number) => void)",
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
     "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
@@ -156,6 +162,8 @@ describe("source scanner", () => {
     "as Definition ? fallback : fallback",
     "as Options<string, unknown> ? fallback : fallback",
     "as true extends true ? Definition : never ? fallback : fallback",
+    "as Definition ? { config: string, other: number } : fallback",
+    "as true extends true ? Definition : never ? (bar()) : fallback",
     "as true extends true ? Options<string, unknown> : never ? (bar()) : fallback",
   ])("rejects runtime suffixes after nested assertion types: %s", (assertion) => {
     expect(findDefaultExportCall(`export default defineSchedule({ cron: '0 8 * * *' } ${assertion})`, ["defineSchedule"]))
