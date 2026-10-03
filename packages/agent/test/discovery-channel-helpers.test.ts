@@ -717,6 +717,14 @@ it.each([
 it.each([
   'driver: { instructions: ({ input }) => `Review ${input.id}` }',
   'box: { env: { THREAD_ID: ({ input }) => `pr-${input.id}` } }',
+  'driver: { instructions: ({ input }) => `portal ${input.id}` }',
+  'driver: { instructions: ({ input }) => `${input.id} portal` }',
+  'driver: { instructions: ({ input }) => `portal ${input.id} portal ${input.name}` }',
+  'driver: { instructions: ({ input }) => `portal ${`portal ${input.id}`} portal` }',
+  'driver: { instructions: ({ input }) => `portal ${({ id: input.id }).id}` }',
+  'driver: { instructions: ({ input }) => `portal ${"portal"} ${input.id}` }',
+  'driver: { instructions: ({ input }) => `portal ${/portal/.source} ${input.id}` }',
+  'driver: { instructions: ({ input }) => `portal ${input.id / 2} portal ${input.id / 2}` }',
 ])("keeps unrelated callback templates separate from imported Channels: %s", async settings => {
   const definition = await discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal }, ${settings} })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
@@ -730,6 +738,12 @@ it.each([
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',
+  'function getPortal() { return portal }; const ignored = `${getPortal().capabilities = []}`',
+  'const getPortal = () => portal; const ignored = `${getPortal().capabilities = []}`',
+  'function mutate() { portal.capabilities = [] }; const ignored = `${mutate()}`',
+  'function mutate() { portal.capabilities = [] }; const ignored = `${mutate`text`}`',
+  'function getPortal() { return portal }; const ignored = `${`${getPortal().capabilities = []}`}`',
+  'const ignored = `${"}"}${portal.capabilities = []}`',
 ])("rejects imported Channel mutations hidden in templates: %s", async expression => {
   await expect(discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; ${expression}; export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,

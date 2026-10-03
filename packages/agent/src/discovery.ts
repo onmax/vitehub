@@ -77,10 +77,9 @@ function isIdentifier(token: string | undefined): boolean {
 }
 
 // Keep literals as single tokens so their punctuation cannot change object depth.
-export function tokenizeAgentSource(source: string): { tokens: string[], lineBreaks: Set<number> } {
-  const tokens: string[] = []
-  const lineBreaks = new Set<number>()
-  let previousEnd = 0
+const agentTokenPattern = /"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[\p{ID_Start}$_]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\p{ID_Continue}$\u200C\u200D])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/gu
+
+function endsAgentExpression(tokens: string[]): boolean {
   function closesControlCondition(index: number): boolean {
     if (tokens[index] !== ")") return false
     let depth = 0
@@ -93,17 +92,76 @@ export function tokenizeAgentSource(source: string): { tokens: string[], lineBre
     }
     return false
   }
-  const tokenPattern = /"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|\/\*[\s\S]*?\*\/|\/\/[^\n]*|\/(?:\\.|\[(?:\\.|[^\]\\])*\]|[^/\n\\])+\/[dgimsuvy]*|(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?)n?|(?:[\p{ID_Start}$_]|\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4})(?:(?:[\p{ID_Continue}$\u200C\u200D])|(?:\\u\{[\da-fA-F]+\}|\\u[\da-fA-F]{4}))*|[^\s]/gu
+  const previous = tokens.at(-1)
+  return previous !== undefined && (
+    /^(?:\d|\.\d|["'`]|\/.)/.test(previous) || ([")", "]", "}"].includes(previous) && !closesControlCondition(tokens.length - 1))
+    || (["+", "-"].includes(previous) && tokens.at(-2) === previous)
+    || (isIdentifier(previous) && !["return", "throw", "yield", "await", "case", "else", "in", "of", "instanceof", "typeof", "void", "delete", "new"].includes(previous))
+  )
+}
+
+// Read nested templates as one token and expose only their executable regions.
+function readAgentTemplate(source: string, start: number): { end: number, expressions: string[] } {
+  const expressions: string[] = []
+  let cursor = start + 1
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") {
+      cursor += 2
+      continue
+    }
+    if (source[cursor] === "`") return { end: cursor + 1, expressions }
+    if (source[cursor] !== "$" || source[cursor + 1] !== "{") {
+      cursor++
+      continue
+    }
+    const expressionStart = cursor + 2
+    const pattern = new RegExp(agentTokenPattern.source, agentTokenPattern.flags)
+    pattern.lastIndex = expressionStart
+    let depth = 1
+    const expressionTokens: string[] = []
+    for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
+      let token = match[0]
+      if (token.startsWith("//") || token.startsWith("/*")) continue
+      if (token.startsWith("/") && token.length > 1 && endsAgentExpression(expressionTokens)) {
+        token = "/"
+        pattern.lastIndex = match.index + 1
+      }
+      expressionTokens.push(token)
+      if (token.startsWith("`")) {
+        pattern.lastIndex = readAgentTemplate(source, match.index).end
+      }
+      else if (token === "{") depth++
+      else if (token === "}") depth--
+      if (depth === 0) {
+        expressions.push(source.slice(expressionStart, match.index))
+        cursor = pattern.lastIndex
+        break
+      }
+    }
+    if (depth !== 0) return { end: source.length, expressions }
+  }
+  return { end: source.length, expressions }
+}
+
+function templateReferences(template: string): string[] {
+  return readAgentTemplate(template, 0).expressions.flatMap(expression =>
+    [...tokenizeAgentSource(expression).tokens.flatMap(token => token.startsWith("`") ? [token, ";", ...templateReferences(token)] : [token]), ";"])
+}
+
+export function tokenizeAgentSource(source: string): { tokens: string[], lineBreaks: Set<number> } {
+  const tokens: string[] = []
+  const lineBreaks = new Set<number>()
+  let previousEnd = 0
+  const tokenPattern = new RegExp(agentTokenPattern.source, agentTokenPattern.flags)
   for (let match = tokenPattern.exec(source); match !== null; match = tokenPattern.exec(source)) {
     let token = match[0]
+    if (token.startsWith("`")) {
+      tokenPattern.lastIndex = readAgentTemplate(source, match.index).end
+      token = source.slice(match.index, tokenPattern.lastIndex)
+    }
     if (token.startsWith("//") || token.startsWith("/*")) continue
     if (/[\r\n\u2028\u2029]/.test(source.slice(previousEnd, match.index))) lineBreaks.add(tokens.length)
-    const previous = tokens.at(-1)
-    const endsExpression = previous !== undefined && (
-      /^(?:\d|\.\d|["'`]|\/.)/.test(previous) || ([")", "]", "}"].includes(previous) && !closesControlCondition(tokens.length - 1))
-      || (["+", "-"].includes(previous) && tokens.at(-2) === previous)
-      || (isIdentifier(previous) && !["return", "throw", "yield", "await", "case", "else", "in", "of", "instanceof", "typeof", "void", "delete", "new"].includes(previous))
-    )
+    const endsExpression = endsAgentExpression(tokens)
     // A slash after an expression divides it. Expose operands that the
     // regex-literal matcher would otherwise hide, including option writes.
     if (token.startsWith("/") && token.length > 1 && endsExpression) {
@@ -1163,10 +1221,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   if (interpolatedTemplates.length > 0) {
     invalidateCapturedBindings()
     for (const template of interpolatedTemplates) {
-      const references = tokenizeAgentSource(template.slice(1, -1)).tokens
+      const references = templateReferences(template)
       // Imports cannot be reassigned. Only an interpolation that can access an
-      // imported value, or evaluate hidden code, can mutate that value.
-      const hiddenCode = references.includes("eval") || references.includes("import")
+      // imported value, call an opaque helper, or evaluate hidden code can
+      // mutate that value through a captured reference.
+      const hiddenCode = references.includes("eval") || references.includes("import") || references.some((token, index) =>
+        (token === "(" || token.startsWith("`"))
+        && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? "")))
       for (const name of imported) if (hiddenCode || references.includes(name)) mutatedBindings.add(name)
     }
   }
