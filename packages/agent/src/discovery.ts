@@ -1488,7 +1488,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // Storage and usage helpers do not allocate an Agent Workspace. Transcription
       // requires a writable Workspace only when artifact persistence is enabled.
       if (firstPartyFactory !== "transcribe") return false
-      const options = properties(call + 1, false, true)
+      const options = properties(call + 1, false, true, () => {
+        throw new Error("[vitehub] Agent Workspace discovery cannot inspect opaque transcription settings. Use literal artifact settings, or add an explicit Workspace ownership marker.")
+      })
       const artifacts = options.get("artifacts")
       return artifacts !== undefined && capabilityWorkspaceOwnsWorkspace(artifacts)
     }

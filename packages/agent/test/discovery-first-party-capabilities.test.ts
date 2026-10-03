@@ -44,6 +44,24 @@ it.each(["undefined", "void 0"])("keeps transcription without artifact settings 
 })
 
 it.each([
+  'get artifacts() { return {} }',
+  'set artifacts(value) {}',
+  '__proto__: { artifacts: {} }',
+  '...{ get artifacts() { return {} } }',
+  '...{ __proto__: { artifacts: {} } }',
+])("rejects opaque transcription artifact settings: %s", async (settings) => {
+  const source = `import { transcribe } from "vite-hub/agent/capabilities";
+    export default defineAgent({ capabilities: [transcribe({ execute: () => "text", ${settings} })] })`
+  await expect(discover(source)).rejects.toThrow("Agent Workspace discovery cannot inspect opaque transcription settings")
+})
+
+it("allows opaque transcription settings with explicit Workspace ownership", async () => {
+  const definitions = await discover(`import { transcribe } from "vite-hub/agent/capabilities";
+    export default defineAgent({ workspace: {}, capabilities: [transcribe({ execute: () => "text", get artifacts() { return {} } })] })`)
+  expect(definitions[0]?.workspace).toBe("meals")
+})
+
+it.each([
   'import { blob } from "./capabilities"; export default defineAgent({ capabilities: [blob({})] })',
   'const blob = () => defineCapability({ workspace: {} }); export default defineAgent({ capabilities: [blob({})] })',
   'import { blob } from "vite-hub/agent/capabilities"; blob.extra = {}; export default defineAgent({ capabilities: [blob({})] })',
