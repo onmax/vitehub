@@ -1813,7 +1813,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const pollCancellationRequest = async (initial = false) => {
         if (!unregisterCancellation || finished || cancellation.signal.aborted) return
         const summary = await boundedStoreOperation(() => store.getSummary(recordId))
-        if (initial && summary === storeOperationTimedOut) {
+        if (initial && (summary === storeOperationTimedOut || summary === undefined)) {
           throw agentDiagnostics.AGENT_R0973({ message: summary === storeOperationTimedOut
             ? "[vitehub] Initial Agent Invocation cancellation check timed out."
             : "[vitehub] Initial Agent Invocation cancellation check failed." })

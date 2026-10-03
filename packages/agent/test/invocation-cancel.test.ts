@@ -812,7 +812,7 @@ describe("Agent Invocation cancel", () => {
     expect((await invocations.getSummary(await agentInvocationId(runId)))?.status).toBe("cancelled")
   })
 
-  it.each(["run", "stream"] as const)("rejects %s startup when cancellation lands after renewal and the initial read rejects", async kind => {
+  it.each((["run", "stream"] as const).flatMap(kind => (["rejected", "missing"] as const).map(failure => ({ kind, failure })))))("rejects $kind startup when cancellation lands after renewal and the initial read is $failure", async ({ kind, failure }) => {
     const backing = createMemoryAgentInvocationStore()
     const entered = deferred()
     const releaseRenewal = deferred()
@@ -820,7 +820,10 @@ describe("Agent Invocation cancel", () => {
     const store = { ...backing, async getSummary(id: string) {
       const snapshot = await backing.getSummary(id)
       if (++reads === 1) { entered.resolve(); await releaseRenewal.promise }
-      else if (reads === 2) throw new Error("Initial cancellation lookup unavailable")
+      else if (reads === 2) {
+        if (failure === "missing") return undefined
+        throw new Error("Initial cancellation lookup unavailable")
+      }
       return snapshot
     } }
     const invocations = defineAgentInvocations({ store })
