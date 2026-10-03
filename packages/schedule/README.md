@@ -202,7 +202,9 @@ When a custom host installs a wake driver, call and await `controller.close()` d
 
 ## Inspect Runtime Schedules
 
-`hubSchedule()` contributes the `vitehub schedule` CLI namespace: `list`, `get <id>`, `runs <id> [--limit <n>]`, `attempts <runId>`, `run-runtime <id>`, `enable <id>`, and `disable <id>`. Each command accepts `--json`. The commands call a guarded endpoint that exists only on the Vite Development Server. The endpoint forwards each operation into the Nitro dev environment, so it reads the same stores and registry as the running app. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there.
+`hubSchedule()` contributes the `vitehub schedule` CLI namespace: `list`, `get <id>`, `runs <id> [--limit <n>]`, `attempts <runId>`, `run <name>`, `run-runtime <id>`, `enable <id>`, and `disable <id>`. Each command accepts `--json`. The commands call a guarded endpoint that exists only on the Vite Development Server. The endpoint forwards each operation into the Nitro dev environment, so it reads the same stores and registry as the running app. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there.
+
+Set `manual: true` on a Static Schedule Definition to allow an on-demand run, then invoke it with `vitehub schedule run <name>`. The name is the discovered schedule file name. Runtime Schedules use the separate `run-runtime` command.
 
 The Console Schedules section is a record table. Build-time records list Schedule Definitions. `readScheduleConsoleRecords()` from `@vite-hub/schedule/runtime/console` adds Runtime Schedules with enabled state, next run, last run, and run history on each request. The Console is read-only. A Runtime Schedule with `console: { enabled: false }` is hidden there. The CLI and the Console redact credentials in Schedule input and error messages.
 
