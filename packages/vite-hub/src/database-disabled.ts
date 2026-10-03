@@ -42,7 +42,9 @@ export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, strin
     },
     configResolved(config) {
       state = {
+        // SAFETY: ViteHub attaches the effective database option to the resolved Vite config.
         databaseOption: (config as typeof config & { database?: unknown }).database,
+        // SAFETY: The guard only reads the optional name and API exposed by Vite plugins.
         databasePlugin: config.plugins.find(plugin => plugin.name === databasePluginName) as DatabasePlugin | undefined,
         root: config.root,
         serverDirs,
