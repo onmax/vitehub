@@ -1341,6 +1341,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const names = callbackBindingNames(parameterOpen, parameterClose, undefined, references)
       templateLocalBindings.push({ start: parameterOpen, end: bodyClose, names })
     }
+    // Class static blocks have their own lexical scope. Track the block so
+    // declarations inside it cannot be mistaken for imported captures.
+    for (let index = 0; index < references.length; index++) {
+      if (references[index] !== "static" || references[index + 1] !== "{") continue
+      const end = referenceClosings.get(index + 1)
+      if (end !== undefined) templateLocalBindings.push({ start: index, end, names: new Set() })
+    }
     // Resolve body declarations in their lexical block, or function for var.
     // Do not let a method local hide imported reads in another interpolation.
     const templateFunctionScopes = [...templateLocalBindings]

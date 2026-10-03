@@ -39,6 +39,7 @@ it.each([
   "({ render() { const first = input, portal = input; return portal } })",
   "({ render() { { const portal = input; return portal.id } } })",
   "({ render() { { var portal = input } return portal } })",
+  "class { static { const portal = input; portal.id } }",
 ])("ignores unrelated template metadata and method locals: %s", async expression => {
   const definition = await discover(`${imports} import portal from "../../portal.ts"; const input = { id: "plain" }; export default defineAgent({ channels: { custom: portal }, driver: { instructions: () => \`${"${"}${expression}${"}"}\` } })`, {
     "portal.ts": `${imports} export default webChat({ capabilities: [] })`,
