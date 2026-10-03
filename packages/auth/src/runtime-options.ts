@@ -93,6 +93,11 @@ export function resolveAuthOptions(
       baseURL,
     } as AuthRuntimeOptions & Record<string, unknown>
   }
-  const options = callback ? requestRuntimeOptions : { ...declared, ...requestRuntimeOptions }
-  return { options, get providerOptions() { return stripViteHubOptions(options) }, requestRuntimeOptions }
+  let snapshot: AuthRuntimeOptions & Record<string, unknown> | undefined
+  const resolveSnapshot = () => snapshot ??= callback ? requestRuntimeOptions : { ...declared, ...requestRuntimeOptions }
+  return {
+    get options() { return resolveSnapshot() },
+    get providerOptions() { return stripViteHubOptions(resolveSnapshot()) },
+    requestRuntimeOptions,
+  }
 }

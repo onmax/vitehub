@@ -52,4 +52,21 @@ describe("Auth option resolution", () => {
     expect(resolved.providerOptions.trustedOrigins).toEqual(["https://trusted.example.com"])
     expect(env).not.toHaveBeenCalled()
   })
+
+  it("reads static metadata only when full or provider options are needed", () => {
+    const appName = vi.fn(() => "ViteHub")
+    const definition = defineAuth({ appName: "ViteHub" })
+    Object.defineProperty(definition.options, "appName", { enumerable: true, get: appName })
+    const resolved = resolveAuthOptions(definition, { request: new Request("https://request.example.com/api/auth") })
+
+    expect(resolved.requestRuntimeOptions).toEqual({
+      baseURL: "https://request.example.com",
+      trustedOrigins: ["https://request.example.com"],
+    })
+    expect(appName).not.toHaveBeenCalled()
+    expect(resolved.options.appName).toBe("ViteHub")
+    expect(resolved.providerOptions.appName).toBe("ViteHub")
+    expect(resolved.providerOptions.appName).toBe("ViteHub")
+    expect(appName).toHaveBeenCalledOnce()
+  })
 })
