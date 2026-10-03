@@ -7,28 +7,67 @@ navigation.group: Core
 icon: i-lucide-bot
 ---
 
-An Agent is a named program that runs on your server. You describe it in one
-file under `server/agents`. ViteHub discovers the file, runs the Agent when a
-caller invokes it, and records what happened.
-
-Use an Agent when a request needs a model, a coding provider such as Codex, or
-a fixed set of typed questions. Use an Agent also when you want the same
-inspection, Capabilities, and Channels for application code that you run
-yourself.
-
-::agent-demo
+::product-hero{eyebrow="Any agent, anywhere" tagline="An Agent is one file under server/agents. Pick a Driver, give it a Workspace and Capabilities, connect a Channel, and ViteHub runs it on your host and records every Invocation."}
+  :::agent-demo
+  :::
 ::
 
+::product-feature{label="Drivers" title="Bring any model or coding provider" to="/docs/agents/agent-drivers" link-label="Choose an Agent Driver"}
+A Driver decides how one run executes. Point at a model string through AI Gateway, hand the run to Codex or Claude Code, ask a fixed set of typed questions, or run your own function.
+
+The rest of the Definition does not change when the Driver does.
+
+#code
+```ts [server/agents/support.ts]
+import { defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    model: 'openai/gpt-5.1-mini',
+    instructions: 'Answer support requests from inspected evidence.',
+    execution: {
+      callSettings: { temperature: 0.2 },
+      stepLimit: 8,
+    },
+  },
+})
+```
+::
+
+::product-feature{label="Capabilities" title="Tools are the APIs your routes already call" to="/docs/agents/capabilities" link-label="Browse the Capabilities" reverse}
+An Agent gets no access by default. A Capability wraps one server primitive and hands the Agent selected tools, with a mode, a scope, and a policy such as `require-approval`.
+
+KV, Blob, Database, Email, Sandbox, Browser, and the Workspace shell ship as official Capabilities. MCP servers, skills, web search, and memory add the rest.
+
+#code
+```ts [server/agents/support.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { kv, workspaceShell } from 'vite-hub/agent/capabilities'
+
+export default defineAgent({
+  driver: { model: 'openai/gpt-5.1-mini' },
+  workspace: { mode: 'read' },
+  capabilities: [
+    workspaceShell({ mode: 'read' }),
+    kv({ mode: 'write', policy: 'require-approval' }),
+  ],
+})
+```
+::
+
+::product-feature{label="Workspace" title="It works in a real file tree" to="/docs/agents/workspace-context" link-label="Give an Agent files and Sources"}
+A Workspace holds the files an Agent can reach: a repository checkout, a glob of documents, or records from a Source. It persists between runs, so a coding provider resumes where it stopped.
+
+Read and write authority is explicit. The Workspace defines which files exist; Capabilities decide what the Agent may do with them.
+
+#code
 ```ts [server/agents/support.ts]
 import { defineAgent } from 'vite-hub/agent'
 import { workspaceShell } from 'vite-hub/agent/capabilities'
 import { glob } from 'vite-hub/workspace'
 
 export default defineAgent({
-  driver: {
-    model: 'openai/gpt-5.1-mini',
-    instructions: 'Answer from the docs. Say when the docs do not answer.',
-  },
+  driver: { model: 'openai/gpt-5.1-mini' },
   capabilities: [workspaceShell({ mode: 'read' })],
   workspace: {
     sourceRootDir: process.cwd(),
@@ -38,86 +77,72 @@ export default defineAgent({
   },
 })
 ```
-
-This file creates an Agent named `support`. The Driver runs a model with the
-instructions. The Workspace contains the docs files. The `workspaceShell()`
-Capability lets the model read those files. Server code then calls the Agent
-with `runAgent(support, runtimeContext, { prompt })`.
-
-::u-page-grid{class="not-prose mt-8 sm:grid-cols-2"}
-  :::u-page-card
-  ---
-  title: Build your first Agent
-  description: Define and call an Agent offline, with no model key.
-  icon: i-lucide-rocket
-  to: /docs/getting-started/first-agent
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Define an Agent
-  description: Select a Driver, Capabilities, Workspace, and Channels.
-  icon: i-lucide-file-user
-  to: /docs/agents/agent-definitions
-  ---
-  :::
 ::
 
-## How an Agent fits together
+::product-feature{label="Channels" title="Reach it from chat, GitHub, Slack, or HTTP" to="/docs/agents/channels" link-label="Connect a Channel" reverse}
+A Channel starts an Invocation from where the input lives. Web chat gets a generated AI SDK route. GitHub opens a run for a pull request. Discord, Slack, Teams, Telegram, Gmail, and HTTP are built in.
 
-| Part | What it decides |
-| --- | --- |
-| [Agent Definition](/docs/agents/agent-definitions) | The one object that names the Agent and holds every other part. |
-| [Agent Driver](/docs/agents/agent-drivers) | How one run executes: a model (`{ model }`), Codex or Claude Code (`'codex'`, `'claude-code'`), typed questions (`{ ask }`), or your function (`{ run }`). |
-| [Instructions](/docs/agents/instructions) | The durable guidance that a model or coding provider reads. |
-| [Capabilities](/docs/agents/capabilities) | The operations the Agent receives, such as tools, chat behavior, and access policy. |
-| [Workspace context](/docs/agents/workspace-context) | The files and Sources that the Agent can reach. |
-| [Invocation](/docs/agents/invocations) | One run: its input, its result or stream, and its trace. |
-| [Agent Actor](/docs/agents/actors) | The trusted identity of the caller for one Invocation. |
+The Channel owns the transport. The Agent Actor carries the trusted identity of the caller.
 
-An Agent gets no access by default. Adding KV, Blob, or a Workspace to the
-application does not give a model access to it. Attach the matching
-Capability only when the Agent needs that operation. A Workspace defines which
-files exist. Capabilities and the Driver decide how the Agent can use them.
+#code
+```ts [server/agents/support.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { github, webChat } from 'vite-hub/agent/channels'
 
-## How callers reach an Agent
+export default defineAgent({
+  channels: {
+    portal: webChat(),
+    github: github({ pullRequest: true }),
+  },
+  driver: { model: 'openai/gpt-5.1-mini' },
+})
+```
+::
 
-Every call creates one Invocation. Choose the entry point that owns the input:
+::product-feature{label="Invocations" title="Call it like a function, inspect it like a trace" to="/docs/agents/invocations" link-label="Run and observe an Invocation"}
+Every call creates one Invocation with its input, its result or stream, and its trace. Call `runAgent()` from a route, a Schedule, or a script. Stream it with `streamAgent()`.
 
-| Entry point | Use it when | API |
-| --- | --- | --- |
-| Direct call | Your route, Schedule, or script already validates the input. | `runAgent()`, `streamAgent()` |
-| Trigger | A Capability or Channel prepares the event, for example `chat.message`. | `runAgentTrigger()`, `streamAgentTrigger()` |
-| Channel | A web chat or messaging provider sends messages. ViteHub generates the route. | `channels` in the Definition |
+The CLI and the Console show each step, tool call, and approval of a run.
 
-Read [Invocations](/docs/agents/invocations) for direct calls,
-[Triggers](/docs/agents/triggers) for event input, and
-[Channels](/docs/agents/channels) for web chat, Discord, Slack, Teams,
-Telegram, GitHub, and HTTP.
+#code
+```ts [server/api/support.post.ts]
+import { runAgent } from 'vite-hub/agent'
+import { getRuntimeContext } from 'vite-hub/runtime/h3'
+import support from '../agents/support'
 
-## Reading order
+export default defineEventHandler(async (event) => {
+  const { prompt } = await readBody<{ prompt: string }>(event)
+  const user = await requireAuthenticatedUser(event)
 
-The sidebar follows this order. Read the pages in each group before you go to
-the next group.
+  return runAgent(support, getRuntimeContext(event), {
+    prompt,
+    context: { invoker: { id: user.id, kind: 'customer', label: user.email } },
+  })
+})
+```
+::
 
-1. **Core.** Read [Agent Definitions](/docs/agents/agent-definitions) to
-   declare an Agent. Then read [Invocations](/docs/agents/invocations) to run
-   it and read the result.
-2. **Configure.** Choose an [Agent Driver](/docs/agents/agent-drivers), write
-   [Instructions](/docs/agents/instructions), and add
-   [Workspace context](/docs/agents/workspace-context). Then select
-   [Capabilities](/docs/agents/capabilities) for the operations the Agent needs.
-3. **Connect.** Add [Channels](/docs/agents/channels) or
-   [Triggers](/docs/agents/triggers). Pass a trusted
-   [Agent Actor](/docs/agents/actors). Select prior messages with
-   [Chat History and sessions](/docs/agents/chat-history-sessions).
-4. **Verify.** Inspect the Agent with the
-   [CLI development loop](/docs/development/cli). Protect behavior with
-   [Evals](/docs/agents/evals). Check Codex and Claude Code credentials and
-   quota with [Provider status](/docs/agents/provider-status). A
-   deployment-specific behavior still needs a build and a runtime check on the
-   selected host.
-5. **Advanced execution.** Start, inspect, and cancel child work with
-   [Child invocations](/docs/agents/controlled-child-invocations).
-   [Boxes](/docs/agents/boxes) prepare a process environment when application
-   code owns that lifecycle.
+::product-feature{label="Presets" title="Start from a working harness" to="/docs/agents/babysitter" link-label="Deploy the Babysitter" reverse}
+Babysitter is an Agent preset that repairs pull requests, waits for checks, and merges the ready ones. Extend it, filter the repositories and authors it serves, and add your own instructions next to the file.
+
+Evals run repeatable scenarios against a Definition before you ship a change to it.
+
+#code
+```ts [server/agents/babysitter/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { babysitter } from 'vite-hub/agent/presets/babysitter'
+
+export default defineAgent({
+  extends: babysitter,
+  options: {
+    filter: {
+      repository: { allow: ['acme/app'] },
+      author: { allow: ['octocat'] },
+    },
+    merge: 'direct',
+    concurrency: 2,
+  },
+  driver: { model: 'gpt-5.6-sol' },
+})
+```
+::

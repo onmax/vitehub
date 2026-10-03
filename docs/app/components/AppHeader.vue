@@ -78,7 +78,7 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
           :collapsed="false"
           :kbds="['meta', 'K']"
           :ui="{
-            base: 'hidden h-8 min-w-44 rounded-md border-0 bg-elevated/60 px-2.5 text-sm text-muted hover:bg-elevated hover:text-highlighted lg:inline-flex',
+            base: 'hidden h-8 !w-56 rounded-md border-0 bg-elevated/60 px-2.5 text-sm text-muted hover:bg-elevated hover:text-highlighted lg:inline-flex',
             trailing: 'ms-auto flex items-center gap-0.5',
           }"
         />

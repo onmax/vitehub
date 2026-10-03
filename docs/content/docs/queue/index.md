@@ -6,27 +6,7 @@ navigation.order: 1
 icon: i-lucide-list-ordered
 ---
 
-Use Queue when a request needs to hand off work and return before that work finishes. You define a handler in a Queue Definition, then call `runQueue()` with the Definition name and a payload. ViteHub sends the job to Cloudflare Queues or Vercel Queues, and the provider delivers it to your handler later.
-
-Enqueueing confirms that the provider accepted the job. It does not confirm that the handler ran successfully. Queue works without Agents.
-
-::tip
-Choose the background-work primitive by what the caller needs:
-
-- Queue: hand off one job and return. The caller gets provider acceptance, not a handler result or run status.
-- [Workflows](/docs/workflows): long-running work with a tracked run id, durable steps, waits, and progress inspection.
-- [Schedule](/docs/schedule): start work at cron times, from static entries or Runtime Schedules.
-::
-
-This Queue Definition sends a welcome email, and a server route enqueues one job for it:
-
-```ts [server/queues/welcome-email.ts]
-import { defineQueue } from '@vite-hub/queue'
-
-export default defineQueue<{ email: string }>(async ({ payload }) => {
-  await sendWelcomeEmail(payload.email)
-})
-```
+::product-hero{tagline="Hand off a job from a request and return before the job runs. One runQueue() call sends it to Cloudflare Queues or Vercel Queues."}
 
 ```ts [server/api/welcome.post.ts]
 import { runQueue } from '@vite-hub/queue'
@@ -36,8 +16,89 @@ export default defineEventHandler(async () => {
 })
 ```
 
-## Connect Queue to Agents
+::
 
-Queue has no official Agent Capability. An Agent can enqueue work only when you expose that behavior through an app-owned Capability or server route.
+::product-feature{label="Definitions" title="The file name is the queue name" to="/docs/queue/configure" link-label="Define a queue and pick a provider"}
+Put a handler in `server/queues/<name>.ts`. ViteHub discovers it, and `runQueue()` addresses it by that name. Definition options set Cloudflare batch concurrency or Vercel callback options.
 
-Keep the Capability specific to the product task. Do not give a model arbitrary queue access because the app uses Queue internally.
+Select the Queue Provider once. ViteHub generates the queue names, bindings, and topics, so application code never depends on them.
+
+#code
+```ts [server/queues/welcome-email.ts]
+import { defineQueue } from '@vite-hub/queue'
+
+export default defineQueue<{ email: string }>(async ({ payload }) => {
+  await sendWelcomeEmail(payload.email)
+})
+```
+
+```ts [vite.config.ts]
+import { hubQueue } from '@vite-hub/queue/vite'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [hubQueue({ provider: 'cloudflare' })],
+})
+```
+::
+
+::product-feature{label="Server API" title="Enqueue confirms acceptance, not the handler result" to="/docs/queue/server-api" link-label="Read the Queue server API" reverse}
+`runQueue()` resolves with `status: 'queued'` when the provider accepts the job. `deferQueue()` enqueues through the request's `waitUntil` and returns at once.
+
+Names and payloads are typed from the discovered Definitions. An enqueue option that the provider does not support throws a `ViteHubError` instead of being ignored.
+
+#code
+```ts [server/api/signup.post.ts]
+import { runQueue } from '@vite-hub/queue'
+
+export default defineEventHandler(async (event) => {
+  const body = await readBody<{ email: string }>(event)
+
+  return runQueue('welcome-email', { email: body.email }, {
+    idempotencyKey: `welcome:${body.email}`,
+  })
+})
+```
+::
+
+::product-feature{label="Delivery" title="A handler must tolerate a second delivery" to="/docs/queue/limits-and-errors" link-label="Check delivery limits and errors"}
+Providers retry failed delivery, and ViteHub does not guarantee exactly-once delivery. Make each handler safe to run again after a partial side effect.
+
+Throw `ViteHubError` for a stable failure code. Decide to acknowledge or retry in `onError` on Cloudflare and `callbackOptions.retry` on Vercel.
+
+#code
+```ts [server/queues/image-expiry.ts]
+import { getViteHubErrorShape, ViteHubError } from '@vite-hub/runtime'
+import { defineQueue } from '@vite-hub/queue'
+
+export default defineQueue<{ key?: string }>(async ({ payload }) => {
+  if (!payload.key) {
+    throw new ViteHubError('EXPIRY_INVALID_PAYLOAD', 'Image expiry payload requires a key.', {
+      details: { field: 'key' },
+    })
+  }
+
+  await deleteImage(payload.key)
+}, {
+  onError: error => getViteHubErrorShape(error)?.code === 'EXPIRY_INVALID_PAYLOAD' ? 'ack' : undefined,
+  callbackOptions: {
+    retry: error => getViteHubErrorShape(error)?.code === 'EXPIRY_INVALID_PAYLOAD'
+      ? { acknowledge: true }
+      : undefined,
+  },
+})
+```
+::
+
+::product-feature{label="Hosts" title="Check discovery and provider output with a build" to="/docs/queue/hosts" link-label="See host and provider notes" reverse}
+Queue has no local delivery provider. Build the app, list the discovered Definitions, then inspect the Wrangler queue entries or the Vercel consumer functions.
+
+Use [Workflows](/docs/workflows) when the caller needs a run id and status, and [Schedule](/docs/schedule) for work on cron times.
+
+#code
+```bash [Terminal]
+pnpm vite build
+pnpm add vite-hub
+pnpm vitehub inspect definitions --kind queue
+```
+::
