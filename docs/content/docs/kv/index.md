@@ -6,93 +6,76 @@ navigation.order: 1
 icon: i-lucide-database-zap
 ---
 
-::product-hero{tagline="One key-value API for settings, feature flags, cursors, cache records, and other small values. Your route calls it in development and on every supported host."}
+::product-hero{tagline="One key-value import for settings, flags, cursors, and cache records, on every supported host."}
+  :::code-group
+  ```ts [Route]
+  import { kv } from '@vite-hub/kv'
 
-```ts [server/api/settings.put.ts]
-import { kv } from '@vite-hub/kv'
+  export default defineEventHandler(async (event) => {
+    const [error] = await kv.set('settings', await readBody(event))
+    if (error) throw error
+    return { ok: true }
+  })
+  ```
 
-export default defineEventHandler(async (event) => {
-  const [error] = await kv.set('settings', await readBody(event))
-  if (error) throw error
-  return { ok: true }
-})
-```
+  ```ts [vite.config.ts]
+  import { hubKv } from '@vite-hub/kv/vite'
+  import { defineConfig } from 'vite'
 
-::
-
-::product-feature{label="Server API" title="Every call returns a result, not a throw" to="/docs/kv/server-api" link-label="Read the KV server API"}
-Each async method returns `[error, value]`. A provider failure is a `ViteHubError` with the operation, the store, and the provider cause. Log it, retry it, or translate it without `try/catch`.
-
-Named stores keep tenant data apart. Upstash adds atomic single-use reads and counters.
-
-#code
-```ts [server/tenant-preferences.ts]
-import { kv } from '@vite-hub/kv'
-
-const preferences = kv.store('tenant-preferences')
-
-export async function savePreferences(tenantId: string, value: unknown) {
-  const [error] = await preferences.set(tenantId, value)
-  if (error) throw error
-}
-
-const upstash = kv.store('tenant-preferences')
-const [consumeError, token] = await upstash.getAndDelete('verification:token')
-const [incrementError, attempts] = await upstash.increment('rate-limit:user', 60)
-```
-::
-
-::product-feature{label="Configure" title="Pick the driver once, keep the import" to="/docs/kv/configure" link-label="Configure KV stores and drivers" reverse}
-Register the Vite integration and select a driver. Local development uses the file system. Cloudflare KV, Upstash, Vercel, and Deno KV take the same `kv` import, so the route never names a provider.
-
-Define extra stores when one application needs separate namespaces.
-
-#code
-```ts [vite.config.ts]
-import { hubKv } from '@vite-hub/kv/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [hubKv()],
-  kv: {
-    stores: {
-      'default': { driver: 'fs-lite' },
-      'tenant-preferences': { driver: 'upstash' },
+  export default defineConfig({
+    plugins: [hubKv()],
+    kv: {
+      stores: {
+        'default': { driver: 'fs-lite' },
+        'tenant-preferences': { driver: 'upstash' },
+      },
     },
-  },
-})
-```
+  })
+  ```
+
+  ```ts [Agent]
+  import { defineAgent } from 'vite-hub/agent'
+  import { kv } from 'vite-hub/agent/capabilities'
+
+  export default defineAgent({
+    driver: { model: 'openai/gpt-5.1-mini' },
+    capabilities: [
+      kv({ mode: 'write', store: 'tenant-preferences', policy: 'require-approval' }),
+    ],
+  })
+  ```
+
+  ```bash [CLI]
+  pnpm vitehub kv list --prefix users:
+  pnpm vitehub kv get settings --json
+  pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
+  pnpm vitehub kv list --store tenant-preferences
+  ```
+  :::
 ::
 
-::product-feature{label="Agent capability" title="The same store, as a tool for an Agent" to="/docs/kv/agent-capability" link-label="Give an Agent KV tools"}
-Installing KV gives no model access to it. Attach the KV Capability to hand an Agent a `kv_read` tool, and in write mode a `kv_edit` tool, limited to one named store.
+::product-features
+  :::product-feature-item{title="Every call returns a result, not a throw" icon="i-lucide-code-2" to="/docs/kv/server-api" link-label="KV server API"}
+  Each method returns `[error, value]`, with the operation, the store, and the provider cause on the error.
+  :::
 
-Write access can require approval before the Agent commits a change.
+  :::product-feature-item{title="Pick the driver once, keep the import" icon="i-lucide-sliders-horizontal" to="/docs/kv/configure" link-label="Configure KV"}
+  The file system in development; Cloudflare KV, Upstash, Vercel, or Deno KV in production, behind the same `kv` import.
+  :::
 
-#code
-```ts [server/agents/support.ts]
-import { defineAgent } from 'vite-hub/agent'
-import { kv } from 'vite-hub/agent/capabilities'
+  :::product-feature-item{title="Named stores keep tenants apart" icon="i-lucide-database-zap" to="/docs/kv/configure#configuration-options" link-label="Define named stores"}
+  Declare extra stores in config and select one with `kv.store(name)`. Upstash adds atomic counters and single-use reads.
+  :::
 
-export default defineAgent({
-  driver: { model: 'openai/gpt-5.1-mini' },
-  capabilities: [
-    kv({ mode: 'write', store: 'tenant-preferences', policy: 'require-approval' }),
-  ],
-})
-```
-::
+  :::product-feature-item{title="The same store, as a tool for an Agent" icon="i-lucide-bot" to="/docs/kv/agent-capability" link-label="KV Agent capability"}
+  The KV Capability gives an Agent `kv_read`, and in write mode `kv_edit`, limited to one named store and gated by a policy.
+  :::
 
-::product-feature{label="Hosts" title="Inspect it from the CLI, ship it to any host" to="/docs/kv/hosts" link-label="See host and provider notes" reverse}
-The development CLI reads and writes the same stores as the running app. The build emits the binding, environment variable, or local path that the selected host needs.
+  :::product-feature-item{title="Read and write the running app's store from a terminal" icon="i-lucide-terminal" to="/docs/kv/hosts" link-label="KV hosts and CLI"}
+  The development CLI uses the same storage as the app. The build emits the binding, variable, or path the host needs.
+  :::
 
-Use [Database](/docs/database) when data needs relationships, [Blob](/docs/blob) for large objects, and [Workspace](/docs/workspace) for file trees.
-
-#code
-```bash [Terminal]
-pnpm vitehub kv list --prefix users:
-pnpm vitehub kv get settings --json
-pnpm vitehub kv set settings '{"theme":"dark"}' --json-value
-pnpm vitehub kv list --store tenant-preferences
-```
+  :::product-feature-item{title="Not for relations, large objects, or file trees" icon="i-lucide-git-branch" to="/docs/database" link-label="Compare Database"}
+  Use Database when data needs constraints, Blob for large objects, and Workspace for file trees.
+  :::
 ::

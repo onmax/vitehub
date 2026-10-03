@@ -6,130 +6,81 @@ navigation.order: 1
 icon: i-lucide-calendar-clock
 ---
 
-::product-hero{tagline="Run server code at cron times from a file, or create recurring Runtime Schedules while the app runs. Static schedules become Cloudflare, Vercel, or Deno cron output."}
+::product-hero{tagline="Run server code at cron times from a file that builds to Cloudflare, Vercel, or Deno cron output."}
+  :::code-group
+  ```ts [Definition]
+  import { defineSchedule } from '@vite-hub/schedule'
 
-```ts [server/schedules/daily-report.ts]
-import { defineSchedule } from '@vite-hub/schedule'
-
-export default defineSchedule({
-  cron: '0 8 * * *',
-  async handler({ scheduledAt, waitUntil }) {
-    await sendDailyReport(scheduledAt)
-    waitUntil(recordDelivery())
-  },
-})
-```
-
-::
-
-::product-feature{label="Definitions" title="The file is the schedule, the cron is UTC" to="/docs/schedule/configure" link-label="Define a static schedule"}
-A Static Schedule Definition deploys with the app. The file name is its identity, and its five-field cron uses UTC.
-
-Set `manual: true` to run it outside its cron with `vitehub schedule run daily-report` or from the Console.
-
-#code
-```ts [server/schedules/daily-report.ts]
-import { defineSchedule } from '@vite-hub/schedule'
-
-export default defineSchedule({
-  cron: '0 8 * * *',
-  manual: true,
-  async handler() {
-    await sendDailyReport()
-  },
-})
-```
-::
-
-::product-feature{label="Runtime Schedules" title="Create recurring work while the app runs" to="/docs/schedule/server-api" link-label="Read the Schedule server API" reverse}
-`schedules.create()` stores a cron schedule for a target that opted into runtime reuse. Set an IANA `timeZone` when the cron must follow local time and daylight-saving changes.
-
-The same helper lists, updates, pauses, runs, and deletes schedules, and reads their run history.
-
-#code
-```ts [server/schedules/report.ts]
-import { defineScheduleTarget } from '@vite-hub/schedule'
-
-export default defineScheduleTarget<{ prompt: string }>({
-  async handler({ input }) {
-    if (input) await generateReport(input.prompt)
-  },
-})
-```
-
-```ts [server/api/schedules.post.ts]
-import { schedules } from '@vite-hub/schedule/runtime'
-
-export default defineEventHandler(async () => {
-  return schedules.create({
-    cron: '30 8 * * 1-5',
-    id: 'weekday-report',
-    input: { prompt: 'Summarize yesterday' },
-    target: 'report',
-    timeZone: 'Europe/Copenhagen',
+  export default defineSchedule({
+    cron: '0 8 * * *',
+    async handler({ scheduledAt, waitUntil }) {
+      await sendDailyReport(scheduledAt)
+      waitUntil(recordDelivery())
+    },
   })
-})
-```
+  ```
+
+  ```ts [Route]
+  import { schedules } from '@vite-hub/schedule/runtime'
+
+  export default defineEventHandler(async () => {
+    return schedules.create({
+      cron: '30 8 * * 1-5',
+      id: 'weekday-report',
+      input: { prompt: 'Summarize yesterday' },
+      target: 'report',
+      timeZone: 'Europe/Copenhagen',
+    })
+  })
+  ```
+
+  ```ts [Agent]
+  import { defineAgent } from 'vite-hub/agent'
+  import { schedule } from 'vite-hub/agent/capabilities'
+
+  export default defineAgent({
+    driver: { model: 'openai/gpt-5.1-mini' },
+    capabilities: [
+      schedule({
+        allowSelfTarget: true,
+        delivery: 'origin',
+        mode: 'write',
+        timeZone: 'Asia/Bangkok',
+      }),
+    ],
+  })
+  ```
+
+  ```bash [CLI]
+  pnpm vitehub schedule list
+  pnpm vitehub schedule runs weekday-report --limit 5 --json
+  pnpm vitehub schedule run-runtime weekday-report
+  ```
+  :::
 ::
 
-::product-feature{label="Agent capability" title="An Agent can schedule its own turns" to="/docs/schedule/agent-capability" link-label="Give an Agent Schedule tools"}
-Attach the Schedule Capability with `mode` to hand an Agent one `cronjob` tool. `targets` limits the schedules it can see and use, and `policy` gates every change.
+::product-features
+  :::product-feature-item{title="The file is the schedule, in UTC" icon="i-lucide-code-2" to="/docs/schedule/configure#define-a-static-schedule" link-label="Define a static schedule"}
+  A Static Schedule Definition deploys with the app, and `manual: true` lets the CLI or the Console run it outside its cron.
+  :::
 
-With `allowSelfTarget`, the Agent creates recurring turns for itself. Each scheduled turn belongs to the invoker that created it.
+  :::product-feature-item{title="Create recurring work while the app runs" icon="i-lucide-calendar-clock" to="/docs/schedule/server-api" link-label="Schedule server API"}
+  `schedules.create()` stores a cron schedule for an opted-in target, with an IANA `timeZone` when it must follow local time.
+  :::
 
-#code
-```ts [server/agents/mini.ts]
-import { defineAgent } from 'vite-hub/agent'
-import { schedule } from 'vite-hub/agent/capabilities'
+  :::product-feature-item{title="An Agent can schedule its own turns" icon="i-lucide-bot" to="/docs/schedule/agent-capability" link-label="Schedule Agent capability"}
+  The Schedule Capability gives an Agent one `cronjob` tool, limited by `targets` and gated by `policy`, and `allowSelfTarget` lets it target itself.
+  :::
 
-export default defineAgent({
-  driver: { model: 'openai/gpt-5.1-mini' },
-  capabilities: [
-    schedule({
-      allowSelfTarget: true,
-      delivery: 'origin',
-      mode: 'write',
-      timeZone: 'Asia/Bangkok',
-    }),
-  ],
-})
-```
-::
+  :::product-feature-item{title="One long-lived process runs every schedule" icon="i-lucide-cpu" to="/docs/schedule/configure#configure-the-vite-integration" link-label="Configure the Process Runtime"}
+  On Node without provider cron, the Process Runtime scans once per minute and needs exactly one long-lived process, never a serverless host.
+  :::
 
-::product-feature{label="Process Runtime" title="One long-lived process runs every schedule" to="/docs/schedule/configure" link-label="Configure the Process Runtime" reverse}
-On a Node host without provider cron, the Process Runtime scans once per minute. It runs Static Schedule Definitions and stored Runtime Schedules, and keeps them in the default KV store.
+  :::product-feature-item{title="Inspect schedules and runs from the CLI" icon="i-lucide-terminal" to="/docs/schedule/hosts" link-label="Schedule hosts"}
+  The development CLI lists Runtime Schedules with their next due time and last run, and the Console Schedules page shows the same records.
+  :::
 
-It needs exactly one long-lived process. Do not use it on serverless hosts.
-
-#code
-```ts [vite.config.ts]
-import { hubKv } from '@vite-hub/kv/vite'
-import { hubSchedule } from '@vite-hub/schedule/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [
-    hubKv(),
-    hubSchedule({
-      runtime: {
-        driver: 'process',
-        prefix: 'my-app:schedule',
-      },
-    }),
-  ],
-})
-```
-::
-
-::product-feature{label="Hosts" title="Inspect schedules and runs from the CLI and the Console" to="/docs/schedule/hosts" link-label="See host and provider notes"}
-The development CLI lists Runtime Schedules with their next due time and last run, and runs one on demand. The Console Schedules page shows the same records next to the discovered Definitions.
-
-Use [Queue](/docs/queue) when a provider enqueue delay is enough, and [Workflows](/docs/workflows) for durable multi-step work.
-
-#code
-```bash [Terminal]
-pnpm vitehub schedule list
-pnpm vitehub schedule runs weekday-report --limit 5 --json
-pnpm vitehub schedule run-runtime weekday-report
-```
+  :::product-feature-item{title="Not for delays or multi-step work" icon="i-lucide-git-branch" to="/docs/workflows" link-label="Compare Workflows"}
+  Use Queue when a provider enqueue delay is enough, and Workflows for durable multi-step work.
+  :::
 ::

@@ -6,103 +6,90 @@ navigation.order: 1
 icon: i-lucide-terminal
 ---
 
-::product-hero{tagline="Run Unix-like commands from server code through an Execution Provider such as Just Bash or Cloudflare. The provider and its filesystem adapter decide which commands, files, and network a command can reach."}
+::product-hero{tagline="Run Unix-like commands from server code through Just Bash, Cloudflare, or a custom Execution Provider."}
+  :::code-group
+  ```ts [Runtime]
+  import { createShellRuntime } from '@vite-hub/shell'
+  import { createJustBashProvider } from '@vite-hub/shell/providers/just-bash'
+  import { createReadonlyWorkspaceFs, workspaceMountPoint } from '@vite-hub/shell/workspace'
+  import { useWorkspace } from '@vite-hub/workspace'
 
-```ts [server/tasks/search-docs.ts]
-import { createShellRuntime } from '@vite-hub/shell'
-import { createJustBashProvider } from '@vite-hub/shell/providers/just-bash'
-import { createReadonlyWorkspaceFs, workspaceMountPoint } from '@vite-hub/shell/workspace'
-import { useWorkspace } from '@vite-hub/workspace'
-
-const workspace = useWorkspace('docs')
-const shell = createShellRuntime({
-  policy: { maxOutputLength: 10_000, timeout: 30_000 },
-  provider: createJustBashProvider({
-    commands: ['pwd', 'ls', 'cat', 'rg'],
-    cwd: workspaceMountPoint,
-    fs: createReadonlyWorkspaceFs(workspace.fs),
-  }),
-})
-
-const observation = await shell.exec('rg auth .', { cwd: workspaceMountPoint })
-```
-
-::
-
-::product-feature{label="Server API" title="Each command returns a Shell Observation" to="/docs/shell/server-api" link-label="Read the Shell server API"}
-An Observation holds the event, exit code, stdout, stderr, and flags for truncated output and timeouts. A policy denial is also an Observation, with exit code `126`, not a thrown error.
-
-A Shell Session keeps one policy across repeated commands: call budget, output size, timeouts, and process budget.
-
-#code
-```ts [server/tasks/inspect-docs.ts]
-import { createShellRuntime } from '@vite-hub/shell'
-
-export async function inspect(runtime: ReturnType<typeof createShellRuntime>) {
-  const session = runtime.createSession({
-    policy: {
-      maxOutputLength: 10_000,
-      maxShellCalls: 4,
-      timeout: 30_000,
-    },
+  const workspace = useWorkspace('docs')
+  const shell = createShellRuntime({
+    policy: { maxOutputLength: 10_000, timeout: 30_000 },
+    provider: createJustBashProvider({
+      commands: ['pwd', 'ls', 'cat', 'rg'],
+      cwd: workspaceMountPoint,
+      fs: createReadonlyWorkspaceFs(workspace.fs),
+    }),
   })
 
-  try {
-    return await session.exec('pwd')
+  const observation = await shell.exec('rg auth .', { cwd: workspaceMountPoint })
+  ```
+
+  ```ts [Session]
+  import { createShellRuntime } from '@vite-hub/shell'
+
+  export async function inspect(runtime: ReturnType<typeof createShellRuntime>) {
+    const session = runtime.createSession({
+      policy: {
+        maxOutputLength: 10_000,
+        maxShellCalls: 4,
+        timeout: 30_000,
+      },
+    })
+
+    try {
+      return await session.exec('pwd')
+    }
+    finally {
+      await session.dispose()
+    }
   }
-  finally {
-    await session.dispose()
-  }
-}
-```
+  ```
+
+  ```ts [Analysis]
+  import { analyzeShellCommand } from '@vite-hub/shell'
+
+  const analysis = await analyzeShellCommand('rg TODO src')
+  // analysis.commands: ['rg'], analysis.hasPipelines: false, analysis.ok: true
+  ```
+
+  ```ts [Agent]
+  import { defineAgent } from 'vite-hub/agent'
+  import { workspaceShell } from 'vite-hub/agent/capabilities'
+
+  export default defineAgent({
+    driver: { model: 'openai/gpt-5.1-mini' },
+    workspace: { mode: 'write' },
+    capabilities: [workspaceShell({ mode: 'write' })],
+  })
+  ```
+  :::
 ::
 
-::product-feature{label="Command analysis" title="Read the facts of a command before it runs" to="/docs/shell/server-api#analyze-commands" link-label="Analyze commands" reverse}
-`analyzeShellCommand()` parses a command and reports its executables and flags for pipelines, redirects, heredocs, and command substitution. Your code makes the final policy decision.
+::product-features
+  :::product-feature-item{title="Each command returns a Shell Observation" icon="i-lucide-terminal" to="/docs/shell/server-api" link-label="Shell server API"}
+  An Observation holds the exit code, stdout, stderr, and truncation and timeout flags, and a policy denial returns exit code `126` instead of throwing.
+  :::
 
-Analysis is not sandbox enforcement. The Execution Provider and your policy control what the command can do.
+  :::product-feature-item{title="A Session keeps one policy across commands" icon="i-lucide-gauge" to="/docs/shell/server-api#use-shell-sessions" link-label="Use Shell sessions"}
+  A Shell Session applies one call budget, output size, timeout, and process budget to repeated commands.
+  :::
 
-#code
-```ts [server/tasks/analyze-command.ts]
-import { analyzeShellCommand } from '@vite-hub/shell'
+  :::product-feature-item{title="Read the facts of a command first" icon="i-lucide-search" to="/docs/shell/server-api#analyze-commands" link-label="Analyze commands"}
+  `analyzeShellCommand()` reports executables and flags for pipelines, redirects, heredocs, and command substitution, and your code decides the policy.
+  :::
 
-const analysis = await analyzeShellCommand('rg TODO src')
-// analysis.commands: ['rg'], analysis.hasPipelines: false, analysis.ok: true
-```
-::
+  :::product-feature-item{title="The provider sets the boundary" icon="i-lucide-shield-check" to="/docs/shell/configure" link-label="Configure Shell"}
+  The Execution Provider and its filesystem adapter, not command analysis, decide which commands, files, and network a command can reach.
+  :::
 
-::product-feature{label="Agent tool" title="Agents get Shell through the Workspace shell" to="/docs/workspace/agent-capability" link-label="Give an Agent the Workspace shell"}
-Do not expose a raw Shell Runtime to a model. The `workspaceShell()` Capability gives an Agent a `shell` tool for Workspace inspection. Write mode adds structured file mutation tools that follow Workspace rules.
+  :::product-feature-item{title="Agents get Shell through the Workspace shell" icon="i-lucide-bot" to="/docs/workspace/agent-capability" link-label="Workspace Agent capability"}
+  `workspaceShell()` gives an Agent a `shell` tool, and with `commands` in write mode, a Provider Driver also gets `workspace_exec`.
+  :::
 
-The Shell policy and the Workspace Scope stay attached to the Agent Definition.
-
-#code
-```ts [server/agents/support.ts]
-import { defineAgent } from 'vite-hub/agent'
-import { workspaceShell } from 'vite-hub/agent/capabilities'
-
-export default defineAgent({
-  driver: { model: 'openai/gpt-5.1-mini' },
-  workspace: { mode: 'write' },
-  capabilities: [workspaceShell({ mode: 'write' })],
-})
-```
-::
-
-::product-feature{label="Commands" title="Provider Drivers run allowlisted executables in the Workspace" to="/docs/workspace/agent-capability" link-label="Configure Workspace commands" reverse}
-With `commands`, a Provider Driver gets a `workspace_exec` tool. It runs one allowlisted executable in the active Workspace Session, so its changes are part of the provider result.
-
-`commands` requires `mode: 'write'`. For model-backed Agents, use the [`sandbox()` Capability](/docs/sandbox/agent-capability).
-
-#code
-```ts [server/agents/coder.ts]
-import { defineAgent } from 'vite-hub/agent'
-import { workspaceShell } from 'vite-hub/agent/capabilities'
-
-export default defineAgent({
-  driver: { kind: 'codex' },
-  workspace: { mode: 'write' },
-  capabilities: [workspaceShell({ commands: ['git'], mode: 'write', timeout: 30_000 })],
-})
-```
+  :::product-feature-item{title="Model-backed Agents run executables in Sandbox" icon="i-lucide-terminal-square" to="/docs/sandbox/agent-capability" link-label="Sandbox Agent capability"}
+  Instead of a raw Shell Runtime, give model-backed Agents allowlisted executables through the `sandbox()` Capability.
+  :::
 ::

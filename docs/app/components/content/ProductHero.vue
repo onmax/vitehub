@@ -1,13 +1,14 @@
 <script setup lang="ts">
 // `::product-hero` opens a product landing page. The copy comes from the page frontmatter and the
-// section manifest. The default slot, usually one code fence, renders in the right column.
+// section manifest. The default slot renders in the right column: a `::code-group` with the real
+// examples that prove the claims on the page, or an interactive component.
 import { docsManifest, getDocsPageByPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
 import { getDocsSectionForPath, getDocsSectionSubpages } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
 
 const props = defineProps<{
   /** Short line above the title. Defaults to the catalog category. */
   eyebrow?: string;
-  /** One sentence shown instead of the frontmatter description. */
+  /** One sentence of 20 words or fewer, shown instead of the frontmatter description. */
   tagline?: string;
 }>();
 
