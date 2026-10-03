@@ -207,7 +207,19 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
   nextActiveLoads.add(name)
   const loadingEntry = Promise.resolve().then(() => loadingRegistryStorage.run(nextActiveLoads, async () => {
     const loadingInlineDefinitions = new Map<string, WorkflowDefinition>()
-    const loaded = await loadingGenerationStorage.run(generation, () => loadingInlineRegistryStorage.run(loadingInlineDefinitions, entry))
+    let loaded: unknown
+    try {
+      loaded = await loadingGenerationStorage.run(generation, () => loadingInlineRegistryStorage.run(loadingInlineDefinitions, entry))
+    }
+    catch (error) {
+      // A failed module load must not leave definitions registered by that
+      // module available to a later load. Keep definitions from a newer
+      // generation or concurrent load intact.
+      for (const [definitionName, definition] of loadingInlineDefinitions) {
+        if (inlineRegistry.get(definitionName) === definition) inlineRegistry.delete(definitionName)
+      }
+      throw error
+    }
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry loaders return opaque module values.
     if (!loaded || typeof loaded !== "object") {
       return undefined
@@ -306,6 +318,7 @@ export function getWorkflowRunState(name: string, id: string): WorkflowRunState 
 }
 
 export function resetWorkflowRuntime(): void {
+  runtimeRegistryGeneration++
   runtimeConfig = undefined
   runtimeRegistry = undefined
   inlineRegistry.clear()
