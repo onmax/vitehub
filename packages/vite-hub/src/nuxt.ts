@@ -880,13 +880,17 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   addTypeScriptDefaults((nuxt.options.nitro ??= {}), generatedTypes, generatedData)
   if (options.database) {
     const databaseOptions = options.database === true ? {} : options.database
+    const effectiveDatabaseOptions = {
+      ...(isRecord(nuxt.options.database) ? nuxt.options.database : {}),
+      ...databaseOptions,
+    }
     // A discovered Definition owns its Cloudflare binding. Keep the historical
     // implicit D1 resource only when no Definition is available to own it.
     const databaseRoot = resolveViteHubProjectRoot(rootDir, {
-      projectRoot: databaseOptions.projectRoot,
+      projectRoot: effectiveDatabaseOptions.projectRoot,
     })
-    const discoveredDatabase = resolveDBViteConfig(databaseOptions, databaseRoot, {
-      serverDirs: databaseOptions.projectRoot
+    const discoveredDatabase = resolveDBViteConfig(effectiveDatabaseOptions, databaseRoot, {
+      serverDirs: effectiveDatabaseOptions.projectRoot
         ? [resolve(databaseRoot, "server")]
         : nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
     })
