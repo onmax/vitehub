@@ -226,19 +226,19 @@ function installNitroRuntimeResolvers(config: Record<string, unknown>, plugins: 
   }
 }
 
-function replayNitroAliases(configured: unknown, nitroConfig: Record<string, unknown>, allowed: ReadonlySet<string>): void {
+function replayNitroAliases(configured: NonNullable<UserConfig["resolve"]>["alias"], nitroConfig: Record<string, unknown>, allowed: ReadonlySet<string>): void {
   if (!configured) return
+  // SAFETY: Nitro's alias option maps module specifiers to string replacement paths.
   const aliases = (nitroConfig.alias ??= {}) as Record<string, string>
   const entries = Array.isArray(configured)
-    ? configured.flatMap((alias: { find: string | RegExp, replacement: string }) => {
-        if (typeof alias.replacement !== "string") return []
-        if (typeof alias.find === "string") return [[alias.find, alias.replacement] as const]
+    ? configured.flatMap((alias) => {
+        if (!(alias.find instanceof RegExp)) return [[alias.find, alias.replacement] as const]
         const source = alias.find.source
         return source.startsWith("^") && source.endsWith("$")
           ? [[source.slice(1, -1).replaceAll("\\/", "/"), alias.replacement] as const]
           : []
       })
-    : Object.entries(configured as Record<string, string>)
+    : Object.entries(configured)
   for (const [name, replacement] of entries) {
     if (allowed.has(name)) aliases[name] ??= replacement
   }
