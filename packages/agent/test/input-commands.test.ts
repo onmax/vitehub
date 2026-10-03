@@ -565,6 +565,27 @@ describe("inputCommands", () => {
     expect(calls).toBe(4_095)
   })
 
+  it("caps cumulative work for numeric fan-out", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        same: {
+          call({ args }) {
+            calls++
+            const depth = Number(args)
+            return depth > 0 ? `/same ${depth - 1} /same ${depth - 1}` : ""
+          },
+        },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 21" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThanOrEqual(1_000_001)
+  })
+
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

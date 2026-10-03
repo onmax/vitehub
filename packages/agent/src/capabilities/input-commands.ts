@@ -465,6 +465,7 @@ function inputCommandNumericDepth(args: string | undefined): number | undefined 
 // Keep a finite resource bound for numeric chains, while allowing chains whose
 // decreasing measure is larger than the ordinary command budget.
 const MAX_NUMERIC_EXPANSION_DEPTH = 1_000_000
+const MAX_NUMERIC_EXPANSION_WORK = 1_000_000
 
 export function inputCommands(options: InputCommandsOptions): AgentCapabilityDefinition {
   const commands = normalizeInputCommands(options)
@@ -488,6 +489,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let text = target.text
       let cursor = 0
       let runs = 0
+      let numericExpansionWork = 0
       let maxRuns = Math.max(1_000, text.length + 1)
       const creditedGrowth = new Set<string>()
       const blockedTransitions = new Set<string>()
@@ -731,6 +733,10 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         if (!commandAllowsCurrentChannel(command, context as AgentCapabilityRuntimeContext)) {
           cursor = invocation.end
           continue
+        }
+        if (inputCommandNumericDepth(invocation.args) !== undefined
+          && ++numericExpansionWork > MAX_NUMERIC_EXPANSION_WORK) {
+          throw agentDiagnostics.AGENT_R0103({ message: "[vitehub] inputCommands exceeded the maximum command expansion depth." })
         }
         budgetText = text
         budgetCommand = invocation.name
