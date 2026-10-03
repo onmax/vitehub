@@ -88,7 +88,7 @@ export async function uploadFiles(apiBase: string, input: UploadInput, options: 
  */
 export function createMultipartUploader(baseURL: string, options: MultipartUploadOptions = {}): (file: File, pathname?: string) => MultipartUploadTask {
   const request = options.fetch ?? globalThis.fetch
-  const partSize = options.partSize ?? defaultPartSize
+  const partSize = Math.max(1, options.partSize ?? defaultPartSize)
   const concurrency = Math.max(1, options.concurrency ?? 1)
   const send = (action: string, pathname: string, init: RequestInit, query?: Record<string, string>) =>
     request(multipartUrl(baseURL, action, pathname, query), { ...init, headers: mergeHeaders(options.headers, init.headers) })
@@ -106,7 +106,9 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
         signal: controller.signal,
       }))
       const { pathname: uploadPathname, uploadId } = upload
-      const partCount = Math.max(1, Math.ceil(file.size / partSize))
+      // Drivers accept at most 10,000 parts. Increase the requested size for very large files.
+      const effectivePartSize = Math.max(partSize, Math.ceil(file.size / 10_000))
+      const partCount = Math.max(1, Math.ceil(file.size / effectivePartSize))
       const parts: BlobMultipartPart[] = []
       let nextPart = 1
       options.onProgress?.(0)
@@ -115,7 +117,7 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
         while (nextPart <= partCount && !aborted) {
           const partNumber = nextPart++
           const result = await readJson<{ part: BlobMultipartPart }>(await send("upload", uploadPathname, {
-            body: file.slice((partNumber - 1) * partSize, partNumber * partSize),
+            body: file.slice((partNumber - 1) * effectivePartSize, partNumber * effectivePartSize),
             method: "PUT",
             signal: controller.signal,
           }, { partNumber: String(partNumber), uploadId }))
@@ -133,8 +135,18 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
         signal: controller.signal,
       }, { uploadId }))
       return result.object
-    })().catch((error: unknown) => {
+    })().catch(async (error: unknown) => {
       if (aborted) return undefined
+      aborted = true
+      controller.abort()
+      if (upload) {
+        try {
+          await readJson(await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId }))
+        }
+        catch {
+          // Preserve the original upload error. Cleanup is best effort here.
+        }
+      }
       throw error
     })
 
@@ -142,7 +154,7 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
       if (aborted) return
       aborted = true
       controller.abort()
-      if (upload) await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId })
+      if (upload) await readJson(await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId }))
     }
 
     return { abort, completed }
