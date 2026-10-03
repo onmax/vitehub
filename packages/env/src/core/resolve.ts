@@ -6,7 +6,7 @@ import { promisify } from "node:util"
 import { parseSchema } from "../schema.ts"
 import { runtimeValueSchema } from "./declarations.ts"
 import { envValueTypeName, parseEnvValue } from "./values.ts"
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { isViteHubError } from "@vite-hub/runtime"
 import { envSourceFailed, invalidEnvDeclaration, isAbortError, missingRequiredEnv } from "./errors.ts"
 

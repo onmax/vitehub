@@ -30,6 +30,8 @@ export interface ViteHubConsoleRecord {
   cells: Readonly<Record<string, string>>
   fields: readonly ViteHubDefinitionField[]
   id: string
+  /** The Console can run this record when it represents a runnable Schedule Definition. */
+  runnable?: boolean
 }
 
 /** Serializable description of a Console section. The Console UI in `vite-hub` renders the view. */

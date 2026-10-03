@@ -1,6 +1,7 @@
 import type { GitHubCheckEvidence, GitHubRequiredCheckState } from "../../server/github-required-checks.ts";
 import type { Snapshot } from "../../server/github-inbox.ts";
-import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../../internal/runtime-type.ts"
 
 export type BabysitterMergeMethod = "squash" | "merge" | "rebase";
 

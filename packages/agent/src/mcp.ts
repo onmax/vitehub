@@ -1,7 +1,8 @@
 import { ViteHubError } from "@vite-hub/runtime"
 
 import { resolveMcpToolServer, withMcpInitializationCompatibility } from "./internal/mcp-tool-capability.ts"
-import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 
 import type { MCPClientConfig as AiSdkMcpClientConfig } from "@ai-sdk/mcp"
 import type { McpClient, McpClientConfig } from "./mcp/types.ts"

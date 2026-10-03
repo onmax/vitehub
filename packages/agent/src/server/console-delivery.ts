@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { otlp } from "../capabilities/otlp.ts";
 import type { AgentCapabilityDefinition } from "../types.ts";
 

@@ -10,6 +10,24 @@ import { createHostedKVStorage, KVAtomicOperationUnsupportedError, KVStoreConfig
 import { kvErrorDiagnostics } from "../error-diagnostics.ts"
 
 const storagePromises = new Map<string, Promise<RuntimeStorage>>()
+let disposal: Promise<void> | undefined
+
+/** Releases every cached store. Call from the application's shutdown hook after stopping new work. */
+export function disposeKVStores(): Promise<void> {
+  if (disposal) return disposal
+  const stores = [...storagePromises.values()]
+  storagePromises.clear()
+  const pending = Promise.allSettled(stores.map(async (promise) => {
+    // Initialization failures already reach the operation caller and own no storage.
+    const storage = await promise.catch(() => undefined)
+    await storage?.dispose()
+  })).then((results) => {
+    const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : [])
+    if (failures.length) throw new AggregateError(failures, "Failed to dispose KV stores.")
+  }).finally(() => { disposal = undefined })
+  disposal = pending
+  return pending
+}
 
 function inferHosting(env: Record<string, string | undefined>) {
   if (getActiveCloudflareEnv()) {
@@ -56,6 +74,7 @@ async function resolveHostedConfig(): Promise<false | ResolvedKVModuleOptions | 
 }
 
 async function resolveStorage(name = "default") {
+  if (disposal) await disposal
   const existing = storagePromises.get(name)
   if (existing) return existing
   const promise = resolveHostedConfig().then(config => createHostedKVStorage(config, name))

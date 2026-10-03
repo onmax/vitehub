@@ -1,4 +1,5 @@
 import { browserProviderError } from "../errors.ts"
+import { withBrowserTimeout } from "./timeout.ts"
 
 import type { CDPClient } from "../controllers/cdp.ts"
 import type {
@@ -109,30 +110,6 @@ function evaluateResult<TResult>(result: { exceptionDetails?: unknown, result?: 
   return result.result?.value as TResult
 }
 
-async function withTimeout<TResult>(
-  promise: Promise<TResult>,
-  timeoutMs: number,
-  operation: string,
-  onTimeout?: (error: Error) => void,
-): Promise<TResult> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          const error = browserProviderError("cdp", operation)
-          onTimeout?.(error)
-          reject(error)
-        }, timeoutMs)
-      }),
-    ])
-  }
-  finally {
-    if (timer) clearTimeout(timer)
-  }
-}
-
 class CDPBrowserLocator implements BrowserLocator {
   constructor(
     private readonly send: AttachedPage["send"],
@@ -166,10 +143,13 @@ class CDPBrowserLocator implements BrowserLocator {
         returnByValue: true,
       })
     })
-    const result = await withTimeout(evaluation.promise, timeoutMs, operationName, (error) => {
-      expired = true
-      evaluation.release()
-      if (started && invalidateOnTimeout) this.invalidatePage(error)
+    const result = await withBrowserTimeout(evaluation.promise, () => browserProviderError("cdp", operationName), {
+      timeoutMs,
+      onTimeout: (error) => {
+        expired = true
+        evaluation.release()
+        if (started && invalidateOnTimeout) this.invalidatePage(error)
+      },
     })
     return evaluateResult(result, operationName)
   }
@@ -205,10 +185,10 @@ class CDPBrowserLocator implements BrowserLocator {
 
 export async function attachCDPPage(client: CDPClient): Promise<AttachedPage> {
   const setupDeadline = Date.now() + DEFAULT_TIMEOUT_MS
-  const setup = <TResult>(promise: Promise<TResult>, operation: string) => withTimeout(
+  const setup = <TResult>(promise: Promise<TResult>, operation: string) => withBrowserTimeout(
     promise,
-    Math.max(0, setupDeadline - Date.now()),
-    operation,
+    () => browserProviderError("cdp", operation),
+    { timeoutMs: Math.max(0, setupDeadline - Date.now()) },
   )
   const targets = await setup(client.send<{
     targetInfos?: Array<{ targetId?: string, type?: string }>
@@ -318,16 +298,18 @@ export async function attachCDPPage(client: CDPClient): Promise<AttachedPage> {
       await runClick(locator)
     })
     pageQueue = barrier.catch(() => {})
-    return withTimeout(
+    return withBrowserTimeout(
       barrier,
-      DEFAULT_TIMEOUT_MS,
-      `click Browser locator ${JSON.stringify(locator.selector)}`,
-      (error) => {
-        expired = true
-        if (started) {
-          clickFailure ??= error
-          invalidatePage(error)
-        }
+      () => browserProviderError("cdp", `click Browser locator ${JSON.stringify(locator.selector)}`),
+      {
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        onTimeout: (error) => {
+          expired = true
+          if (started) {
+            clickFailure ??= error
+            invalidatePage(error)
+          }
+        },
       },
     )
   }
@@ -367,9 +349,12 @@ export async function attachCDPPage(client: CDPClient): Promise<AttachedPage> {
         }
       })
       pageQueue = barrier.catch(() => {})
-      await withTimeout(barrier, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, operation, (error) => {
-        expired = true
-        if (started) invalidatePage(error)
+      await withBrowserTimeout(barrier, () => browserProviderError("cdp", operation), {
+        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        onTimeout: (error) => {
+          expired = true
+          if (started) invalidatePage(error)
+        },
       })
     },
     locator(selector: string, options: BrowserLocatorOptions = {}) {
@@ -395,10 +380,13 @@ export async function attachCDPPage(client: CDPClient): Promise<AttachedPage> {
           throw error
         }
       })
-      await withTimeout(dispatch.promise, DEFAULT_TIMEOUT_MS, `press Browser key ${JSON.stringify(key)}`, (error) => {
-        expired = true
-        dispatch.release()
-        if (started) invalidatePage(error)
+      await withBrowserTimeout(dispatch.promise, () => browserProviderError("cdp", `press Browser key ${JSON.stringify(key)}`), {
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        onTimeout: (error) => {
+          expired = true
+          dispatch.release()
+          if (started) invalidatePage(error)
+        },
       })
     },
   }

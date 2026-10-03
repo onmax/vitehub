@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { BlobNotFoundError, BlobServiceNotAvailable } from "@vercel/blob"
 import { checkGlobCwd, seedGlobCwdStore } from "./glob-cwd-checks.ts"
 
 declare global {
@@ -7,28 +8,33 @@ declare global {
 
 const blobMock = vi.hoisted(() => {
   const store = new Map<string, { body: Uint8Array, uploadedAt: Date }>()
-  const pathnameFromUrl = (input: string) => input.startsWith("https://blob.example/")
+  const cache = new Map<string, { body: Uint8Array, uploadedAt: Date }>()
+  const pathnameFromUrl = (input: string) => (input.startsWith("https://blob.example/")
     ? input.slice("https://blob.example/".length)
-    : input
+    : input).split("?")[0]
 
   return {
     clear() {
       store.clear()
+      cache.clear()
     },
     del: vi.fn(async (input: string | string[]) => {
       for (const item of Array.isArray(input) ? input : [input]) store.delete(pathnameFromUrl(item))
     }),
-    get: vi.fn(async (input: string) => {
-      const current = store.get(pathnameFromUrl(input))
+    get: vi.fn(async (input: string, options: { access?: "private" | "public", useCache?: boolean } = {}) => {
+      const pathname = pathnameFromUrl(input)
+      const hasPublicCacheBust = input.includes("?vitehubCacheBust=")
+      const bypassCache = options.useCache === false && (options.access !== "public" || hasPublicCacheBust)
+      const current = bypassCache ? store.get(pathname) : cache.get(pathname) || store.get(pathname)
+      if (current && !bypassCache) cache.set(pathname, current)
       return current
         ? { blob: { contentType: "application/octet-stream", size: current.body.byteLength }, statusCode: 200, stream: new Response(current.body).body }
-        : { statusCode: 404, stream: null }
+        : null
     }),
     head: vi.fn(async (pathname: string) => {
       const current = store.get(pathname)
-      return current
-        ? { pathname, size: current.body.byteLength, uploadedAt: current.uploadedAt, url: `https://blob.example/${pathname}` }
-        : null
+      if (!current) throw new BlobNotFoundError()
+      return { pathname, size: current.body.byteLength, uploadedAt: current.uploadedAt, url: `https://blob.example/${pathname}` }
     }),
     list: vi.fn(async ({ prefix = "" }: { prefix?: string }) => ({
       blobs: [...store.entries()]
@@ -74,6 +80,123 @@ afterEach(() => {
 })
 
 describe("Vercel Blob workspace store", () => {
+  it("detects equal-size content changes in snapshot diffs", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    const snapshot = await store.snapshot()
+
+    await expect(store.diff({ from: snapshot })).resolves.toMatchObject({ entries: [] })
+    await store.writeFile("readme.md", { path: "readme.md", content: "after!" })
+
+    await expect(store.diff({ from: snapshot })).resolves.toMatchObject({
+      entries: [{ path: "readme.md", type: "modified" }],
+    })
+  })
+
+  it("requests uncached reads for public blobs", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ access: "public", provider: "vercel-blob", token: "token" }, "docs")
+
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    await store.readFile("readme.md")
+
+    expect(blobMock.get).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      access: "public",
+      headers: { "cache-control": "no-cache, no-store" },
+      useCache: false,
+    }))
+    expect(blobMock.get.mock.calls[0]?.[0]).toMatch(/\?vitehubCacheBust=/)
+  })
+
+  it("detects equal-size rewrites for public blobs despite CDN caching", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ access: "public", provider: "vercel-blob", token: "token" }, "docs")
+
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    const snapshot = await store.snapshot()
+    await store.writeFile("readme.md", { path: "readme.md", content: "after!" })
+
+    await expect(store.diff({ from: snapshot })).resolves.toMatchObject({
+      entries: [{ path: "readme.md", type: "modified" }],
+    })
+  })
+
+  it("preserves unchanged legacy snapshots without file digests", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    const current = await store.snapshot()
+    const legacy = {
+      ...current,
+      entries: Object.fromEntries(Object.entries(current.entries).map(([path, entry]) => [path, { ...entry, digest: undefined }])),
+    }
+
+    await expect(store.diff({ from: legacy })).resolves.toMatchObject({ entries: [] })
+  })
+
+  it("does not persist a partial snapshot when digest hydration fails", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await store.writeFile("readme.md", { path: "readme.md", content: "before" })
+    blobMock.get.mockRejectedValueOnce(new Error("temporary failure"))
+
+    await expect(store.snapshot()).rejects.toThrow("temporary failure")
+    await expect(store.snapshot()).resolves.toMatchObject({
+      entries: { "readme.md": { digest: expect.any(String) } },
+    })
+  })
+  it("preserves provider failures while reading files and metadata", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const failure = new BlobServiceNotAvailable()
+    for (const read of [() => store.readFile("readme.md"), () => store.stat("readme.md"), () => store.getMeta!("loader")]) {
+      blobMock.get.mockRejectedValueOnce(failure)
+      await expect(read()).rejects.toBe(failure)
+    }
+    expect(blobMock.list).not.toHaveBeenCalled()
+  })
+
+  it("does not treat failed removal probes as missing paths", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const failure = new BlobServiceNotAvailable()
+    blobMock.head.mockRejectedValueOnce(failure)
+    await expect(store.rm("docs", { recursive: true, force: true })).rejects.toBe(failure)
+    expect(blobMock.list).not.toHaveBeenCalled()
+    expect(blobMock.del).not.toHaveBeenCalled()
+  })
+
+  it("returns missing results only for absent blobs", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    await expect(store.readFile("missing.md")).resolves.toBeUndefined()
+    await expect(store.getMeta!("missing")).resolves.toBeUndefined()
+    await expect(store.stat("missing.md")).resolves.toBeUndefined()
+    await expect(store.rm("missing.md", { force: true })).resolves.toBeUndefined()
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await store.rm("docs", { recursive: true })
+    await expect(store.readFile("docs/readme.md")).resolves.toBeUndefined()
+  })
+
+  it("recognizes not-found errors from a separately loaded Blob SDK", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const peerNotFound = new Error("missing")
+    peerNotFound.name = "BlobNotFoundError"
+    blobMock.head.mockRejectedValueOnce(peerNotFound)
+    await expect(store.rm("missing.md", { force: true })).resolves.toBeUndefined()
+  })
+
   it("matches glob patterns relative to cwd", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
@@ -101,6 +224,7 @@ describe("Vercel Blob workspace store", () => {
     expect(blobMock.get).toHaveBeenCalledWith("workspace/e2e/docs/files/docs/readme.md", expect.objectContaining({
       access: "private",
       token: "token",
+      useCache: false,
     }))
     blobMock.get.mockClear()
     expect(await store.glob("**/*.{md,mdx}")).toEqual([

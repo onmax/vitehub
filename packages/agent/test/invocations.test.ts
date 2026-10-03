@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { createClient } from "@libsql/client"
 import { createTraceEventLog, deriveTraceRuns, traceEventsToOpenTelemetrySpans } from "@vite-hub/runtime"
 import { mkdtemp, rm } from "node:fs/promises"
@@ -12,6 +13,7 @@ import { applyAgentInvocationStoreUpdate, bindAgentInvocations, byteBoundedObser
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { createLibsqlAgentInvocationStore } from "../src/invocations/sqlite.ts"
 
+import type { AgentInvocationListOptions } from "../src/invocations.ts"
 import type { AgentInvocationStore } from "../src/server.ts"
 import type { Client } from "@libsql/client"
 
@@ -46,6 +48,21 @@ function inspectableToolCapability() {
 }
 
 describe("Agent Invocations", () => {
+  it("preserves direct libSQL list diagnostic codes", async () => {
+    const client = createClient({ url: "file::memory:" })
+    const store = createLibsqlAgentInvocationStore({ client, maxAgeMs: false, maxRecords: false })
+    try {
+      await expect(store.list({ limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0629" })
+      // SAFETY: Deliberately violates the typed input to check runtime validation.
+      await expect(store.list({ search: 1 } as unknown as AgentInvocationListOptions)).rejects.toMatchObject({ code: "AGENT_R0630" })
+      await expect(store.list({ search: "x".repeat(257) })).rejects.toMatchObject({ code: "AGENT_R0631" })
+      await expect(store.list({ cursor: "01" })).rejects.toMatchObject({ code: "AGENT_R0635" })
+    }
+    finally {
+      client.close()
+    }
+  })
+
   it("retains terminal usage totals when raw and call evidence exceeds the byte budget", () => {
     const usage = { inputTokens: 5, outputTokens: 2, totalTokens: 7 }
     const result = byteBoundedObservations([{

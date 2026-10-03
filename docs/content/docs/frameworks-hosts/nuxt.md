@@ -53,7 +53,7 @@ pnpm nuxt build
 | --- | --- |
 | Generated types | The module adds the `.vitehub` declarations to the Nuxt and Nitro TypeScript configs. You do not add them to `tsconfig.json`. |
 | Generated Agent files | Agent route handlers and wrappers are written under `<buildDir>/vitehub/agent/**`, normally `.nuxt/vitehub/agent/**`, instead of `.vitehub/agent/**`. Agent discovery still uses `server/agents`. |
-| Database on Cloudflare | With the `cloudflare` preset, `database` defaults to `driver: 'd1'`. This configures one D1 host resource that Nitro and Nuxt Content share. |
+| Database on Cloudflare | With the `cloudflare` preset, `database` defaults to `driver: 'd1'` when no Database Definition is discovered. A discovered Definition owns its binding; set `database.driver: 'd1'` with a database name and ID to configure a separate D1 host resource that Nitro and Nuxt Content share. |
 | Console | The Console runs as Nuxt pages. Install `@nuxt/ui`, `@iconify-json/lucide`, and `@iconify-json/ph`. Read [Console](/docs/development/console). |
 | Connections | Not supported by the Nuxt module yet. `connections` fails during module setup. Use the Vite integration for Connections. |
 
