@@ -549,11 +549,9 @@ it('keeps relocation in the retained pool when its parent is replaced by a direc
   vi.mocked(rename).mockImplementationOnce(async (from, to) => {
     await fs.rename(pool, displaced)
     await mkdir(pool)
-    // Mirror both visible names in the replacement parent. Path-based relocation
-    // would use these directories and reset the replacement checkout.
+    // Mirror the visible checkout in the replacement parent. Path-based
+    // relocation would use this directory and reset the replacement checkout.
     await cp(join(displaced, basename(checkout)), checkout, { recursive: true })
-    const privateName = (await readdir(displaced)).find(name => name.startsWith('vitehub-github-reset-'))!
-    await mkdir(join(pool, privateName))
     await writeFile(join(checkout, 'untracked-marker'), 'untouched')
     await fs.rename(from, to)
   })
