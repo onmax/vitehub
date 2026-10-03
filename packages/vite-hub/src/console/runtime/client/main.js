@@ -9,6 +9,7 @@ import { createRouter, createWebHistory } from "vue-router";
 
 import ConsoleApp from "../components/console-app.vue";
 import ConsoleBlob from "../components/console-blob.vue";
+import ConsoleConnections from "../components/console-connections.vue";
 import ConsoleDatabase from "../components/console-database.vue";
 import ConsoleDefinitions from "../components/console-definitions.vue";
 import ConsoleHome from "../components/console-home.vue";
@@ -30,6 +31,20 @@ const router = createRouter({
   history: createWebHistory("/_vitehub/"),
   routes: [
     { component: ConsoleEnv, name: "vitehub-console-env", path: "/env", meta: { consoleSection: "env", title: "Env · ViteHub Console" }, props: { agentsBase: "/api/_vitehub/console/agents", definitionsBase: "/api/_vitehub/console/definitions", kvBase: "/api/_vitehub/console/kv", envBase: "/api/_vitehub/console/env", managementBase: "/_vitehub/env/manage", searchBase: "/api/_vitehub/console/search", sectionsBase } },
+    {
+      component: ConsoleConnections,
+      name: "vitehub-console-connections",
+      path: "/connections",
+      meta: { consoleSection: "connections", title: "Connections · ViteHub Console" },
+      props: {
+        agentsBase: "/api/_vitehub/console/agents",
+        definitionsBase: "/api/_vitehub/console/definitions",
+        kvBase: "/api/_vitehub/console/kv",
+        managementBase: "/_vitehub/connections",
+        searchBase: "/api/_vitehub/console/search",
+        sectionsBase,
+      },
+    },
     {
       component: ConsoleHome,
       name: "vitehub-console",

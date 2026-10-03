@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   consoleBuiltinSectionIds,
+  consoleSectionDetails,
   prioritizeConsoleSectionIds,
   readLastConsoleSection,
   rememberConsoleSection,
@@ -97,6 +98,9 @@ describe("Console section routes", () => {
     const routedSections = new Set([...client.matchAll(/consoleSection: "([^"]+)"/g)].map(match => match[1]))
 
     expect([...routedSections].sort()).toEqual([...consoleBuiltinSectionIds].sort())
+    for (const section of consoleBuiltinSectionIds) {
+      expect(client).toContain(`name: "${consoleSectionDetails[section].routeName}"`)
+    }
     expect(client).toContain("subscribeConsoleNavigation(sectionsBase, addContributedRoutes)")
     expect(client).toContain("const name = consoleSectionRouteName(section)")
   })
