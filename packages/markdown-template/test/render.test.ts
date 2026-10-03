@@ -391,6 +391,15 @@ Unavailable
     })).toBe("<policy>Use Acme.</policy>")
   })
 
+  it("rejects unsafe URLs in authored HTML tags", async () => {
+    await expect(renderMarkdownTemplate('<a href="https://example.com/a b">Open</a>'))
+      .resolves.toContain("https://example.com/a%20b")
+    await expect(renderMarkdownTemplate('<a href="javascript:alert(1)">Open</a>'))
+      .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<img src="data:text/html,<script>alert(1)</script>">'))
+      .rejects.toThrow("must resolve to a safe destination")
+  })
+
   it("renders scalar bindings in quoted XML attributes", async () => {
     expect(await renderMarkdownTemplate("<policy :audience=\"data.audience\" :tone=\"data.tone\">Use it.</policy>", {
       data: {

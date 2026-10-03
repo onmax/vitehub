@@ -14,6 +14,7 @@ import type { RenderMarkdownTemplateInternalOptions, RenderMarkdownTemplateOptio
 
 const parserOptions = { autoClose: false, autoUnwrap: false, linkify: false, plugins: [binding()] }
 const literalHtmlTags = new Set(["code", "pre", "script", "style", "textarea", "kbd", "samp", "var"])
+const urlAttributes = new Set(["action", "cite", "formaction", "href", "poster", "src", "xlink:href"])
 
 export async function renderMarkdownTemplate(template: string, options: RenderMarkdownTemplateOptions = {}): Promise<string> {
   return await renderMarkdownTemplateInternal(template, options)
@@ -66,9 +67,13 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         return await renderNodes(fragment.nodes, literalState(state), parent)
       },
       A: async (node, state, parent) => {
-        if (!Object.hasOwn(node[1], ":href")) return await state.handlers.a!(node, state, parent)
         const props = resolveScalarTemplateAttributes(node[1], renderData(state))
-        const href = await safeLinkDestination(resolveScalarTemplateBinding({ ":value": node[1][":href"] }, renderData(state)), String(node[1][":href"]))
+        const href = Object.hasOwn(node[1], ":href")
+          ? await safeLinkDestination(resolveScalarTemplateBinding({ ":value": node[1][":href"] }, renderData(state)), String(node[1][":href"]))
+          : typeof props.href === "string"
+            ? await safeLinkDestination(props.href, "href")
+            : undefined
+        if (href === undefined) return await state.handlers.a!(node, state, parent)
         // SAFETY: Preserve the element tag and children, replacing only its resolved attributes.
         return await state.handlers.a!([node[0], { ...props, href }, ...node.slice(2)] as ElementNode, state, parent)
       },
@@ -77,7 +82,8 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         handler: async (node, state, parent) => {
           const [tag, attrs, ...children] = node
           const props = resolveScalarTemplateAttributes(attrs, renderData(state))
-          const escaped = Object.fromEntries(Object.entries(props).map(([key, value]) =>
+          const sanitized = await sanitizeUrlAttributes(props, attrs)
+          const escaped = Object.fromEntries(Object.entries(sanitized).map(([key, value]) =>
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- String XML attributes need escaping; Comark serializes boolean and numeric attributes.
             [key, typeof value === "string" ? escapeHtml(value) : value]))
           // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Only raw text children of block HTML need Markdown parsing; parsed nodes are rendered directly.
@@ -89,6 +95,15 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
       },
     },
   })).trim())
+}
+
+async function sanitizeUrlAttributes(props: Record<string, unknown>, source: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const sanitized = { ...props }
+  for (const [key, value] of Object.entries(props)) {
+    if (typeof value !== "string" || !urlAttributes.has(key.toLowerCase())) continue
+    sanitized[key] = await safeLinkDestination(value, String(source[`:${key}`] ?? key))
+  }
+  return sanitized
 }
 
 function literalState(state: State): State {
