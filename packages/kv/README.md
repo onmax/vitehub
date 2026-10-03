@@ -60,6 +60,8 @@ Deno KV accepts `kv.set(key, value, { ttl: seconds })` to expire a value. Omitti
 
 `kv.keys(prefix)` is exhaustive. Use `kv.list({ prefix, limit, cursor })` when the caller needs bounded work. `limit` must be a positive integer. A page returns `{ keys, cursor? }`; an omitted cursor means the listing is complete.
 
+List prefixes use the same key normalization as reads and writes. For example, `users/al` matches the stored key `users:alice`. A trailing separator, such as `users/` or `users:`, limits the prefix to children and does not match `users-other`.
+
 Cursors are opaque and provider-specific. Pass a returned cursor back to the same store with the same prefix. Cloudflare KV, Upstash, Deno KV, and `fs-lite` stop enumeration when the requested page is full. An `fs-lite` cursor retains a directory iterator in the current process for up to 15 minutes. Upstash uses the same retention window when the provider returns more keys than requested. These process-local cursors can expire sooner when more than 32 listings are left unfinished. Callers must restart listing without a cursor when continuation fails.
 
 KV operations return `[error, value]`. Provider failures use `ViteHubError` with code `KV_OPERATION_FAILED`, operation/store details, and the provider failure in `cause`. Invalid configuration and unknown named stores still throw before provider execution.

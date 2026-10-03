@@ -11,6 +11,28 @@ const runtime = () => ({
 })
 
 describe("inputCommands", () => {
+  it("leaves inherited command names as ordinary input", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+
+    const resolved = await resolveAgentCapabilities({
+      capabilities: [inputCommands({ commands: {} })],
+    }, runtime(), { prompt: "/constructor" })
+
+    expect(resolved.input.prompt).toBe("/constructor")
+  })
+
+  it("accepts an explicitly registered constructor command", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+
+    const resolved = await resolveAgentCapabilities({
+      capabilities: [inputCommands({ commands: { constructor: { call: () => "Registered command" } } })],
+    }, runtime(), { prompt: "/constructor" })
+
+    expect(resolved.input.prompt).toBe("Registered command")
+  })
+
   it("exposes resolved runtime primitives and can reply without running the driver", async () => {
     const { agentInvocationId } = await import("../src/invocations.ts")
     const { inputCommands } = await import("../src/capabilities.ts")

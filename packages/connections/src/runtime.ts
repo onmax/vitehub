@@ -1,11 +1,12 @@
 import * as v from "valibot"
 
+import { createConnectionTransport } from "./transport.ts"
 import { isApiKeyProvider } from "./api-key.ts"
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
 import { isConnectionDefinition } from "./definition.ts"
 import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
 import { decide, envActor } from "./policy.ts"
-import { connectionActions, prepareConnectionMethod, providerApis } from "./catalog.ts"
+import { connectionActions, prepareConnectionMethod } from "./catalog.ts"
 
 import type { EnvAccessContext, EnvActivity } from "@vite-hub/env/bridge"
 import type { ConnectionState, ConnectionStore } from "./store.ts"
@@ -28,8 +29,6 @@ const REFRESH_LEASE_MS = 60_000
 const REFRESH_WAIT_MS = 30_000
 const AUTHORIZATION_TTL_MS = 10 * 60_000
 const APPROVAL_EXECUTION_TTL_MS = 5 * 60_000
-const MAX_REDIRECTS = 5
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 // Visible ASCII only, so the key is a valid header value.
 const API_KEY_PATTERN = /^[\x21-\x7e]{1,8192}$/
 
@@ -52,6 +51,7 @@ export interface ConnectionsRuntimeOptions {
 }
 
 interface CallContext {
+  transport: ReturnType<typeof createConnectionTransport>
   actor: string
   approved?: boolean
   approvedGrantId?: string
@@ -165,23 +165,6 @@ function parseToken(value: string, name: string): StoredToken {
     throw new ConnectionError("reauth_required", `Connection "${name}" is not connected. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
   }
   return token.output
-}
-
-/** The header that carries the stored credential. */
-function credentialHeader(definition: ConnectionDefinition): string {
-  return isApiKeyProvider(definition.provider) ? definition.provider.header : "authorization"
-}
-
-function credential(definition: ConnectionDefinition, token: StoredToken): string {
-  const provider = definition.provider
-  if (isApiKeyProvider(provider)) return provider.scheme ? `${provider.scheme} ${token.accessToken}` : token.accessToken
-  return `${token.tokenType === "bearer" ? "Bearer" : token.tokenType} ${token.accessToken}`
-}
-
-/** Origins that may receive the credential: API catalog root URLs, and the origins of an API key provider. */
-function credentialOrigins(definition: ConnectionDefinition): string[] {
-  const origins = Object.values(providerApis(definition)).map(catalog => new URL(catalog.rootUrl).origin)
-  return isApiKeyProvider(definition.provider) ? [...origins, ...definition.provider.origins] : origins
 }
 
 async function providerMessage(response: Response): Promise<string | undefined> {
@@ -481,41 +464,6 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     throw new ConnectionError("reauth_required", message, { details: { connection: name } })
   }
 
-  /**
-   * Send a request that carries an API key. Fetch keeps custom headers on a cross-origin redirect,
-   * so ViteHub follows redirects itself and removes the key once the chain leaves the first origin.
-   */
-  async function sendKey(url: string, init: RequestInit, header: string): Promise<Response> {
-    if (init.redirect && init.redirect !== "follow") return await request(url, init)
-    const origin = new URL(url).origin
-    let target = new URL(url)
-    let current = init
-    let crossed = false
-    for (let hop = 0; ; hop += 1) {
-      crossed ||= target.origin !== origin
-      const headers = new Headers(current.headers)
-      if (crossed) {
-        headers.delete(header)
-        for (const credentialHeader of ["authorization", "cookie", "proxy-authorization", "set-cookie"]) headers.delete(credentialHeader)
-      }
-      const response = await request(target.toString(), { ...current, headers, redirect: "manual" })
-      const location = response.headers.get("location")
-      if (!REDIRECT_STATUSES.has(response.status) || !location || hop === MAX_REDIRECTS) return response
-      await response.body?.cancel().catch(() => undefined)
-      const method = (current.method ?? "GET").toUpperCase()
-      // Fetch turns a 303, and a 301 or 302 after POST, into GET without a body.
-      if ((response.status === 303 && method !== "GET" && method !== "HEAD") || ((response.status === 301 || response.status === 302) && method === "POST")) {
-        headers.delete("content-type")
-        headers.delete("content-length")
-        current = { ...current, body: undefined, headers, method: "GET" }
-      }
-      else {
-        current = { ...current, headers }
-      }
-      target = new URL(location, target)
-    }
-  }
-
   /** Send one provider request with the Connection token inside an audited Env Bridge use. */
   async function send(context: CallContext, providerRequest: ProviderRequest, init: { headers?: Record<string, string>, redirect?: RequestInit["redirect"], signal?: AbortSignal } = {}): Promise<Response> {
     const connections = await getStore()
@@ -533,27 +481,19 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
             if (context.approved && (!context.approvedGrantId || current.grantId !== context.approvedGrantId)) {
               throw new ConnectionError("invalid", "Approval belongs to a previous Connection grant.")
             }
-            const header = credentialHeader(context.definition)
-            const headers: Record<string, string> = { accept: "application/json" }
-            for (const [key, value] of Object.entries(init.headers ?? {})) {
-              if (key.toLowerCase() !== header) headers[key] = value
-            }
-            headers[header] = credential(context.definition, current)
-            if (providerRequest.json && providerRequest.body !== undefined && !Object.keys(headers).some(key => key.toLowerCase() === "content-type")) headers["content-type"] = "application/json"
             if (providerRequest.write && context.providerExecution) {
               context.providerExecution.dispatched = true
               context.providerExecution.rejected = false
             }
-            const providerInit: RequestInit = {
+            const providerInit = {
               body: providerRequest.body,
-              headers,
+              json: providerRequest.json,
+              headers: init.headers,
               method: providerRequest.method,
               redirect: init.redirect,
               signal: init.signal,
             }
-            const dispatch = isApiKeyProvider(context.definition.provider)
-              ? sendKey(providerRequest.url, providerInit, header)
-              : request(providerRequest.url, providerInit)
+            const dispatch = context.transport.send(providerRequest.url, current, providerInit)
             return dispatch.then(response => {
               if (providerRequest.write && context.providerExecution) {
                 context.providerExecution.rejected = response.status >= 400 && response.status < 500 && response.status !== 408
@@ -650,6 +590,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
 
   async function callMethod(context: CallContext, action: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
     const prepared = prepareConnectionMethod(context.name, context.definition, action, input)
+    context.transport.prepare(prepared.url)
     const response = await governed(context, { ...prepared, input, json: true }, { input, kind: "method" }, { signal })
     return response ? await readResponse(response) : undefined
   }
@@ -658,17 +599,11 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     const url = new URL(input)
     const method = new Request(url, { method: init.method ?? "GET" }).method
     const write = !isConnectionReadMethod(method)
-    const allowed = credentialOrigins(context.definition).includes(url.origin)
-    if (!allowed) throw new ConnectionError("invalid", `Connection "${context.name}" does not send its token to ${url.origin}.`, { details: { connection: context.name } })
+    const headers = context.transport.prepare(url, init.headers)
     if (init.body !== undefined && init.body !== null && !v.is(v.string(), init.body)) {
       throw new ConnectionError("invalid", "Connection fetch accepts only a string body.")
     }
     const body = init.body ?? undefined
-    const headers: Record<string, string> = {}
-    const header = credentialHeader(context.definition)
-    for (const [key, value] of new Headers(init.headers)) {
-      if (key !== "authorization" && key !== header) headers[key] = value
-    }
     return await governed(
       context,
       { action: "fetch", body, highRisk: false, input: { method, url: url.toString() }, method, url: url.toString(), write },
@@ -680,7 +615,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   function buildClient(name: string, options: UseConnectionOptions): ConnectionRuntimeClient {
     const actor = options.actor ?? "server"
     let context: Promise<CallContext> | undefined
-    const resolveContext = () => (context ??= definition(name).then(loaded => ({ actor, definition: loaded, name, options })))
+    const resolveContext = () => (context ??= definition(name).then(loaded => ({ actor, definition: loaded, name, options, transport: createConnectionTransport(name, loaded, request) })))
     return {
       async call(action: string, input?: unknown, callOptions?: { signal?: AbortSignal }): Promise<unknown> {
         return await callMethod(await resolveContext(), action, input, callOptions?.signal)
@@ -1043,6 +978,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       const stored = v.parse(approvalInputSchema, approval.input)
       const loaded = await definition(approval.name)
       const context: CallContext = {
+        transport: createConnectionTransport(approval.name, loaded, request),
         actor: approval.actor,
         approved: true,
         approvedGrantId: stored.grantId,
