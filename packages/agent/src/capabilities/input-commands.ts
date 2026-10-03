@@ -455,6 +455,13 @@ function scheduleInputCommandFinishHook(
   })
 }
 
+function inputCommandNumericDepth(args: string | undefined): number | undefined {
+  const match = args?.match(/^\s*(\d+)(?:\s|$)/)
+  if (!match) return
+  const depth = Number(match[1])
+  return Number.isSafeInteger(depth) ? depth : undefined
+}
+
 export function inputCommands(options: InputCommandsOptions): AgentCapabilityDefinition {
   const commands = normalizeInputCommands(options)
   const trigger = normalizeInputCommandTrigger(options.trigger)
@@ -523,6 +530,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               nextInvocation = findInputCommandInvocation(text, trigger, commands, nextInvocation.end)
             }
             let changedRange = budgetReplacementRange
+            let revealsBoundaryCommand = false
             if (nextInvocation && nextInvocation.name !== budgetCommand && !changedRange) {
               let start = 0
               while (start < budgetText.length && start < text.length && budgetText[start] === text[start]) start++
@@ -533,12 +541,15 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
                 end--
               }
               changedRange = { start, end }
+              // The changed separator can reveal a command in the unchanged suffix.
+              revealsBoundaryCommand = previousEnd > 0 && !/\s/.test(budgetText[previousEnd - 1]!)
+                && end > 0 && /\s/.test(text[end - 1]!)
             }
             // Every generated child must decrease the numeric measure. Checking
             // only the first child misses a recursive sibling with unchanged depth.
             let finiteSameCommandGrowth = false
-            const depth = budgetArgs?.match(/^\s*(\d+)(?:\s|$)/)
-            if (depth && budgetCommand === nextInvocation?.name && budgetInvocationRange) {
+            const depth = inputCommandNumericDepth(budgetArgs)
+            if (depth !== undefined && budgetCommand === nextInvocation?.name && budgetInvocationRange) {
               let replacementRange = budgetReplacementRange
               if (!replacementRange) {
                 const prefix = budgetText.slice(0, budgetInvocationRange.start)
@@ -552,8 +563,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               let child = findInputCommandInvocation(replacement, trigger, commands)
               finiteSameCommandGrowth = child !== undefined
               while (child) {
-                const childDepth = child.args.match(/^\s*(\d+)(?:\s|$)/)
-                if (child.name !== budgetCommand || !childDepth || Number(childDepth[1]) >= Number(depth[1])) {
+                const childDepth = inputCommandNumericDepth(child.args)
+                if (child.name !== budgetCommand || childDepth === undefined || childDepth >= depth) {
                   finiteSameCommandGrowth = false
                   break
                 }
@@ -561,26 +572,29 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               }
             }
             const introducesNextInvocation = nextInvocation && nextInvocation.name !== budgetCommand && changedRange
-              && nextInvocation.start < changedRange.end
+              && (nextInvocation.start < changedRange.end || (nextInvocation.start === changedRange.end
+                && revealsBoundaryCommand))
               && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
             let cycleDetected = false
-            const budgetDepth = budgetArgs?.match(/^\s*(\d+)(?:\s|$)/)
-            const nextDepth = nextInvocation?.args.match(/^\s*(\d+)(?:\s|$)/)
+            const budgetDepth = inputCommandNumericDepth(budgetArgs)
+            const nextDepth = inputCommandNumericDepth(nextInvocation?.args)
             const advancesNumericStage = Boolean(
-              budgetDepth && nextDepth && Number(nextDepth[1]) < Number(budgetDepth[1]),
+              budgetDepth !== undefined && nextDepth !== undefined && nextDepth < budgetDepth
+              // Same-command fan-out must decrease every child, including siblings.
+              && (nextInvocation?.name !== budgetCommand || finiteSameCommandGrowth),
             )
-            if (budgetDepth && runs === 1) maxRuns += Number(budgetDepth[1]) + 2
+            if (budgetDepth !== undefined && runs === 1) maxRuns += budgetDepth + 2
             // Keep every generated edge after leading commands finish and are removed.
             // A cyclic edge can receive credit once, but cannot renew it indefinitely.
             let graphCreditBlocked = false
             if (changedRange) {
               const generatedNames = new Set<string>()
               const generatedText = text.slice(changedRange.start, changedRange.end)
-              let generatedNumericDecrease = Boolean(budgetDepth)
+              let generatedNumericDecrease = budgetDepth !== undefined
               let generated = findInputCommandInvocation(generatedText, trigger, commands)
               while (generated) {
-                const generatedDepth = generated.args.match(/^\s*(\d+)(?:\s|$)/)
-                if (!generatedDepth || Number(generatedDepth[1]) >= Number(budgetDepth?.[1])) generatedNumericDecrease = false
+                const generatedDepth = inputCommandNumericDepth(generated.args)
+                if (generatedDepth === undefined || budgetDepth === undefined || generatedDepth >= budgetDepth) generatedNumericDecrease = false
                 if (generated.name !== budgetCommand && commandAllowsCurrentChannel(commands[generated.name]!, context as AgentCapabilityRuntimeContext)) {
                   generatedNames.add(generated.name)
                   const successors = transitionGraph.get(budgetCommand) || new Set<string>()

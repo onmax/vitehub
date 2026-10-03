@@ -341,6 +341,47 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it.each(["result", "mutation"] as const)("bounds cycles revealed at a rewrite boundary through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const rewrite = (prompt: string): InputCommand["call"] => ({ context }) => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      if (mode === "mutation") context.input.set({ prompt })
+      else return { prompt }
+    }
+    const capability = inputCommands({
+      commands: {
+        a: { call: rewrite(" /_  /b y/a") },
+        b: { call: rewrite(" /_ x/b  /a") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: " /_  /b y/a" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
+  it.each(["9".repeat(400), "9007199254740992"])("bounds cycles with an unsafe numeric argument %s", async (depth) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const rewrite = (next: string) => () => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      return { prompt: `/${next} ${depth}` }
+    }
+    const capability = inputCommands({
+      commands: {
+        a: { call: rewrite("b") },
+        b: { call: rewrite("a") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: `/a ${depth}` }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
   it.each(["replacement", "result", "mutation"] as const)("allows decreasing same-command fan-out with options through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
