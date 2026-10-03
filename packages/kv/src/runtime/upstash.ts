@@ -27,12 +27,13 @@ function resolveRuntimeUpstashStore(
     .find(([url, token]) => url && token)
   const envUrl = readEnv(env, ...upstashUrlEnvNames)
   const envToken = readEnv(env, ...upstashTokenEnvNames)
-  const generatedValues = isMaskedValue(config.url) && isMaskedValue(config.token)
+  const resolveMaskedValue = (value: string | undefined, pairValue: string | undefined, fallback: string | undefined) =>
+    isMaskedValue(value) ? (pairValue || fallback || value) : value
 
   const resolved = {
     ...config,
-    token: isMaskedValue(config.token) ? (generatedValues ? completeEnvPair?.[1] : envToken) || config.token : config.token,
-    url: isMaskedValue(config.url) ? (generatedValues ? completeEnvPair?.[0] : envUrl) || config.url : config.url,
+    token: resolveMaskedValue(config.token, completeEnvPair?.[1], envToken),
+    url: resolveMaskedValue(config.url, completeEnvPair?.[0], envUrl),
   }
 
   assertRuntimeValue(resolved.url, upstashUrlEnvNames)
