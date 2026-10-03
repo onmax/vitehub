@@ -1241,6 +1241,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const bindingReference = (index: number) => isIdentifier(references[index])
       && references[index - 1] !== "."
       && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
+    const reassignedGlobalConversions = new Set<string>()
+    for (let index = 0; index < tokens.length; index++) {
+      const objectEnd = intrinsicObjectEnd(index)
+      const reflectEnd = intrinsicReflectEnd(index)
+      const receiverEnd = objectEnd ?? reflectEnd
+      if (receiverEnd === undefined) continue
+      const member = memberAccess(receiverEnd - 1)
+      if (member?.name !== "defineProperty") continue
+      const call = memberCallEnd(member.end - 1, index)
+      if (tokens[call] !== "(") continue
+      const target = resolveReference(call + 1, new Set(), true)
+      if (!globalBindingReference(target, "globalThis") || tokens[target + 1] !== ",") continue
+      const property = resolveReference(target + 2)
+      const name = propertyName(tokens[property] ?? "")
+      if (["String", "Number", "Boolean"].includes(name)) reassignedGlobalConversions.add(name)
+    }
     // Only unshadowed global conversions are known calls. Nested opaque calls
     // and imported arguments still invalidate imported Channels.
     const conversionCall = (index: number) => {
@@ -1249,6 +1265,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && ["String", "Number", "Boolean"].includes(name)
         && globalBindingAvailable(templateIndex, name)
         && !expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
+        && !reassignedGlobalConversions.has(name)
         && ![tokens, references].some(sequence => sequence.some((token, cursor) =>
           token === name && ["=", "+", "-"].includes(sequence[cursor + 1] ?? "")))
     }

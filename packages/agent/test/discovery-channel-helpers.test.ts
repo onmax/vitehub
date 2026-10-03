@@ -753,6 +753,7 @@ it.each([
   'const ignored = ({ String }) => `${String("id")}`',
   'String = () => { portal.capabilities = [] }; const ignored = `${String("id")}`',
   'const ignored = `${String`id`}`',
+  'Object.defineProperty(globalThis, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',
