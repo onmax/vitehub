@@ -716,6 +716,14 @@ it.each([
 
 it.each([
   'driver: { instructions: ({ input }) => `Review ${input.id}` }',
+  'driver: { instructions: ({ input }) => `${input.portal}` }',
+  'driver: { instructions: ({ input }) => `${input?.portal}` }',
+  'driver: { instructions: ({ input }) => `${input["portal"]}` }',
+  'driver: { instructions: ({ input }) => `${`${input.portal}`}` }',
+  'driver: { instructions: ({ input }) => `${String(input.id)}` }',
+  'driver: { ignored: (String) => String, instructions: ({ input }) => `${String(input.id)}` }',
+  'driver: { instructions: ({ input }) => `${Number(input.id)} ${Boolean(input.id)}` }',
+  'driver: { instructions: ({ input }) => `${`${String(input.id)}`}` }',
   'box: { env: { THREAD_ID: ({ input }) => `pr-${input.id}` } }',
   'driver: { instructions: ({ input }) => `portal ${input.id}` }',
   'driver: { instructions: ({ input }) => `${input.id} portal` }',
@@ -735,6 +743,16 @@ it.each([
 
 it.each([
   'const ignored = `${portal.capabilities = []}`',
+  'const ignored = `${input[portal].capabilities = []}`',
+  'const ignored = `${String(portal.capabilities = [])}`',
+  'function mutate() { portal.capabilities = [] }; const ignored = `${String(mutate())}`',
+  'function String() { portal.capabilities = [] }; const ignored = `${String("id")}`',
+  'const String = () => { portal.capabilities = [] }; const ignored = `${String("id")}`',
+  'const ignored = (String) => `${String("id")}`',
+  'const ignored = (String) => { return `${String("id")}` }',
+  'const ignored = ({ String }) => `${String("id")}`',
+  'String = () => { portal.capabilities = [] }; const ignored = `${String("id")}`',
+  'const ignored = `${String`id`}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',

@@ -709,9 +709,25 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
   }
 
-  function isFunctionParameter(index: number): boolean {
+  const expressionArrowParameters: { start: number; end: number; names: Set<string> }[] = []
+  for (let arrow = 0; arrow + 2 < tokens.length; arrow++) {
+    if (tokens[arrow] !== "=" || tokens[arrow + 1] !== ">" || tokens[arrow + 2] === "{") continue
+    const parameters = openingDelimiters.get(arrow - 1) ?? arrow - 1
+    const names = callbackBindingNames(parameters, arrow)
+    let end = arrow + 2
+    let depth = 0
+    for (; end < tokens.length; end++) {
+      const token = tokens[end]!
+      if (depth === 0 && ([";", ",", ")", "]", "}"].includes(token) || startsStatement(end))) break
+      if (["(", "[", "{"].includes(token)) depth++
+      else if ([")", "]", "}"].includes(token)) depth--
+    }
+    expressionArrowParameters.push({ start: arrow + 2, end, names })
+  }
+
+  function isFunctionParameter(index: number, name = tokens[index]): boolean {
     for (let scope = tokenScopes[index]; scope !== undefined; scope = scopeParents.get(scope)) {
-      if (functionParameterNames.get(scope)?.has(tokens[index])) return true
+      if (functionParameterNames.get(scope)?.has(name)) return true
     }
     return false
   }
@@ -1217,18 +1233,30 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   if (directEvalCalls.size > 0) invalidateCapturedBindings()
   // Template interpolations execute expressions hidden inside a literal token.
   // Their side effects cannot be inspected by this scanner.
-  const interpolatedTemplates = tokens.filter(token => token.startsWith("`") && /(?<!\\)(?:\\\\)*\$\{/.test(token))
-  if (interpolatedTemplates.length > 0) {
+  for (let templateIndex = 0; templateIndex < tokens.length; templateIndex++) {
+    const template = tokens[templateIndex]!
+    if (!template.startsWith("`") || !/(?<!\\)(?:\\\\)*\$\{/.test(template)) continue
     invalidateCapturedBindings()
-    for (const template of interpolatedTemplates) {
-      const references = templateReferences(template)
-      // Imports cannot be reassigned. Only an interpolation that can access an
-      // imported value, call an opaque helper, or evaluate hidden code can
-      // mutate that value through a captured reference.
-      const hiddenCode = references.includes("eval") || references.includes("import") || references.some((token, index) =>
-        (token === "(" || token.startsWith("`"))
-        && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? "")))
-      for (const name of imported) if (hiddenCode || references.includes(name)) mutatedBindings.add(name)
+    const references = templateReferences(template)
+    const bindingReference = (index: number) => isIdentifier(references[index]) && references[index - 1] !== "."
+    // Only unshadowed global conversions are known calls. Nested opaque calls
+    // and imported arguments still invalidate imported Channels.
+    const conversionCall = (index: number) => {
+      const name = references[index - 1]!
+      return references[index] === "(" && bindingReference(index - 1)
+        && ["String", "Number", "Boolean"].includes(name)
+        && globalBindingAvailable(templateIndex, name)
+        && !expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
+        && ![tokens, references].some(sequence => sequence.some((token, cursor) =>
+          token === name && ["=", "+", "-"].includes(sequence[cursor + 1] ?? "")))
+    }
+    const hiddenCode = references.some((token, index) =>
+      (bindingReference(index) && ["eval", "import"].includes(token))
+      || ((token === "(" || token.startsWith("`"))
+        && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
+        && !conversionCall(index)))
+    for (const name of imported) {
+      if (hiddenCode || references.some((token, index) => token === name && bindingReference(index))) mutatedBindings.add(name)
     }
   }
   // Invoking an extracted member of an opaque result may mutate captured
@@ -1330,16 +1358,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (mutatedBindings.has(local)) opaqueExports.add(name)
   }
 
-  function visibleDeclaration(index: number): number | undefined {
+  function visibleDeclaration(index: number, name = tokens[index]): number | undefined {
     const visibleScopes: (number | undefined)[] = []
     for (let scope = tokenScopes[index]; scope !== undefined; scope = scopeParents.get(scope)) visibleScopes.push(scope)
     visibleScopes.push(undefined)
-    const parameterScope = callbackParameters.findLast(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
+    const parameterScope = callbackParameters.findLast(scope => index >= scope.start && index < scope.end && scope.names.has(name))
     for (const scope of visibleScopes) {
       let binding: number | undefined
       for (const [i, declaration] of variableDeclarations) {
         if (i < (parameterScope?.start ?? 0)
-          || (tokens[i + 1] !== tokens[index] && !destructuredBindings.get(i)?.has(tokens[index]))) continue
+          || (tokens[i + 1] !== name && !destructuredBindings.get(i)?.has(name))) continue
         const bindingScope = tokens[declaration] === "var" ? variableScope(declaration) : tokenScopes[declaration]
         if (bindingScope !== scope) continue
         if (binding === undefined || i < index) binding = i
@@ -1379,7 +1407,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function globalBindingReference(index: number, name: string): boolean {
-    if (tokens[index] !== name || tokens[index - 1] === "." || imported.has(name) || mutatedBindings.has(name) || visibleDeclaration(index) !== undefined || isFunctionParameter(index)
+    return tokens[index] === name && tokens[index - 1] !== "." && globalBindingAvailable(index, name)
+  }
+
+  function globalBindingAvailable(index: number, name: string): boolean {
+    if (imported.has(name) || mutatedBindings.has(name) || visibleDeclaration(index, name) !== undefined || isFunctionParameter(index, name)
       || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(name))) return false
     for (let scope = tokenScopes[index]; ; scope = scopeParents.get(scope!)) {
       if (tokens.some((token, declaration) => ["function", "class"].includes(token)
