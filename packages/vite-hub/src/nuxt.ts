@@ -885,9 +885,11 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     const nuxtDatabaseOptions = nuxt.options.database && typeof nuxt.options.database === "object" ? nuxt.options.database : {}
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite configuration accepts opaque user options at this integration boundary.
     const viteDatabaseOptions = viteConfig.database && typeof viteConfig.database === "object" ? viteConfig.database : {}
+    const viteDatabaseRoot = configuredProjectRoot(viteRoot, viteDatabaseOptions)
     const databaseOptions = {
       ...nuxtDatabaseOptions,
       ...viteDatabaseOptions,
+      ...(viteDatabaseRoot !== undefined ? { projectRoot: viteDatabaseRoot } : {}),
       ...(options.database === true ? {} : options.database),
     }
     await hubDatabaseNuxt({

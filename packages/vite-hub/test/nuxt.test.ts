@@ -1012,6 +1012,34 @@ describe("ViteHub Nuxt integration", () => {
     }
   })
 
+  it("resolves the Vite Database root before Nuxt runtime and Console setup", async () => {
+    const definition = "/tmp/vitehub-nuxt/app/packages/db/server/databases/config.ts"
+    await mkdir(resolve(definition, ".."), { recursive: true })
+    await writeFile(definition, "export default defineDatabase({ schema: { notes } })\n")
+    const development = createNuxt(true)
+    Object.assign(development.nuxt.options.vite, {
+      database: { projectRoot: "packages/db" },
+      root: "app",
+    })
+    development.nuxt.options.serverDir = undefined
+
+    try {
+      await viteHubNuxtModule({ console: true, database: true, preset: "node" }, development.nuxt)
+      expect(development.nuxt.options.vite).toMatchObject({
+        database: { projectRoot: "/tmp/vitehub-nuxt/app/packages/db" },
+      })
+      const nitroConfig = nitroOptions(development.nuxt)
+      await development.runNitroConfigHook(nitroConfig)
+
+      const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+      expect(generated).toContain(`"file":"app/packages/db/server/databases/config.ts"`)
+      expect(generated).toContain(`"name":"default"`)
+    }
+    finally {
+      await rm("/tmp/vitehub-nuxt/app/packages/db", { force: true, recursive: true })
+    }
+  })
+
   it("uses the replay-resolved default Database root for the Nuxt Console", async () => {
     const definition = "/tmp/vitehub-nuxt/server/databases/config.ts"
     await mkdir(resolve(definition, ".."), { recursive: true })

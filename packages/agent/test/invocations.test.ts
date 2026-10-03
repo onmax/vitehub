@@ -4845,7 +4845,7 @@ describe("Agent Invocations", () => {
     await journal?.finish("completed")
   })
 
-  it("does not dispatch a Driver when the running transition fails", async () => {
+  it.each([false, true])("does not dispatch a Driver when the running transition fails, capacity=%s", async capacity => {
     const memory = createMemoryAgentInvocationStore()
     let runningFailures = 1
     const recoveryTasks: Array<Promise<unknown>> = []
@@ -4859,7 +4859,7 @@ describe("Agent Invocations", () => {
       },
     })
     const run = vi.fn(() => "done")
-    const agent = defineAgent({ driver: { run }, invocations, runtime: false })
+    const agent = defineAgent({ driver: { ...(capacity ? { capacity: { concurrency: 1 } } : {}), run }, invocations, runtime: false })
 
     await expect(runAgent(agent, {
       ...runtime("fast-running-recovery"),
