@@ -13,7 +13,7 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
-import { agentWithColocatedInstructions, defineAgent, getAgentFromRegistry } from "../src/index.ts";
+import { agentWithColocatedInstructions, defineAgent, defineCapability, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
 import { getAgentLayerOptions } from "../src/agent-layers.ts";
@@ -207,9 +207,20 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     preset: "babysitter",
     presets: { babysitter },
     github,
+    // SAFETY: exercise preservation of a valid custom capability across the preset boundary.
+    capabilities: [defineCapability({
+      id: "internal-check",
+      tools: {
+        internalCheck: {
+          description: "Check the internal API contract.",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          execute: () => ({ checked: true }),
+        },
+      },
+    })] as never,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
-    driver: { env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
+    driver: { kind: "codex", env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
     agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
@@ -251,6 +262,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
         );
         try {
           const listedTools = (await client.listTools()).tools;
+          const customCheck = await client.callTool({ name: "internalCheck", arguments: {} });
+          expect(customCheck.isError, JSON.stringify(customCheck)).not.toBe(true);
           passes.push({
             tools: listedTools.map((tool) => tool.name),
             descriptions: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.description])),
@@ -689,6 +702,7 @@ describe("Babysitter preset runtime", () => {
     expect(f.push).toHaveBeenCalledOnce();
     expect(f.prepare).toHaveBeenCalledOnce();
     expect(f.passes[0]?.tools).not.toContain("requestAutoMerge");
+    expect(f.passes[0]?.tools).toContain("internalCheck");
     expect(f.passes[0]?.prompt).toContain("new-review-bot[bot]");
     expect(f.passes[0]?.instructions).toContain("Preserve the documented API contract.");
     expect(f.passes[0]?.instructions).not.toContain("{{{ instructions }}}");

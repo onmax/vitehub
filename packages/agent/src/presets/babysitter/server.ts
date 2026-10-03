@@ -5,7 +5,7 @@ import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
-import type { AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
+import type { AgentCapabilityDefinition, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -641,6 +641,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // GitHub Channels. Extending the base Agent would merge those
               // Channels and preserve the host identity on the worker.
               const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              const baseCapabilities = Array.isArray(workerSettings.capabilities)
+                ? workerSettings.capabilities as AgentCapabilityDefinition[]
+                : [];
+              const workerCapabilities = [
+                ...baseCapabilities.filter(capability => capability.id !== "babysitter.github"),
+                repairCapability(operations, merge.mode === "auto"),
+              ];
               copyDefinitionDecorations(asMetadataTarget(baseAgent), asMetadataTarget(workerSettings));
               const workerChannel = { ...github.channel({
                 activity: activityEnabled,
@@ -657,7 +664,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 channels: {
                   github: workerChannel,
                 },
-                capabilities: [repairCapability(operations, merge.mode === "auto")],
+                // SAFETY: workerCapabilities preserves validated base capability definitions and appends the broker capability.
+                capabilities: workerCapabilities as never,
                 driver: {
                   ...workerDriver,
                   permissions: "allow-edits",
@@ -683,8 +691,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 },
                 workspace: {
                   commit: false,
-                  mode: "write",
-                  store: { provider: "local", root: checkout },
+                  mode: "write" as const,
+                  store: { provider: "local" as const, root: checkout },
                 },
               });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
