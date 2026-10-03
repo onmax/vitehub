@@ -1478,6 +1478,29 @@ it("keeps read-only tagged-template results from invalidating Channel options", 
   expect((await discover(source))?.workspace).toBeUndefined()
 })
 
+it.each([
+  "({ portal: input.id }).portal",
+  "({ id: input.id, portal: input.id }).portal",
+  "({ nested: { portal: input.id } }).nested.portal",
+])("ignores non-computed object keys in template interpolations: %s", async expression => {
+  const source = `${imports} import portal from "../../portal.ts"; const input = { id: "value" }; const message = \`\${${expression}}\`; export default defineAgent({ channels: { custom: portal } })`
+  const definition = await discover(source, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
+  "({ portal }).portal",
+  "({ [portal]: input.id })",
+  "input.id ? portal : input.id",
+])("preserves imported binding reads in template interpolations: %s", async expression => {
+  const source = `${imports} import portal from "../../portal.ts"; const input = { id: "value" }; const message = \`\${${expression}}\`; export default defineAgent({ channels: { custom: portal } })`
+  await expect(discover(source, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it("rejects writes through tagged-template results inside configure callbacks", async () => {
   const source = `${imports} export default defineAgent({ options: {}, configure: () => { const options = { pullRequest: false }; const tag = () => options; tag\`x\`.pullRequest = true; return defineAgent({ channels: { custom: github(options) } }) } })`
   await expect(discover(source)).rejects.toThrow(/opaque Channel/)

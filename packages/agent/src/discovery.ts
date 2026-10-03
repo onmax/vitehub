@@ -1238,7 +1238,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (!template.startsWith("`") || !/(?<!\\)(?:\\\\)*\$\{/.test(template)) continue
     invalidateCapturedBindings()
     const references = templateReferences(template)
-    const bindingReference = (index: number) => isIdentifier(references[index]) && references[index - 1] !== "."
+    const bindingReference = (index: number) => isIdentifier(references[index])
+      && references[index - 1] !== "."
+      && !(references[index + 1] === ":" && ["{", ","].includes(references[index - 1] ?? ""))
     // Only unshadowed global conversions are known calls. Nested opaque calls
     // and imported arguments still invalidate imported Channels.
     const conversionCall = (index: number) => {
