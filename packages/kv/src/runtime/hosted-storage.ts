@@ -7,6 +7,7 @@ import { createLazyKVRuntimeDriver } from "./driver.ts"
 import { normalizeKVListPrefix } from "./list-prefix.ts"
 
 export interface RuntimeStorage {
+  dispose(): Promise<void>
   clear(base?: string, options?: unknown): Promise<void>
   // doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- This mirrors unstorage's caller-typed read contract.
   getItem<T = unknown>(key: string, options?: unknown): Promise<T | null>
