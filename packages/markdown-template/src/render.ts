@@ -90,10 +90,11 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
       },
       A: async (node, state, parent) => {
         const props = resolveScalarTemplateAttributes(node[1], renderData(state))
-        const sanitized = await sanitizeUrlAttributes("a", props, node[1])
+        const authoredHtml = node[1].$?.html === 1
+        const sanitized = authoredHtml ? await sanitizeUrlAttributes("a", props, node[1]) : props
         const href = Object.hasOwn(node[1], ":href")
           ? await safeLinkDestination(resolveScalarTemplateBinding({ ":value": node[1][":href"] }, renderData(state)), String(node[1][":href"]))
-          : sanitized.href
+          : authoredHtml ? sanitized.href : undefined
         if (href === undefined) return await state.handlers.a!(node, state, parent)
         // SAFETY: Preserve the element tag and children, replacing only its resolved attributes.
         return await state.handlers.a!([node[0], { ...sanitized, href }, ...node.slice(2)] as ElementNode, state, parent)

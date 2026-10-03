@@ -392,6 +392,8 @@ Unavailable
   })
 
   it("rejects unsafe URLs in authored HTML tags", async () => {
+    await expect(renderMarkdownTemplate("[status](<http://[::1]/>)"))
+      .resolves.toBe("[status](http://%5B::1%5D/)")
     await expect(renderMarkdownTemplate('<a href="https://example.com/a b">Open</a>'))
       .resolves.toContain("https://example.com/a%20b")
     await expect(renderMarkdownTemplate('<a href="https://example.com/?a=1&amp;b=2">Open</a>'))
