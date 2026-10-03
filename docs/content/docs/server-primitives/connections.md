@@ -196,15 +196,15 @@ ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern match
 
 ## Use from Agents
 
-Agent Capabilities call a Connection with the Agent name as the actor. The rule in `access.agents.<name>` applies. Tools check access before they run.
+Agent Capabilities call a Connection with `agent:<name>` as the actor. The rule in `access['agent:<name>']` applies. Connections checks access before each request runs.
 
 | Capability | Option | Operation ids |
 | --- | --- | --- |
-| [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.messages.list`, `gmail.messages.get`, `gmail.drafts.create` |
+| [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.users.messages.list`, `gmail.users.messages.get`, `gmail.users.messages.attachments.get`, `gmail.users.drafts.create` |
 | [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `fetch` |
 | [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `fetch` |
 
-`gmail.users.drafts.create`, OpenAPI operations other than `GET` and `HEAD`, and MCP POST requests use the Connection `fetch` action as writes. Without a matching rule they are denied, so allow or approve them in the Agent rule.
+Gmail drafts use the Connection action `gmail.users.drafts.create` as a write. Grant it with `write: ['gmail.users.drafts.create']` in the Agent rule. OpenAPI operations other than `GET` and `HEAD` and MCP POST requests use the Connection `fetch` action as writes, so they need `write: ['fetch']`. Without a matching write rule, these requests are denied. MCP also requires `approve: false` because its transport needs each response in the active session.
 
 ## Activity
 
