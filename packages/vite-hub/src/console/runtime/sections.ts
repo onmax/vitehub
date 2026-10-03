@@ -74,10 +74,12 @@ export function isConsoleBuiltinSectionId(value: unknown): value is ConsoleBuilt
 
 /** Connections management is mounted for development Consoles and explicit production management. */
 export function isConsoleConnectionsEnabled(options: { connections?: unknown }, development = false): boolean {
-  if (!options.connections) return false
+  const connections = options.connections
+  if (!connections) return false
   if (development) return true
-  if (!options.connections || typeof options.connections !== "object") return false
-  return Boolean((options.connections as { management?: unknown }).management)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Options cross the host boundary as unknown values.
+  if (typeof connections !== "object" || connections === null) return false
+  return "management" in connections && Boolean(connections.management)
 }
 
 /** Route name of a contributed section. The Console serves it at `/_vitehub/<id>`. */
