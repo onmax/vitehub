@@ -55,6 +55,13 @@ type VercelBlobModule = {
   }): Promise<unknown>
 }
 
+function isMissingBlobError(error: unknown) {
+  return error instanceof Error && (
+    error.name === "BlobNotFoundError"
+    || /requested blob does not exist/i.test(error.message)
+  )
+}
+
 function joinBlobPath(...parts: string[]) {
   return parts.map(part => normalizeWorkspacePath(part)).filter(Boolean).join("/")
 }
@@ -80,25 +87,28 @@ async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) 
     async delete(key: string): Promise<void> {
       await blob.del(key, auth(options))
     },
-    async download(key: string): Promise<Blob> {
+    async download(key: string): Promise<Blob | undefined> {
       const readKey = access === "public"
         ? `${key}?vitehubCacheBust=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
         : key
       const result = await blob.get(readKey, {
         access,
-        // The SDK only adds its cache-bypass query for private blobs. Public
-        // reads use a unique query so the CDN cannot reuse stale bytes.
         headers: { "cache-control": "no-cache, no-store" },
         useCache: false,
         ...auth(options),
       })
-      if (!result || result.statusCode !== 200 || !result.stream) throw Object.assign(workspaceErrorDiagnostics.WORKSPACE_R0033({ message: "not found" }), { code: "NotFound" })
+      if (!result) return undefined
+      if (result.statusCode !== 200) throw workspaceErrorDiagnostics.WORKSPACE_R0033({ message: `Unexpected Vercel Blob response: ${result.statusCode}.` })
       return await new Response(result.stream, {
         headers: result.blob.contentType ? { "content-type": result.blob.contentType } : undefined,
       }).blob()
     },
-    async head(key: string): Promise<BlobListItem> {
-      const result = await blob.head(key, auth(options))
+    async head(key: string): Promise<BlobListItem | undefined> {
+      const result = await blob.head(key, auth(options)).catch((error: unknown) => {
+        if (isMissingBlobError(error)) return undefined
+        throw error
+      })
+      if (!result) return undefined
       return {
         key: result.pathname,
         lastModified: result.uploadedAt.getTime(),
@@ -256,7 +266,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
     }
     const client = await this.#client()
     const targets: string[] = []
-    const current = await client.head(this.#fileKey(normalized)).catch(() => null)
+    const current = await client.head(this.#fileKey(normalized))
     if (current) targets.push(this.#fileKey(normalized))
     else if (options.recursive) {
       for (const blob of await this.#listBlobs(`${this.#fileKey(normalized)}/`)) {
@@ -314,7 +324,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   }
 
   async #readJson(pathname: string): Promise<unknown> {
-    const file = await (await this.#client()).download(pathname).catch(() => null)
+    const file = await (await this.#client()).download(pathname)
     return file ? JSON.parse(await file.text()) : undefined
   }
 }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { BlobNotFoundError, BlobServiceNotAvailable } from "@vercel/blob"
 import { checkGlobCwd, seedGlobCwdStore } from "./glob-cwd-checks.ts"
 
 declare global {
@@ -28,13 +29,12 @@ const blobMock = vi.hoisted(() => {
       if (current && !bypassCache) cache.set(pathname, current)
       return current
         ? { blob: { contentType: "application/octet-stream", size: current.body.byteLength }, statusCode: 200, stream: new Response(current.body).body }
-        : { statusCode: 404, stream: null }
+        : null
     }),
     head: vi.fn(async (pathname: string) => {
       const current = store.get(pathname)
-      return current
-        ? { pathname, size: current.body.byteLength, uploadedAt: current.uploadedAt, url: `https://blob.example/${pathname}` }
-        : null
+      if (!current) throw new BlobNotFoundError()
+      return { pathname, size: current.body.byteLength, uploadedAt: current.uploadedAt, url: `https://blob.example/${pathname}` }
     }),
     list: vi.fn(async ({ prefix = "" }: { prefix?: string }) => ({
       blobs: [...store.entries()]
@@ -150,6 +150,51 @@ describe("Vercel Blob workspace store", () => {
     await expect(store.snapshot()).resolves.toMatchObject({
       entries: { "readme.md": { digest: expect.any(String) } },
     })
+  })
+  it("preserves provider failures while reading files and metadata", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const failure = new BlobServiceNotAvailable()
+    for (const read of [() => store.readFile("readme.md"), () => store.stat("readme.md"), () => store.getMeta!("loader")]) {
+      blobMock.get.mockRejectedValueOnce(failure)
+      await expect(read()).rejects.toBe(failure)
+    }
+    expect(blobMock.list).not.toHaveBeenCalled()
+  })
+
+  it("does not treat failed removal probes as missing paths", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const failure = new BlobServiceNotAvailable()
+    blobMock.head.mockRejectedValueOnce(failure)
+    await expect(store.rm("docs", { recursive: true, force: true })).rejects.toBe(failure)
+    expect(blobMock.list).not.toHaveBeenCalled()
+    expect(blobMock.del).not.toHaveBeenCalled()
+  })
+
+  it("returns missing results only for absent blobs", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    await expect(store.readFile("missing.md")).resolves.toBeUndefined()
+    await expect(store.getMeta!("missing")).resolves.toBeUndefined()
+    await expect(store.stat("missing.md")).resolves.toBeUndefined()
+    await expect(store.rm("missing.md", { force: true })).resolves.toBeUndefined()
+    await store.writeFile("docs/readme.md", { path: "docs/readme.md", content: "hello" })
+    await store.rm("docs", { recursive: true })
+    await expect(store.readFile("docs/readme.md")).resolves.toBeUndefined()
+  })
+
+  it("recognizes not-found errors from a separately loaded Blob SDK", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    const peerNotFound = new Error("missing")
+    peerNotFound.name = "BlobNotFoundError"
+    blobMock.head.mockRejectedValueOnce(peerNotFound)
+    await expect(store.rm("missing.md", { force: true })).resolves.toBeUndefined()
   })
 
   it("matches glob patterns relative to cwd", async () => {

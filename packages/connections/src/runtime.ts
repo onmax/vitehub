@@ -5,13 +5,13 @@ import { isApiKeyProvider } from "./api-key.ts"
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
 import { isConnectionDefinition } from "./definition.ts"
 import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
-import { connectionActions, decide, envActor, providerApis } from "./policy.ts"
+import { decide, envActor } from "./policy.ts"
+import { connectionActions, prepareConnectionMethod } from "./catalog.ts"
 
 import type { EnvAccessContext, EnvActivity } from "@vite-hub/env/bridge"
 import type { ConnectionState, ConnectionStore } from "./store.ts"
 import type {
   ConnectionAccount,
-  ConnectionApiCatalog,
   ConnectionApproval,
   ConnectionApprovalPage,
   ConnectionApprovalStatus,
@@ -165,32 +165,6 @@ function parseToken(value: string, name: string): StoredToken {
     throw new ConnectionError("reauth_required", `Connection "${name}" is not connected. Run \`vitehub connections connect ${name}\`.`, { details: { connection: name } })
   }
   return token.output
-}
-
-function buildMethodRequest(catalog: ConnectionApiCatalog, method: string, input: unknown): { body?: string, method: string, url: string } {
-  const entry = catalog.methods[method]
-  if (!entry) throw new ConnectionError("invalid", `Unknown method "${method}".`)
-  const [httpMethod, template, acceptsBody] = entry
-  const parsedInput = v.safeParse(v.record(v.string(), v.unknown()), input)
-  const params: Record<string, unknown> = parsedInput.success ? { ...parsedInput.output } : {}
-  const body = params.requestBody
-  delete params.requestBody
-  const path = template.replace(/\{(\+?)([^}]+)\}/g, (_match, reserved: string, parameter: string) => {
-    const value = params[parameter]
-    if (value === undefined || value === null || value === "") throw new ConnectionError("invalid", `Method "${method}" requires "${parameter}".`)
-    delete params[parameter]
-    return reserved ? encodeURI(String(value)) : encodeURIComponent(String(value))
-  })
-  const url = new URL(path, catalog.rootUrl)
-  for (const [parameter, value] of Object.entries(params)) {
-    if (value === undefined || value === null) continue
-    for (const item of Array.isArray(value) ? value : [value]) url.searchParams.append(parameter, String(item))
-  }
-  return {
-    body: acceptsBody && body !== undefined ? JSON.stringify(body) : undefined,
-    method: httpMethod,
-    url: url.toString(),
-  }
 }
 
 async function providerMessage(response: Response): Promise<string | undefined> {
@@ -588,6 +562,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
       return undefined
     }
     if (decision === "approve") {
+      if (context.options.rejectApprovals) {
+        await recordDenied(context.name, context.actor, providerRequest.action, context.options)
+        throw new ConnectionError("denied", `Connection "${context.name}" requires immediate access for ${providerRequest.action}. Set approve: false on the actor's access rule.`, {
+          details: { action: providerRequest.action, connection: context.name },
+        })
+      }
       await requireConnected(context.name)
       const current = await (await getStore()).secrets.read(tokenKey(context.name))
       const token = current ? parseToken(current.value, context.name) : undefined
@@ -614,20 +594,10 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return await send(context, providerRequest, init)
   }
 
-  function findCatalog(definition: ConnectionDefinition, action: string): { api: string, catalog: ConnectionApiCatalog, method: string } | undefined {
-    const apis = providerApis(definition)
-    const api = action.slice(0, action.indexOf("."))
-    const catalog = Object.hasOwn(apis, api) ? apis[api] : undefined
-    return catalog ? { api, catalog, method: action.slice(api.length + 1) } : undefined
-  }
-
   async function callMethod(context: CallContext, action: string, input: unknown, signal?: AbortSignal): Promise<unknown> {
-    const found = findCatalog(context.definition, action)
-    const info = connectionActions(context.definition).find(candidate => candidate.id === action)
-    if (!found || !info) throw new ConnectionError("invalid", `Connection "${context.name}" does not expose ${action}.`, { details: { action, connection: context.name } })
-    const built = buildMethodRequest(found.catalog, found.method, input)
-    context.transport.prepare(built.url)
-    const response = await governed(context, { ...built, action, highRisk: info.highRisk, input, json: true, write: info.write }, { input, kind: "method" }, { signal })
+    const prepared = prepareConnectionMethod(context.name, context.definition, action, input)
+    context.transport.prepare(prepared.url)
+    const response = await governed(context, { ...prepared, input, json: true }, { input, kind: "method" }, { signal })
     return response ? await readResponse(response) : undefined
   }
 

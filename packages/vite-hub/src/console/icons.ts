@@ -79,7 +79,6 @@ export const consoleIcons: readonly string[] = [
   "ph:arrow-clockwise",
   "ph:arrow-up-light",
   "ph:arrows-clockwise-light",
-  "ph:caret-down-light",
   "ph:chart-bar-light",
   "ph:chat-dots-light",
   "ph:chat-text-light",

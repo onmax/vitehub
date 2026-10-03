@@ -355,17 +355,22 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.findAll(".vh-invocation-list__title").map(title => title.text())).toEqual(items.map(item => item.title));
   });
 
-  it("keeps completed status accessible without restoring compact-list metadata", () => {
+  it("keeps completed status accessible and shows only the project line above the title", () => {
     const wrapper = mount(AgentInvocationList, {
       props: {
-        items: [{ id: "finished", status: "completed", title: "Support session", project: "Console", agent: "Helper", provider: "OpenAI" }],
+        items: [
+          { id: "finished", status: "completed", title: "Support session", project: "Console", agent: "Helper", provider: "OpenAI" },
+          { id: "bare", status: "completed", title: "Bare session" },
+        ],
       },
     });
-    const row = wrapper.get("button");
-    expect(row.get(".vh-visually-hidden").text()).toBe("Done");
-    expect(row.find(".vh-invocation-list__state-icon").exists()).toBe(false);
-    expect(row.find(".vh-invocation-list__project").exists()).toBe(false);
-    expect(row.find(".vh-invocation-list__harness").exists()).toBe(false);
+    const [row, bare] = wrapper.findAll("button");
+    expect(row!.get(".vh-visually-hidden").text()).toBe("Done");
+    expect(row!.find(".vh-invocation-list__state-icon").exists()).toBe(false);
+    expect(row!.get(".vh-invocation-list__project").text()).toBe("Console");
+    expect(row!.find(".vh-invocation-list__harness").exists()).toBe(false);
+    expect(row!.find(".vh-invocation-list__meta").exists()).toBe(false);
+    expect(bare!.find(".vh-invocation-list__project").exists()).toBe(false);
   });
 
   it("renders flat-list project and harness slots with the invocation item", () => {

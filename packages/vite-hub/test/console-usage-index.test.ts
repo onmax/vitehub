@@ -1,7 +1,10 @@
 import { createClient } from "@libsql/client";
+import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server";
+import type { AgentInvocationRecord } from "@vite-hub/agent";
 import { afterEach, describe, expect, it } from "vitest";
 import { createConsoleUsageIndex } from "../src/console/runtime/server/usage-index.ts";
 import type { Client } from "@libsql/client";
+import { createUsageSummary } from "../src/console/runtime/server/usage.ts";
 const clients: Client[] = [];
 afterEach(() => {
   for (const client of clients.splice(0)) client.close();
@@ -45,6 +48,91 @@ const priced = (usd: string, estimated = false) => ({
   usage: { inputTokens: 2, outputTokens: 3, totalTokens: 5 },
 });
 describe("Console persisted usage index", () => {
+  it.each(["24h", "7d"] as const)("matches fallback bucket model totals and filters for %s", async (window) => {
+    const { client, insert, index } = await fixture();
+    const store = createMemoryAgentInvocationStore();
+    const invocations = defineAgentInvocations({ store });
+    const firstModel = "provider:model|variant:雪";
+    const secondModel = 'provider:model|variant:"other"';
+    const seed = async (
+      id: string,
+      usage: unknown,
+      at = "2026-09-05T11:15:00.000Z",
+      status: AgentInvocationRecord["status"] = "failed",
+      agentName = "bot",
+      truncated = false,
+    ) => {
+      const record: AgentInvocationRecord = {
+        id, agentName, status, createdAt: at, updatedAt: at, completedAt: at,
+        cursor: id, traceId: id,
+        annotations: { "agent.model.id": "model" },
+        observations: usage === undefined ? [] : [{
+          name: "agent.invocation.finish", sequence: 1, timestamp: at, type: "lifecycle",
+          attributes: { "usage.record": usage, "vitehub.observation.truncated": truncated },
+        }],
+      };
+      await insert(id, usage, status, agentName, at);
+      await client.execute({ sql: "UPDATE vitehub_agent_invocations SET record = ? WHERE id = ?", args: [JSON.stringify(record), id] });
+      await store.create(record);
+    };
+    await seed("selected-compound", { calls: [
+      { model: firstModel, ...priced("0.1") },
+      { model: firstModel, ...priced("0.2") },
+      { model: secondModel, usage: { inputTokens: 7 } },
+    ] });
+    await seed("selected-precise", { model: firstModel, ...priced("0.000000000000001", true) });
+    await seed("selected-repeat", { model: firstModel, ...priced("0.000000000000001") });
+    await seed("selected-zero", { model: secondModel, ...priced("0") });
+    await seed("selected-order-small", { model: "a-small", ...priced("0") });
+    await seed("selected-order-tie", { model: "a-tied", usage: { totalTokens: 20 } });
+    await seed("selected-older", { model: firstModel, ...priced("0.4") }, "2026-09-04T13:15:00.000Z");
+    await seed("selected-truncated", { model: firstModel, ...priced("100") }, undefined, undefined, undefined, true);
+    await seed("selected-missing", undefined);
+    await seed("selected-other-agent", { model: firstModel, ...priced("10") }, undefined, undefined, "other");
+    await seed("selected-other-status", { model: firstModel, ...priced("10") }, undefined, "completed");
+    await seed("irrelevant", { model: firstModel, ...priced("10") });
+    await seed("selected-outside", { model: firstModel, ...priced("10") }, "2026-08-01T00:00:00.000Z");
+    await index.rebuild();
+    for (const filters of [{}, { agentName: "bot", status: "failed" as const, search: "selected" }]) {
+      const options = { now, window, ...filters };
+      const indexed = await index.query(options);
+      const fallback = await createUsageSummary(invocations, options);
+      expect(indexed.buckets).toEqual(fallback.buckets);
+      expect(indexed.totals).toEqual(fallback.totals);
+      expect(indexed.models).toEqual(fallback.models);
+    }
+    expect(await index.query({ now, window, agentName: "bot", status: "failed", search: "selected" })).toMatchObject({
+      buckets: expect.arrayContaining([expect.objectContaining({
+        start: window === "24h" ? "2026-09-05T11:00:00.000Z" : "2026-09-05T00:00:00.000Z",
+        models: expect.arrayContaining([
+          expect.objectContaining({ model: firstModel, invocations: 3, costUsd: "0.300000000000002", costEstimated: true, totalTokens: 20 }),
+          expect.objectContaining({ model: secondModel, invocations: 2, costUsd: "0", costAvailable: false, totalTokensAvailable: false }),
+        ]),
+      })]),
+    });
+  });
+
+  it("marks bucket model totals incomplete until request-scoped projection finishes", async () => {
+    const { client, insert } = await fixture();
+    for (let index = 0; index < 251; index++) await insert(`run-${index}`, priced("0.01"));
+    const index = createConsoleUsageIndex(client, { requestScoped: true });
+    expect(await index.query({ now, window: "24h" })).toMatchObject({
+      projection: { complete: false, pending: 1 },
+      buckets: expect.arrayContaining([expect.objectContaining({
+        start: now,
+        models: [expect.objectContaining({ model: "model", invocations: 250, costUsd: "2.5", costAvailable: false, invocationsAvailable: false, totalTokensAvailable: false })],
+      })]),
+    });
+    await index.rebuild();
+    expect(await index.query({ now, window: "24h" })).toMatchObject({
+      projection: { complete: true, pending: 0 },
+      buckets: expect.arrayContaining([expect.objectContaining({
+        start: now,
+        models: [expect.objectContaining({ model: "model", invocations: 251, costUsd: "2.51", costAvailable: true, invocationsAvailable: true, totalTokensAvailable: true })],
+      })]),
+    });
+  });
+
   it("includes failed costs, preserves zero and unknown, and counts auxiliary calls once", async () => {
     const { insert, index } = await fixture();
     await insert("failed", priced("0.1"), "failed");

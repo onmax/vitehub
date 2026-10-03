@@ -29,7 +29,7 @@ import type {
   WorkspaceRules,
   WorkspaceSourceInput,
 } from "@vite-hub/workspace"
-import type { BoxDefinition } from "@vite-hub/box"
+import type { BoxDefinition, BoxToolchain } from "@vite-hub/box"
 import type { channelDeliveryHandlers } from "./internal/channel-delivery-handlers.ts"
 import type { ReplayChannelResult } from "./channel-replay.ts"
 import type {
@@ -1502,6 +1502,12 @@ export interface AgentProviderDriverOptions<
   requirements?: readonly string[]
   /** SQLite file used to persist provider session cursors across process restarts. */
   sessionStorePath?: string
+  /**
+   * Node.js and package manager pinned by the prepared checkout, with the same declaration as
+   * `box.toolchain`. ViteHub provisions them on this host and puts them first on the PATH of the
+   * provider and every command it starts. With `defineAgent({ box })`, declare `box.toolchain` instead.
+   */
+  toolchain?: BoxToolchain
 }
 
 export interface AgentProviderSealedCredential {
@@ -1613,6 +1619,7 @@ export interface AgentModelDriver<
   reasoningEffort?: never
   reasoningSummary?: never
   sessionStorePath?: never
+  toolchain?: never
   run?: never
   sandbox?: never
   sessionKey?: never
@@ -1641,6 +1648,7 @@ export interface AgentRunDriver<
   reasoningEffort?: never
   reasoningSummary?: never
   sessionStorePath?: never
+  toolchain?: never
   run: AgentRunHandler<TRuntimeConfig, CALL_OPTIONS, TContextValues>
   sandbox?: never
   sessionKey?: never
@@ -1686,6 +1694,7 @@ export interface AgentAskDriver<
   reasoningEffort?: never
   reasoningSummary?: never
   sessionStorePath?: never
+  toolchain?: never
   run?: never
   sandbox?: never
   sessionKey?: never
@@ -2568,6 +2577,7 @@ export interface AgentInspectionProviderMetadata {
   reasoningEffort?: CodexReasoningEffort
   reasoningSummary?: CodexReasoningSummary
   sessionStore?: "sqlite"
+  toolchain?: BoxToolchain
 }
 
 export interface AgentInspectionDriverMetadata {

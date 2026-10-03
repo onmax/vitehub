@@ -238,6 +238,8 @@ export interface UseConnectionOptions {
   actor?: string
   /** Skip provider calls for writes and report each skipped write to `onEffect`. */
   dryRun?: boolean
+  /** Reject approval-gated calls without storing a replay request when the caller needs the response immediately. */
+  rejectApprovals?: boolean
   invocationId?: string
   onEffect?: (effect: ConnectionEffect) => void
   traceId?: string
