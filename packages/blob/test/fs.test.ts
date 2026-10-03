@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -13,6 +13,59 @@ afterEach(async () => {
 })
 
 describe("fs blob driver", () => {
+  it("rechecks containment after consuming a streamed body", async () => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    const outside = await mkdtemp(join(tmpdir(), "vitehub-blob-outside-"))
+    tempDirs.push(base, outside)
+    await mkdir(join(base, "uploads"))
+    const driver = createDriver({ base, driver: "fs" })
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await rename(join(base, "uploads"), join(base, "original"))
+        await symlink(outside, join(base, "uploads"))
+        controller.enqueue(new TextEncoder().encode("attacker"))
+        controller.close()
+      },
+    }, { highWaterMark: 0 })
+
+    await expect(driver.put("uploads/created.txt", body)).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(readFile(join(outside, "created.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("rejects a symlinked configured base", async () => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    const outside = await mkdtemp(join(tmpdir(), "vitehub-blob-outside-"))
+    tempDirs.push(base, outside)
+    await writeFile(join(outside, "secret.txt"), "secret")
+    const link = join(base, "root")
+    await symlink(outside, link)
+    const driver = createDriver({ base: link, driver: "fs" })
+
+    await expect(driver.put("created.txt", "attacker")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.get("secret.txt")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.head("secret.txt")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.list()).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.delete("secret.txt")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.createMultipartUpload!("video.mp4", {})).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(readFile(join(outside, "secret.txt"), "utf8")).resolves.toBe("secret")
+    await expect(readFile(join(outside, "created.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it.each([
+    { contentType: 42 },
+    { customMetadata: { author: 42 } },
+  ])("rejects invalid metadata sidecars %j", async (metadata) => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    tempDirs.push(base)
+    const driver = createDriver({ base, driver: "fs" })
+    await driver.put("safe.txt", "safe")
+    const key = Buffer.from("safe.txt").toString("base64url")
+    await writeFile(join(base, ".vitehub", "blob-meta", `${key}.json`), JSON.stringify(metadata))
+
+    await expect(driver.head("safe.txt")).rejects.toThrow()
+    await expect(driver.get("safe.txt")).rejects.toThrow()
+  })
+
   it.each([
     ["", ["docs/"]],
     ["doc", ["docs/"]],

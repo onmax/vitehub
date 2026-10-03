@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
+import { object, optional, parse, record, string } from "valibot"
 
 import type { BlobDriverAdapter, BlobDriverMultipartUpload, BlobListOptions, BlobListResult, BlobMultipartOptions, BlobObject, BlobPutBody, BlobPutOptions, ResolvedFsBlobStoreConfig } from "../types.ts"
 import { blobErrorDiagnostics } from "../error-diagnostics.ts"
@@ -29,6 +30,11 @@ interface FsBlobMetadata {
   contentType?: string
   customMetadata?: Record<string, string>
 }
+
+const fsBlobMetadataSchema = object({
+  contentType: optional(string()),
+  customMetadata: optional(record(string(), string())),
+})
 
 interface FsBlobEntry {
   meta: FsBlobMetadata
@@ -75,7 +81,7 @@ function resolveBlobPath(root: string, pathname: string) {
 async function assertNoSymlinkPath(root: string, path: string) {
   let current = root
   const relativePath = relative(root, path)
-  for (const component of relativePath.split(sep).filter(Boolean)) {
+  for (const component of ["", ...relativePath.split(sep).filter(Boolean)]) {
     current = resolve(current, component)
     try {
       if ((await lstat(current)).isSymbolicLink()) {
@@ -110,7 +116,8 @@ async function readMetadata(root: string, pathname: string): Promise<FsBlobMetad
   try {
     const path = resolveMetaPath(root, pathname)
     await assertNoSymlinkPath(root, path)
-    return JSON.parse(await readFile(path, "utf8")) as FsBlobMetadata
+    const metadata: unknown = JSON.parse(await readFile(path, "utf8"))
+    return parse(fsBlobMetadataSchema, metadata)
   }
   catch (error) {
     if (isNotFound(error)) return {}
@@ -167,6 +174,7 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
 }
 
 async function walkFiles(root: string, dir = root): Promise<string[]> {
+  await assertNoSymlinkPath(root, dir)
   const entries = await readdir(dir, { withFileTypes: true })
   const files = await Promise.all(entries.map(async (entry) => {
     const path = resolve(dir, entry.name)
@@ -359,6 +367,8 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await assertNoSymlinkPath(root, path)
       await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       const bytes = await bodyToBytes(body)
+      await assertNoSymlinkPath(root, path)
+      await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, bytes)
       await writeMetadata(root, pathname, {
