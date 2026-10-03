@@ -1344,7 +1344,12 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         }
         end--
       }
-      if (end >= start && references[end + 1] !== "(") uncalledFunctionBodies.push({ start, end })
+      // An immediately invoked arrow wrapped in parentheses is followed by
+      // the grouping closers before its call, for example `(() => value)()`.
+      // Skip those closers when deciding whether the body executes.
+      let invocation = end + 1
+      while ([")", "]", "}"].includes(references[invocation] ?? "")) invocation++
+      if (end >= start && references[invocation] !== "(") uncalledFunctionBodies.push({ start, end })
     }
     const functionExpressionCall = (index: number) => {
       for (let cursor = Math.max(0, index - 3); cursor <= index; cursor++) {
@@ -1506,6 +1511,22 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       && !classExpressionNames.has(index)
       && !templateLocalBindings.some(scope => index >= scope.start && index < scope.end && scope.names.has(references[index]!))
     const reassignedGlobalConversions = new Set<string>()
+    // Template references are tokenized separately from the outer program,
+    // so direct global conversion writes inside an interpolation must be
+    // included in the same conservative reassignment set.
+    for (let index = 0; index + 3 < references.length; index++) {
+      if (references[index] !== "globalThis") continue
+      let member = index + 1
+      if (references[member] === ".") {
+        const name = references[member + 1]
+        if (["String", "Number", "Boolean"].includes(name ?? "")
+          && assignmentOperator(member + 2, references)) reassignedGlobalConversions.add(name!)
+      } else if (references[member] === "[" && references[member + 2] === "]"
+        && ["String", "Number", "Boolean"].includes(references[member + 1] ?? "")
+        && assignmentOperator(member + 3, references)) {
+        reassignedGlobalConversions.add(references[member + 1]!)
+      }
+    }
     for (let index = 0; index < tokens.length; index++) {
       const objectEnd = intrinsicObjectEnd(index)
       const reflectEnd = intrinsicReflectEnd(index)
@@ -1904,7 +1925,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       || expressionArrowParameters.some(scope => reference >= scope.start && reference < scope.end && scope.names.has(name))) return false
     for (let index = 0; index + 4 < tokens.length; index++) {
       if (tokens[index] !== name || tokens[index + 1] !== "=") continue
-      if (visibleDeclaration(reference) !== index - 1) continue
+      // Match the lexical binding at the call site. This covers both a
+      // declarator initializer and a later assignment (`let globals; globals
+      // = () => globalThis`) without conflating shadowed names.
+      if (visibleDeclaration(reference) !== visibleDeclaration(index)) continue
       const parameters = index + 2
       const parameterEnd = tokens[parameters] === "("
         ? [...openingDelimiters].find(([, opening]) => opening === parameters)?.[0]

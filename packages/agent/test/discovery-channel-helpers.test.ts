@@ -958,6 +958,30 @@ it("keeps a shadowed global helper separate from its outer declaration", async (
   expect(definition?.workspace).toBeUndefined()
 })
 
+it("rejects parenthesized immediately invoked arrow mutations in templates", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = \`${"\${(() => portal.capabilities = [])()}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it("rejects conversion writes hidden in template references", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const ignored = \`${"\${globalThis.String = () => portal.capabilities = []}\${String(\"id\")}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it("tracks later-assigned global helper arrows", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; let globals; globals = () => globalThis; globals().String = replacement; const ignored = \`${"\${String(\"id\")}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it("tracks later-assigned intrinsic writer aliases by binding", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; let define; define = Object.defineProperty; define(globalThis, "String", { value: replacement }); const ignored = \`${"\${String(\"id\")}"}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it.each(["String", "Number", "Boolean"].flatMap(name =>
   ["&&=", "||=", "??=", "*=", "/=", "%=", "**=", "&=", "|=", "^=", "<<=", ">>=", ">>>="].map(operator => ({ name, operator })),
 ))("rejects global conversion assignments inside templates: $name $operator", async ({ name, operator }) => {
