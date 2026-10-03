@@ -93,6 +93,20 @@ describe("vitehub() without database", () => {
     expect((await runDb(root, plugins, ["db", "--help"])).stdout).toContain("generate")
   })
 
+  it("lets a composed Database integration without Definitions provide the runtime", async () => {
+    const root = await createProject({})
+
+    // SAFETY: Both packages use the same Vite API, but pnpm resolves separate peer type instances.
+    const databasePlugin = hubDb() as unknown as Plugin
+    const plugins = [vitehub({ preset: "node", env: false }), databasePlugin]
+    const config = await resolveConfig(serverBuild(root, plugins), "build")
+    const guard = config.plugins.find(plugin => plugin.name === "vite-hub/database-disabled")
+    const resolveId = guard?.resolveId
+    if (typeof resolveId !== "function") throw new TypeError("Expected the disabled Database guard.")
+    // SAFETY: The guard reads only the import source and importer.
+    expect(resolveId.call({} as never, "vite-hub/database/drizzle", join(root, "src/server.ts"), {} as never)).toBeUndefined()
+  })
+
   it("reports imports when a composed Database integration is explicitly disabled", async () => {
     const root = await createProject({
       "src/server.ts": `import { useDatabase } from "vite-hub/database/drizzle"\nexport const notes = useDatabase("default")\n`,

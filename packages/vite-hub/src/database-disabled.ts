@@ -13,13 +13,14 @@ interface DisabledDatabaseState {
   /** Another integration, such as a direct hubDb() or the Database Nuxt module, provides Database. */
   databasePlugin?: DatabasePlugin
   databaseOption?: unknown
+  explicitlyDisabled: boolean
   root: string
   serverDirs?: string[]
 }
 
 interface DatabasePlugin {
   name?: string
-  api?: { getConfig?: () => unknown }
+  api?: { getConfig?: () => unknown; isEnabled?: () => boolean }
 }
 
 /**
@@ -29,7 +30,7 @@ interface DatabasePlugin {
  * resolves to an empty registry, so a build succeeds and the first query fails at runtime.
  * `runtimeImports` maps each import that Vite can resolve to its public specifier.
  */
-export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, string>): Plugin & { vitehub: { cli: () => ViteHubCliContributor | undefined } } {
+export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, string>, explicitlyDisabled = false): Plugin & { vitehub: { cli: () => ViteHubCliContributor | undefined } } {
   let serverDirs: string[] | undefined
   let state: DisabledDatabaseState | undefined
 
@@ -44,6 +45,7 @@ export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, strin
       state = {
         // SAFETY: ViteHub attaches the effective database option to the resolved Vite config.
         databaseOption: (config as typeof config & { database?: unknown }).database,
+        explicitlyDisabled,
         // SAFETY: The guard only reads the optional name and API exposed by Vite plugins.
         databasePlugin: config.plugins.find(plugin => plugin.name === databasePluginName) as DatabasePlugin | undefined,
         root: config.root,
@@ -80,9 +82,9 @@ export function databaseDisabledPlugin(runtimeImports: ReadonlyMap<string, strin
 }
 
 function hasDatabasePlugin(state: DisabledDatabaseState): boolean {
-  if (!state.databasePlugin || state.databaseOption === false) return false
-  const config = state.databasePlugin.api?.getConfig?.()
-  return config !== undefined || !state.databasePlugin.api?.getConfig
+  if (!state.databasePlugin) return false
+  if (state.explicitlyDisabled) return false
+  return state.databasePlugin.api?.isEnabled?.() ?? state.databaseOption !== false
 }
 
 function hasDatabaseDefinitions(state: DisabledDatabaseState): boolean {

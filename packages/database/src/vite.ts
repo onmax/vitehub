@@ -37,6 +37,7 @@ const DB_DRIZZLE_ENTRY_PATTERN = /(?:^|\/)(?:@vite-hub\/database|database)\/dist
 
 export interface DBVitePluginAPI {
   getConfig: () => ResolvedDBViteConfig | undefined
+  isEnabled: () => boolean
   refresh: () => Promise<ResolvedDBViteConfig | undefined>
 }
 
@@ -140,6 +141,7 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
     name: DB_VITE_PLUGIN_NAME,
     api: {
       getConfig: () => runtimeConfig,
+      isEnabled: () => resolvedOptions() !== false,
       refresh: refreshRuntimeConfig,
     },
     vitehub: {

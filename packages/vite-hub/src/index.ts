@@ -879,7 +879,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
       const facade = frameworkProviderImportAliases[specifier]
       if (facade) databaseRuntimeImports.set(facade, specifier)
     }
-    plugins.push(databaseDisabledPlugin(databaseRuntimeImports))
+    plugins.push(databaseDisabledPlugin(databaseRuntimeImports, options.database === false))
   }
   plugins.push(frameworkDependencyResolver(options, envPlugin, providerImportAliases, blobEnabled, presetKVOptions || undefined))
 
