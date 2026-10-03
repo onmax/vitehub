@@ -940,6 +940,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     let checkout = pooled?.anchoredDirectory ?? await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
     const operation = controlledOperation(options)
     let keepCheckout = false
+    let checkoutIdentity: { dev: number, ino: number } | undefined
     let reset: Awaited<ReturnType<typeof resetPooledCheckout>> | undefined
     let submodules: string[] = []
     try {
@@ -1007,6 +1008,11 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       }
       operation.signal.throwIfAborted()
       await pooled?.validate()
+      if (pooled) {
+        const retained = await lstat(pooled.anchoredDirectory)
+        if (!retained.isDirectory()) throw new Error("Pooled checkout is not a directory")
+        checkoutIdentity = { dev: retained.dev, ino: retained.ino }
+      }
       // Keep callbacks on the descriptor-anchored path. The visible pool path
       // can be replaced after validation; exposing it would let a callback
       // traverse a different checkout before custody is released.
@@ -1065,8 +1071,16 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       operation.close()
       try {
         await reset?.close()
-        if (keepCheckout && checkoutPool && pooled) checkoutPool.release(pullRequest.repository, pullRequest.number, pooled.directory, false, submodules)
-        else {
+        let retainedCheckout = false
+        if (keepCheckout && checkoutPool && pooled && checkoutIdentity) {
+          const retained = await lstat(pooled.anchoredDirectory).catch((error: unknown) => {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+            throw error
+          })
+          retainedCheckout = Boolean(retained?.isDirectory() && retained.dev === checkoutIdentity.dev && retained.ino === checkoutIdentity.ino)
+          if (retainedCheckout) checkoutPool.release(pullRequest.repository, pullRequest.number, pooled.directory, false, submodules)
+        }
+        if (!retainedCheckout) {
           const discard = pooled?.anchoredDirectory ?? checkout
           await rm(discard, { force: true, recursive: true })
           if (pooled) await rm(`${discard}.meta.json`, { force: true })
