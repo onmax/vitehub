@@ -1075,7 +1075,17 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         reset = await resetPooledCheckout(checkout, pooled.anchoredRoot, pullRequest.repository, pooled.submodules, commandOptions, pooled.adopted)
         checkout = reset.directory
       }
-      else await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
+      else {
+        // The allocated child can be replaced after acquire returns. Verify its
+        // descriptor identity immediately before Git starts writing into it.
+        if (pooled) {
+          const allocated = await lstat(pooled.anchoredDirectory)
+          if (!allocated.isDirectory() || allocated.dev !== pooled.identity.dev || allocated.ino !== pooled.identity.ino) {
+            throw new Error("Pooled checkout directory was replaced")
+          }
+        }
+        await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
+      }
       if (pullRequest.headRef) {
         // Fetch the source branch: GitHub's synthetic pull refs can lag a push.
         const sourceRepository = pullRequest.headRepository ?? pullRequest.repository
