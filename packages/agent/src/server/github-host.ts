@@ -334,6 +334,7 @@ function createCheckoutPool(root: string) {
   }
   const adopt = () => adopted ??= (async () => {
     await mkdir(root, { recursive: true })
+    root = await realpath(root)
     for (const entry of await readdir(root, { withFileTypes: true })) {
       const match = /^(.+)-pr-(\d+)-[A-Za-z0-9]{6}$/.exec(entry.name)
       const repository = match ? decodeRepository(match[1]!) : undefined

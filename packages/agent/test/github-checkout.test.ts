@@ -174,6 +174,9 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   const base = join(root, 'base.git')
   const source = join(root, 'source')
   const pool = join(root, 'checkouts')
+  const poolAlias = join(root, 'checkout-alias')
+  await mkdir(pool)
+  await symlink(pool, poolAlias, 'dir')
   await mkdir(source)
   await git(root, 'init', '--bare', base)
   await git(source, 'init', '-b', 'main')
@@ -201,7 +204,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
   vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
   const options = {
-    checkouts: { root: pool },
+    checkouts: { root: poolAlias },
     credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
     identity: { login: 'Test', email: 'test@example.com' },
   }
