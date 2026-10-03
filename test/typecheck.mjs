@@ -17,15 +17,35 @@ function signalExitCode(signal) {
   return 128 + (constants.signals[signal] ?? 0)
 }
 
-function run(command, args, environment) {
+export function runTypecheckPhase(command, args, environment, abortSignal) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env: environment, stdio: "inherit" })
-    child.once("error", reject)
-    child.once("close", (code, signal) => resolve(signal ? signalExitCode(signal) : (code ?? 1)))
+    const detached = process.platform !== "win32"
+    const child = spawn(command, args, { detached, env: environment, stdio: "inherit" })
+    const onAbort = () => {
+      const signal = abortSignal.reason || "SIGTERM"
+      try {
+        if (detached && child.pid) process.kill(-child.pid, signal)
+        else child.kill(signal)
+      }
+      catch (error) {
+        if (error.code !== "ESRCH") throw error
+      }
+    }
+    if (abortSignal.aborted) onAbort()
+    else abortSignal.addEventListener("abort", onAbort, { once: true })
+    const cleanup = () => abortSignal.removeEventListener("abort", onAbort)
+    child.once("error", (error) => {
+      cleanup()
+      reject(error)
+    })
+    child.once("close", (code, signal) => {
+      cleanup()
+      resolve(signal ? signalExitCode(signal) : (code ?? 1))
+    })
   })
 }
 
-export async function runTypecheck(environment = process.env, execute = run) {
+export async function runTypecheck(environment = process.env, execute = runTypecheckPhase) {
   const childEnvironment = typecheckEnvironment(environment)
   const vp = fileURLToPath(new URL("./bin/vp", import.meta.resolve("vite-plus/package.json")))
   const steps = [
@@ -34,11 +54,22 @@ export async function runTypecheck(environment = process.env, execute = run) {
     [process.execPath, ["test/run-package-task.mjs", "typecheck"]],
   ]
 
-  for (const [command, args] of steps) {
-    const exitCode = await execute(command, args, childEnvironment)
-    if (exitCode !== 0) return exitCode
+  const controller = new AbortController()
+  const interrupt = signal => controller.abort(signal)
+  process.once("SIGINT", interrupt)
+  process.once("SIGTERM", interrupt)
+  try {
+    for (const [command, args] of steps) {
+      const exitCode = await execute(command, args, childEnvironment, controller.signal)
+      if (controller.signal.aborted) return signalExitCode(controller.signal.reason)
+      if (exitCode !== 0) return exitCode
+    }
+    return 0
   }
-  return 0
+  finally {
+    process.removeListener("SIGINT", interrupt)
+    process.removeListener("SIGTERM", interrupt)
+  }
 }
 
 const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)
