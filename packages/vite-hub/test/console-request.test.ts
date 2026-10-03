@@ -49,6 +49,15 @@ describe("Console requests", () => {
     })
   })
 
+  it.each(["", "/workspace"])("rejects malformed invocation ids before making an RPC request (%s)", async (suffix) => {
+    const request = requestConsole(`/api/_vitehub/console/invocations/%E0%A4%A${suffix}`)
+    await expect(request)
+      .rejects.toMatchObject({ name: "ConsoleRequestError", status: 400, message: "Malformed invocation id." })
+    expect(isRetryableConsoleRequestError(await request.catch(error => error))).toBe(false)
+    expect(mocks.call).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it("sends one stateless POST to the app-relative call endpoint", async () => {
     mocks.call.mockResolvedValue({ ok: true, value: { sections: ["kv"] } })
     const signal = new AbortController().signal
