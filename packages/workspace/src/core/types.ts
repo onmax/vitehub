@@ -31,6 +31,7 @@ export interface ListOptions {
 }
 
 export interface GlobOptions {
+  /** Workspace-relative directory to match patterns within. Result paths remain relative to the Workspace root. */
   cwd?: string
 }
 

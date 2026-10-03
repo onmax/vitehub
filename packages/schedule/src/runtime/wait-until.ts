@@ -3,7 +3,7 @@ interface LocalWaitUntil {
   waitUntil(promise: PromiseLike<unknown>): void
 }
 
-export function createLocalWaitUntil(): LocalWaitUntil {
+function createLocalWaitUntil(): LocalWaitUntil {
   const pending = new Set<Promise<unknown>>()
   let error: unknown
   let failed = false
@@ -27,5 +27,28 @@ export function createLocalWaitUntil(): LocalWaitUntil {
         },
       )
     },
+  }
+}
+/** Complete local deferred work while preserving a handler's failure over a deferred failure. */
+export async function runWithScheduleWaitUntil<T>(
+  run: (waitUntil: LocalWaitUntil["waitUntil"]) => T | Promise<T>,
+  hostWaitUntil?: LocalWaitUntil["waitUntil"],
+): Promise<T> {
+  if (hostWaitUntil) return await run(hostWaitUntil)
+
+  const local = createLocalWaitUntil()
+  try {
+    const result = await run(local.waitUntil)
+    await local.flush()
+    return result
+  }
+  catch (error) {
+    try {
+      await local.flush()
+    }
+    catch {
+      // Preserve the first execution error after all locally owned work settles.
+    }
+    throw error
   }
 }

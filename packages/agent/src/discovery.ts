@@ -142,6 +142,7 @@ function invalidModuleLiteral(token: string | undefined): boolean {
 // First-party Channel helpers from the Agent Channel entry. Only `github()`
 // adds a Capability of its own: the pull request Workspace. The other helpers
 // contribute only the Capabilities passed in their `capabilities` option.
+const firstPartyCapabilityFactories = new Set(["blob", "db", "usage", "transcribe"])
 const firstPartyChannelFactories = new Set(["discord", "github", "http", "slack", "teams", "telegram", "webChat"])
 const channelModuleExtensions = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]
 
@@ -278,6 +279,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   const importedNamespaces = new Set<string>()
   const importedAgentBindings = new Set<string>()
   const importedCapabilityBindings = new Set<string>()
+  const importedCapabilityNamespaces = new Set<string>()
+  const importedCapabilityFactories = new Map<string, string>()
   const importedChannelBindings = new Set<string>()
   const importedChannelNamespaces = new Set<string>()
   const importedChannelFactories = new Map<string, string>()
@@ -341,6 +344,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
             const moduleName = moduleSpecifier(moduleToken)
             if (moduleName === "@vite-hub/agent" || moduleName === "vite-hub/agent") importedNamespaces.add(tokens[j + 1])
             if (moduleName === "@vite-hub/agent/channels" || moduleName === "vite-hub/agent/channels") importedChannelNamespaces.add(tokens[j + 1])
+            if (moduleName === "@vite-hub/agent/capabilities" || moduleName === "vite-hub/agent/capabilities") importedCapabilityNamespaces.add(tokens[j + 1])
             continue
           }
           if (!sawFrom && j === i + 1 && /^['"`]/.test(token)) { i = j; break }
@@ -352,6 +356,14 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
                 for (let b = 0; b < bindings.length; b++) {
                   if (bindings[b] === "defineAgent") importedAgentBindings.add(bindings[b + 1] === "as" ? bindings[b + 2] : bindings[b])
                   if (bindings[b] === "defineCapability") importedCapabilityBindings.add(bindings[b + 1] === "as" ? bindings[b + 2] : bindings[b])
+                }
+              }
+              if (moduleName === "@vite-hub/agent/capabilities" || moduleName === "vite-hub/agent/capabilities") {
+                const bindings = tokens.slice(i + 1, j)
+                for (let b = 0; b < bindings.length; b++) {
+                  if (firstPartyCapabilityFactories.has(bindings[b]!) && bindings[b - 1] !== "as") {
+                    importedCapabilityFactories.set(bindings[b + 1] === "as" ? bindings[b + 2]! : bindings[b]!, bindings[b]!)
+                  }
                 }
               }
               if (moduleName === "@vite-hub/agent/channels" || moduleName === "vite-hub/agent/channels") {
@@ -1464,6 +1476,24 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     }
     const parameterScope = callbackParameters.findLast(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]))
     const binding = visibleDeclaration(index)
+    const firstPartyFactory = importedCapabilityFactories.get(tokens[index]!)
+      ?? (importedCapabilityNamespaces.has(tokens[index]!) && tokens[index + 1] === "." && firstPartyCapabilityFactories.has(tokens[index + 2]!) ? tokens[index + 2] : undefined)
+    if (firstPartyFactory !== undefined && binding === undefined && !parameterScope) {
+      let call = importedCapabilityNamespaces.has(tokens[index]!) ? index + 3 : index + 1
+      if (tokens[call] === "<") call = skipTypeArguments(call)
+      const close = [...openingDelimiters].find(([, opening]) => opening === call)?.[0]
+      if (mutatedBindings.has(tokens[index]!) || tokens[call] !== "(" || close === undefined || hasChannelContinuation(close + 1)) {
+        throw new Error("[vitehub] Agent Workspace discovery cannot inspect an opaque first-party Capability call. Use an unchanged imported helper call, or add an explicit Workspace ownership marker.")
+      }
+      // Storage and usage helpers do not allocate an Agent Workspace. Transcription
+      // requires a writable Workspace only when artifact persistence is enabled.
+      if (firstPartyFactory !== "transcribe") return false
+      const options = properties(call + 1, false, true, () => {
+        throw new Error("[vitehub] Agent Workspace discovery cannot inspect opaque transcription settings. Use literal artifact settings, or add an explicit Workspace ownership marker.")
+      })
+      const artifacts = options.get("artifacts")
+      return artifacts !== undefined && capabilityWorkspaceOwnsWorkspace(artifacts)
+    }
     let capabilityCall = binding !== undefined || parameterScope ? -1 : tokens[index] === "defineCapability" || importedCapabilityBindings.has(tokens[index])
       ? index + 1
       : importedNamespaces.has(tokens[index]) && tokens[index + 1] === "." && tokens[index + 2] === "defineCapability"

@@ -13,7 +13,7 @@ let registryOverride: QueueDefinitionRegistry | undefined
 
 const queueEventStorage = new AsyncLocalStorage<unknown>()
 let queueEventDefaults: unknown
-const queueClientCache = new Map<string, Promise<unknown>>()
+const queueClientCache = new Map<string, Promise<QueueClient>>()
 
 export function missingQueueDefinitionError(): Error {
   return queueErrorDiagnostics.QUEUE_R0013({ message: "Missing queue definition." })
@@ -60,8 +60,17 @@ export function setQueueRuntimeRegistry(registry: QueueDefinitionRegistry | unde
   queueClientCache.clear()
 }
 
-export function getQueueClientCache(): Map<string, Promise<unknown>> {
-  return queueClientCache
+export function getOrCreateQueueClient(name: string, createClient: () => Promise<QueueClient>): Promise<QueueClient> {
+  const existing = queueClientCache.get(name)
+  if (existing) return existing
+
+  const pending = createClient().catch((error) => {
+    // Runtime replacement can install a newer client while this creation is pending.
+    if (queueClientCache.get(name) === pending) queueClientCache.delete(name)
+    throw error
+  })
+  queueClientCache.set(name, pending)
+  return pending
 }
 
 function isQueueDefinition(value: unknown): value is QueueDefinition {

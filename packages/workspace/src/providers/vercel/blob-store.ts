@@ -1,5 +1,6 @@
 import { workspaceConflict, workspaceError } from "../../core/errors.ts"
-import { contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
+import { contentToBytes, isExcludedWorkspacePath, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../../core/glob.ts"
 import { resolveRuntimeVercelBlobWorkspaceStore } from "../../storage/provider.ts"
 import { createSnapshotFromEntries, diffSnapshots } from "../../storage/utils.ts"
 import * as bundledVercelBlob from "@vercel/blob"
@@ -216,10 +217,11 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
     return [...entries.values()].sort((a, b) => a.path.localeCompare(b.path))
   }
 
-  async glob(pattern: string | string[], _options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
+  async glob(pattern: string | string[], options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
     const patterns = Array.isArray(pattern) ? pattern.map(normalizeSafeWorkspacePattern) : normalizeSafeWorkspacePattern(pattern)
-    const entries = await this.list("", { recursive: true })
-    return entries.filter(entry => entry.type === "file" && matchesAny(entry.path, patterns))
+    const { cwd, matches } = createWorkspaceGlobMatcher(patterns, options)
+    const entries = await this.list(cwd, { recursive: true })
+    return entries.filter(entry => entry.type === "file" && matches(entry.path))
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {

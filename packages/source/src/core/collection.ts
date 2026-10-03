@@ -1,8 +1,10 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import { Diagnostic } from "nostics"
-import { isPlainRecord } from "@vite-hub/internal/object"
 import type { AccessAuthorizeOption } from "@vite-hub/runtime"
 import { sourceErrorDiagnostics } from "../error-diagnostics.ts"
+import { createCollectionCursorCodec } from "./collection-cursor.ts"
+import { parseCollectionSchema } from "./schema.ts"
+
+export { CollectionCursorError } from "./collection-cursor.ts"
 
 const defaultPageLimit = 50
 const defaultMaxLimit = 100
@@ -202,18 +204,6 @@ export type CollectionQueryInput<TInput> = TInput extends object
 
 type QueryInput<TSchema extends StandardSchemaV1> = CollectionQueryInput<StandardSchemaV1.InferInput<TSchema>>
 
-export class CollectionCursorError extends Diagnostic {
-  constructor(message = "[vitehub] Collection cursor is malformed.", options?: ErrorOptions) {
-    super({
-      cause: options?.cause,
-      code: "SOURCE_R0023",
-      docs: "https://vitehub.dev/docs/reference/diagnostics",
-      why: message,
-    }, CollectionCursorError)
-    this.name = "CollectionCursorError"
-  }
-}
-
 function assertPositiveInteger(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 1) {
     throw sourceErrorDiagnostics.SOURCE_R0004({ message: `[vitehub] Collection ${label} must be a positive integer.` })
@@ -223,102 +213,6 @@ function assertPositiveInteger(value: number, label: string): void {
 function resolveLimit(limit: number | undefined, defaultLimit: number, maxLimit: number): number {
   if (limit !== undefined) assertPositiveInteger(limit, "limit")
   return Math.min(limit ?? defaultLimit, maxLimit)
-}
-
-function encodeBase64Url(value: string): string {
-  const bytes = new TextEncoder().encode(value)
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
-}
-
-function decodeBase64Url(value: string): string {
-  const normalized = value.replaceAll("-", "+").replaceAll("_", "/")
-  const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
-  return new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)))
-}
-
-function hasPrimitiveRuntimeTag(value: unknown, tag: string): boolean {
-  return value !== null && value !== undefined && Object(value) !== value && Object.prototype.toString.call(value) === tag
-}
-
-function isRuntimeNumber(value: unknown): value is number {
-  return hasPrimitiveRuntimeTag(value, "[object Number]")
-}
-
-function isRuntimeObject(value: unknown): value is object {
-  return value !== null && Object(value) === value
-}
-
-function isRuntimeString(value: unknown): value is string {
-  return hasPrimitiveRuntimeTag(value, "[object String]")
-}
-
-function isCursorValue(value: unknown, ancestors = new Set<object>()): value is CollectionCursorValue {
-  if (isRuntimeNumber(value)) return Number.isFinite(value) && !Object.is(value, -0)
-  if (value === null || value === true || value === false || isRuntimeString(value)) return true
-  if (!isRuntimeObject(value) || ancestors.has(value)) return false
-
-  ancestors.add(value)
-  try {
-    if (Array.isArray(value)) {
-      const keys = Reflect.ownKeys(value)
-      if (keys.length !== value.length + 1 || keys.some(key => key !== "length" && !isRuntimeString(key))) return false
-      for (let index = 0; index < value.length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
-        if (!descriptor?.enumerable || !("value" in descriptor) || !isCursorValue(descriptor.value, ancestors)) return false
-      }
-      return true
-    }
-
-    if (!isPlainRecord(value)) return false
-    for (const key of Reflect.ownKeys(value)) {
-      if (!isRuntimeString(key)) return false
-      const descriptor = Object.getOwnPropertyDescriptor(value, key)
-      if (!descriptor?.enumerable || !("value" in descriptor) || !isCursorValue(descriptor.value, ancestors)) return false
-    }
-    return true
-  } catch {
-    return false
-  } finally {
-    ancestors.delete(value)
-  }
-}
-
-function encodeCursor(value: CollectionCursorValue): string {
-  if (!isCursorValue(value)) {
-    throw sourceErrorDiagnostics.SOURCE_R0005({ message: "[vitehub] Collection cursor() must return a JSON-serializable value." })
-  }
-  return encodeBase64Url(JSON.stringify(value))
-}
-
-async function parseSchema<TOutput>(schema: StandardSchemaV1<unknown, TOutput>, value: unknown): Promise<TOutput> {
-  const result = await schema["~standard"].validate(value)
-  if (result.issues) throw sourceErrorDiagnostics.SOURCE_R0006({ message: result.issues[0]?.message ?? "Collection value is invalid." })
-  return result.value
-}
-
-async function decodeCursor<TCursorInput extends CollectionCursorValue, TCursorOutput extends CollectionCursorValue>(
-  value: string | undefined,
-  schema: StandardSchemaV1<TCursorInput, TCursorOutput>,
-): Promise<TCursorOutput | undefined> {
-  if (value === undefined) return
-  let decoded: unknown
-  try {
-    decoded = JSON.parse(decodeBase64Url(value))
-  } catch (cause) {
-    throw new CollectionCursorError(undefined, { cause })
-  }
-  if (!isCursorValue(decoded)) throw new CollectionCursorError()
-  try {
-    const cursor = await parseSchema(schema, decoded)
-    if (!isCursorValue(cursor)) {
-      throw sourceErrorDiagnostics.SOURCE_R0007({ message: "Collection cursor schema returned an invalid value." })
-    }
-    return cursor
-  } catch (cause) {
-    throw new CollectionCursorError(undefined, { cause })
-  }
 }
 
 export function defineCollection<
@@ -385,6 +279,7 @@ export function defineCollection<
   if (defaultLimit > maxLimit) {
     throw sourceErrorDiagnostics.SOURCE_R0008({ message: "[vitehub] Collection defaultLimit cannot exceed maxLimit." })
   }
+  const cursorCodec = createCollectionCursorCodec(definition.cursorSchema)
   const authorize = definition.authorize
   if (authorize !== undefined && authorize !== true && !(authorize instanceof Function)) {
     throw sourceErrorDiagnostics.SOURCE_R0024({ message: "[vitehub] Collection authorize must be true or a function." })
@@ -395,7 +290,7 @@ export function defineCollection<
     async page(request) {
       const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
       const sourceItems = await load({
-        cursor: await decodeCursor(request.cursor, definition.cursorSchema),
+        cursor: await cursorCodec.decode(request.cursor),
         limit: limit + 1,
         query: request.query,
         signal: request.signal,
@@ -407,8 +302,7 @@ export function defineCollection<
       const pageItems = sourceItems.slice(0, limit)
       const nextCursor =
         hasMore && pageItems.length
-          ? // SAFETY: CollectionOptions constrains cursor output to the serializable cursor contract.
-            encodeCursor(definition.cursor(pageItems[pageItems.length - 1]!) as CollectionCursorValue)
+          ? cursorCodec.encode(definition.cursor(pageItems[pageItems.length - 1]!))
           : null
       const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : pageItems
       // SAFETY: The overload without transform fixes TItem to TSourceItem; the other branch ran the typed transform.
@@ -419,7 +313,7 @@ export function defineCollection<
       }
     },
     async parseQuery(input) {
-      if (definition.querySchema) return await parseSchema(definition.querySchema, input)
+      if (definition.querySchema) return await parseCollectionSchema(definition.querySchema, input)
       // SAFETY: CollectionRequestQuery is the owned default contract when no custom query schema is supplied.
       return input as TQuery
     },

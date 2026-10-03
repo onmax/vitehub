@@ -1,7 +1,7 @@
 import { mockEvent } from "h3"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { requireRateLimit } from "../src/index.ts"
+import { peekRateLimit, requireRateLimit, resetRateLimit } from "../src/index.ts"
 import { getCloudflareRateLimitBindingName } from "../src/drivers/cloudflare.ts"
 import { setRateLimitRuntimeConfig } from "../src/runtime.ts"
 
@@ -79,6 +79,38 @@ describe("managed Rate Limit guard", () => {
     await requireRateLimit(event, "uploads", { limit: 1, window: "1m" })
     await expect(requireRateLimit(event, "uploads", { limit: 1, window: "1m" })).rejects.toMatchObject({ status: 429 })
     await expect(requireRateLimit(event, "uploads", { limit: 2, window: "1m" })).resolves.toBeUndefined()
+  })
+
+  it("shares named policy counters between guard, inspection, and reset", async () => {
+    const event = requestEvent("192.0.2.20")
+    const name = 'uploads:["tenant"]'
+    await Promise.all([
+      requireRateLimit(event, name, { key: "user", limit: 3, window: "1m" }),
+      requireRateLimit(event, name, { key: "user", limit: 3, window: "1m" }),
+    ])
+    await requireRateLimit(event, name, { key: "user", limit: 5, window: "1m" })
+    await requireRateLimit(event, "other", { key: "user", limit: 3, window: "1m" })
+
+    const inspection = await peekRateLimit(name, "user")
+    expect(inspection).toMatchObject({ status: "known", counters: [
+      { limit: 3, used: 2, remaining: 1 },
+      { limit: 5, used: 1, remaining: 4 },
+    ] })
+    if (inspection.status === "known") inspection.counters.length = 0
+    await expect(resetRateLimit(name, "user")).resolves.toMatchObject({ status: "reset" })
+    await expect(peekRateLimit(name, "user")).resolves.toMatchObject({ counters: [
+      { limit: 3, used: 0 }, { limit: 5, used: 0 },
+    ] })
+    await expect(peekRateLimit("other", "user")).resolves.toMatchObject({ counters: [{ used: 1 }] })
+  })
+
+  it("clears guard and inspection state when runtime configuration is replaced", async () => {
+    const event = requestEvent("192.0.2.21")
+    await requireRateLimit(event, "uploads", { key: "user", limit: 1, window: "1m" })
+    setRateLimitRuntimeConfig({ provider: "memory" })
+    await expect(peekRateLimit("uploads", "user")).resolves.toMatchObject({ status: "unused" })
+    await expect(requireRateLimit(event, "uploads", { key: "user", limit: 1, window: "1m" })).resolves.toBeUndefined()
+    await expect(peekRateLimit("uploads", "user")).resolves.toMatchObject({ counters: [{ used: 1 }] })
   })
 
   it("passes the request event binding and Cloudflare identity directly", async () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { BlobNotFoundError, BlobServiceNotAvailable } from "@vercel/blob"
+import { checkGlobCwd, seedGlobCwdStore } from "./glob-cwd-checks.ts"
 
 declare global {
   var __vitehubWorkspaceImportVercelBlobPeer: (() => Promise<unknown>) | undefined
@@ -117,6 +118,14 @@ describe("Vercel Blob workspace store", () => {
     peerNotFound.name = "BlobNotFoundError"
     blobMock.head.mockRejectedValueOnce(peerNotFound)
     await expect(store.rm("missing.md", { force: true })).resolves.toBeUndefined()
+  })
+
+  it("matches glob patterns relative to cwd", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "********" }, "docs")
+    await seedGlobCwdStore(store)
+    await checkGlobCwd(store)
   })
 
   it("stores files, metadata, snapshots, and diffs in Blob", async () => {

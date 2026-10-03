@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { defineScheduleTarget, schedules } from "../src/index.ts"
 import { executeStaticSchedule } from "../src/runtime.ts"
+import { executeStaticSchedule as executeProviderStaticSchedule } from "../src/runtime/static.ts"
 import { installScheduleRuntime } from "../src/runtime/driver.ts"
 import { resetScheduleRuntime } from "../src/runtime/state.ts"
 import { createMemoryRuntimeScheduleStore, createMemoryScheduleRunStore } from "../src/runtime/store.ts"
@@ -246,5 +247,60 @@ describe("Schedule waitUntil", () => {
     releaseDeferred!()
     await Promise.all([wake, closing])
     expect(driverClosed).toBe(true)
+  })
+})
+
+describe.each([
+  { execute: executeStaticSchedule, name: "tracked" },
+  { execute: executeProviderStaticSchedule, name: "provider static" },
+])("$name Schedule waitUntil ownership", ({ execute }) => {
+  it("settles deferred work registered by another deferred task", async () => {
+    const completed: string[] = []
+    await execute({
+      cron: "0 10 * * *",
+      definition: {
+        cron: "0 10 * * *",
+        handler({ waitUntil }) {
+          waitUntil(Promise.resolve().then(() => {
+            completed.push("parent")
+            waitUntil(Promise.resolve().then(() => { completed.push("child") }))
+          }))
+          return "done"
+        },
+      },
+      name: "nested-deferred",
+    })
+
+    expect(completed).toEqual(["parent", "child"])
+  })
+
+  it("preserves the handler error when deferred work also fails", async () => {
+    const handlerError = new Error("handler failure")
+    await expect(execute({
+      cron: "0 10 * * *",
+      definition: {
+        cron: "0 10 * * *",
+        handler({ waitUntil }) {
+          waitUntil(Promise.reject(new Error("deferred failure")))
+          throw handlerError
+        },
+      },
+      name: "error-precedence",
+    })).rejects.toBe(handlerError)
+  })
+
+  it("leaves deferred settlement to the supplied host", async () => {
+    let resolveDeferred!: () => void
+    const deferred = new Promise<void>(resolve => { resolveDeferred = resolve })
+    const hostWaitUntil = vi.fn()
+    await execute({
+      cron: "0 10 * * *",
+      definition: { cron: "0 10 * * *", handler({ waitUntil }) { waitUntil(deferred) } },
+      name: "host-deferred",
+      waitUntil: hostWaitUntil,
+    })
+
+    expect(hostWaitUntil).toHaveBeenCalledWith(deferred)
+    resolveDeferred()
   })
 })
