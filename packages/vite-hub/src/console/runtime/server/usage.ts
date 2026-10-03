@@ -713,22 +713,27 @@ export async function createUsageSummary(
     buckets: bucketStarts(from, to, window.bucket).map((start) => ({
       start,
       ...publicTotals(buckets.get(start) ?? emptyTotals(), !scanTruncated),
-      models: [...(bucketModels.get(start) ?? new Map<string, UsageTotal>()).entries()].map(
-        ([model, modelTotal]) => ({ model, ...publicTotals(modelTotal, !scanTruncated) }),
-      ),
+      models: [...(bucketModels.get(start) ?? new Map<string, UsageTotal>()).entries()]
+        .map(([model, modelTotal]) => ({ model, ...publicTotals(modelTotal, !scanTruncated) }))
+        .sort(compareUsageModels),
     })),
     costAvailable: publicTotal.costAvailable,
     from,
     generatedAt: new Date().toISOString(),
     models: [...models.entries()]
       .map(([model, total]) => ({ model, ...publicTotals(total, !scanTruncated) }))
-      .sort(
-        (left, right) =>
-          right.totalTokens - left.totalTokens || left.model.localeCompare(right.model),
-      ),
+      .sort(compareUsageModels),
     partial,
     resolution: window.bucket,
     to,
     totals: publicTotal,
   };
+}
+
+/** Bucket and global model breakdowns use the same deterministic ranking. */
+export function compareUsageModels(
+  left: { model: string; totalTokens: number },
+  right: { model: string; totalTokens: number },
+): number {
+  return right.totalTokens - left.totalTokens || left.model.localeCompare(right.model);
 }
