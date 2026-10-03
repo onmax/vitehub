@@ -755,6 +755,7 @@ it.each([
   'const ignored = `${String`id`}`',
   'Object.defineProperty(globalThis, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'Object.assign(globalThis, { String: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
+  'Object.defineProperties(globalThis, { String: { value: () => getPortal().capabilities = [] } }); const ignored = `${String("id")}`',
   'globalThis["String"] = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'globalThis["Number"] = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
   'globalThis["Boolean"] = () => getPortal().capabilities = []; const ignored = `${Boolean("id")}`',

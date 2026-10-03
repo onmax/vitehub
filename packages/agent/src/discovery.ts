@@ -1248,16 +1248,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const receiverEnd = objectEnd ?? reflectEnd
       if (receiverEnd === undefined) continue
       const member = memberAccess(receiverEnd - 1)
-      if (member?.name !== "defineProperty" && member?.name !== "set" && member?.name !== "assign") continue
+      if (member?.name !== "defineProperty" && member?.name !== "defineProperties" && member?.name !== "set" && member?.name !== "assign") continue
       const call = memberCallEnd(member.end - 1, index)
       if (tokens[call] !== "(") continue
       const target = resolveReference(call + 1, new Set(), true)
       if (!globalThisReceiver(target) || tokens[target + 1] !== ",") continue
-      // Object.assign(globalThis, ...) can replace any of the built-in
-      // conversion helpers without exposing a direct member assignment.
+      // Bulk writes can replace any of the built-in conversion helpers without
+      // exposing a direct member assignment.
       // Keep all conversions opaque because the source object may contain
       // computed or otherwise non-static property names.
-      if (member.name === "assign") {
+      if (member.name === "assign" || member.name === "defineProperties") {
         reassignedGlobalConversions.add("String")
         reassignedGlobalConversions.add("Number")
         reassignedGlobalConversions.add("Boolean")
