@@ -336,7 +336,7 @@ Static Schedule Definitions and Provider Wake output remain UTC. Runtime Schedul
 
 - Use [Queue](/docs/server-primitives/queue) when a provider-supported enqueue delay is enough.
 - Use [Workflows](/docs/server-primitives/workflows) for durable orchestration.
-- Learn trigger language in [Channels API](/docs/concepts/channels-api).
+- Learn trigger language in [Agent Channels](/docs/agents/channels).
 
 
 ## Definition-owned target inputs
