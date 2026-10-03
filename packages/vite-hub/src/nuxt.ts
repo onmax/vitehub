@@ -880,7 +880,9 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   addTypeScriptDefaults(nuxt.options, generatedTypes, generatedData)
   addTypeScriptDefaults((nuxt.options.nitro ??= {}), generatedTypes, generatedData)
   if (options.database) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Nuxt configuration accepts opaque user options at this integration boundary.
     const nuxtDatabaseOptions = nuxt.options.database && typeof nuxt.options.database === "object" ? nuxt.options.database : {}
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vite configuration accepts opaque user options at this integration boundary.
     const viteDatabaseOptions = viteConfig.database && typeof viteConfig.database === "object" ? viteConfig.database : {}
     const databaseOptions = {
       ...nuxtDatabaseOptions,

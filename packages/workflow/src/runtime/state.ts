@@ -86,8 +86,10 @@ export function takeInlineWorkflowDefinition(name: string): WorkflowDefinition |
 }
 
 function isWorkflowHandle(value: unknown): value is { name: string } {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
   return typeof value === "object"
     && value !== null
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The object guard above establishes the loader value shape.
     && typeof (value as { name?: unknown }).name === "string"
     && typeof (value as { defer?: unknown }).defer === "function"
     && typeof (value as { getRun?: unknown }).getRun === "function"
@@ -102,6 +104,7 @@ function findExportedInlineWorkflowDefinition(
   const namedDefinition = definitions.get(name)
   if (namedDefinition) return { definition: namedDefinition, name }
 
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Loaded module values are opaque until their object shape is checked.
   if (!loaded || typeof loaded !== "object") return undefined
 
   if ("default" in loaded && isWorkflowHandle(loaded.default)) {
@@ -117,6 +120,7 @@ function findExportedInlineWorkflowDefinition(
   }
 
   if (matches.size !== 1) return undefined
+  // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- A non-empty map has a first entry.
   const [matchedName, definition] = matches.entries().next().value!
   return { definition, name: matchedName }
 }
@@ -137,6 +141,7 @@ function consumeInlineWorkflowDefinition(name: string, expected?: WorkflowDefini
 }
 
 export function registerInlineWorkflowDefinition(name: string, definition: WorkflowDefinition): void {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Public Workflow names cross an untyped API boundary.
   if (!name || typeof name !== "string") {
     throw workflowErrorDiagnostics.WORKFLOW_R0023({ message: "`createWorkflow()` requires a workflow name." })
   }
@@ -203,6 +208,7 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
   const loadingEntry = Promise.resolve().then(() => loadingRegistryStorage.run(nextActiveLoads, async () => {
     const loadingInlineDefinitions = new Map<string, WorkflowDefinition>()
     const loaded = await loadingGenerationStorage.run(generation, () => loadingInlineRegistryStorage.run(loadingInlineDefinitions, entry))
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry loaders return opaque module values.
     if (!loaded || typeof loaded !== "object") {
       return undefined
     }
@@ -212,6 +218,7 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
       consumeInlineWorkflowDefinition(name, registeredInlineDefinition)
       return registeredInlineDefinition
     }
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Registry module exports are validated as WorkflowDefinitions at this boundary.
     const definition = ("default" in loaded ? loaded.default : loaded) as WorkflowDefinition | undefined
     if (definition && typeof definition.handler === "function") {
       return definition
