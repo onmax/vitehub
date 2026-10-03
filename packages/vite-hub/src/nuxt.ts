@@ -18,6 +18,7 @@ import { mergeConfig } from "vite"
 
 import { vitehub } from "./index.ts"
 import { createConsoleCliNamespace } from "./console/cli.ts"
+import { consoleIcons } from "./console/icons.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureRevision, readConsoleFixture } from "./console/fixture.ts"
 import { createConsoleInvocationsIdentity } from "./console/internal.ts"
 import { installConsoleInvocations } from "./console/runtime/server/invocations.ts"
@@ -28,7 +29,7 @@ import { resolveConsoleProjectNameFromRoot } from "./console/project.ts"
 import { consoleSectionRouteName, resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
 import { describeConsoleContributedSections, isConsoleContributedSectionId } from "./console/contributions.ts"
 import { addConsoleDevframeHandler } from "./console/nitro.ts"
-import { registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "./console/auth-build.ts"
+import { consoleConnectionsActorId, registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, writeConsoleConnectionsActor, type ConsoleConnectionsActorSource } from "./console/auth-build.ts"
 import { serializeConsoleRefresh } from "./console/refresh.ts"
 import { assertConsoleProductionAccess, closeConsoleInvocationRootState, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
 
@@ -295,6 +296,16 @@ async function installConsole(
     const rule = (routeRules[route] ??= {})
     rule.headers = { ...rule.headers, "x-robots-tag": "noindex, nofollow" }
   }
+  // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- @nuxt/icon declares this hook, while this structural seam keeps narrow nitro-only test hosts assignable.
+  // SAFETY: @nuxt/icon calls this hook with the mutable Set of client bundle icon names.
+  const hookIcons = nuxt.hook as unknown as ((name: "icon:clientBundleIcons", callback: (icons: Set<string>) => void) => void) | undefined
+  // @nuxt/icon does not scan dependencies, so add the Console icons to its client bundle.
+  hookIcons?.("icon:clientBundleIcons", (icons) => {
+    for (const icon of consoleIcons) icons.add(icon)
+    for (const section of describeConsoleContributedSections(sections)) {
+      icons.add(section.icon.replace(/^i-(lucide|ph)-/, "$1:"))
+    }
+  })
   // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- Nuxt exposes hook overloads, while this structural seam keeps narrow nitro-only test hosts assignable.
   const hookPages = nuxt.hook as unknown as ((name: "pages:extend", callback: (pages: NuxtPage[]) => void) => void) | undefined
   hookPages?.("pages:extend", (pages) => {
@@ -583,7 +594,7 @@ async function applyNitroConfig(
     command: nuxt.options.dev ? "serve" : "build",
     isPreview: false,
     isSsrBuild: true,
-    mode: nuxt.options.dev ? "development" : "production",
+    mode: nuxt.options.vite?.mode ?? (nuxt.options.dev ? "development" : "production"),
   } as const
   const serverDirs = nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined
   const generatedRoot = join(nuxt.options.buildDir, "vitehub")
@@ -1065,9 +1076,11 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     if (options.env !== false) await envPlugin?.api?.prepareTypes?.(replayConfig.env, viteRoot)
     consoleWorkflowConfigResolved = true
     if (options.console) {
+      let connectionsActorSource: ConsoleConnectionsActorSource = (replayConfig.auth ?? nuxt.options.vite?.auth ?? options.auth) ? "app-auth" : "none"
       if (consoleAuthMode && options.console !== true && options.console.access === "auth" && options.console.auth) {
         const authConfig = resolveConsoleAuthConfig(viteRoot, options.console.auth, plan.preset)
         let authHandlers = await writeConsoleAuthHandlers(viteRoot, authConfig, nuxt.options.app?.baseURL ?? "/")
+        if (authHandlers.auth === true) connectionsActorSource = "console-auth"
         if (nuxt.options.dev && authHandlers.clientSource) {
           const clientDirectories = new Set<string>()
           const newClientDirectories = new Set<string>()
@@ -1154,6 +1167,11 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         workflow: replayConfig.workflow ?? options.workflow,
       })
       consoleSections.splice(0, consoleSections.length, ...resolvedSections)
+      if (consoleSections.includes("connections")) {
+        const connectionsActor = await writeConsoleConnectionsActor(viteRoot, connectionsActorSource)
+        const alias = (config.alias ??= {}) as Record<string, string>
+        alias[consoleConnectionsActorId] = connectionsActor
+      }
       consoleBlobStores.splice(
         0,
         consoleBlobStores.length,

@@ -1876,6 +1876,39 @@ describe("ViteHub Nuxt integration", () => {
     }
   })
 
+  it.each(["none", "app-auth", "console-auth"] as const)("resolves the Nuxt Connections management actor with %s", async (source) => {
+    const production = createNuxt(false)
+    production.nuxt.options.vite.root = "/tmp/vitehub-nuxt/app"
+    await viteHubNuxtModule({
+      auth: source === "app-auth",
+      connections: { management: true },
+      database: true,
+      console: source === "console-auth"
+        ? { access: "auth", auth: { provider: "github", allowedEmails: ["maintainer@example.com"], databasePath: "/data/console-auth.sqlite" } }
+        : { exposure: "host-managed" },
+      preset: "node",
+    }, production.nuxt)
+    const config = nitroOptions(production.nuxt)
+    await production.runNitroConfigHook(config)
+
+    const actor = "/tmp/vitehub-nuxt/app/.vitehub/nitro/console/connections-actor.mjs"
+    expect(config.alias).toMatchObject({ "#vitehub/console/connections-actor": actor })
+    const generated = await readFile(actor, "utf8")
+    if (source === "console-auth") {
+      expect(generated).toContain('import { definition } from "./auth-definition.mjs"')
+      expect(generated).toContain("createAuthForRequest(definition, event.req")
+    }
+    else if (source === "app-auth") {
+      expect(generated).toContain("getAuthForRequest(event.req")
+    }
+    else {
+      expect(generated).toContain("return undefined")
+    }
+    await production.runNitroConfigHook(config)
+    expect(await readFile(actor, "utf8")).toBe(generated)
+    expect(config.alias).toMatchObject({ "#vitehub/console/connections-actor": actor })
+  })
+
   it("mounts independent Console Auth below the Nuxt app base URL", async () => {
     const production = createNuxt(false)
     Object.assign(production.nuxt.options, { app: { baseURL: "/portal/" } })
