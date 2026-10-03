@@ -63,17 +63,18 @@ export function resolveAuthOptions(
   } = {},
 ) {
   const { request } = input
-  const usesContext = !request || typeof definition.options === "function" || Boolean(definition.options.runtime)
+  const callback = typeof definition.options === "function"
+  const staticRequestRuntime = request && typeof definition.options !== "function" ? definition.options.runtime : undefined
+  const usesContext = !request || callback || Boolean(staticRequestRuntime)
   const context: AuthRuntimeContext = {
     env: usesContext ? input.env?.(input.event ?? request) ?? {} : {},
     ...(request ? { request } : {}),
     requestOrigin: usesContext && request ? new URL(request.url).origin : "http://localhost",
   }
-  const callback = typeof definition.options === "function"
   const declared = (callback
     ? (definition.options as AuthDefinitionResolver)(context)
     : definition.options) as AuthRuntimeOptions & Record<string, unknown>
-  const runtime = declared.runtime
+  const runtime = request && !callback ? staticRequestRuntime : declared.runtime
   const resolvedRuntime = !runtime
     ? {}
     : typeof runtime === "function"

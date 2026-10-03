@@ -69,4 +69,27 @@ describe("Auth option resolution", () => {
     expect(resolved.providerOptions.appName).toBe("ViteHub")
     expect(appName).toHaveBeenCalledOnce()
   })
+
+  it.each([
+    { name: "request", request: new Request("https://request.example.com/api/auth"), expectedOrder: ["runtime", "env"], expectedSecret: "early" },
+    { name: "default", request: undefined, expectedOrder: ["env", "runtime"], expectedSecret: "late" },
+  ])("preserves static runtime and environment evaluation order for $name options", ({ request, expectedOrder, expectedSecret }) => {
+    const order: string[] = []
+    const definition = defineAuth({ appName: "ViteHub" })
+    Object.defineProperty(definition.options, "runtime", {
+      enumerable: true,
+      get() {
+        order.push("runtime")
+        return { secret: order.includes("env") ? "late" : "early" }
+      },
+    })
+    const env = () => {
+      order.push("env")
+      return {}
+    }
+
+    const resolved = resolveAuthOptions(definition, { request, env })
+    expect(resolved.requestRuntimeOptions.secret).toBe(expectedSecret)
+    expect(order).toEqual(expectedOrder)
+  })
 })
