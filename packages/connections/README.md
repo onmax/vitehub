@@ -46,7 +46,7 @@ const { labels = [] } = await gmail.users.labels.list({ userId: "me" });
 
 The client exposes only the methods selected in `api`. GET, HEAD, and OPTIONS methods are reads and other methods are writes. Denied calls throw `ConnectionError` with code `CONNECTION_DENIED`. Dry-run clients keep read responses non-optional; only skipped writes add `undefined` to the result. Custom typed catalogs can include a `method` field in each method signature to preserve this distinction. Writes that need approval throw `CONNECTION_APPROVAL_REQUIRED` and create an approval.
 
-`useConnection().fetch()` calls provider catalog origins with the Connection token. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body` for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
+Typed catalog methods and `useConnection().fetch()` can send the Connection token only to provider catalog origins or declared API key origins. A catalog path or reserved path parameter that resolves to another origin fails with `CONNECTION_INVALID` before a provider call or approval is created. `ConnectionFetchInit` accepts `method`, `headers`, `redirect`, `signal`, and a string `body` for approval replay. Encode form parameters with `URLSearchParams.toString()` and set the form content type.
 
 ## Use an API key
 

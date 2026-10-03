@@ -94,6 +94,12 @@ Source, Source Reader, Source Item, revision, cache, and error types are exporte
 
 Use `sourceIgnores` for reusable ignore patterns. Workspace GitHub Sources apply `sourceIgnores.defaults` automatically. Pass `ignore: false` to opt out, or pass more patterns to extend the defaults.
 
+`glob()` caches its key listing per Source Reader. Opening a new reader gets a
+fresh listing without replacing an existing reader's keys. File content and
+metadata still come from the current file system. With `keyCache: false`, each
+listing refreshes the keys; item and metadata reads reuse the latest listing and
+refresh it when the requested key is missing.
+
 ### Cache options
 
 `github()`, `mcpResources()`, and custom Sources can expose a cache policy. `false` disables it. GitHub applies the policy to its own ref, archive, and metadata caches. Workspace uses the same policy to decide whether materialized Source content is fresh.

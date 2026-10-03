@@ -164,7 +164,7 @@ export function findInputCommandInvocation(
     const match = /^[a-z][a-z0-9_-]*/.exec(text.slice(nameStart))
     if (!match) continue
     const name = match[0]
-    if (!commands[name]) continue
+    if (!Object.hasOwn(commands, name) || !commands[name]) continue
     const afterName = nameStart + name.length
     if (!isInputCommandBoundary(text[afterName])) continue
 

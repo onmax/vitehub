@@ -22,7 +22,8 @@ import {
 } from "../internal/invocation-activity.ts";
 
 export { invocationActivities } from "../internal/invocation-activity.ts";
-import { hasRuntimeType, runtimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { buildInvocationConversation, type InvocationConversation } from "../internal/invocation-conversation.ts";
+import { hasRuntimeType, runtimeType } from "@vite-hub/runtime/internal/runtime-type";
 import { AgentPatchDiff } from "./agent-code-view.ts";
 import { AgentMarkdown } from "./agent-markdown.ts";
 import { AgentToolList } from "./agent-tool-list.ts";
@@ -1409,38 +1410,6 @@ function renderWorkSummary(
   ]);
 }
 
-function promptActivityIndex(activities: readonly InvocationActivity[]): number {
-  for (let index = 0; index < activities.length; index += 1) {
-    const activity = activities[index]!;
-    if (activity.kind === "message"
-      && activity.role === "user"
-      && activity.name !== "agent.input.message"
-      && activity.attributes["input.mode"] !== "steer") return index;
-  }
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index]!;
-    if (activity.kind === "message" && activity.role === "user" && activity.attributes["input.mode"] !== "steer") return index;
-  }
-  return -1;
-}
-
-function isVisibleMessage(activity: InvocationActivity): boolean {
-  return activity.kind === "message" && Boolean(activity.body?.trim());
-}
-
-function coalesceAgentConfiguration(activities: readonly InvocationActivity[]): InvocationActivity[] {
-  let latestConfiguration = -1;
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    if (activities[index]!.name === "vitehub.agent.configured") {
-      latestConfiguration = index;
-      break;
-    }
-  }
-  return latestConfiguration < 0
-    ? [...activities]
-    : activities.filter((activity, index) => activity.name !== "vitehub.agent.configured" || index === latestConfiguration);
-}
-
 function renderPreviousMessages(
   messages: readonly InvocationActivity[],
   invocation: AgentInvocationView,
@@ -1462,9 +1431,8 @@ function renderPreviousMessages(
   ]);
 }
 
-function invocationPromptMetadata(invocation: AgentInvocationView, activities: readonly InvocationActivity[]) {
-  const prompt = activities[promptActivityIndex(activities)];
-  if (!prompt) return {};
+function invocationPromptMetadata(invocation: AgentInvocationView, promptId: string | undefined) {
+  if (promptId === undefined) return {};
   const triggeredBy = stringAttribute(invocation.annotations ?? {}, "triggeredBy");
   const observationAttributes = invocation.observations
     .map(observation => observation.attributes ?? {})
@@ -1473,63 +1441,11 @@ function invocationPromptMetadata(invocation: AgentInvocationView, activities: r
     ? triggeredBy.trim()
     : stringAttribute(observationAttributes ?? {}, "agent.invoker.label")
       ?? stringAttribute(observationAttributes ?? {}, "agent.invoker.id");
-  return { author, promptId: prompt.id, sentAt: stringAttribute(invocation.annotations ?? {}, "channel.sentAt") };
-}
-
-const answerDeliveryKinds = new Set(["reply", "update"]);
-
-function deliveryContent(activity: InvocationActivity): string | undefined {
-  const content = activity.attributes["channel.effect.content"];
-  return hasRuntimeType(content, "string") && content.trim() ? content : undefined;
-}
-
-// A delivered reply is the answer the user saw, so show it as an assistant message.
-function isDeliveredAnswer(activity: InvocationActivity): boolean {
-  return activity.kind === "delivery"
-    && activity.status === "completed"
-    && activity.attributes["channel.effect.supported"] !== false
-    && !stringAttribute(activity.attributes, "channel.effect.skipped")
-    && answerDeliveryKinds.has(stringAttribute(activity.attributes, "channel.effect.kind")?.toLocaleLowerCase() ?? "")
-    && deliveryContent(activity) !== undefined;
-}
-
-// Use the same current-turn answer selection as the conversation renderer.
-function deliveredAnswerCount(activities: readonly InvocationActivity[]): number {
-  return conversationAnswers(activities).answers.size;
-}
-
-function conversationAnswers(activities: readonly InvocationActivity[]) {
-  const orderedActivities = activities.filter(activity => activity.kind !== "message" || isVisibleMessage(activity));
-  const firstUser = promptActivityIndex(orderedActivities);
-  const lastUser = orderedActivities.findLastIndex(activity => activity.kind === "message" && activity.role === "user");
-  const lastAssistant = orderedActivities.findLastIndex((activity, index) => index > lastUser
-    && activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] !== "commentary");
-  const tail = orderedActivities.slice(firstUser + 1);
-  const finalBody = lastAssistant >= 0 ? orderedActivities[lastAssistant]!.body?.trim() : undefined;
-  const answers = new Set(uniqueDeliveredAnswers(tail, new Set(finalBody ? [finalBody] : [])));
-  return { orderedActivities, firstUser, lastAssistant, tail, answers };
-}
-
-function uniqueDeliveredAnswers(activities: readonly InvocationActivity[], bodies: Set<string>): InvocationActivity[] {
-  return activities.filter(activity => {
-    if (!isDeliveredAnswer(activity)) return false;
-    const body = deliveryContent(activity)!.trim();
-    if (bodies.has(body)) return false;
-    bodies.add(body);
-    return true;
-  });
-}
-
-function deliveryReceipt(activity: InvocationActivity): InvocationActivity {
-  return { ...activity, attributes: Object.fromEntries(Object.entries(activity.attributes).filter(([key]) => key !== "channel.effect.content")) };
-}
-
-function deliveryAnswer(activity: InvocationActivity): InvocationActivity {
-  return { ...activity, body: deliveryContent(activity), id: `${activity.id}:answer`, kind: "message", role: "assistant" };
+  return { author, promptId, sentAt: stringAttribute(invocation.annotations ?? {}, "channel.sentAt") };
 }
 
 function renderInvocationActivities(
-  activities: readonly InvocationActivity[],
+  conversation: InvocationConversation,
   invocation: AgentInvocationView,
   expanded: ReadonlySet<string>,
   workOpen: boolean,
@@ -1538,39 +1454,15 @@ function renderInvocationActivities(
   inspect: InspectHandler,
   messageRendering: MessageRendering,
 ) {
-  const { orderedActivities, firstUser, lastAssistant, tail, answers } = conversationAnswers(activities);
-  if (firstUser < 0 && !orderedActivities.some(isDeliveredAnswer)) return renderActivitySequence(orderedActivities, invocation, expanded, toggleExpanded, inspect, messageRendering);
-
-  const history = orderedActivities.slice(0, Math.max(firstUser, 0)).filter(isVisibleMessage);
-  const workBeforePrompt = orderedActivities.slice(0, Math.max(firstUser, 0)).filter(activity => activity.kind !== "message");
-  const prompt = orderedActivities[firstUser];
-  const hasLaterCommentary = lastAssistant >= 0 && orderedActivities.slice(lastAssistant + 1).some(activity =>
-    activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] === "commentary");
-  if (hasLaterCommentary) {
-    const beforeAnswer = orderedActivities.slice(firstUser + 1, lastAssistant);
-    const followup = orderedActivities.slice(lastAssistant);
-    const work = coalesceAgentConfiguration([...workBeforePrompt, ...beforeAnswer, ...followup.filter(activity => activity.kind === "delivery")])
-      .map(activity => isDeliveredAnswer(activity) ? deliveryReceipt(activity) : activity);
-    const answerAndFollowup = followup.flatMap(activity =>
-      answers.has(activity) ? [deliveryAnswer(activity)] : activity.kind === "delivery" ? [] : [activity]);
-    return [
-      renderPreviousMessages(history, invocation, expanded, toggleExpanded, inspect, messageRendering),
-      prompt ? renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering) : null,
-      renderWorkSummary(work, invocation, expanded, workOpen, setWorkOpen, toggleExpanded, inspect, messageRendering),
-      ...beforeAnswer.filter(activity => answers.has(activity))
-        .map(activity => renderInvocationActivity(deliveryAnswer(activity), expanded, toggleExpanded, inspect, messageRendering)),
-      ...renderActivitySequence(answerAndFollowup, invocation, expanded, toggleExpanded, inspect, messageRendering),
-    ].filter(item => item !== null);
+  if (conversation.kind === "activities") {
+    return renderActivitySequence(conversation.activities, invocation, expanded, toggleExpanded, inspect, messageRendering);
   }
-  const work = coalesceAgentConfiguration([...workBeforePrompt, ...tail.filter((_, offset) => firstUser + 1 + offset !== lastAssistant)]).map(activity => isDeliveredAnswer(activity) ? deliveryReceipt(activity) : activity);
-
   return [
-    renderPreviousMessages(history, invocation, expanded, toggleExpanded, inspect, messageRendering),
-    prompt ? renderInvocationActivity(prompt, expanded, toggleExpanded, inspect, messageRendering) : null,
-    renderWorkSummary(work, invocation, expanded, workOpen, setWorkOpen, toggleExpanded, inspect, messageRendering),
-    ...[...[...answers].map(deliveryAnswer), ...(lastAssistant >= 0 ? [orderedActivities[lastAssistant]!] : [])]
-      .sort((left, right) => left.sequence - right.sequence)
-      .map(activity => renderInvocationActivity(activity, expanded, toggleExpanded, inspect, messageRendering)),
+    renderPreviousMessages(conversation.history, invocation, expanded, toggleExpanded, inspect, messageRendering),
+    conversation.prompt ? renderInvocationActivity(conversation.prompt, expanded, toggleExpanded, inspect, messageRendering) : null,
+    renderWorkSummary(conversation.work, invocation, expanded, workOpen, setWorkOpen, toggleExpanded, inspect, messageRendering),
+    ...conversation.answers.map(activity => renderInvocationActivity(activity, expanded, toggleExpanded, inspect, messageRendering)),
+    ...renderActivitySequence(conversation.followup, invocation, expanded, toggleExpanded, inspect, messageRendering),
   ].filter(item => item !== null);
 }
 
@@ -1592,6 +1484,7 @@ export const AgentInvocation = defineComponent({
       delete attributes["vitehub.inspect.target"];
       return { ...activity, attributes, skill: undefined, skills: undefined };
     }));
+    const conversation = computed(() => buildInvocationConversation(activities.value));
     const expandedMessages = ref<ReadonlySet<string>>(new Set());
     const mounted = useMounted();
     const now = useNow({ interval: 60_000 });
@@ -1681,7 +1574,7 @@ export const AgentInvocation = defineComponent({
     });
 
     return () => {
-      const promptMetadata = invocationPromptMetadata(props.invocation, activities.value);
+      const promptMetadata = invocationPromptMetadata(props.invocation, conversation.value.promptId);
       return h("article", {
         class: ["vh-invocation-session", { "vh-invocation-session--headerless": !props.header }],
         "data-status": props.invocation.status,
@@ -1707,7 +1600,7 @@ export const AgentInvocation = defineComponent({
               "aria-relevant": "additions text",
               role: "log",
             }, [h("ol", { class: "vh-invocation-activities" }, renderInvocationActivities(
-              activities.value,
+              conversation.value,
               props.invocation,
               expandedMessages.value,
               workOpen.value,
@@ -1750,12 +1643,13 @@ export const AgentInvocationInspector = defineComponent({
   },
   setup(props, { emit, slots }) {
     const activities = computed(() => invocationActivities(props.invocation));
+    const conversation = computed(() => buildInvocationConversation(activities.value));
     const copied = ref<"invocation" | "trace">();
     const copyError = ref<"invocation" | "trace">();
     let copyTimer: ReturnType<typeof setTimeout> | undefined;
     const metrics = computed(() => ({
       changes: activities.value.filter((activity) => activity.kind === "change").length,
-      messages: activities.value.filter((activity) => activity.kind === "message").length + deliveredAnswerCount(activities.value),
+      messages: activities.value.filter((activity) => activity.kind === "message").length + conversation.value.deliveredAnswerCount,
       steps: activities.value.filter((activity) =>
         activity.kind !== "message" && activity.name !== "vitehub.observation.truncated"
       ).length,
