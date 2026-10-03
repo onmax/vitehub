@@ -122,8 +122,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="flex w-full min-w-0 items-center gap-0.5">
-    <nav class="flex min-w-0 flex-1 items-center gap-0.5" aria-label="Console primitives">
+  <div class="flex w-full min-w-0 items-start gap-0.5">
+    <nav class="grid min-w-0 flex-1 grid-cols-[repeat(auto-fill,minmax(1.75rem,1fr))] gap-0.5" aria-label="Console primitives">
       <UTooltip v-for="item in items" :key="item.id" :text="item.label">
         <UButton
           :aria-label="`Open ${item.label}`"

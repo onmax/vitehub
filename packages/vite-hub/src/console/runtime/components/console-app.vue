@@ -188,7 +188,8 @@ const invocationItems = computed<AgentInvocationListItem[]>(() =>
         .filter((value): value is string => Boolean(value))
         .join(" · ") || undefined,
     id: invocation.id,
-    project: agentInvocationProject(invocation),
+    // The list is already filtered by Agent, so the project line only names a different origin.
+    project: agentInvocationProject(invocation) === invocation.agentName ? undefined : agentInvocationProject(invocation),
     provider:
       stringValue(invocation.annotations?.["agent.model.provider"]) ||
       (invocation.id === selectedInvocationId.value
@@ -917,33 +918,36 @@ onBeforeUnmount(() => {
         root: 'md:flex',
         header: 'p-0',
         body: 'gap-0 overflow-hidden p-0',
-        footer: 'px-2 py-1',
-        content: 'md:hidden',
+        footer: 'px-2 py-1.5',
+        content: 'md:hidden w-[calc(100vw-0.75rem)] max-w-none',
         overlay: 'md:hidden',
       }"
       resizable
     >
       <template #header>
-        <div class="flex min-w-0 items-center gap-2 px-[0.875rem]">
-          <ConsoleMark class="size-4" />
-          <span class="shrink-0 text-xs font-medium text-muted">ViteHub Agent</span>
+        <div class="flex min-w-0 flex-1 items-center gap-1 px-2">
           <UDropdownMenu
             v-if="hasMultipleAgents"
             :items="agentMenuItems"
             :content="{ align: 'start', collisionPadding: 12 }"
-            :ui="{ content: 'w-(--reka-dropdown-menu-trigger-width)' }"
+            :ui="{ content: 'w-(--reka-dropdown-menu-trigger-width) min-w-48' }"
           >
             <UButton
-              class="min-w-0 justify-start rounded-md border border-default px-1.5 hover:bg-elevated"
+              class="vitehub-console__agent-switch h-8 min-w-0 flex-1 justify-start gap-2 rounded-md px-2 text-sm font-medium"
               color="neutral"
-              :label="selectedAgentLabel"
-              trailing-icon="i-ph-caret-down-light"
-              size="xs"
+              trailing-icon="i-lucide-chevron-down"
+              size="sm"
               variant="ghost"
               :aria-label="`Switch Agent. ${selectedAgentLabel} selected.`"
-            />
+            >
+              <ConsoleMark class="size-4 shrink-0" />
+              <span class="min-w-0 truncate">{{ selectedAgentLabel }}</span>
+            </UButton>
           </UDropdownMenu>
-          <span v-else class="min-w-0 truncate text-xs text-default">{{ selectedAgentLabel }}</span>
+          <div v-else class="flex h-8 min-w-0 flex-1 items-center gap-2 px-2 text-sm font-medium">
+            <ConsoleMark class="size-4 shrink-0" />
+            <span class="min-w-0 truncate">{{ selectedAgentLabel }}</span>
+          </div>
         </div>
       </template>
 
@@ -960,11 +964,11 @@ onBeforeUnmount(() => {
             ]"
           />
         </div>
-        <div class="flex shrink-0 items-center gap-1 px-[0.875rem] pb-2 pt-1">
+        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
           <UDashboardSearchButton
             block
             class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
-            label="Search console"
+            label="Search"
             :ui="{ trailing: 'vitehub-console__search-shortcut' }"
           />
           <UTooltip v-if="newChatTargetName" text="New chat">
@@ -1115,7 +1119,7 @@ onBeforeUnmount(() => {
             (!list.isLoading.value || invocationItems.length) &&
             (!errorMessage(list.error.value) || invocationItems.length)
           "
-          class="min-h-0 flex-1 px-1 pb-3"
+          class="min-h-0 flex-1 px-1.5 pb-3"
           :continuation-key="list.cursor.value"
           :has-more="Boolean(list.cursor.value)"
           :items="invocationItems"
@@ -1495,6 +1499,20 @@ onBeforeUnmount(() => {
 
 .vitehub-console__sessions[data-slot="root"] {
   background: var(--ui-bg-muted);
+  border-inline-end: 1px solid var(--ui-border);
+}
+
+.dark .vitehub-console__sessions[data-slot="root"] {
+  background: #000;
+  border-inline-end-color: rgb(255 255 255 / 8%);
+}
+
+.vitehub-console__sessions [data-slot="header"] {
+  min-height: 2.75rem;
+}
+
+.vitehub-console__agent-switch {
+  color: var(--ui-text-highlighted);
 }
 
 .vitehub-console__search {
@@ -1507,11 +1525,14 @@ onBeforeUnmount(() => {
 
 .vitehub-console__sessions .vh-invocation-list__item[aria-current="true"] {
   background: var(--ui-bg-accented);
-  box-shadow: none;
+}
+
+.dark .vitehub-console__sessions .vh-invocation-list__item:hover {
+  background: rgb(255 255 255 / 8%);
 }
 
 .dark .vitehub-console__sessions .vh-invocation-list__item[aria-current="true"] {
-  background: var(--ui-bg-accented);
+  background: rgb(255 255 255 / 11%);
 }
 
 .vitehub-console__session-panel > [data-slot="body"] {
@@ -1521,8 +1542,8 @@ onBeforeUnmount(() => {
 
 .vitehub-console__session-navbar {
   background: var(--ui-bg) !important;
-  height: 2.5rem !important;
-  min-height: 2.5rem !important;
+  height: 2.75rem !important;
+  min-height: 2.75rem !important;
   overflow: visible !important;
   padding: 0 1.25rem !important;
   position: relative;
