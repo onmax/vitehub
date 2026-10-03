@@ -677,11 +677,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // instruction bindings while replacing the checkout-owned fields.
               const configuredWorkspace = workerSettings.workspace;
               let baseWorkspace: Record<string, unknown> = {};
-              if (typeof configuredWorkspace === "string") {
+              if (hasRuntimeType(configuredWorkspace, "string")) {
                 baseWorkspace = { ...await resolveRegisteredWorkspaceDefinition(configuredWorkspace) };
               }
               else if (isRuntimeRecord(configuredWorkspace)) {
-                const workspaceName = typeof configuredWorkspace.name === "string" ? configuredWorkspace.name : undefined;
+                const workspaceName = hasRuntimeType(configuredWorkspace.name, "string") ? configuredWorkspace.name : undefined;
                 const registeredWorkspace = workspaceName
                   ? await resolveRegisteredWorkspaceDefinition(workspaceName)
                   : undefined;
