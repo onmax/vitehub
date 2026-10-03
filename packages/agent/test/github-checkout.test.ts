@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, cp, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -212,6 +212,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     await mkdir(join(path, '.git/hooks'), { recursive: true })
     await writeFile(join(path, '.git/hooks/post-checkout'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
     await git(path, 'config', 'core.fsmonitor', 'false')
+    await writeFile(join(path, '.git/info/exclude'), 'untracked\n')
     await mkdir(join(path, '.vitehub'), { recursive: true })
     await writeFile(`${path}.meta.json`, '{}')
   })
@@ -236,6 +237,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     expect(await readFile(join(path, 'file'), 'utf8')).toBe('two')
     expect(await readFile(join(path, 'node_modules/marker'), 'utf8')).toBe('warm')
     await expect(access(join(path, 'untracked'))).rejects.toThrow()
+    expect(await readFile(join(path, '.git/info/exclude'), 'utf8')).toBe('')
     await expect(access(join(path, '.git/hooks/post-checkout'))).rejects.toThrow()
     await expect(access(join(path, '.vitehub'))).rejects.toThrow()
     await expect(access(`${path}.meta.json`)).rejects.toThrow()
@@ -251,6 +253,13 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     expect(await git(path, 'config', 'remote.origin.pushurl')).toMatch(/^disabled:/)
     await expect(git(path, 'config', 'remote.origin.push')).rejects.toThrow()
   })
+
+  // Pooled cleanup must reject tampered Git metadata instead of following a symlink.
+  await rename(join(secondPath, '.git'), join(secondPath, '.git-real'))
+  await symlink(join(secondPath, '.git-real'), join(secondPath, '.git'))
+  await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: oneSha }, async () => {
+    throw new Error('must not run')
+  })).rejects.toThrow('unsafe Git metadata')
 
   // A checkout without a verified head leaves the pool.
   await expect(restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 2, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'one' }, async () => {

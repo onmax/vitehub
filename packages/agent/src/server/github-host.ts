@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -361,15 +361,22 @@ type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal:
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
 async function resetPooledCheckout(checkout: string, repository: string, commandOptions: GitHubCommandOptions) {
+  const gitMetadata = join(checkout, ".git")
+  const metadata = await lstat(gitMetadata).catch(() => undefined)
+  if (!metadata?.isDirectory()) {
+    throw new Error("Pooled checkout has unsafe Git metadata")
+  }
   for (const path of [
     ".git/hooks", ".git/index.lock", ".git/config.lock", ".git/config.worktree.lock", ".git/HEAD.lock", ".git/shallow.lock", ".git/packed-refs.lock",
     ".git/rebase-merge", ".git/rebase-apply", ".git/sequencer", ".git/CHERRY_PICK_HEAD", ".git/MERGE_HEAD", ".git/REVERT_HEAD",
-    ".git/config", ".git/config.worktree", ".vitehub",
+    ".git/config", ".git/config.worktree", ".git/info/exclude", ".vitehub",
   ]) {
     await rm(join(checkout, path), { force: true, recursive: true })
   }
   await rm(`${checkout}.meta.json`, { force: true })
   await exec("git", ["-C", checkout, "init", "-q", "--template="], commandOptions)
+  await mkdir(join(checkout, ".git/info"), { recursive: true })
+  await writeFile(join(checkout, ".git/info/exclude"), "")
   for (const [key, value] of [
     ["core.repositoryformatversion", "1"],
     ["remote.origin.url", `https://github.com/${repository}.git`],
