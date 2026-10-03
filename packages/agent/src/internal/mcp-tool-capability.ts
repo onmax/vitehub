@@ -12,12 +12,10 @@ import type {
   AgentCapabilityRuntimeContext,
   AgentRuntimeConfig,
   AgentToolDefinition,
-  AgentToolExecutionContext,
   AgentToolSet,
   MaybePromise,
 } from "../types.ts"
 import type { McpClient, McpClientConfig, McpToolFingerprints } from "../mcp/types.ts"
-import type { AgentConnection, AgentConnectionEffect } from "../capabilities/connection.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -27,12 +25,9 @@ interface McpToolDrift {
   removed: string[]
 }
 
-/** Connection that authorizes one MCP server. Each discovered tool gets a policy for its Operation. */
+/** Connection that governs the MCP transport. The runtime owns access and approval. */
 export interface McpToolServerConnection {
-  /** Runs one tool with its own approval context, including unapproved executions. */
-  execute: <T>(operation: string, input: unknown, approved: boolean, run: () => Promise<T>) => Promise<T>
-  connection: AgentConnection
-  operation: (toolName: string) => { effect: AgentConnectionEffect, id: string }
+  name: string
 }
 
 export interface ResolvedMcpToolServer {
@@ -339,26 +334,17 @@ export function defineMcpToolCapability<
           if (tools[name]) {
             throw agentDiagnostics.AGENT_R0563({ message: `[vitehub] Duplicate MCP tool name "${name}" after normalization.` })
           }
-          const operation = binding?.operation(toolName)
           tools[name] = {
             ...definition,
             metadata: {
               ...definition.metadata,
-              ...(binding && operation ? { connection: { name: binding.connection.name, operation: operation.id } } : {}),
+              ...(binding ? { connection: { name: binding.name, operation: "fetch" } } : {}),
               mcp: metadata,
               mcpServer: server.name,
               originalName: toolName,
             },
             name,
-            ...(binding && operation
-              ? {
-                  async execute(input: unknown, execution: AgentToolExecutionContext | undefined) {
-                    const approved = binding.connection.approval(input).has(operation.id)
-                    return binding.execute(operation.id, input, approved, async () => definition.execute?.(input, execution))
-                  },
-                  policy: binding.connection.policy(name, [operation]),
-                }
-              : {}),
+
           }
         }
       }

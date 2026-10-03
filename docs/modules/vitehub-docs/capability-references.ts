@@ -37,17 +37,25 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
   const kvPrimitive = { del() {}, get() {}, keys() {}, set() {} };
   const emailPrimitive = { send() {} };
   const sandboxPrimitive = { exec() {} };
-  const gmailOperation = (id: string, effect: "read" | "write") => ({ effect, id, request() {} });
   const connectionsPrimitive = {
-    operations: {
-      gmail: {
-        attachmentsGet: gmailOperation("gmail.messages.attachments.get", "read"),
-        draftsCreate: gmailOperation("gmail.drafts.create", "write"),
-        messagesGet: gmailOperation("gmail.messages.get", "read"),
-        messagesList: gmailOperation("gmail.messages.list", "read"),
-      },
+    runtime() {
+      return {
+        client() {
+          return {
+            call() {
+              throw new Error("Documentation references must not execute Connection calls.");
+            },
+            fetch() {
+              throw new Error("Documentation references must not execute Connection fetches.");
+            },
+          };
+        },
+      };
     },
-    runtime() {},
+  };
+  const gmailContext = {
+    capabilities: { connections: connectionsPrimitive },
+    context: new Map<string, unknown>(),
   };
   const emailOptions = {
     from: "support@example.com",
@@ -72,13 +80,11 @@ export async function createCapabilityReferences(): Promise<CapabilityReferences
       ],
       [
         "gmail.read",
-        await resolveReference(gmail(), { capabilities: { connections: connectionsPrimitive } }),
+        await resolveReference(gmail(), gmailContext),
       ],
       [
         "gmail.draft",
-        await resolveReference(gmail({ operations: ["search", "read", "draft"] }), {
-          capabilities: { connections: connectionsPrimitive },
-        }),
+        await resolveReference(gmail({ operations: ["search", "read", "draft"] }), gmailContext),
       ],
       ["kv.read", await resolveReference(kv(), { capabilities: { kv: kvPrimitive } })],
       [
