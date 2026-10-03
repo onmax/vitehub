@@ -368,10 +368,17 @@ describe("ViteHub Nuxt integration", () => {
     await mkdir(nuxt.options.serverDir, { recursive: true })
     const config = { preset: "cloudflare_module" }
 
-    await viteHubNuxtModule({ database: {}, preset: "cloudflare" }, nuxt)
+    await viteHubNuxtModule({
+      database: { databaseId: "implicit-id", databaseName: "implicit" },
+      preset: "cloudflare",
+    }, nuxt)
     await expect(runNitroConfigHook(config)).resolves.toBeUndefined()
 
-    expect(config).toHaveProperty("cloudflare.wrangler.d1_databases", [expect.objectContaining({ binding: "DB" })])
+    expect(config).toHaveProperty("cloudflare.wrangler.d1_databases", [{
+      binding: "DB",
+      database_id: "implicit-id",
+      database_name: "implicit",
+    }])
     expect(nuxt.options).toHaveProperty("content.database", { bindingName: "DB", type: "d1" })
   })
 
