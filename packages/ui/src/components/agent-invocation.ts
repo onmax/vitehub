@@ -19,7 +19,9 @@ import {
   stringAttribute,
   terminalText,
   type InvocationActivity,
+  invocationActivityDetail,
 } from "../internal/invocation-activity.ts";
+import { AgentInvocationTimeline, invocationTimeline } from "./agent-invocation-timeline.ts";
 
 export { invocationActivities } from "../internal/invocation-activity.ts";
 import { buildInvocationConversation, type InvocationConversation } from "../internal/invocation-conversation.ts";
@@ -68,16 +70,6 @@ function formatElapsed(startedAt: string | undefined, now: Date | undefined): st
   const hours = Math.floor(seconds / 3_600);
   const pad = (value: number) => String(value).padStart(2, "0");
   return hours ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}` : `${minutes}:${pad(seconds % 60)}`;
-}
-
-function formatTimelineDuration(value: number): string | undefined {
-  if (!Number.isFinite(value) || value < 0) return;
-  if (value < 1_000) return `${Math.round(value)}ms`;
-  if (value < 60_000) {
-    return `${new Intl.NumberFormat("en", { maximumFractionDigits: 1 }).format(value / 1_000)}s`;
-  }
-  const seconds = Math.round(value / 1_000);
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function driverLabel(configuration: AgentInvocationConfiguration): string | undefined {
@@ -779,7 +771,7 @@ function renderCommandError(value: unknown) {
 }
 
 function activityDetail(activity: InvocationActivity): string | undefined {
-  return activity.preview ?? stringAttribute(activity.attributes, "vitehub.activity.detail");
+  return invocationActivityDetail(activity);
 }
 
 function renderPreparationAction(activity: InvocationActivity, inspect: InspectHandler) {
@@ -1050,82 +1042,9 @@ function inspectorSection(title: string, body: ReturnType<typeof h>) {
   return h("section", [h("h4", title), body]);
 }
 
-function timelineOwner(activity: InvocationActivity): "agent" | "vitehub" {
-  const tool = String(activity.attributes["tool.name"] ?? "").toLocaleLowerCase();
-  if (
-    activity.kind === "preparation"
-    || activity.kind === "action"
-    || activity.kind === "system"
-    || activity.kind === "delivery"
-    || activity.name.startsWith("vitehub.")
-    || tool === "materialize_sources"
-    || tool.startsWith("vitehub_")
-  ) return "vitehub";
-  return "agent";
-}
-
-function traceTimeline(
-  activities: readonly InvocationActivity[],
-  invocation: AgentInvocationView,
-  selectActivity: (id: string) => void,
-) {
-  const items = activities.filter(activity => activity.kind !== "message" && Number.isFinite(Date.parse(activity.startedAt ?? "")));
-  if (!items.length) return null;
-  const invocationStart = Date.parse(invocation.startedAt ?? invocation.createdAt ?? "");
-  const observedStarts = items
-    .map(activity => Date.parse(activity.startedAt ?? ""))
-    .filter(Number.isFinite);
-  const zero = Number.isFinite(invocationStart) ? invocationStart : Math.min(...observedStarts);
-  const invocationEnd = Date.parse(
-    invocation.completedAt ?? invocation.failedAt ?? invocation.cancelledAt ?? invocation.updatedAt ?? "",
-  );
-  const observedEnds = items
-    .map(activity => Date.parse(activity.endedAt ?? activity.startedAt ?? ""))
-    .filter(Number.isFinite);
-  const end = Number.isFinite(invocationEnd) ? invocationEnd : Math.max(...observedEnds, zero + 1);
-  const span = Math.max(1, end - zero);
-  return inspectorSection("Trace timeline", h("div", { class: "vh-invocation-timeline" }, [
-    h("div", { class: "vh-invocation-timeline__legend", "aria-hidden": "true" }, [
-      h("span", { "data-owner": "agent" }, "Agent"),
-      h("span", { "data-owner": "vitehub" }, "ViteHub"),
-    ]),
-    h("ol", items.map((activity) => {
-      const started = Date.parse(activity.startedAt ?? "");
-      const duration = Number.isFinite(activity.durationMs) ? (activity.durationMs ?? 0) : 0;
-      const offset = Number.isFinite(started) ? Math.max(0, started - zero) : 0;
-      const owner = timelineOwner(activity);
-      const timing = [
-        offset ? `+${formatTimelineDuration(offset)}` : "start",
-        duration ? formatTimelineDuration(duration) : undefined,
-      ].filter(Boolean).join(" · ");
-      const title = invocationActivityTitle(activity);
-      const detail = activityDetail(activity);
-      const width = Math.max(1.5, Math.min(100, (duration / span) * 100));
-      const left = Math.min(100 - width, Math.max(0, (offset / span) * 100));
-      return h("li", { key: `timeline:${activity.id}` }, [
-        h("button", {
-          class: "vh-invocation-timeline__row",
-          "data-activity-id": activity.id,
-          "data-owner": owner,
-          onClick: () => selectActivity(activity.id),
-          title: detail ? `${title} — ${detail}` : title,
-          type: "button",
-        }, [
-          h("div", { class: "vh-invocation-timeline__heading" }, [
-            h("strong", title),
-            h("time", timing),
-          ]),
-          detail ? h("code", { class: "vh-invocation-timeline__detail" }, detail) : null,
-          h("div", { class: "vh-invocation-timeline__track", "aria-hidden": "true" }, [
-            h("span", { style: {
-              left: `${left}%`,
-              width: `${width}%`,
-            } }),
-          ]),
-        ]),
-      ]);
-    })),
-  ]));
+function traceTimeline(invocation: AgentInvocationView, selectActivity: (id: string) => void) {
+  if (!invocationTimeline(invocation).length) return null;
+  return inspectorSection("Trace timeline", h(AgentInvocationTimeline, { invocation, onSelectActivity: selectActivity }));
 }
 
 function inspectorRow(label: string, value: string | number | undefined) {
@@ -1853,7 +1772,7 @@ export const AgentInvocationInspector = defineComponent({
               ]),
             ),
             props.showTimeline
-              ? traceTimeline(activities.value, props.invocation, id => emit("selectActivity", id))
+              ? traceTimeline(props.invocation, id => emit("selectActivity", id))
               : null,
             ...(configuration ? renderConfiguration(configuration, props.invocation, props.showCapabilities, selectTool) : []),
             slots.metadata?.({ invocation: props.invocation }),
