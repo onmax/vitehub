@@ -1330,6 +1330,10 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       || ((token === "(" || token.startsWith("`"))
         && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
         && !conversionCall(index)))
+      // A tagged template also calls its tag. The tag is outside the
+      // interpolation token stream, so treat it as opaque
+      // to avoid trusting captured imported Channels that it may mutate.
+      || opaqueCalls.has(templateIndex)
     for (const name of imported) {
       if (hiddenCode || references.some((token, index) => token === name && bindingReference(index))) mutatedBindings.add(name)
     }

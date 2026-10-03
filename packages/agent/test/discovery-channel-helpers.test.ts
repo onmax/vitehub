@@ -1560,6 +1560,13 @@ it("rejects writes through tagged-template results inside configure callbacks", 
   await expect(discover(source)).rejects.toThrow(/opaque Channel/)
 })
 
+it.each(["tag`Review ${input.id}`", "(tag)`Review ${input.id}`", "wrapper.tag`Review ${input.id}`"])("rejects tagged-template tags that capture imported Channels: %s", async expression => {
+  const source = `${imports} import portal from "../../portal.ts"; const getPortal = () => portal; const storage = { id: "storage", workspace: true }; const tag = () => getPortal().capabilities = [storage]; const wrapper = { tag }; export default defineAgent({ channels: { custom: portal }, driver: { instructions: ({ input }) => ${expression} } })`
+  await expect(discover(source, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow(/opaque Channel/)
+})
+
 it("rejects writes through captured call results inside configure callbacks", async () => {
   const source = `${imports} export default defineAgent({ options: {}, configure: () => { const options = { pullRequest: false }; const getOptions = () => options; getOptions().pullRequest = true; return defineAgent({ channels: { custom: github(options) } }) } })`
   await expect(discover(source)).rejects.toThrow(/opaque Channel/)
