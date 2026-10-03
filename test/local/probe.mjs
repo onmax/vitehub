@@ -13,7 +13,7 @@ export async function waitForProbe(url, timeoutMs = 60_000) {
       if (bodyCancellation) {
         await Promise.race([
           Promise.resolve(bodyCancellation),
-          sleep(remaining),
+          sleep(Math.max(0, timeoutMs - (Date.now() - startedAt)), undefined, { ref: false }),
         ])
       }
       if (response.ok) return
