@@ -357,7 +357,11 @@ export async function provisionToolchain(
     ? { pin: pins.packageManager, ...(await resolvePackageManagerVersion(pins.packageManager, signal)) }
     : undefined;
   const nodeKey = distribution.key(nodeVersion);
-  const packageKey = packageManager ? `${packageManager.name.replace(/^@/, "").replace("/", "-")}-${packageManager.version}` : undefined;
+  // Integrity pins are part of the cache identity. A cached archive created for
+  // one pin must never satisfy a different (or invalid) project pin.
+  const packageKey = packageManager
+    ? `${packageManager.name.replace(/^@/, "").replace("/", "-")}-${packageManager.version}${packageManager.pin.integrity ? `-${packageManager.pin.integrity.replace(/[^A-Za-z0-9_-]/g, "_")}` : ""}`
+    : undefined;
   const nodeRoot = joinPath(target.cacheRoot, nodeKey);
   const packageRoot = packageKey ? joinPath(target.cacheRoot, packageKey) : undefined;
 

@@ -116,9 +116,6 @@ export interface ProviderAgentAdapterOptions<
   toolchain?: BoxToolchain
 }
 
-/** Commands that driver.toolchain provides after the checkout is prepared. */
-const providerToolchainCommands = new Set(["node", "npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"])
-
 interface GeneratedProviderFile {
   root: string
   appendedContent?: string
@@ -1212,6 +1209,19 @@ const providerStatusCache = new WeakMap<object, Map<string, AgentProviderStatus>
 const providerRequirementScript = 'for command do command -v "$command" >/dev/null 2>&1 || printf "%s\\n" "$command"; done'
 const providerRequirementPrelude = 'count=$1; prefix=$2; shift 2; missing=""; while [ "$count" -gt 0 ]; do command -v "$1" >/dev/null 2>&1 || missing="$missing,$1"; shift; count=$((count - 1)); done; printf "%s%s\\n" "$prefix" "$missing" >&2; exec "$@"'
 
+function providerToolchainCommandsFor(options: ProviderAgentAdapterOptions): ReadonlySet<string> {
+  if (options.toolchain === undefined) return new Set()
+  const commands = new Set(["node", "npm", "npx"])
+  const packageManager = options.toolchain === "project" ? "project" : options.toolchain.packageManager
+  if (packageManager && packageManager !== "project" && packageManager !== false) {
+    const name = packageManager.split("@", 1)[0]
+    if (name === "pnpm") for (const command of ["pnpm", "pnpx"]) commands.add(command)
+    if (name === "yarn") for (const command of ["yarn", "yarnpkg"]) commands.add(command)
+    if (name === "npm") for (const command of ["npm", "npx"]) commands.add(command)
+  }
+  return commands
+}
+
 async function capturedProviderRequirements(capture: ProviderRequirementCapture): Promise<string[] | undefined> {
   try {
     const lines = (await readFile(capture.path, "utf8")).trim().split("\n")
@@ -1269,8 +1279,9 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
   const signal = context.abortSignal
   const checkRequirements = inspectionOptions.checkRequirements !== false
   // The toolchain exists only after an invocation prepares its checkout.
+  const providedToolchainCommands = providerToolchainCommandsFor(options)
   const requirements = (checkRequirements ? options.requirements || [] : [])
-    .filter(command => options.toolchain === undefined || !providerToolchainCommands.has(command))
+    .filter(command => !providedToolchainCommands.has(command))
   let home: CodexCredentialHome | undefined
   let root: string | undefined
   try {
