@@ -4,6 +4,7 @@ import type {
   BoxExecOptions,
   BoxFileEntry,
   BoxProcess,
+  BoxResolvedToolchain,
   BoxRuntimeOpenOptions,
   BoxSession,
 } from "../index.ts";
@@ -61,6 +62,8 @@ export interface RuntimeSession {
   }>;
   spawn?(options: RuntimeCommandOptions): Promise<RuntimeProcess>;
   stop(): Promise<void>;
+  /** Set by the shared toolchain step before requirement checks. */
+  toolchain?: BoxResolvedToolchain;
   writeBinaryFile(options: {
     abortSignal?: AbortSignal;
     content: Uint8Array;
@@ -202,6 +205,9 @@ export function createBoxSession(
       },
     },
     id: runtime.id,
+    get toolchain() {
+      return runtime.toolchain;
+    },
     ...(runtime.inspectionConcurrency === undefined
       ? {}
       : { inspectionConcurrency: runtime.inspectionConcurrency }),

@@ -1,3 +1,4 @@
+import { maxAgentInvocationListLimit as MAX_LIST_LIMIT, normalizeAgentInvocationListOptions } from "./invocations/list-options.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { searchableAgentInvocationText } from "./invocations/search.ts"
 import { createTraceEventLog, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError } from "@vite-hub/runtime"
@@ -17,8 +18,6 @@ const bindAgentInvocationsSymbol = Symbol("vitehub.bindAgentInvocations")
 const recoverInterruptedAgentInvocationsSymbol = Symbol("vitehub.recoverInterruptedAgentInvocations")
 const agentInvocationsBrand: unique symbol = Symbol("vitehub.agentInvocations")
 
-const DEFAULT_LIST_LIMIT = 50
-const MAX_LIST_LIMIT = 100
 const MAX_ANNOTATIONS = 32
 const MAX_ANNOTATION_KEY_LENGTH = 64
 const MAX_ANNOTATION_STRING_LENGTH = 512
@@ -530,39 +529,9 @@ function mergeConfigurationAnnotations(
   return normalizeAnnotations(merged)
 }
 
-function normalizeLimit(limit: number | undefined): number {
-  if (limit === undefined) return DEFAULT_LIST_LIMIT
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw agentDiagnostics.AGENT_R0618({ message: "[vitehub] Agent Invocation list limit must be a positive integer." })
-  }
-  return Math.min(limit, MAX_LIST_LIMIT)
-}
-
-function normalizeSearch(search: string | undefined): string | undefined {
-  if (search === undefined) return
-  if (!hasRuntimeType(search, "string")) {
-    throw agentDiagnostics.AGENT_R0619({ message: "[vitehub] Agent Invocation search must be a string." })
-  }
-  const value = search.trim()
-  if (!value) return
-  if (value.length > 256) {
-    throw agentDiagnostics.AGENT_R0620({ message: "[vitehub] Agent Invocation search must be at most 256 characters." })
-  }
-  return value
-}
-
 function matchesInvocationSearch(record: AgentInvocationRecord, search: string | undefined): boolean {
   if (!search) return true
   return searchableAgentInvocationText(record).includes(search.toLowerCase())
-}
-
-function normalizeBuiltInCursor(cursor: string | undefined): string | undefined {
-  if (cursor === undefined) return
-  const value = Number(cursor)
-  if (!Number.isSafeInteger(value) || value < 1 || String(value) !== cursor) {
-    throw agentDiagnostics.AGENT_R0621({ message: "[vitehub] Agent Invocation cursor is invalid." })
-  }
-  return cursor
 }
 
 function boundedString(value: string | undefined): string | undefined {
@@ -1556,10 +1525,9 @@ export function createMemoryAgentInvocationStore(): AgentInvocationStore {
     getClaimToken(id) {
       return claims.get(id)?.token
     },
-    list(options = {}) {
-      const limit = normalizeLimit(options.limit)
-      const cursor = normalizeBuiltInCursor(options.cursor)
-      const search = normalizeSearch(options.search)
+    list(input = {}) {
+      const options = normalizeAgentInvocationListOptions(input, { sequenceCursor: true })
+      const { limit, cursor, search } = options
       const agentName = options.agentName?.trim()
       const capabilityId = options.capabilityId?.trim()
       const triggeredBy = options.triggeredBy?.trim()
@@ -2609,16 +2577,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       return await store.getSummary(id)
     },
     async list(options = {}) {
-      const search = normalizeSearch(options.search)
-      const normalized = { ...options, limit: normalizeLimit(options.limit) }
-      const capabilityId = options.capabilityId?.trim()
-      if (capabilityId) normalized.capabilityId = capabilityId
-      else delete normalized.capabilityId
-      const triggeredBy = options.triggeredBy?.trim()
-      if (triggeredBy) normalized.triggeredBy = triggeredBy
-      else delete normalized.triggeredBy
-      if (search) normalized.search = search
-      else delete normalized.search
+      const normalized = normalizeAgentInvocationListOptions(options)
       return await store.list(normalized)
     },
     async listAgentNames() {

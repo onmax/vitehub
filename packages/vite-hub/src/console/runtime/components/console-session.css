@@ -1557,11 +1557,17 @@
 /* Shared compact Console session chrome. */
 .vitehub-console__search {
   justify-content: flex-start !important;
-  border: 1px solid var(--ui-border) !important;
+  border: 0 !important;
   box-shadow: none !important;
+  color: var(--ui-text-muted) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 500 !important;
+  height: 2rem !important;
+  min-height: 2rem !important;
   padding-inline: 0.5rem !important;
-  font-size: 0.75rem !important;
-  min-height: 1.5rem !important;
+}
+.vitehub-console__search:hover {
+  color: var(--ui-text) !important;
 }
 .vitehub-console__search [data-slot="trailing"] {
   display: none;
@@ -1572,19 +1578,6 @@
 .vitehub-console__session-navbar button [data-slot$="Icon"] {
   width: 0.875rem;
   height: 0.875rem;
-}
-.vh-invocation-list__item {
-  gap: 0.2rem;
-  min-height: 3rem;
-  padding: 0.45rem 0.625rem;
-}
-.vh-invocation-list__meta {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-.vh-invocation-list__state {
-  margin-left: auto;
 }
 .vh-invocation-list__channel {
   width: 0.875rem;

@@ -28,7 +28,7 @@ it("opens the inspector on its launcher and keeps terminal session chrome quiet"
   expect(consolePage).toContain('const inspectorActiveSurface = ref("");');
   expect(consolePage).toContain('ref<Array<"details" | "trace" | "workspace" | "capabilities">>([])');
   expect(consolePage).toContain("selectedDisplay.value?.status === \"pending\"");
-  expect(consolePage).toContain("i-ph-caret-down-light");
+  expect(consolePage).toContain('trailing-icon="i-lucide-chevron-down"');
   expect(consolePage).not.toContain("i-ph-caret-up-down-light");
   expect(sessionNavbar).toContain('v-if="refreshable" text="Refresh session"');
 });

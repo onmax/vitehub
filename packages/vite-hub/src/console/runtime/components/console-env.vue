@@ -161,7 +161,7 @@ onBeforeUnmount(() => request?.abort());
       :menu="{ title: 'Env', description: 'Server environment.' }"
       :ui="{
         body: 'gap-0 overflow-hidden p-0',
-        footer: 'h-11 shrink-0 border-t border-default px-2 py-1.5',
+        footer: 'shrink-0 border-t border-default px-2 py-1.5',
       }"
       resizable
     >

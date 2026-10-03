@@ -570,7 +570,7 @@ describe("framework package contract", () => {
     expect(consoleSessionNavbar).toContain('data-slot="mobile-session-navigation"');
     expect(consolePage).toContain('window.matchMedia("(min-width: 981px)")');
     expect(consolePage).toContain("root: 'md:flex'");
-    expect(consolePage).toContain("content: 'md:hidden'");
+    expect(consolePage).toContain("content: 'md:hidden w-[calc(100vw-0.75rem)] max-w-none'");
     expect(consolePage).toContain("const detailsOpen = ref(false)");
     expect(consolePage).toContain("}, 60_000);");
     expect(consolePage).toContain(

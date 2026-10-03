@@ -26,13 +26,14 @@ import { defineAgent } from '@vite-hub/agent'
 export default defineAgent({
   box: {
     runtime: 'trusted-host',
-    requires: ['git', 'pnpm'],
+    requires: ['git'],
+    toolchain: 'project',
   },
   driver: { kind: 'codex' },
 })
 ```
 
-For each invocation, ViteHub opens a new Box session. The Box creates a private Home, runs its requirements, and starts the provider only after boot succeeds. ViteHub closes the session when the invocation ends.
+For each invocation, ViteHub opens a new Box session. The Box creates a private Home, provisions the Node.js and package manager versions that the project pins, runs its requirements, and starts the provider only after boot succeeds. ViteHub closes the session when the invocation ends.
 
 :::warning
 `trusted-host` isolates Home and declared environment values. It does not isolate the filesystem, network, processes, or installed executables. Use it only when the Agent may act with the authority of the host user.
@@ -80,6 +81,24 @@ export default defineAgent({
 
 The Box fetches `ref`, compares the fetched commit with the full `sha`, and starts in a detached Git repository. Use `cwd` when the caller already owns the authoritative directory. `cwd` and `checkout` are mutually exclusive.
 
+## Provision Node.js and the package manager
+
+A Box does not assume that the host or image has Node.js, a package manager, or Corepack. Set `toolchain: 'project'` and the Box reads the pins from the checkout or `cwd`:
+
+```ts
+box: {
+  runtime: { kind: 'crabbox', profile: 'review' },
+  checkout: { ref, remote, sha },
+  toolchain: 'project',
+}
+```
+
+Node.js comes from the first match: `package.json` `devEngines.runtime`, `.node-version`, `.nvmrc`, `package.json` `volta.node`, `package.json` `engines.node`, then `toolchain.fallbackNode`. Ranges and aliases such as `lts/*` resolve to the highest matching release. The package manager comes from `package.json` `packageManager` or `devEngines.packageManager`; without one, the project uses the npm bundled with Node.js. Use `{ node: '22', packageManager: 'pnpm@10.2.0' }` to pin versions in the Agent, or `packageManager: false` to keep the bundled npm.
+
+ViteHub downloads official archives, verifies the Node.js `SHASUMS256.txt` checksum and the npm registry `sha512` integrity, and caches each version. The provisioned `bin` directories come first on the Box `PATH`, so a different `node` on the host never answers. Boot fails when the project pins no Node.js version and no `fallbackNode` is set. See the [`@vite-hub/box` README](https://github.com/vite-hub/vitehub/tree/main/packages/box#provision-the-project-toolchain) for the cache location of each runtime, mirrors, and limits.
+
+Provider CLIs that start through `#!/usr/bin/env node` also run on the provisioned Node.js.
+
 ## Add credentials and CLI state
 
 Keep secret values outside the repository. Resolve them into Box `env`, Home files, or a first-use seed for writable state. The provider reads its credentials from the Box Home, for example `.codex/auth.json`.
@@ -124,6 +143,7 @@ export default defineAgent({
 | `home.files` | Immutable configuration | Writes private files on every boot. |
 | `home.state` | CLI-owned writable directories | Persists beneath `stateRoot` under an exclusive lease. |
 | `seed` | First-use state | Resolves only when the durable state directory is absent. |
+| `toolchain` | Project-pinned Node.js and package manager | Installs into a shared cache, or the Box Home on remote runtimes, before requirement checks. |
 | `requires` | Executable and authentication checks | Runs after materialization and fails boot on error. |
 
 Targets are relative POSIX paths below the Box Home. State keys must be stable and project-qualified. Existing state wins over its seed, so a failed authentication check does not restore older credentials.
@@ -172,8 +192,9 @@ Capability tools reach the provider through a loopback MCP endpoint of the ViteH
 2. The runtime acquires state leases and creates a private Home.
 3. It resolves first-use seeds, environment values, and Home files for this invocation.
 4. It creates and verifies the checkout when configured.
-5. It runs requirements, including the provider command, inside the prepared environment.
-6. The provider starts in the Box working directory.
+5. It provisions `toolchain` from the checkout or `cwd`, puts it first on `PATH`, and verifies `node -v` and the package manager version.
+6. It runs requirements, including the provider command, `node`, and the package manager, inside the prepared environment.
+7. The provider starts in the Box working directory.
 
 A failed input or boot check stops the invocation before the provider starts. Box metadata excludes resolved secret values, file contents, physical Home paths, and provider handles.
 
@@ -187,6 +208,7 @@ ViteHub rejects these combinations when you define the Agent:
 | `box` with `driver.launch` | The Box starts the provider. |
 | `box` with `driver.credentials` or `driver.credentialProfile` | Put provider credentials in `box.home.files`, `box.home.state`, or `box.env`. |
 | `box` with an Agent Workspace | The Box `cwd` or `checkout` owns the working tree. |
+| `box` with `driver.toolchain` | Declare `box.toolchain` so the Box provisions it. |
 | `box` on a Worker or Deno host | Provider Drivers need a Node.js host. |
 
 ViteHub rejects these inputs when an invocation starts:
