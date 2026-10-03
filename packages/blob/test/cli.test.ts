@@ -541,6 +541,19 @@ describe("Blob dev endpoint", () => {
     expect(dispatchFetch).toHaveBeenCalledOnce()
   })
 
+  it("rejects a nested Vite root from an independent project", async () => {
+    await writeFile(join(cwd, "package.json"), "{}")
+    const nestedRoot = join(cwd, "nested", "app")
+    await mkdir(join(nestedRoot, "server", "blobs"), { recursive: true })
+    await writeFile(join(nestedRoot, "package.json"), "{}")
+    const fetch = devServer({}, { discovery: { root: nestedRoot } })
+    const output = context()
+    output.context.cwd = nestedRoot
+    output.context.rootDir = cwd
+    await expect(runBlobCli(["list", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
   it("rejects requests without the guard header or from another origin", async () => {
     const { middlewares, server } = fakeServer()
     registerBlobDevEndpoint(server)

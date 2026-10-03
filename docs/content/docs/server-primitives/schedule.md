@@ -143,6 +143,21 @@ Cron expressions use the Schedule Time Base, currently UTC. The discovered file 
 | `cron` | `string` | Yes | Five-field UTC cron expression for the Static Schedule Definition. |
 | `handler` | `ScheduleHandler` | Yes | Function called with Schedule Run Context. |
 | `allowRuntimeSchedules` | `boolean` | No | Allows Runtime Schedules to target this definition. |
+| `manual` | `boolean` | No | Allows `vitehub schedule run` and Console invocation to run this definition outside its cron. |
+
+Set `manual: true` to enable on-demand runs for a Static Schedule Definition:
+
+```ts [server/schedules/daily-report.ts]
+export default defineSchedule({
+  cron: '0 8 * * *',
+  manual: true,
+  async handler() {
+    await sendDailyReport()
+  },
+})
+```
+
+Run it from a ViteHub development server with `vitehub schedule run daily-report`. The command uses the discovered file name as the definition name and supports `--json`; deployments can invoke the same definition through the Console.
 
 Write `allowRuntimeSchedules` as a literal `true` or `false` in the directly exported definition. Discovery does not evaluate constants, spreads, computed properties, or getters. Unsupported forms fail with the source file and line instead of silently omitting a runtime target.
 

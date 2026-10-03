@@ -36,7 +36,10 @@ import type { BlobDevDeleteResult, BlobDevHeadResult, BlobDevListResult, BlobDev
 export type BlobCliContext = Pick<ViteHubCliContext, "cwd" | "env" | "rootDir"> & ViteHubCliStreams
 
 function isCompatibleBlobDevServerRoot(rootDir: string, serverRoot: string): boolean {
-  const nestedPath = relative(resolve(rootDir), resolve(serverRoot))
+  const resolvedRootDir = resolve(rootDir)
+  const resolvedServerRoot = resolve(serverRoot)
+  if (resolveViteHubProjectRoot(resolvedRootDir) !== resolveViteHubProjectRoot(resolvedServerRoot)) return false
+  const nestedPath = relative(resolvedRootDir, resolvedServerRoot)
   return nestedPath === "" || (nestedPath !== ".." && !nestedPath.startsWith(`..${sep}`) && !isAbsolute(nestedPath))
 }
 
