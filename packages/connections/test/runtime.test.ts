@@ -405,6 +405,27 @@ describe("calls", () => {
     expect(modify).toMatchObject({ body: "{\"addLabelIds\":[\"L1\"]}", method: "POST", url: "https://mail.example.com/mail/v1/users/me/messages/a%2Fb/modify" })
   })
 
+  it("prepares repeated query parameters without mutating method input", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const input = { userId: "a/b", label: ["INBOX", "a b"], ignored: null, requestBody: { ignored: true } }
+    await test.runtime.client("mail", {}).call("mail.labels.list", input)
+    expect(test.provider.calls.at(-1)).toMatchObject({
+      method: "GET", url: "https://mail.example.com/mail/v1/users/a%2Fb/labels?label=INBOX&label=a+b",
+    })
+    expect(test.provider.calls.at(-1)?.body).toBeUndefined()
+    expect(input).toEqual({ userId: "a/b", label: ["INBOX", "a b"], ignored: null, requestBody: { ignored: true } })
+  })
+
+  it("rejects unexposed methods and missing path parameters before provider dispatch", async () => {
+    const test = createTestRuntime()
+    await connect(test)
+    const calls = test.provider.calls.length
+    await expect(test.runtime.client("mail", {}).call("mail.unknown", {})).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
+    await expect(test.runtime.client("mail", {}).call("mail.labels.list", {})).rejects.toThrow('requires "userId"')
+    expect(test.provider.calls).toHaveLength(calls)
+  })
+
   it("refreshes an expiring token once for concurrent calls", async () => {
     const test = createTestRuntime()
     await connect(test)
