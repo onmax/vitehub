@@ -86,6 +86,15 @@ export default defineAgent({ channels: { github: portal } })`, {
   })).rejects.toThrow("opaque Channel")
 })
 
+it("keeps optional intrinsic conversions inspectable", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts";
+const ignored = \`\${String?.("id")}\`;
+export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
 it.each([
   "import('./other.ts')",
   "class { #portal = portal; get value() { return this.#portal } }",

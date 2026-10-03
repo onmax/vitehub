@@ -1557,8 +1557,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // Only unshadowed global conversions are known calls. Nested opaque calls
     // and imported arguments still invalidate imported Channels.
     const conversionCall = (index: number) => {
-      const name = references[index - 1]!
-      return references[index] === "(" && bindingReference(index - 1)
+      // Optional calls tokenize as `name`, `?`, `.`, `(`. Treat them like
+      // ordinary calls while still resolving the conversion's binding.
+      const nameIndex = references[index - 1] === "." && references[index - 2] === "?"
+        ? index - 3
+        : index - 1
+      const name = references[nameIndex]!
+      return references[index] === "(" && bindingReference(nameIndex)
         && ["String", "Number", "Boolean"].includes(name)
         && globalBindingAvailable(templateIndex, name)
         && !expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
