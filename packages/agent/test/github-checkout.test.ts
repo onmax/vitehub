@@ -217,10 +217,15 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   })
   await access(firstPath)
 
+  // An interrupted Git command can leave locks behind when the host stops.
+  const staleLocks = ['index.lock', 'config.lock', 'config.worktree.lock', 'HEAD.lock', 'shallow.lock', 'packed-refs.lock']
+  for (const lock of staleLocks) await writeFile(join(firstPath, '.git', lock), '')
+
   // A restarted process adopts the checkout that the previous process left in the pool.
   const restarted = createGitHubHost(options)
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }, async ({ path }) => {
     expect(path).toBe(firstPath)
+    for (const lock of staleLocks) await expect(access(join(path, '.git', lock))).rejects.toThrow()
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
     expect(await git(path, 'branch', '--show-current')).toBe('two')
     expect(await readFile(join(path, 'file'), 'utf8')).toBe('two')

@@ -38,7 +38,7 @@ export interface GitHubHostCredentialContext {
 export interface GitHubHostOptions {
   cacheMs?: number
   /**
-   * Keeps pull request checkouts under `root` and reuses them per repository. Reuse keeps ignored
+   * Keeps pull request checkouts under `root` and reuses them per pull request. Reuse keeps ignored
    * files, such as dependencies and build output, resets everything else, and fetches only the new head.
    * Use it only when one process owns `root`.
    */
@@ -360,7 +360,7 @@ type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal:
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
 async function resetPooledCheckout(checkout: string, repository: string, commandOptions: GitHubCommandOptions) {
-  for (const path of [".git/hooks", ".git/index.lock", ".git/config", ".git/config.worktree", ".vitehub"]) {
+  for (const path of [".git/hooks", ".git/index.lock", ".git/config.lock", ".git/config.worktree.lock", ".git/HEAD.lock", ".git/shallow.lock", ".git/packed-refs.lock", ".git/config", ".git/config.worktree", ".vitehub"]) {
     await rm(join(checkout, path), { force: true, recursive: true })
   }
   await rm(`${checkout}.meta.json`, { force: true })
