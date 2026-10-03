@@ -31,12 +31,3 @@ export default defineSchedule({
 The Schedule Capability can let an Agent read or manage allowed Runtime Schedules through Capability policy. Inline Agent Schedules start the owning Agent with Schedule Invocation Input, not a synthetic user message.
 
 Attach a Schedule Capability only when a model needs to manage schedules. Read [Official capabilities](/docs/agents/capabilities/official) for Capability modes and write policy.
-
-## Next steps
-
-- [Get started](/docs/schedule/get-started): install Schedule, register the integration, and declare a first schedule.
-- [Configure](/docs/schedule/configure): Vite options, the Process Runtime, Schedule Definitions, and storage.
-- [Server API](/docs/schedule/server-api): public imports and Runtime Schedule helpers.
-- [Agent capability](/docs/schedule/agent-capability): let an Agent declare or manage schedules.
-- [Hosts](/docs/schedule/hosts): Provider Output, development inspection, wake drivers, and production checks.
-- Learn trigger language in [Agent Channels](/docs/agents/channels).

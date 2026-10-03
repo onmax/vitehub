@@ -96,3 +96,26 @@ export function getDocsRelatedSections(sections: DocsSection[], section: DocsSec
     .map(id => sections.find(candidate => candidate.id === id))
     .filter((candidate): candidate is DocsSection => Boolean(candidate) && candidate?.id !== section.id);
 }
+
+/** Categories whose section Overview renders as a product landing page without the sidebar. */
+export const docsLandingCategories: readonly DocsCategory[] = ["Data", "Compute", "Access", "Delivery", "Files", "Agents"];
+
+/** Sections whose Overview stays a regular docs page even though their category is a product category. */
+const docsPageOverviewSections = new Set(["ui"]);
+
+/** True for `/docs` and for the Overview of every product section. These pages have a hero and no sidebar. */
+export function isDocsLandingPath(sections: DocsSection[], path: string) {
+  const normalizedPath = normalizeDocsPath(path);
+  if (normalizedPath === "/docs") return true;
+
+  const section = getDocsSectionForPath(sections, normalizedPath);
+  if (!section || normalizedPath !== normalizeDocsPath(section.path)) return false;
+
+  return !docsPageOverviewSections.has(section.id)
+    && docsLandingCategories.includes(section.category as DocsCategory);
+}
+
+/** Pages of a product section other than its Overview, in sidebar order. The landing page lists them as cards. */
+export function getDocsSectionSubpages(section: DocsSection) {
+  return section.pages.filter(page => page.navigation !== false && page.id !== "index");
+}

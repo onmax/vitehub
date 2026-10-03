@@ -6,8 +6,10 @@ import {
   getDocsCatalog,
   getDocsSectionForPath,
   getDocsSectionSelectItems,
+  getDocsSectionSubpages,
   getDocsSidebarGroups,
   getUncategorizedDocsSections,
+  isDocsLandingPath,
 } from "../modules/vitehub-docs/runtime/utils/docs-navigation";
 import { createDocsRedirectRouteRules, docsPageRedirects } from "../modules/vitehub-docs/redirects";
 
@@ -131,6 +133,20 @@ describe("docs product navigation", () => {
       const duplicates = [...pathsByTitle].filter(([, paths]) => paths.length > 1);
       expect(duplicates, section.id).toEqual([]);
     }
+  });
+
+  it("renders the catalog and every product Overview as a landing page", () => {
+    expect(isDocsLandingPath(docsManifest.sections, "/docs")).toBe(true);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/kv/")).toBe(true);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/agents")).toBe(true);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/kv/get-started")).toBe(false);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/getting-started")).toBe(false);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/reference")).toBe(false);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/ui")).toBe(false);
+
+    const kv = docsManifest.sections.find(section => section.id === "kv");
+    expect(getDocsSectionSubpages(kv!).map(page => page.title)[0]).toBe("Get started");
+    expect(getDocsSectionSubpages(kv!).some(page => page.id === "index")).toBe(false);
   });
 
   it("keeps commas in frontmatter titles", () => {

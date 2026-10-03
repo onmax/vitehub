@@ -54,14 +54,3 @@ export default defineConfig({
 | `"vercel"` | Optional Secret Env `AI_GATEWAY_API_KEY`. Without it, the client uses `VERCEL_OIDC_TOKEN` on Vercel. | `typesafe-ai/jev` |
 
 `TYPESAFE_DEFAULT_MODEL` overrides the model. The `model` option changes the default.
-
-## Next steps
-
-- [Get started](/docs/env/get-started): install Env and read the first Public Env value.
-- [Configure](/docs/env/configure): declare Env values, sources, typed values, and generated types.
-- [Server API](/docs/env/server-api): read Public Env and Server Env, and load provider-backed values.
-- [Limits and errors](/docs/env/limits-and-errors): structured errors and production checks.
-- [Env Bridge](/docs/env/bridge): replace credentials at runtime with scoped access and activity.
-- Learn the server primitive model in [Server primitives for any host](/docs/frameworks-hosts).
-- Use Env with [Auth](/docs/auth) when Auth runtime options need secrets.
-- Expose agent abilities through [Official capabilities](/docs/agents/capabilities/official) without making secrets model-facing.

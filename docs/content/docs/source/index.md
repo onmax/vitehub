@@ -58,15 +58,3 @@ Workspace owns placement, materialization, sync, and access rules. The Source st
 ## Connect Source to Agents
 
 Source has no Agent Capability of its own. Bind the Source to a [Workspace](/docs/workspace), then attach the [Workspace Shell Capability](/docs/workspace/agent-capability) so the Agent can inspect the mounted files. Workspace rules and access scopes decide what the Agent sees.
-
-## Next steps
-
-- [Get started](/docs/source/get-started): install ViteHub and read a first Source.
-- [Configure](/docs/source/configure): loader options, cache policy, and custom loaders.
-- [Server API](/docs/source/server-api): read, register, combine, and expose Sources as Collections.
-- [Hosts](/docs/source/hosts): runtime requirements for each loader.
-- [Limits and errors](/docs/source/limits-and-errors): path, symlink, cache, and Collection checks.
-- Learn the shared model in [Workspace and Sources](/docs/getting-started/concepts/workspace-and-sources).
-- Persist retrieved content through [Workspace](/docs/workspace).
-- Parse and search documents with [Content](/docs/content).
-- Expose Workspace content to Agents through [Workspace Shell](/docs/workspace/agent-capability).

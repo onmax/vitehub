@@ -33,10 +33,3 @@ Agent Capabilities call a Connection with `agent:<name>` as the actor. The rule 
 | [`mcp()`](/docs/agents/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `fetch` |
 
 Gmail drafts use the Connection action `gmail.users.drafts.create` as a write. Grant it with `write: ['gmail.users.drafts.create']` in the Agent rule. OpenAPI operations other than `GET` and `HEAD` and MCP POST requests use the Connection `fetch` action as writes, so they need `write: ['fetch']`. Without a matching write rule, these requests are denied. MCP also requires `approve: false` because its transport needs each response in the active session.
-
-## Next steps
-
-- [Get started](/docs/connections/get-started): enable Connections and connect a first account.
-- [Configure](/docs/connections/configure): set provider origins, API keys, and access rules.
-- [Server API](/docs/connections/server-api): call Connections from server code and manage them from the CLI.
-- [Limits and errors](/docs/connections/limits-and-errors): storage guarantees and error codes.

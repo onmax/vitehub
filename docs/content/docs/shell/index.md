@@ -47,13 +47,3 @@ Agents use Shell through the [`workspaceShell()` Capability](/docs/workspace/age
 To let an Agent run commands, use the same Capability. `workspaceShell({ mode: 'write', commands: ['pnpm'] })` gives Provider Drivers allowlisted command tools that run in the active Workspace Session. `commands` requires `mode: 'write'` and works only with Provider Drivers. For model-backed Agents, use the [`sandbox()` Capability](/docs/sandbox/agent-capability).
 
 Do not expose a raw Shell Runtime to a model. Use [Official capabilities](/docs/agents/capabilities/official) so policy, metadata, Driver support, and tools stay attached to the Agent Definition.
-
-## Next steps
-
-- [Get started](/docs/shell/get-started): create a Shell Runtime and run a first command.
-- [Configure](/docs/shell/configure): select a provider and set runtime, session, and exec options.
-- [Server API](/docs/shell/server-api): use sessions, Command Analysis, and Shell Observations.
-- [Limits and errors](/docs/shell/limits-and-errors): policy limits and production checks.
-- Expose Workspace commands to Agents with [Workspace shell](/docs/workspace/agent-capability).
-- Use [Workspace](/docs/workspace) for file-tree state.
-- Use [Sandbox](/docs/sandbox) for provider-managed isolation.

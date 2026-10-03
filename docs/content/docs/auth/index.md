@@ -48,16 +48,3 @@ export default defineAgent({
 By default, `authenticated()` reads the same-app Better Auth session and maps the Auth User to an Agent Invoker with `kind: "authUser"`. Use the [Access](/docs/agents/capabilities/access) Capability for decisions based on invoker identity. Read [Auth Users and Agent Invokers](/docs/getting-started/concepts/auth-users-and-agent-invokers) for the mental model.
 
 When a required Auth Session does not exist, `authenticated()` throws. Read [Handle required authentication](/docs/auth/limits-and-errors#handle-required-authentication) for the error codes.
-
-## Next steps
-
-- [Get started](/docs/auth/get-started): install Auth and create the first session.
-- [Configure](/docs/auth/configure): write the Auth Definition, runtime options, and storage placement.
-- [Server API](/docs/auth/server-api): read sessions and guard routes from server and Vue code.
-- [Hosts](/docs/auth/hosts): Better Auth ownership and provider output.
-- [Limits and errors](/docs/auth/limits-and-errors): production checks and Auth error codes.
-- Configure typed secrets with [Env](/docs/env).
-- Protect the [ViteHub Console](/docs/development/console) before you enable it in production.
-- Call third-party APIs for connected accounts with [Connections](/docs/connections).
-- Use [Database](/docs/database) and [KV](/docs/kv) as application primitives. Auth placement metadata does not wire them into Better Auth.
-- Learn shared identity boundaries in [Auth Users and Agent Invokers](/docs/getting-started/concepts/auth-users-and-agent-invokers).

@@ -35,14 +35,3 @@ import { kv } from '@vite-hub/agent/capabilities'
 ```
 
 Give model-facing tools the narrowest useful key prefix and configure write access deliberately. Read [Official capabilities](/docs/agents/capabilities/official) for storage modes and write approvals.
-
-## Next steps
-
-- [Get started](/docs/kv/get-started): install KV and write the first key.
-- [Configure](/docs/kv/configure): select drivers and define named KV Stores.
-- [Server API](/docs/kv/server-api): read and write keys from server code.
-- [Agent capability](/docs/kv/agent-capability): give an Agent scoped KV tools.
-- [Hosts](/docs/kv/hosts): provider output, the development CLI, and production checks.
-- Use [Database](/docs/database) for relational data.
-- Use [Blob](/docs/blob) for object storage.
-- Expose scoped model access through [Official capabilities](/docs/agents/capabilities/official).
