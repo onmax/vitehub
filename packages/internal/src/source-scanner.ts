@@ -350,10 +350,15 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // operator), for example `T extends Types.Promise<A, B>`. Keep the fast
   // path broad enough to mask its generic arguments before call splitting.
   const prefix = source.slice(0, index).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ")
+  // Once a return type continues past a completed generic, the preceding
+  // arguments are masked before checking the next union/intersection member.
+  // Treat the arrow as type whitespace for that continuation check.
+  if (/=>/.test(prefix) && /\b(?:as|satisfies)\b/.test(prefix)
+    && hasAssertionTypePrefix(prefix.replace(/=>/g, "  "))) return true
   // Function and constructor assertion types place their return reference
   // after `=>`, so the generic is not directly adjacent to the assertion
   // keyword. Treat that return type as part of the assertion as well.
-  if (/=>\s*(?:(?:asserts\s+)?[A-Za-z_$][\w$]*\s+is\s+)?(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
+  if (/=>\s*(?:(?:asserts\s+)?[A-Za-z_$][\w$]*\s+is\s+)?(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*\s*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(prefix)) return true
   if (/\b(?:extends|implements)\s+(?:(?:keyof|readonly|typeof)\s+)*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*$/.test(prefix)
     && /\b(?:as|satisfies)\b/.test(source.slice(0, index))) return true
