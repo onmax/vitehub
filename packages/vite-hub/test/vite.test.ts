@@ -1106,14 +1106,16 @@ describe("vitehub", () => {
     ["deno", { base: "cache", driver: "deno-kv" }],
     ["node", { base: ".vitehub/data/cache", driver: "fs-lite" }],
   ] as const)("mounts Nitro cache storage for the %s preset", async (preset, storage) => {
-    const config = await applyDeploymentConfig({ cache: true, preset })
+    const config = await applyDeploymentConfig(
+      { cache: preset === "cloudflare" ? { driver: "cloudflare-kv-binding", namespaceId: "cache-id" } : true, preset },
+    )
 
     expect(config.nitro).toMatchObject({
       devStorage: { cache: { base: ".vitehub/data/cache", driver: "fs-lite" } },
       storage: { cache: storage },
     })
     if (preset === "cloudflare") {
-      expect(config.nitro).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE" }])
+      expect(config.nitro).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE", id: "cache-id" }])
     }
   })
 

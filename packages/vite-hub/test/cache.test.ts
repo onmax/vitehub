@@ -25,11 +25,11 @@ describe("resolveCacheStorage", () => {
 
 describe("applyCacheStorage", () => {
   it("adds the Cloudflare namespace once", () => {
-    const cache = resolveCacheStorage(true, "cloudflare")
+    const cache = resolveCacheStorage({ driver: "cloudflare-kv-binding", namespaceId: "cache-id" }, "cloudflare")
     const once = applyCacheStorage({}, cache)
     const twice = applyCacheStorage({ ...once, storage: {} }, cache)
 
-    expect(twice).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE" }])
+    expect(twice).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE", id: "cache-id" }])
   })
 
   it("preserves an explicit Cloudflare namespace ID when the binding already exists", () => {
@@ -39,5 +39,17 @@ describe("applyCacheStorage", () => {
     }, cache)
 
     expect(config).toHaveProperty("cloudflare.wrangler.kv_namespaces", [{ binding: "CACHE", id: "cache-id" }])
+  })
+
+  it("rejects a Cloudflare cache without a namespace ID", () => {
+    expect(() => applyCacheStorage({}, resolveCacheStorage(true, "cloudflare")))
+      .toThrow("needs a namespace ID")
+  })
+
+  it("rejects a conflicting existing Cloudflare namespace ID", () => {
+    const cache = resolveCacheStorage({ driver: "cloudflare-kv-binding", namespaceId: "cache-id" }, "cloudflare")
+    expect(() => applyCacheStorage({
+      cloudflare: { wrangler: { kv_namespaces: [{ binding: "CACHE", id: "other-id" }] } },
+    }, cache)).toThrow("already uses namespace")
   })
 })

@@ -259,13 +259,15 @@ for Nitro's `cache` mount. In ViteHub, set `cache: true`.
 
 | Preset | Production store |
 | --- | --- |
-| `cloudflare` | Workers KV binding `CACHE` |
+| `cloudflare` | Workers KV binding `CACHE` with an existing namespace ID |
 | `vercel` | Vercel Runtime Cache |
 | `deno` | Deno KV |
 | `node` | `.vitehub/data/cache` |
 
 Development uses `.vitehub/data/cache`, or `<dataDir>/cache` when `dataDir` is
-set. The `netlify` preset has no
+set. Cloudflare requires `cache.namespaceId`, or an existing `CACHE` namespace
+with an ID in `nitro.cloudflare.wrangler.kv_namespaces`, so the generated
+deployment always names a real namespace. The `netlify` preset has no
 default cache store, so `cache: true` fails the build there. A `cache` mount
 that you set in `nitro.storage` takes precedence.
 

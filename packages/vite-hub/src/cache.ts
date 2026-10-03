@@ -108,8 +108,17 @@ export function applyCacheStorage(nitro: Record<string, unknown>, cache: Resolve
   const existingIndex = namespaces.findIndex(entry => isPlainObject(entry) && entry.binding === namespace.binding)
   const existing = existingIndex === -1 ? undefined : namespaces[existingIndex]
   if (isPlainObject(existing)) {
+    if (namespace.id && existing.id && existing.id !== namespace.id) {
+      throw viteHubErrorDiagnostics.VITE_HUB_C0003({ message: `[vitehub] Cloudflare cache binding "${namespace.binding}" already uses namespace "${existing.id}", but cache.namespaceId requests "${namespace.id}".` })
+    }
     if (namespace.id && !existing.id) namespaces[existingIndex] = { ...existing, id: namespace.id }
+    if (!namespace.id && !existing.id) {
+      throw viteHubErrorDiagnostics.VITE_HUB_C0003({ message: `[vitehub] Cloudflare cache binding "${namespace.binding}" needs a namespace ID. Set cache.namespaceId or configure an existing namespace with an ID.` })
+    }
   } else {
+    if (!namespace.id) {
+      throw viteHubErrorDiagnostics.VITE_HUB_C0003({ message: `[vitehub] Cloudflare cache binding "${namespace.binding}" needs a namespace ID. Set cache.namespaceId or configure an existing namespace with an ID.` })
+    }
     namespaces.push(namespace)
   }
   wrangler.kv_namespaces = namespaces
