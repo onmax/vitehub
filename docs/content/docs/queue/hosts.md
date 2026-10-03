@@ -11,8 +11,8 @@ icon: i-lucide-cloud-cog
 Queue has no in-memory Queue Provider for local delivery. Use a build to check that ViteHub discovers your Queue Definitions and generates the right provider output. A standalone Node process, such as a `tsx` script, does not run Vite discovery or load the generated Queue Runtime Registry, so `runQueue()` cannot find queue files from there.
 
 ```bash [Terminal]
-pnpm vite build
 pnpm add vite-hub
+pnpm vite build
 pnpm vitehub inspect definitions --kind queue
 ```
 

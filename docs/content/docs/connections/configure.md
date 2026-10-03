@@ -75,9 +75,9 @@ ViteHub seals the key like an OAuth grant. Access rules, approvals, dry run, and
 
 ## Access rules
 
-`access` has rules for `server`, `routes` (by route id such as `POST /api/sync`), and `agents` (by Agent id). A route without its own rule uses `server`. Each rule has `allow`, `approve`, and `deny` lists of Operation id patterns. `*` matches any characters.
+`access` has rules for `server`, `routes` (by route id such as `POST /api/sync`), and `agents` (by Agent id). A route without its own rule uses `server`. Each rule has `read`, `write`, and `approve` settings. When an `access` map is present, actors without a matching rule are denied. Without the map, reads and ordinary server writes are allowed, while high-risk writes and fetches are denied.
 
-ViteHub checks `deny` first, then `approve`, then `allow`. When no pattern matches, reads are allowed and writes are denied.
+ViteHub checks the actor rule before the operation. A write list can contain exact Operation ids or `*` patterns; high-risk writes require an explicit matching pattern.
 
 | Decision | Result |
 | --- | --- |

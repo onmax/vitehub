@@ -41,14 +41,14 @@ import { google } from 'vite-hub/connections/google'
 
 export default defineConnection({
   provider: google({
-    // Server Env with { clientId: string, clientSecret: secret string }
-    client: ({ event }) => useServerEnv(event).google,
-    scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+    clientId: () => useServerEnv().google.clientId,
+    clientSecret: () => useServerEnv().google.clientSecret.unseal(),
   }),
+  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
   access: {
-    server: { allow: ['gmail.*'] },
+    server: { write: ['gmail.*'] },
     agents: {
-      labeller: { allow: ['gmail.messages.*', 'gmail.labels.list'], approve: ['gmail.drafts.create'] },
+      labeller: { write: ['gmail.messages.*', 'gmail.labels.list', 'gmail.drafts.create'], approve: true },
     },
   },
 })
@@ -65,12 +65,11 @@ vitehub connections connect google
 ### Call the provider
 
 ```ts [server/api/labels.get.ts]
-import { useConnection } from 'vite-hub/connections'
-import { gmail } from 'vite-hub/connections/google'
+import { useConnection } from 'vite-hub/connections/server'
 
 export default defineEventHandler(async (event) => {
-  const connection = useConnection('google', { event })
-  return await gmail(connection).labels.list()
+  const connection = useConnection('google')
+  return await connection.gmail.users.labels.list()
 })
 ```
 
