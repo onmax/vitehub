@@ -22,7 +22,8 @@ function memoryStorage(initial?: string) {
 
 describe("Console section preferences", () => {
   it("derives enabled primitive sections, including Agent-enabled Workflow", () => {
-    expect(resolveConsoleSectionIds({ agent: true, blob: true, database: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })).toEqual([
+    expect(resolveConsoleSectionIds({ agent: true, blob: true, connections: true, database: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })).toEqual([
+      "connections",
       "agents",
       "usage",
       "blob",
@@ -35,6 +36,7 @@ describe("Console section preferences", () => {
       "queues",
       "schedules",
     ])
+    expect(resolveConsoleSectionIds({ connections: true })).toEqual(["connections"])
     expect(resolveConsoleSectionIds({ agent: true })).toEqual(["agents", "usage", "workflows"])
     expect(resolveConsoleSectionIds({ agent: true, preset: "netlify" })).toEqual(["agents", "usage"])
     expect(resolveConsoleSectionIds({ agent: true, preset: "netlify", workflow: { provider: "vercel" } })).toEqual([
