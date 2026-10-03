@@ -6,9 +6,15 @@ import { promisify } from 'node:util'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createGitHubHost, prepareGitHubPullRequestWorkspace } from '../src/server/github.ts'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...fs, rename: vi.fn(fs.rename) }
+})
+
 const exec = promisify(execFile)
 const roots: string[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -348,7 +354,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   expect(await readFile(join(firstPath, 'node_modules/marker'), 'utf8')).toBe('warm')
 }, 30_000)
 
-it('builds pooled Git metadata outside a checkout before installing it atomically', async () => {
+it('keeps reset Git operations private when the checkout path is replaced', async () => {
   const { root, source, head } = await fixture()
   const pool = join(root, 'pool')
   const outside = join(root, 'outside')
@@ -371,16 +377,16 @@ it('builds pooled Git metadata outside a checkout before installing it atomicall
   await mkdir(bin)
   const realGit = (await exec('which', ['git'])).stdout.trim()
   const commandLog = join(root, 'commands.jsonl')
-  // Inject the background-process race at the first reset Git command. The
-  // completed metadata must not be installed through this replacement symlink.
+  // A background process replaces the public checkout path while reset is in
+  // flight. All Git commands must stay private, including fetch and cleanup.
   await writeFile(join(bin, 'git'), `#!${process.execPath}
 const { spawnSync } = require('node:child_process');
 const { appendFileSync, rmSync, symlinkSync } = require('node:fs');
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify(args) + '\\n');
 if (args.includes('init')) {
-  rmSync(${JSON.stringify(join(checkout, '.git'))}, { recursive: true, force: true });
-  symlinkSync(${JSON.stringify(outside)}, ${JSON.stringify(join(checkout, '.git'))});
+  rmSync(${JSON.stringify(checkout)}, { recursive: true, force: true });
+  symlinkSync(${JSON.stringify(outside)}, ${JSON.stringify(checkout)});
 }
 const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });
 process.exit(result.status ?? 1);
@@ -391,9 +397,46 @@ process.exit(result.status ?? 1);
   })).rejects.toThrow()
   const commands: string[][] = (await readFile(commandLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
   expect(commands.some(args => args.includes('init'))).toBe(true)
-  for (const args of commands) expect(args[1]).toMatch(/vitehub-github-reset-.*replacement-/)
+  expect(commands.some(args => args.includes('fetch'))).toBe(true)
+  expect(commands.some(args => args.includes('clean'))).toBe(true)
+  for (const args of commands) expect(args[1]).toMatch(/vitehub-github-reset-.*(?:replacement-|checkout)/)
   expect(await readdir(outside)).toEqual(['marker'])
   expect(await readFile(join(outside, 'marker'), 'utf8')).toBe('untouched')
+  expect(await readdir(pool)).toEqual([])
+}, 30_000)
+
+it('rejects a checkout swapped for a symlink immediately before relocation', async () => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const outside = join(root, 'outside')
+  await mkdir(outside)
+  await git(outside, 'init')
+  const outsideHead = await readFile(join(outside, '.git/HEAD'), 'utf8')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: pool },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let checkout = ''
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  vi.mocked(rename).mockImplementationOnce(async (from, to) => {
+    expect(from).toBe(checkout)
+    await fs.rename(checkout, join(root, 'displaced'))
+    await symlink(outside, checkout)
+    await fs.rename(from, to)
+  })
+  await expect(host.withPullRequestCheckout(pullRequest, async () => {
+    throw new Error('must not run')
+  })).rejects.toThrow('unsafe Git metadata')
+  expect(await readFile(join(outside, '.git/HEAD'), 'utf8')).toBe(outsideHead)
+  expect(await readdir(outside)).toEqual(['.git'])
   expect(await readdir(pool)).toEqual([])
 }, 30_000)
 
@@ -425,6 +468,11 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
   await git(source, 'add', '.')
   await git(source, 'commit', '-m', 'two')
   const secondSha = await git(source, 'rev-parse', 'HEAD')
+  await git(source, 'rm', '-f', 'nested')
+  await writeFile(join(source, '.gitignore'), 'nested/\n')
+  await git(source, 'add', '.')
+  await git(source, 'commit', '-m', 'remove and ignore submodule')
+  const removedSha = await git(source, 'rev-parse', 'HEAD')
   await git(root, 'clone', '--bare', source, remote)
   const config = join(root, 'gitconfig')
   await writeFile(config, '')
@@ -450,6 +498,12 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
     expect(await git(join(path, 'nested'), 'rev-parse', 'HEAD')).toBe(secondDependencySha)
     expect(await readFile(join(path, 'nested/file'), 'utf8')).toBe('two')
     await expect(access(join(path, 'nested/untracked'))).rejects.toThrow()
+    await writeFile(join(path, 'nested/untracked'), 'stale again')
+  })
+  await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: removedSha }, async ({ path }) => {
+    expect(path).toBe(firstPath)
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(removedSha)
+    await expect(access(join(path, 'nested'))).rejects.toThrow()
   })
 }, 30_000)
 

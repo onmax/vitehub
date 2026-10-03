@@ -311,7 +311,7 @@ export function parseGraphQLRateLimit(value: unknown, checkedAt: number = Date.n
  * Pull request identity is part of the pool key so ignored state cannot cross the trust boundary between pull requests.
  */
 function createCheckoutPool(root: string) {
-  const idle = new Map<string, { directory: string, adopted: boolean }[]>()
+  const idle = new Map<string, { directory: string, adopted: boolean, submodules: string[] }[]>()
   let adopted: Promise<void> | undefined
   const key = (repository: string, number: number) => `${repository}#${number}`
   const encodeRepository = (repository: string) => repository.split('/').map(part => Buffer.from(part).toString('base64url')).join('--')
@@ -328,9 +328,9 @@ function createCheckoutPool(root: string) {
       return undefined
     }
   }
-  const release = (repository: string, number: number, directory: string, adopted = false) => {
+  const release = (repository: string, number: number, directory: string, adopted = false, submodules: string[] = []) => {
     const poolKey = key(repository, number)
-    idle.set(poolKey, [...idle.get(poolKey) ?? [], { directory, adopted }])
+    idle.set(poolKey, [...idle.get(poolKey) ?? [], { directory, adopted, submodules }])
   }
   const adopt = () => adopted ??= (async () => {
     await mkdir(root, { recursive: true })
@@ -344,11 +344,11 @@ function createCheckoutPool(root: string) {
     throw error
   })
   return {
-    async acquire(repository: string, number: number): Promise<{ directory: string, reused: boolean, adopted: boolean }> {
+    async acquire(repository: string, number: number): Promise<{ directory: string, reused: boolean, adopted: boolean, submodules: string[] }> {
       await adopt()
       const checkout = idle.get(key(repository, number))?.pop()
       if (checkout) return { ...checkout, reused: true }
-      return { directory: await mkdtemp(join(root, `${encodeRepository(repository)}-pr-${number}-`)), reused: false, adopted: false }
+      return { directory: await mkdtemp(join(root, `${encodeRepository(repository)}-pr-${number}-`)), reused: false, adopted: false, submodules: [] }
     },
     release,
   }
@@ -376,77 +376,68 @@ async function assertGitObjectStore(path: string) {
  * Removes the state of the previous pull request from a pooled checkout. Ignored files stay.
  * The previous run could write Git configuration and hooks, so both are recreated.
  */
-async function resetPooledCheckout(checkout: string, repository: string, commandOptions: GitHubCommandOptions) {
-  await assertCheckoutDirectories(checkout)
-  const gitMetadata = join(checkout, ".git")
-  const metadata = await lstat(gitMetadata).catch(() => undefined)
-  if (!metadata?.isDirectory()) {
-    throw new Error("Pooled checkout has unsafe Git metadata")
-  }
-  const info = await lstat(join(gitMetadata, "info")).catch(() => undefined)
-  if (info && !info.isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
-  // Move the Git metadata tree out of the checkout atomically before changing it.
-  // This avoids following a path that a background process replaces after validation
-  // while retaining the object database for pooled fetches.
-  const quarantine = async (path: string, required = false) => {
-    const target = `${path}.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-    try {
-      await rename(path, target)
-    }
-    catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT" && !required) return
-      throw error
-    }
-    await rm(target, { force: true, recursive: true })
-  }
-  // Keep all temporary metadata in a private directory that callbacks cannot
-  // discover by enumerating the checkout's parent.
+async function resetPooledCheckout(checkout: string, repository: string, submodules: string[], commandOptions: GitHubCommandOptions) {
+  // Relocate the entire checkout before reading any of its metadata. A rename
+  // moves a replaced symlink itself, so validation below never traverses it.
   const privateRoot = await mkdtemp(join(tmpdir(), "vitehub-github-reset-"))
-  const gitQuarantine = join(privateRoot, "git")
-  await rename(gitMetadata, gitQuarantine)
+  const parkedCheckout = join(privateRoot, "checkout")
+  const close = () => rm(privateRoot, { force: true, recursive: true })
   try {
-    // Retained objects and their subdirectories must not redirect later fetches outside the checkout.
+    await assertCheckoutDirectories(dirname(checkout))
+    await rename(checkout, parkedCheckout)
+    await assertCheckoutDirectories(parkedCheckout)
+    const gitMetadata = join(parkedCheckout, ".git")
+    if (!(await lstat(gitMetadata)).isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
+    const info = await lstat(join(gitMetadata, "info")).catch(() => undefined)
+    if (info && !info.isDirectory()) throw new Error("Pooled checkout has unsafe Git metadata")
+    const gitQuarantine = join(privateRoot, "git")
+    await rename(gitMetadata, gitQuarantine)
     await assertGitObjectStore(join(gitQuarantine, "objects"))
-    // Object-store metadata can borrow objects from outside the checkout through alternates.
     await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
-    // Build replacement metadata outside every callback-controlled path. Install
-    // the completed directory with one rename, which cannot follow a .git symlink.
     const replacement = await mkdtemp(join(privateRoot, "replacement-"))
-    try {
-      await exec("git", ["-C", replacement, "init", "-q", "--template="], commandOptions)
-      const replacementGit = join(replacement, ".git")
-      await rm(join(replacementGit, "objects"), { force: true, recursive: true })
-      await rename(join(gitQuarantine, "objects"), join(replacementGit, "objects"))
-      await mkdir(join(replacementGit, "info"), { recursive: true })
-      await writeFile(join(replacementGit, "info/exclude"), "")
-      for (const [key, value] of [
-        ["core.repositoryformatversion", "1"],
-        ["remote.origin.url", `https://github.com/${repository}.git`],
-        ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
-        ["remote.origin.promisor", "true"],
-        ["remote.origin.partialclonefilter", "blob:none"],
-      ] as const) await exec("git", ["-C", replacement, "config", key, value], commandOptions)
-      // Move the checkout itself while installing metadata. This prevents a
-      // callback from swapping its parent between validation and the rename.
-      const parkedCheckout = join(privateRoot, "checkout")
-      await rename(checkout, parkedCheckout)
+    await exec("git", ["-C", replacement, "init", "-q", "--template="], commandOptions)
+    const replacementGit = join(replacement, ".git")
+    await rm(join(replacementGit, "objects"), { force: true, recursive: true })
+    await rename(join(gitQuarantine, "objects"), join(replacementGit, "objects"))
+    await mkdir(join(replacementGit, "info"), { recursive: true })
+    await writeFile(join(replacementGit, "info/exclude"), "")
+    for (const [key, value] of [
+      ["core.repositoryformatversion", "1"],
+      ["remote.origin.url", `https://github.com/${repository}.git`],
+      ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
+      ["remote.origin.promisor", "true"],
+      ["remote.origin.partialclonefilter", "blob:none"],
+    ] as const) await exec("git", ["-C", replacement, "config", key, value], commandOptions)
+    await rename(replacementGit, gitMetadata)
+    // These paths came from the verified tree before the previous callback,
+    // rather than its mutable index or the incoming head's ignore rules.
+    for (const submodule of submodules) {
+      const target = join(parkedCheckout, submodule)
       try {
-        await assertCheckoutDirectories(parkedCheckout)
-        await rename(replacementGit, join(parkedCheckout, ".git"))
+        await assertCheckoutDirectories(dirname(target))
       }
-      finally {
+      catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
+        throw error
+      }
+      await rm(target, { force: true, recursive: true })
+    }
+    await rm(join(parkedCheckout, ".vitehub"), { force: true, recursive: true })
+    await rm(`${checkout}.meta.json`, { force: true })
+    return {
+      directory: parkedCheckout,
+      close,
+      async restore() {
+        await assertCheckoutDirectories(dirname(checkout))
         await rename(parkedCheckout, checkout)
-      }
-    }
-    finally {
-      await rm(replacement, { force: true, recursive: true })
+        await close()
+      },
     }
   }
-  finally {
-    await rm(privateRoot, { force: true, recursive: true })
+  catch (error) {
+    await close()
+    throw error
   }
-  await quarantine(join(checkout, ".vitehub"))
-  await quarantine(`${checkout}.meta.json`)
 }
 
 export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
@@ -873,9 +864,11 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef is required when headRepository is supplied." })
     }
     const pooled = checkoutPool ? await checkoutPool.acquire(pullRequest.repository, pullRequest.number) : undefined
-    const checkout = pooled?.directory ?? await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
+    let checkout = pooled?.directory ?? await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
     const operation = controlledOperation(options)
     let keepCheckout = false
+    let reset: Awaited<ReturnType<typeof resetPooledCheckout>> | undefined
+    let submodules: string[] = []
     try {
       const baseAuth = await access({
         refresh: true,
@@ -888,7 +881,10 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["check-ref-format", `refs/heads/${pullRequest.headRef}`], commandOptions)
         if (pullRequest.headRef.startsWith("-")) throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef cannot start with a dash." })
       }
-      if (pooled?.reused) await resetPooledCheckout(checkout, pullRequest.repository, commandOptions)
+      if (pooled?.reused) {
+        reset = await resetPooledCheckout(checkout, pullRequest.repository, pooled.submodules, commandOptions)
+        checkout = reset.directory
+      }
       else await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
       if (pullRequest.headRef) {
         // Fetch the source branch: GitHub's synthetic pull refs can lag a push.
@@ -901,8 +897,8 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-f", "--detach", "FETCH_HEAD"], commandOptions)
       }
-      // The fresh index identifies incoming gitlinks. Clear their old working trees
-      // after checkout, since reset no longer retains the previous HEAD or index.
+      // Adopted checkouts have no trusted list of previous submodule paths.
+      // Clear incoming submodules too before removing all adopted ignored state.
       if (pooled?.reused) {
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "submodule", "deinit", "--force", "--all"], commandOptions)
       }
@@ -924,6 +920,15 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       await exec("git", ["-C", checkout, "clean", "-ffdq"], commandOptions)
       operation.signal.throwIfAborted()
       // Only a checkout with a verified head returns to the pool. Reuse resets it again.
+      if (checkoutPool) {
+        const tree = (await exec("git", ["-C", checkout, "ls-tree", "-rz", "HEAD"], commandOptions)).stdout
+        submodules = tree.split("\0").filter(entry => entry.startsWith("160000 ")).map(entry => entry.slice(entry.indexOf("\t") + 1))
+      }
+      if (reset && pooled) {
+        await reset.restore()
+        checkout = pooled.directory
+      }
+      operation.signal.throwIfAborted()
       keepCheckout = Boolean(checkoutPool)
       const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
       let pushHead = pullRequest.headSha
@@ -976,11 +981,13 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      if (keepCheckout && checkoutPool) checkoutPool.release(pullRequest.repository, pullRequest.number, checkout)
+      await reset?.close()
+      if (keepCheckout && checkoutPool) checkoutPool.release(pullRequest.repository, pullRequest.number, checkout, false, submodules)
       else {
-        if (checkoutPool) await assertCheckoutDirectories(dirname(checkout))
-        await rm(checkout, { force: true, recursive: true })
-        if (checkoutPool) await rm(`${checkout}.meta.json`, { force: true })
+        const discard = pooled?.directory ?? checkout
+        if (checkoutPool) await assertCheckoutDirectories(dirname(discard))
+        await rm(discard, { force: true, recursive: true })
+        if (checkoutPool) await rm(`${discard}.meta.json`, { force: true })
       }
     }
   }
