@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks"
+import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 
 import type { WorkflowDefinition, WorkflowDefinitionRegistry } from "../types.ts"
 import { workflowErrorDiagnostics } from "../error-diagnostics.ts"
@@ -16,6 +17,13 @@ type RegistryState = ReturnType<typeof createRegistryState>
 
 let registryState = createRegistryState()
 const inlineRegistry = new Map<string, WorkflowDefinition>()
+// Module exports survive registry replacement without publishing retired definitions by name.
+const handleDefinitions = new WeakMap<object, WorkflowDefinition>()
+
+export function bindWorkflowDefinitionHandle<T extends object>(handle: T, definition?: WorkflowDefinition): T {
+  if (definition) handleDefinitions.set(handle, definition)
+  return handle
+}
 const loadingRegistryStorage = new AsyncLocalStorage<{ names: Set<string>, state: RegistryState }>()
 const loadingInlineRegistryStorage = new AsyncLocalStorage<{ definitions: Map<string, WorkflowDefinition>, state: RegistryState }>()
 
@@ -46,13 +54,16 @@ export function takeInlineWorkflowDefinition(name: string): WorkflowDefinition |
   return definition
 }
 
+function isWorkflowDefinition(value: unknown): value is WorkflowDefinition {
+  return isRuntimeRecord(value) && hasRuntimeType(value.handler, "function")
+}
+
 function isWorkflowHandle(value: unknown): value is { name: string } {
-  return typeof value === "object"
-    && value !== null
-    && typeof (value as { name?: unknown }).name === "string"
-    && typeof (value as { defer?: unknown }).defer === "function"
-    && typeof (value as { getRun?: unknown }).getRun === "function"
-    && typeof (value as { run?: unknown }).run === "function"
+  return isRuntimeRecord(value)
+    && hasRuntimeType(value.name, "string")
+    && hasRuntimeType(value.defer, "function")
+    && hasRuntimeType(value.getRun, "function")
+    && hasRuntimeType(value.run, "function")
 }
 
 function findExportedInlineWorkflowDefinition(
@@ -63,17 +74,17 @@ function findExportedInlineWorkflowDefinition(
   const namedDefinition = definitions.get(name)
   if (namedDefinition) return { definition: namedDefinition, name }
 
-  if (!loaded || typeof loaded !== "object") return undefined
+  if (!isRuntimeRecord(loaded)) return undefined
 
   if ("default" in loaded && isWorkflowHandle(loaded.default)) {
-    const definition = definitions.get(loaded.default.name)
+    const definition = handleDefinitions.get(loaded.default) ?? definitions.get(loaded.default.name)
     if (definition) return { definition, name: loaded.default.name }
   }
 
   const matches = new Map<string, WorkflowDefinition>()
   for (const value of Object.values(loaded)) {
     if (!isWorkflowHandle(value)) continue
-    const definition = definitions.get(value.name)
+    const definition = handleDefinitions.get(value) ?? definitions.get(value.name)
     if (definition) matches.set(value.name, definition)
   }
 
@@ -89,6 +100,7 @@ export function takeInlineWorkflowDefinitionForModule(name: string, loaded: unkn
     || (current ? findExportedInlineWorkflowDefinition(name, loaded, inlineRegistry) : undefined)
   if (!match) return undefined
   if (current) consumeInlineWorkflowDefinition(match.name, match.definition)
+  loading?.definitions.delete(match.name)
   return match.definition
 }
 
@@ -100,8 +112,8 @@ function consumeInlineWorkflowDefinition(name: string, expected?: WorkflowDefini
   return definition
 }
 
-export function registerInlineWorkflowDefinition(name: string, definition: WorkflowDefinition): void {
-  if (!name || typeof name !== "string") {
+export function registerInlineWorkflowDefinition(name: string, definition: WorkflowDefinition): WorkflowDefinition {
+  if (!name || !hasRuntimeType(name, "string")) {
     throw workflowErrorDiagnostics.WORKFLOW_R0023({ message: "`createWorkflow()` requires a workflow name." })
   }
 
@@ -116,6 +128,7 @@ export function registerInlineWorkflowDefinition(name: string, definition: Workf
   if (!loading || loading.state === registryState) inlineRegistry.set(name, definition)
 
   loadingDefinitions?.set(name, definition)
+  return definition
 }
 
 export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefinition | undefined> {
@@ -152,7 +165,7 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
     try {
       return await loadingInlineRegistryStorage.run({ definitions: loadingInlineDefinitions, state }, async () => {
         const loaded = await entry()
-        if (!loaded || typeof loaded !== "object") {
+        if (!isRuntimeRecord(loaded)) {
           return undefined
         }
         const registeredInlineDefinition = loadingInlineDefinitions.get(name) ?? (state === registryState ? consumeInlineWorkflowDefinition(name) : undefined)
@@ -160,8 +173,8 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
           if (state === registryState) consumeInlineWorkflowDefinition(name, registeredInlineDefinition)
           return registeredInlineDefinition
         }
-        const definition = ("default" in loaded ? loaded.default : loaded) as WorkflowDefinition | undefined
-        if (definition && typeof definition.handler === "function") {
+        const definition = "default" in loaded ? loaded.default : loaded
+        if (isWorkflowDefinition(definition)) {
           return definition
         }
         const exportedInlineDefinition = findExportedInlineWorkflowDefinition(name, loaded, loadingInlineDefinitions)
@@ -196,4 +209,24 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
 export function resetWorkflowDefinitions(): void {
   setWorkflowRuntimeRegistry(undefined)
   inlineRegistry.clear()
+}
+
+export function captureWorkflowDefinitionLoader() {
+  const state = registryState
+  return async <T>(callback: (definitions: ReadonlyMap<string, WorkflowDefinition>) => Promise<T>): Promise<T> => {
+    const definitions = new Map<string, WorkflowDefinition>()
+    state.inlineLoads.add(definitions)
+    try {
+      return await loadingInlineRegistryStorage.run({ definitions, state }, () => callback(definitions))
+    }
+    catch (error) {
+      if (state === registryState) {
+        for (const [name, definition] of definitions) consumeInlineWorkflowDefinition(name, definition)
+      }
+      throw error
+    }
+    finally {
+      state.inlineLoads.delete(definitions)
+    }
+  }
 }

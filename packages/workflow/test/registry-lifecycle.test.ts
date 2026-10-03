@@ -200,3 +200,27 @@ it("retries a failed import after it partially registered an inline definition",
   expect(loader).toHaveBeenCalledTimes(2)
   expect(handler).toHaveBeenCalledTimes(1)
 })
+
+it.each(["before", "after"])("recovers shared inline module imports registered %s replacement", async (timing) => {
+  const started = deferred()
+  const release = deferred()
+  const handler = vi.fn(() => "shared")
+  let module: Promise<{ workflow: ReturnType<typeof createWorkflow> }> | undefined
+  const registry = {
+    report: () => module ??= (async () => {
+      const early = timing === "before" ? createWorkflow("legacy-name", handler) : undefined
+      started.resolve()
+      await release.promise
+      return { workflow: early ?? createWorkflow("legacy-name", handler) }
+    })(),
+  }
+  setWorkflowRuntimeRegistry(registry)
+  const oldRun = runWorkflow("report")
+  await started.promise
+  setWorkflowRuntimeRegistry(registry)
+  const currentRun = runWorkflow("report")
+  release.resolve()
+  await Promise.all([oldRun, currentRun])
+  await runWorkflow("report")
+  expect(handler).toHaveBeenCalledTimes(3)
+})

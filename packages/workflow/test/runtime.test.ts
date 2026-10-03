@@ -1946,6 +1946,35 @@ describe("workflow runtime", () => {
     expect(openWorkflowMock.definitions.has("legacy-chat-name")).toBe(false)
   })
 
+  it.each(["replace", "reset"])("isolates paused OpenWorkflow loaders after %s", async (operation) => {
+    const config = normalizeWorkflowOptions({ provider: "openworkflow", sqlite: { path: ":memory:" } })!
+    let release!: () => void
+    let started!: () => void
+    const pause = new Promise<void>(resolve => { release = resolve })
+    const ready = new Promise<void>(resolve => { started = resolve })
+    const oldWorker = createOpenWorkflowWorker({ config, registry: {
+      report: async () => {
+        started()
+        await pause
+        expect(takeInlineWorkflowDefinition("current")).toBeUndefined()
+        return { workflow: createWorkflow("helper", () => "old") }
+      },
+    } })
+    await ready
+    if (operation === "reset") resetWorkflowRuntime()
+    setWorkflowRuntimeRegistry({})
+    const handler = vi.fn(() => "current")
+    const current = createWorkflow("helper", handler)
+    createWorkflow("current", () => "current")
+    release()
+    await oldWorker
+    expect(getInlineWorkflowDefinitions().get("helper")?.handler).toBe(handler)
+    setWorkflowRuntimeConfig({ provider: "vercel" })
+    await current.run()
+    expect(handler).toHaveBeenCalledOnce()
+    expect(getInlineWorkflowDefinitions().has("current")).toBe(true)
+  })
+
   it("registers wrapped inline folder workflows in OpenWorkflow workers", async () => {
     setWorkflowRuntimeConfig({
       postgres: { url: "postgres://localhost/vitehub" },
