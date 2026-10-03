@@ -93,6 +93,19 @@ Blob stores binary objects and small object metadata. Keep catalogs, indexes, pe
 
 Pass the cursor returned by `blob.list()` unchanged to the next list call on the same Blob Store. Keep `prefix` and `folded` unchanged. Netlify Blobs listings and folded files-sdk listings fail if they cannot decode the cursor.
 
+## Uploads
+
+`blob.handleUpload(event, options)` stores the files of a `multipart/form-data` request and returns `[error, objects]`. Options: `formKey` (default `"files"`), `multiple` (default `true`), `ensure` (checked with `ensureBlob()`), and `put` (write options). Request errors throw H3 400 errors before anything is stored.
+
+`blob.handleMultipartUpload(event, options)` serves `create`, `upload`, `complete`, and `abort` requests from a route with `action` and `pathname` params, such as `server/api/files/multipart/[action]/[...pathname].ts`. `blob.createMultipartUpload()` and `blob.resumeMultipartUpload()` drive an upload from server code. The `fs`, `cloudflare-r2` (binding), and `vercel-blob` drivers support multipart uploads. Other drivers throw `BLOB_R0030`.
+
+Upload routes accept client-chosen pathnames. Authorize each request in the route.
+
+Browser clients:
+
+- `@vite-hub/blob/client`: `uploadFiles()` and `createMultipartUploader()`, built only on `fetch`.
+- `@vite-hub/blob/vue`: `useUpload()` and `useMultipartUpload()`, which add a progress ref. `vue` is an optional peer dependency.
+
 ## Signed requests
 
 Use `blob.sign()` to grant short-lived access to one private object without routing its body through your server.

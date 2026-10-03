@@ -1304,6 +1304,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     nuxtAlias[name] ??= path
     nitroAlias[name] ??= path
   }
+  if (options.blob) addVueImports(nuxt, "vite-hub/blob/vue", ["useMultipartUpload", "useUpload"])
   if (options.realtime) {
     addVueImports(nuxt, "vite-hub/realtime", ["defineRealtime"])
     addVueImports(nuxt, "vite-hub/realtime/vue", ["useRealtimeTiptap"])
