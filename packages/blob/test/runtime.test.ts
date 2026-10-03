@@ -175,7 +175,18 @@ afterEach(() => {
   vercelBlobMock.head.mockClear()
   vercelBlobMock.list.mockClear()
   vercelBlobMock.put.mockClear()
-  filesSdkMock.list.mockClear()
+  filesSdkMock.list.mockReset().mockImplementation(async () => ({
+    items: [
+      {
+        etag: "\"etag\"",
+        key: "notes/hello.txt",
+        lastModified: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+        size: 5,
+        type: "text/plain",
+      },
+    ],
+  }))
   filesSdkMock.minio.mockClear()
   filesSdkMock.r2.mockClear()
   filesSdkMock.s3.mockClear()
@@ -747,6 +758,18 @@ describe("blob runtime", () => {
       { cursor: "last", limit: 1000, prefix: "a/" },
       { cursor: "last", limit: 1000, prefix: "a/" },
     ])
+  })
+
+  it("rejects a repeated folded files-sdk cursor before requesting the page again", async () => {
+    filesSdkMock.list
+      .mockResolvedValueOnce({ cursor: "same", items: [] })
+      .mockResolvedValueOnce({ cursor: "same", items: [] })
+      .mockRejectedValueOnce(new Error("repeated-cursor sentinel"))
+    const { createDriver } = await import("../src/drivers/s3.ts")
+    const driver = createDriver({ bucket: "assets", driver: "s3" })
+
+    await expect(driver.list({ folded: true })).rejects.toThrow("Blob provider listing returned a repeated pagination cursor.")
+    expect(filesSdkMock.list).toHaveBeenCalledTimes(2)
   })
 
   it.each([

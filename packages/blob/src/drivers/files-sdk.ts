@@ -1,6 +1,7 @@
 import { toArray } from "@vite-hub/internal/arrays"
 import { isPlainObject } from "@vite-hub/internal/object"
 import { importOptionalPeer } from "../internal/optional-peer.ts"
+import { blobErrorDiagnostics } from "../error-diagnostics.ts"
 
 import type { BlobDriverAdapter, BlobListOptions, BlobListResult, BlobObject, BlobPutBody, BlobPutOptions, ResolvedBlobStoreConfig } from "../types.ts"
 import type { Adapter, Files, StoredFile, UploadResult } from "files-sdk"
@@ -155,6 +156,7 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
         const folders = new Set<string>()
         const blobs: BlobObject[] = []
         let providerCursor = initialCursor.providerCursor
+        const seenProviderCursors = new Set<string>(providerCursor ? [providerCursor] : [])
         let start = initialCursor.index
         let nextCursor: string | undefined
 
@@ -205,6 +207,10 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
             nextCursor = undefined
             break
           }
+          if (seenProviderCursors.has(result.cursor)) {
+            throw blobErrorDiagnostics.BLOB_R0017({ message: "Blob provider listing returned a repeated pagination cursor." })
+          }
+          seenProviderCursors.add(result.cursor)
           providerCursor = result.cursor
           start = 0
         }
