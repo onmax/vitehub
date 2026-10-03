@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { resolveInstalledProviderExecutable, resolveProviderRuntimePackages } from "../src/internal/provider-runtime-packages.ts"
 
@@ -59,6 +59,8 @@ async function createProject(options: {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
   await Promise.all(tempDirs.splice(0).map(dir => rm(dir, { force: true, recursive: true })))
 })
 
@@ -124,5 +126,31 @@ describe("Provider runtime packages", () => {
       .toThrow("Cannot package @openai/codex")
     expect(() => resolveProviderRuntimePackages({ arch: "x64", platform: "win32", rootDir: claude.rootDir }))
       .toThrow("Cannot package @anthropic-ai/claude-agent-sdk")
+  })
+
+  // Root bypasses directory permissions, so the unreadable build root cannot be reproduced.
+  it.skipIf(process.getuid?.() === 0)("skips a build root that the runtime user cannot read", async () => {
+    const codexTarget = "@openai/codex-linux-x64"
+    const claudeTarget = "@anthropic-ai/claude-agent-sdk-linux-x64"
+    const { codexPackageDir, rootDir } = await createProject({ claude: true, claudeTarget, codex: true, codexTarget })
+    // The Vite build bakes in the directory where it ran. A release can run elsewhere as a user
+    // that cannot enter that directory, so Node cannot read its nearest package.json.
+    const buildParent = await mkdtemp(join(tmpdir(), "vitehub-provider-build-"))
+    tempDirs.push(buildParent)
+    const buildRoot = join(buildParent, "app")
+    await mkdir(buildRoot)
+    await writeFile(join(buildRoot, "package.json"), "{}\n")
+    await chmod(buildParent, 0o000)
+    try {
+      vi.stubGlobal("__VITEHUB_AGENT_APP_ROOT__", buildRoot)
+      vi.spyOn(process, "cwd").mockReturnValue(rootDir)
+
+      expect(resolveInstalledProviderExecutable("codex")).toBe(join(codexPackageDir, "bin", "codex.js"))
+      expect(resolveInstalledProviderExecutable("claude-code", { arch: "x64", libc: "glibc", platform: "linux" }))
+        .toBe(join(rootDir, "node_modules", ...claudeTarget.split("/"), "claude"))
+    }
+    finally {
+      await chmod(buildParent, 0o700)
+    }
   })
 })
