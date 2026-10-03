@@ -84,6 +84,8 @@ describe("Console persisted usage index", () => {
     await seed("selected-precise", { model: firstModel, ...priced("0.000000000000001", true) });
     await seed("selected-repeat", { model: firstModel, ...priced("0.000000000000001") });
     await seed("selected-zero", { model: secondModel, ...priced("0") });
+    await seed("selected-order-small", { model: "a-small", ...priced("0") });
+    await seed("selected-order-tie", { model: "a-tied", usage: { totalTokens: 20 } });
     await seed("selected-older", { model: firstModel, ...priced("0.4") }, "2026-09-04T13:15:00.000Z");
     await seed("selected-truncated", { model: firstModel, ...priced("100") }, undefined, undefined, undefined, true);
     await seed("selected-missing", undefined);
@@ -103,7 +105,7 @@ describe("Console persisted usage index", () => {
       const fallback = await createUsageSummary(invocations, options);
       expect(normalize(indexed.buckets)).toEqual(normalize(fallback.buckets));
       expect(indexed.totals).toEqual(fallback.totals);
-      expect(normalizeModels(indexed.models)).toEqual(normalizeModels(fallback.models));
+      expect(indexed.models).toEqual(fallback.models);
     }
     expect(await index.query({ now, window, agentName: "bot", status: "failed", search: "selected" })).toMatchObject({
       buckets: expect.arrayContaining([expect.objectContaining({

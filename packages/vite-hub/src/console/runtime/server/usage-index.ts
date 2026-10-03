@@ -356,10 +356,12 @@ export function createConsoleUsageIndex(
         generatedAt: new Date().toISOString(),
         buckets,
         totals: publicTotals(totals, !incomplete),
-        models: [...groups(models.rows, modelKey)].map(([model, total]) => ({
-          model,
-          ...publicTotals(total, !incomplete),
-        })),
+        models: [...groups(models.rows, modelKey)]
+          .map(([model, total]) => ({ model, ...publicTotals(total, !incomplete) }))
+          .sort(
+            (left, right) =>
+              right.totalTokens - left.totalTokens || left.model.localeCompare(right.model),
+          ),
         agents: [...groups(agents.rows)].map(([agent, total]) => ({
           agent,
           ...publicTotals(total, !incomplete),
