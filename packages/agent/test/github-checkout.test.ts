@@ -252,7 +252,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
 
   let firstPath = ''
   await host.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: oneSha, headRepository: 'base--owner/repo--name', headRef: 'one' }, async ({ path }) => {
-    firstPath = path
+    firstPath = await realpath(path)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
     await mkdir(join(path, 'node_modules'), { recursive: true })
     await writeFile(join(path, 'node_modules/marker'), 'warm')
@@ -290,7 +290,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   // A restarted process adopts the checkout that the previous process left in the pool.
   const restarted = createGitHubHost(options)
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha, headRepository: 'base--owner/repo--name', headRef: 'two' }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+    expect(await realpath(path)).toBe(firstPath)
     await expect(access(join(path, '.git/objects/info/alternates'))).rejects.toThrow()
     await expect(git(path, 'cat-file', '-p', borrowedBlob)).rejects.toThrow()
     expect(await git(outsideObjects, 'cat-file', '-p', borrowedBlob)).toBe('outside checkout object')
@@ -312,7 +312,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
     expect(await git(path, 'config', 'remote.origin.pushurl')).toBe('https://github.com/base--owner/repo--name.git')
   })
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+    expect(await realpath(path)).toBe(firstPath)
     expect(await readFile(join(path, 'node_modules/marker'), 'utf8')).toBe('warm')
   })
   // A callback can rename its directory to impersonate another PR before restart.
@@ -320,7 +320,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   await rename(firstPath, impersonated)
   const nextHost = createGitHubHost(options)
   await nextHost.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 3, headSha: oneSha }, async ({ path }) => {
-    expect(path).toBe(impersonated)
+    expect(await realpath(path)).toBe(impersonated)
     await expect(access(join(path, 'node_modules/marker'))).rejects.toThrow()
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(oneSha)
   })
@@ -392,7 +392,7 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   await rm(join(firstPath, '.git/HEAD'))
   await symlink(outsideHead, join(firstPath, '.git/HEAD'))
   await restarted.withPullRequestCheckout({ repository: 'base--owner/repo--name', number: 1, headSha: twoSha }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+    expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(twoSha)
   })
   expect(await readFile(outsideHead, 'utf8')).toBe('ref: refs/heads/one\n')
@@ -426,7 +426,7 @@ it('keeps reset Git operations private when the checkout path is replaced', asyn
   })
   const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
   let checkout = ''
-  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = await realpath(path) })
   const bin = join(root, 'bin')
   await mkdir(bin)
   const realGit = (await exec('which', ['git'])).stdout.trim()
@@ -478,7 +478,7 @@ it('rejects a checkout swapped for a symlink immediately before relocation', asy
   })
   const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
   let checkout = ''
-  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = await realpath(path) })
   const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
   vi.mocked(rename).mockImplementationOnce(async (from, to) => {
     expect(await realpath(from)).toBe(checkout)
@@ -544,7 +544,7 @@ it('keeps relocation in the retained pool when its parent is replaced by a direc
   })
   const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
   let checkout = ''
-  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = path })
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => { checkout = await realpath(path) })
   const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
   vi.mocked(rename).mockImplementationOnce(async (from, to) => {
     await fs.rename(pool, displaced)
@@ -611,14 +611,14 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
   const host = createGitHubHost({ checkouts: { root: join(root, 'pool') }, credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }) })
   let firstPath = ''
   await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: firstSha }, async ({ path }) => {
-    firstPath = path
+    firstPath = await realpath(path)
     await git(path, 'submodule', 'update', '--init', '--recursive')
     expect(await git(join(path, 'nested'), 'rev-parse', 'HEAD')).toBe(firstDependencySha)
     await writeFile(join(path, 'nested/file'), 'dirty')
     await writeFile(join(path, 'nested/untracked'), 'stale')
   })
   await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: secondSha }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+    expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(secondSha)
     expect(await readdir(join(path, 'nested'))).toEqual([])
     await expect(access(join(path, '.git/modules'))).rejects.toThrow()
@@ -629,13 +629,13 @@ it('clears initialized submodules when a pooled checkout changes its gitlink', a
     await writeFile(join(path, 'nested/untracked'), 'stale again')
   })
   await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: malformedSha }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+    expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(malformedSha)
     expect(await readdir(join(path, 'nested'))).toEqual([])
     await expect(access(join(path, '.git/modules'))).rejects.toThrow()
   })
   await host.withPullRequestCheckout({ repository: 'acme/submodules', number: 1, headSha: removedSha }, async ({ path }) => {
-    expect(path).toBe(firstPath)
+    expect(await realpath(path)).toBe(firstPath)
     expect(await git(path, 'rev-parse', 'HEAD')).toBe(removedSha)
     await expect(access(join(path, 'nested'))).rejects.toThrow()
   })

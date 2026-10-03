@@ -994,7 +994,10 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       }
       operation.signal.throwIfAborted()
       await pooled?.validate()
-      const publicCheckout = pooled?.directory ?? checkout
+      // Keep callbacks on the descriptor-anchored path. The visible pool path
+      // can be replaced after validation; exposing it would let a callback
+      // traverse a different checkout before custody is released.
+      const publicCheckout = pooled?.anchoredDirectory ?? checkout
       keepCheckout = Boolean(checkoutPool)
       const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
       let pushHead = pullRequest.headSha
