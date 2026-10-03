@@ -4,9 +4,12 @@ import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 import type { WorkflowDefinition, WorkflowDefinitionRegistry } from "../types.ts"
 import { workflowErrorDiagnostics } from "../error-diagnostics.ts"
 
+let definitionGeneration = 0
+
 function createRegistryState(registry?: WorkflowDefinitionRegistry) {
   return {
     registry,
+    generation: definitionGeneration,
     loaded: new Map<string, WorkflowDefinition | undefined>(),
     loading: new Map<string, Promise<WorkflowDefinition | undefined>>(),
     inlineLoads: new Set<Map<string, WorkflowDefinition>>(),
@@ -18,10 +21,13 @@ type RegistryState = ReturnType<typeof createRegistryState>
 let registryState = createRegistryState()
 const inlineRegistry = new Map<string, WorkflowDefinition>()
 // Module exports survive registry replacement without publishing retired definitions by name.
-const handleDefinitions = new WeakMap<object, WorkflowDefinition>()
+const handleDefinitions = new WeakMap<object, { definition: WorkflowDefinition, generation: number }>()
 
 export function bindWorkflowDefinitionHandle<T extends object>(handle: T, definition?: WorkflowDefinition): T {
-  if (definition) handleDefinitions.set(handle, definition)
+  if (definition) {
+    const state = loadingInlineRegistryStorage.getStore()?.state ?? registryState
+    handleDefinitions.set(handle, { definition, generation: state.generation })
+  }
   return handle
 }
 const loadingRegistryStorage = new AsyncLocalStorage<{ names: Set<string>, state: RegistryState }>()
@@ -76,15 +82,21 @@ function findExportedInlineWorkflowDefinition(
 
   if (!isRuntimeRecord(loaded)) return undefined
 
+  const generation = loadingInlineRegistryStorage.getStore()?.state.generation ?? registryState.generation
+  const definitionForHandle = (handle: object) => {
+    const retained = handleDefinitions.get(handle)
+    return retained?.generation === generation ? retained.definition : undefined
+  }
+
   if ("default" in loaded && isWorkflowHandle(loaded.default)) {
-    const definition = handleDefinitions.get(loaded.default) ?? definitions.get(loaded.default.name)
+    const definition = definitionForHandle(loaded.default) ?? definitions.get(loaded.default.name)
     if (definition) return { definition, name: loaded.default.name }
   }
 
   const matches = new Map<string, WorkflowDefinition>()
   for (const value of Object.values(loaded)) {
     if (!isWorkflowHandle(value)) continue
-    const definition = handleDefinitions.get(value) ?? definitions.get(value.name)
+    const definition = definitionForHandle(value) ?? definitions.get(value.name)
     if (definition) matches.set(value.name, definition)
   }
 
@@ -207,6 +219,8 @@ export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefi
 }
 
 export function resetWorkflowDefinitions(): void {
+  // Reset invalidates cached exports, including handles created by retired loaders later.
+  definitionGeneration++
   setWorkflowRuntimeRegistry(undefined)
   inlineRegistry.clear()
 }

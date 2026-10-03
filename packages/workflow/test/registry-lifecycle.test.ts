@@ -183,6 +183,45 @@ it("resolves an inline export that was registered before its module loader", asy
   expect(handler).toHaveBeenCalledTimes(1)
 })
 
+it("does not revive cached inline exports after reset", async () => {
+  const handler = vi.fn(() => "stale")
+  const workflow = createWorkflow("legacy-name", handler)
+  const registry = {
+    report: async () => ({ workflow }),
+  }
+  setWorkflowRuntimeRegistry(registry)
+  await runWorkflow("report")
+
+  resetWorkflowRuntime()
+  setWorkflowRuntimeRegistry(registry)
+  await expect(runWorkflow("report")).rejects.toMatchObject({ code: "WORKFLOW_DEFINITION_NOT_FOUND" })
+  expect(handler).toHaveBeenCalledTimes(1)
+})
+
+it("does not revive handles created by a retired loader after reset", async () => {
+  const started = deferred()
+  const release = deferred()
+  const handler = vi.fn(() => "retired")
+  let module: Promise<{ workflow: ReturnType<typeof createWorkflow> }> | undefined
+  const registry = {
+    report: () => module ??= (async () => {
+      started.resolve()
+      await release.promise
+      return { workflow: createWorkflow("legacy-name", handler) }
+    })(),
+  }
+  setWorkflowRuntimeRegistry(registry)
+  const oldRun = runWorkflow("report")
+  await started.promise
+  resetWorkflowRuntime()
+  setWorkflowRuntimeRegistry(registry)
+  release.resolve()
+  await oldRun
+
+  await expect(runWorkflow("report")).rejects.toMatchObject({ code: "WORKFLOW_DEFINITION_NOT_FOUND" })
+  expect(handler).toHaveBeenCalledTimes(1)
+})
+
 it("retries a failed import after it partially registered an inline definition", async () => {
   const handler = vi.fn(() => "retried")
   let fail = true
