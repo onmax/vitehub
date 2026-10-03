@@ -55,6 +55,7 @@ describe("Netlify Blobs driver", () => {
     let calls = 0
     vi.stubGlobal("fetch", vi.fn(async () => {
       calls++
+      if (calls > 2) throw new Error("repeated-cursor sentinel")
       return new Response(JSON.stringify({ blobs: [], directories: [], next_cursor: "same" }), { status: 200 })
     }))
 
