@@ -457,8 +457,32 @@ describe("Browser Sessions", () => {
 
     await session.close()
     expect(close).toHaveBeenCalledOnce()
-    expect(release).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledTimes(2)
     expect(session.inspect().state).toBe("closed")
+  })
+
+  it("retains failed rollback cleanup until closure can release the controller", async () => {
+    const { close, controller, provider, release } = fixture()
+    const traceError = new Error("attach trace failed")
+    const releaseError = new Error("detach failed")
+    const trace = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(traceError)
+    release.mockRejectedValue(releaseError)
+    const session = await createBrowser({ provider, trace }).open()
+
+    await expect(session.attach(controller)).rejects.toMatchObject({ errors: [traceError, releaseError] })
+    await expect(session.close()).rejects.toBe(releaseError)
+    expect(close).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledTimes(2)
+    expect(session.inspect().state).toBe("controlled")
+    expect(trace.mock.calls.map(([event]) => event.name)).not.toContain("browser.controller.detach")
+
+    release.mockResolvedValue(undefined)
+    await session.close()
+    expect(release).toHaveBeenCalledTimes(3)
+    expect(session.inspect().state).toBe("closed")
+    expect(trace.mock.calls.map(([event]) => event.name)).toContain("browser.controller.detach")
   })
 
   it("allows another controller after attachment rollback succeeds even if detach tracing fails", async () => {

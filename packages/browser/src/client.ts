@@ -226,7 +226,6 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           }
           finally {
             releasePromise = undefined
-            if (this.pendingControllerRelease === control?.release) this.pendingControllerRelease = undefined
           }
         },
       }

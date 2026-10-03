@@ -209,7 +209,7 @@ finally {
 }
 ```
 
-If attachment tracing fails, ViteHub releases the controller before rejecting `session.attach()`. If controller cleanup also fails, the session blocks another attachment or handoff. Call `session.close()` to terminate the provider session. Provider cleanup is also available while controller cleanup is pending.
+If attachment tracing fails, ViteHub releases the controller before rejecting `session.attach()`. If controller cleanup also fails, the session blocks another attachment or handoff. Call `session.close()` to terminate the provider session and retry failed rollback cleanup. Provider cleanup is also available while controller cleanup is pending. Closure waits for rollback cleanup to succeed; if it fails again, closure rejects and can be retried.
 
 Install `@cloudflare/playwright` and `playwright-core` when using the Playwright controller on Cloudflare. Cloudflare builds select the `workerd` export condition and exclude the Node Playwright loader. Standalone Worker bundlers must also select `workerd`. The built-in Playwright CDP adapter requires Node.js.
 
