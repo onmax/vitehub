@@ -13,6 +13,8 @@ import type { BlobStorage, ResolvedBlobModuleOptions } from "../types.ts"
 
 let runtimeConfig: false | ResolvedBlobModuleOptions | undefined
 let runtimeConfigSnapshot: string | undefined
+const functionIds = new WeakMap<Function, number>()
+let nextFunctionId = 0
 let runtimeConfigPromise: Promise<false | ResolvedBlobModuleOptions> | undefined
 let runtimeStorages = new Map<string, BlobStorage>()
 let pendingStorages = new Map<string, Promise<BlobStorage>>()
@@ -64,7 +66,15 @@ export function getNamedBlobRuntimeStorage(name: string): BlobStorage | undefine
 }
 
 export function setBlobRuntimeConfig(config: false | ResolvedBlobModuleOptions | undefined): void {
-  const snapshot = config === undefined ? undefined : JSON.stringify(config)
+  const snapshot = config === undefined ? undefined : JSON.stringify(config, (_key, value: unknown) => {
+    if (typeof value !== "function") return value
+    let id = functionIds.get(value)
+    if (typeof id === "undefined") {
+      id = ++nextFunctionId
+      functionIds.set(value, id)
+    }
+    return { __viteHubFunctionId: id }
+  })
   if (config !== undefined && config === runtimeConfig && snapshot === runtimeConfigSnapshot) return
   runtimeConfig = config
   runtimeConfigSnapshot = snapshot
