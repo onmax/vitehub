@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest"
 import {
   consoleBuiltinSectionIds,
   consoleSectionDetails,
+  isConsoleConnectionsEnabled,
   prioritizeConsoleSectionIds,
   readLastConsoleSection,
   rememberConsoleSection,
@@ -22,6 +23,13 @@ function memoryStorage(initial?: string) {
 }
 
 describe("Console section preferences", () => {
+  it("only advertises Connections when management is mounted", () => {
+    expect(isConsoleConnectionsEnabled({ connections: true, console: true })).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: { management: true }, console: { access: "auth" } })).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: true, console: { access: "auth" } })).toBe(false)
+    expect(isConsoleConnectionsEnabled({ connections: { management: false }, console: { access: "auth" } })).toBe(false)
+  })
+
   it("derives enabled primitive sections, including Agent-enabled Workflow", () => {
     expect(resolveConsoleSectionIds({ agent: true, blob: true, connections: true, database: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })).toEqual([
       "connections",

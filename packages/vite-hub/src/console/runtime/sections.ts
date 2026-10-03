@@ -72,6 +72,14 @@ export function isConsoleBuiltinSectionId(value: unknown): value is ConsoleBuilt
   return consoleBuiltinSectionIds.some(section => section === value)
 }
 
+/** Connections management is mounted for development Consoles and explicit production management. */
+export function isConsoleConnectionsEnabled(options: { connections?: unknown; console?: unknown }): boolean {
+  if (!options.connections) return false
+  if (options.console === true) return true
+  if (!options.connections || typeof options.connections !== "object") return false
+  return Boolean((options.connections as { management?: unknown }).management)
+}
+
 /** Route name of a contributed section. The Console serves it at `/_vitehub/<id>`. */
 export function consoleSectionRouteName(section: ConsoleSectionId): string {
   return `vitehub-console-${section}`
