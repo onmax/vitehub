@@ -516,33 +516,6 @@ async function createTrustedHostSession(options: {
         },
       );
     },
-    async readFile({ path }: { path: string }) {
-      const bytes = await this.readBinaryFile({ path });
-      return bytes ? readableStream(bytes) : null;
-    },
-    async readTextFile({
-      encoding = "utf8",
-      endLine,
-      path,
-      startLine,
-    }: {
-      encoding?: string;
-      endLine?: number;
-      path: string;
-      startLine?: number;
-    }) {
-      const bytes = await this.readBinaryFile({ path });
-      if (!bytes) return null;
-      const text = Buffer.from(bytes).toString(encoding as BufferEncoding);
-      if (startLine === undefined && endLine === undefined) return text;
-      return text
-        .split(/\r?\n/)
-        .slice((startLine || 1) - 1, endLine)
-        .join("\n");
-    },
-    restricted() {
-      return this;
-    },
     async run(runOptions: {
       abortSignal?: AbortSignal;
       command: string;
@@ -619,23 +592,6 @@ async function createTrustedHostSession(options: {
       const target = resolveSessionPath(options.root, path);
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, content);
-    },
-    async writeFile({ content, path }: { content: ReadableStream<Uint8Array>; path: string }) {
-      await this.writeBinaryFile({ content: await bytesFromStream(content), path });
-    },
-    async writeTextFile({
-      content,
-      encoding = "utf8",
-      path,
-    }: {
-      content: string;
-      encoding?: string;
-      path: string;
-    }) {
-      await this.writeBinaryFile({
-        content: Buffer.from(content, encoding as BufferEncoding),
-        path,
-      });
     },
   } satisfies TrustedHostSession;
   return session;
@@ -942,14 +898,6 @@ function rootRelativeFragment(path: string) {
     .replace(/^[A-Za-z]:[\\/]*/, "")
     .replace(/^[\\/]+/, "")
     .replace(/\\/g, "/");
-}
-
-function readableStream(bytes: Uint8Array) {
-  return new Response(bytes).body!;
-}
-
-async function bytesFromStream(stream: ReadableStream<Uint8Array>) {
-  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
 async function collect(stream: ReadableStream<Uint8Array>) {
