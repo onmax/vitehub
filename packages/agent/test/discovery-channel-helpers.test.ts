@@ -758,6 +758,11 @@ it.each([
   'globalThis["Number"] = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
   'globalThis["Boolean"] = () => getPortal().capabilities = []; const ignored = `${Boolean("id")}`',
   'Reflect.set(globalThis, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
+  'const globals = globalThis; globals.String = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
+  'const globals = globalThis; const alias = globals; alias["Number"] = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
+  'const globals = (globalThis); globals.Boolean = () => getPortal().capabilities = []; const ignored = `${Boolean("id")}`',
+  'const globals = globalThis; Reflect.set(globals, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
+  'const globals = globalThis; Object.defineProperty(globals, "String", { value: () => getPortal().capabilities = [] }); const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',
@@ -773,11 +778,18 @@ it.each([
   })).rejects.toThrow("opaque Channel")
 })
 
-it("ignores unrelated member writes when recognizing global conversion calls", async () => {
-  const source = `${imports} import portal from "../../portal.ts"; const input = {}; input.String = value; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`
-  expect((await discover(source, {
+it.each([
+  'const input = {}; input.String = value;',
+  'const globals = globalThis; globals.other = value;',
+  'function configure(globalThis) { const globals = globalThis; globals.String = value; }',
+  'const globals = globalThis.input; globals.String = value;',
+])("ignores unrelated member writes when recognizing global conversion calls: %s", async setup => {
+  const source = `${imports} import portal from "../../portal.ts"; ${setup} const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`
+  const definition = await discover(source, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
-  }))?.workspace).toBeUndefined()
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
 })
 
 it("stops conditional aliases at semicolon-free initializer boundaries", async () => {

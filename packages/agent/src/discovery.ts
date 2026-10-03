@@ -1252,7 +1252,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const call = memberCallEnd(member.end - 1, index)
       if (tokens[call] !== "(") continue
       const target = resolveReference(call + 1, new Set(), true)
-      if (!globalBindingReference(target, "globalThis") || tokens[target + 1] !== ",") continue
+      if (!globalThisReceiver(target) || tokens[target + 1] !== ",") continue
       const property = resolveReference(target + 2)
       const name = propertyName(tokens[property] ?? "")
       if (["String", "Number", "Boolean"].includes(name)) reassignedGlobalConversions.add(name)
@@ -1261,10 +1261,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // exposing the property name as an identifier token (for example,
     // `globalThis["String"] = replacement`). Treat these as opaque too.
     for (let index = 0; index < tokens.length; index++) {
-      // `globalThis` itself may be marked mutated by the generic assignment
-      // scan, so check shadowing without requiring globalBindingAvailable().
-      if (tokens[index] !== "globalThis" || tokens[index - 1] === "."
-        || !globalBindingUnshadowed(index, "globalThis")) continue
+      // Member writes mark globalThis and its aliases mutated. Follow their
+      // direct initializers without requiring globalBindingAvailable().
+      if (!globalThisReceiver(index)) continue
       const member = memberAccess(index)
       if (member && ["String", "Number", "Boolean"].includes(member.name) && assignmentOperator(member.end)) {
         reassignedGlobalConversions.add(member.name)
@@ -1441,6 +1440,23 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
 
   function globalBindingReference(index: number, name: string): boolean {
     return tokens[index] === name && tokens[index - 1] !== "." && globalBindingAvailable(index, name)
+  }
+
+  function globalThisReceiver(index: number, seen = new Set<number>()): boolean {
+    while (tokens[index] === "(") index++
+    if (!isIdentifier(tokens[index]) || seen.has(index) || tokens[index - 1] === ".") return false
+    seen.add(index)
+    if (tokens[index] === "globalThis") return globalBindingUnshadowed(index, "globalThis")
+    if (isFunctionParameter(index) || callbackParameters.some(scope => index >= scope.start && index < scope.end && scope.names.has(tokens[index]!))) return false
+    const binding = visibleDeclaration(index)
+    const initializer = binding === undefined ? undefined : declaratorInitializers.get(binding + 1)
+    if (initializer === undefined) return false
+    let value = initializer
+    while (tokens[value] === "(") value++
+    // Member writes mark the receiver mutated, but do not sever its alias.
+    // Follow only direct initializers so unrelated global properties stay local.
+    if (![";", ",", ")", undefined].includes(tokens[value + 1]) && !startsStatement(value + 1)) return false
+    return globalThisReceiver(value, seen)
   }
 
   function globalBindingAvailable(index: number, name: string): boolean {
