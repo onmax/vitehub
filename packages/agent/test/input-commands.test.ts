@@ -424,6 +424,28 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it("bounds positive-depth numeric oscillation cycles", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        a: { call: ({ args }) => {
+          calls++
+          return { prompt: `/b ${Number(args) - 1}` }
+        } },
+        b: { call: ({ args }) => {
+          calls++
+          return { prompt: `/a ${Number(args) + 1}` }
+        } },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a 2" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
   it.each(["replacement", "result", "mutation"] as const)("allows decreasing same-command fan-out with options through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")

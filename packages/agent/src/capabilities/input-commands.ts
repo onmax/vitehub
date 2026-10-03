@@ -491,6 +491,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       const blockedTransitions = new Set<string>()
       const transitionGraph = new Map<string, Set<string>>()
       const creditedCyclicTransitions = new Set<string>()
+      const numericTransitionDepths = new Map<string, number>()
       let transitionLineage: string[] = []
       let budgetText: string | undefined
       let budgetCommand: string | undefined
@@ -578,6 +579,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
                 && revealsBoundaryCommand))
               && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
             let cycleDetected = false
+            let numericTransitionBlocked = false
             const budgetDepth = inputCommandNumericDepth(budgetArgs)
             const nextDepth = inputCommandNumericDepth(nextInvocation?.args)
             const advancesNumericStage = Boolean(
@@ -625,6 +627,14 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             if (introducesNextInvocation && nextInvocation) {
               if (!transitionLineage.length) transitionLineage.push(budgetCommand)
               const transition = `${budgetCommand}->${nextInvocation.name}`
+              if (advancesNumericStage && nextInvocation.name !== budgetCommand) {
+                const previousDepth = numericTransitionDepths.get(transition)
+                if (previousDepth !== undefined && budgetDepth! >= previousDepth) {
+                  numericTransitionBlocked = true
+                } else {
+                  numericTransitionDepths.set(transition, budgetDepth!)
+                }
+              }
               const transitionWasBlocked = blockedTransitions.has(transition)
               const cycleStart = transitionLineage.indexOf(nextInvocation.name)
               if (cycleStart >= 0 && !transitionWasBlocked) {
@@ -643,7 +653,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               const nextOwnRuns = nextCounts.byName.get(budgetCommand) || 0
               if (!(previousOwnRuns > 1 && nextOwnRuns > 0)) creditedCyclicTransitions.clear()
             }
-            if (!graphCreditBlocked && (!nextInvocation || cycleDetected || advancesNumericStage
+            if (!graphCreditBlocked && !numericTransitionBlocked && (!nextInvocation || cycleDetected || advancesNumericStage
               || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))
               && (finiteStage || advancesStage || ownGrowth || finiteSameCommandGrowth || advancesNumericStage)) {
               // Credit the rewritten invocation too, which may consume the base allowance.
