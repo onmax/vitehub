@@ -380,6 +380,14 @@ vitehub agent invocations tail INVOCATION_ID
 
 The CLI defaults to `http://localhost:5173/api/invocations`. Use `--url` or `VITEHUB_AGENT_INVOCATIONS_URL` for another local endpoint, and `--json` for automation-safe output.
 
+To request cancellation of an active invocation, use the development endpoint:
+
+```sh
+vitehub agent invocations cancel INVOCATION_ID
+```
+
+Cancellation is available through the Vite + Nitro development runtime. Set `--url` (or `VITEHUB_AGENT_INVOCATIONS_URL`) to the invocation endpoint registered by that runtime when the default URL does not apply. The command requires the runtime's development token and reports whether cancellation was accepted; it does not delete the journal record.
+
 Delete and prune open a SQLite or libSQL journal directly:
 
 ```sh
