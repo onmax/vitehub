@@ -1813,7 +1813,7 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
       const pollCancellationRequest = async (initial = false) => {
         if (!unregisterCancellation || finished || cancellation.signal.aborted) return
         const summary = await boundedStoreOperation(() => store.getSummary(recordId))
-        if (initial && (!summary || summary === storeOperationTimedOut)) {
+        if (initial && summary === storeOperationTimedOut) {
           throw agentDiagnostics.AGENT_R0973({ message: summary === storeOperationTimedOut
             ? "[vitehub] Initial Agent Invocation cancellation check timed out."
             : "[vitehub] Initial Agent Invocation cancellation check failed." })
@@ -2356,7 +2356,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
             return runningPersisted
           }
           if (await markRunning()) return true
-          if (cancellationDriver?.enforced === false && !cancellationWarningPrepared) {
+          const latest = await boundedStoreOperation(() => store.getSummary(recordId))
+          // A reused terminal record is intentionally immutable, but the new
+          // execution still runs its lifecycle hooks and Driver. Treat that
+          // case as ready; an active record whose update failed must remain
+          // blocked until the recovery retry succeeds.
+          if (latest && latest !== storeOperationTimedOut && terminalStatus(latest.status) && !latest.cancelRequestedAt) return true
+          if (cancellationDriver?.enforced === false && !cancellationWarningPrepared && latest && latest !== storeOperationTimedOut && !terminalStatus(latest.status)) {
             throw agentDiagnostics.AGENT_R0973({ message: "[vitehub] Initial custom Driver cancellation state could not be persisted." })
           }
           if (runningRetry) return false

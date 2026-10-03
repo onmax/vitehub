@@ -122,6 +122,7 @@ function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | und
   return candidates.some(candidate => values.includes(candidate))
 }
 
+// doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- Collection callers provide the item shape through their published generic contract.
 function project<T>(item: unknown, select: string[] | undefined): T {
   if (!select?.length) return item as T
   return Object.fromEntries(select.map(field => [field, valueAt(item, field)])) as T
