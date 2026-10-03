@@ -966,6 +966,23 @@ it("does not treat async global helpers as global object aliases", async () => {
   expect(definition?.workspace).toBeUndefined()
 })
 
+it.each([
+  'globalThis.String = replacement',
+  '(globalThis).String = replacement',
+  '((globalThis) as object).String = replacement',
+])("rejects parenthesized global conversion receivers: %s", async setup => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; ${setup}; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it("ignores named function expressions in template interpolations", async () => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; const ignored = \`\${function portal() {}}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
 it("stops conditional aliases at semicolon-free initializer boundaries", async () => {
   const definition = await discover(`import { defineAgent } from "vite-hub/agent"
 import { join } from "node:path"

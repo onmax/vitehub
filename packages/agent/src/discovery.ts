@@ -1297,6 +1297,35 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
           && references[index - 2] === "static"
         || previous === "*" && references[index - 2] === "async"
     }
+    // Function expressions create a local name and parameter scope. Their
+    // declaration syntax also contains a parenthesized token sequence that
+    // must not be mistaken for an opaque call.
+    const functionExpression = (index: number) => {
+      if (references[index] !== "function") return undefined
+      let cursor = index + 1
+      if (references[cursor] === "*") cursor++
+      const name = isIdentifier(references[cursor] ?? "") ? references[cursor++] : undefined
+      if (references[cursor] !== "(") return undefined
+      const close = referenceClosings.get(cursor)
+      if (close === undefined || references[close + 1] !== "{") return undefined
+      const bodyClose = referenceClosings.get(close + 1)
+      if (bodyClose === undefined) return undefined
+      return { name, parameters: cursor, parameterClose: close, bodyClose }
+    }
+    const functionExpressionCall = (index: number) => {
+      for (let cursor = Math.max(0, index - 3); cursor <= index; cursor++) {
+        const expression = functionExpression(cursor)
+        if (expression && expression.parameters === index + 1) return true
+      }
+      return false
+    }
+    for (let index = 0; index < references.length; index++) {
+      const expression = functionExpression(index)
+      if (expression === undefined) continue
+      const names = callbackBindingNames(expression.parameters, expression.parameterClose, undefined, references)
+      if (expression.name !== undefined) names.add(expression.name)
+      templateLocalBindings.push({ start: index, end: expression.bodyClose, names })
+    }
     // Method parameters shadow module bindings throughout their method body.
     // Keep these names local to the template interpolation so an unrelated
     // method such as `render(portal) { return portal.id }` cannot taint an
@@ -1444,6 +1473,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       || ((token === "(" || token.startsWith("`"))
         && (isIdentifier(references[index - 1]) || [")", "]", ">", "."].includes(references[index - 1] ?? ""))
         && !methodKey(index - 1)
+        && !functionExpressionCall(index - 1)
         && !conversionCall(index)))
       // A tagged template also calls its tag. The tag is outside the
       // interpolation token stream, so treat it as opaque
@@ -2237,7 +2267,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     // TypeScript assertions can appear between a receiver and its member,
     // for example `(globalThis as object).String` or `(globalThis!).String`.
     let receiverEnd = index + 1
-    let wrapped = false
+    let wrapped = tokens[index - 1] === "("
     while (receiverEnd < tokens.length) {
       if (tokens[receiverEnd] === "!") {
         wrapped = true
