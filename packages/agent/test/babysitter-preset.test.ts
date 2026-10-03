@@ -17,6 +17,7 @@ import { agentWithColocatedInstructions, defineAgent, getAgentFromRegistry } fro
 import { babysitter } from "../src/presets/babysitter.ts";
 import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
 import { getAgentLayerOptions } from "../src/agent-layers.ts";
+import { github as githubChannel, githubChannelIdentity } from "../src/channels.ts";
 import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
 import * as githubRuns from "../src/server/github-pull-requests.ts";
 import { agentInvocationId } from "../src/invocations.ts";
@@ -166,7 +167,11 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
   const github: GitHubHost = {
     identity: () => "repair-bot",
     command,
-    channel: () => ({ kind: "github" }),
+    channel: (options) => {
+      const channel = githubChannel({ ...options, app: github });
+      expect(githubChannelIdentity({ github: channel })).toBe(github);
+      return channel;
+    },
     environment: async () => {
       throw new Error("Worker must not resolve GitHub credentials");
     },
@@ -201,6 +206,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     ...(discovered ? {} : { name: "babysitter" }),
     preset: "babysitter",
     presets: { babysitter },
+    github,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
     driver: { env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
@@ -692,6 +698,7 @@ describe("Babysitter preset runtime", () => {
     const environment = createProviderRuntime.mock.calls[0]?.[0].environment;
     expect(environment).not.toHaveProperty("GH_TOKEN");
     expect(environment).not.toHaveProperty("GITHUB_TOKEN");
+    expect(environment).not.toHaveProperty("VITEHUB_GITHUB_HEAD_TOKEN");
     expect(environment).toHaveProperty("OPENAI_API_KEY", "provider-only");
     const commitRoot = await mkdtemp(join(tmpdir(), "vitehub-babysitter-commit-"));
     roots.push(commitRoot);

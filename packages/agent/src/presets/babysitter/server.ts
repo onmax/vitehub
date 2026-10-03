@@ -27,7 +27,7 @@ import {
 import type { Claim, PullRequestInboxStorage, ReadGraphql, Snapshot } from "../../server/github-inbox.ts";
 import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
-import { getAgentLayerOptions } from "../../agent-layers.ts";
+import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence } from "./merge.ts";
@@ -635,16 +635,27 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 | (ClaudeCodeDriverOptions<BabysitterPassResult> & { kind: "claude-code" });
               const activityEnabled = !!verifiedHostIdentity;
               const workerName = "babysitter-worker";
+              const baseSettings = getAgentLayerOptions(baseAgent);
+              if (!baseSettings) throw new Error("Babysitter base Agent settings are unavailable.");
+              // Build the worker from the base settings without inheriting its
+              // GitHub Channels. Extending the base Agent would merge those
+              // Channels and preserve the host identity on the worker.
+              const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              copyDefinitionDecorations(asMetadataTarget(baseAgent), asMetadataTarget(workerSettings));
+              const workerChannel = { ...github.channel({
+                activity: activityEnabled,
+                pullRequest: { filter: presetOptions.filter, workspace: false },
+              }) };
+              // Preserve host-owned activity and delivery closures without
+              // exposing their identity to provider credential resolution.
+              Reflect.deleteProperty(workerChannel, Symbol.for("vitehub.githubChannelIdentity"));
               const agent = defineAgent({
-                extends: baseAgent,
+                ...workerSettings,
                 name: workerName,
                 // GitHub authority stays in the broker operations above;
                 // attaching the host here would expose its token to the driver.
                 channels: {
-                  github: github.channel({
-                    activity: activityEnabled,
-                    pullRequest: { filter: presetOptions.filter },
-                  }),
+                  github: workerChannel,
                 },
                 capabilities: [repairCapability(operations, merge.mode === "auto")],
                 driver: {
