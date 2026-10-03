@@ -28,6 +28,18 @@ describe("Console status", () => {
     expect(create).not.toHaveBeenCalled()
   })
 
+  it("includes HTTP status messages for invalid and unavailable status requests", async () => {
+    const invalid = "a".repeat(513)
+    await expect(statusHandler({ method: "GET", req: { url: `http://localhost/api/_vitehub/console/status?agent=${invalid}` } })).rejects.toMatchObject({
+      statusCode: 400,
+      statusMessage: "Invalid Agent name.",
+    })
+    await expect(statusHandler({ method: "GET", req: { url: "http://localhost/api/_vitehub/console/status?agent=missing" } })).rejects.toMatchObject({
+      statusCode: 404,
+      statusMessage: "Agent status is unavailable.",
+    })
+  })
+
   it("reports the observability exporter and papercut backlog", async () => {
     const status = { configured: false, accepted: 0, failed: 1, dropped: 0, pending: 0, closed: false, papercuts: { running: false, pending: 0, delivered: 0, failed: 1 } }
     const slot = Symbol.for("vitehub.observability")

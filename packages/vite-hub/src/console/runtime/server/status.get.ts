@@ -14,11 +14,11 @@ const readStatus = createAgentStatusReader()
 export default async function statusHandler(event: ConsoleRequestEvent): Promise<{ agents: AgentProviderStatus[], observability: ObservabilityStatus | null }> {
   assertConsoleRequest(event)
   const name = consoleRequestURL(event).searchParams.get("agent")?.trim()
-  if (name && name.length > 512) throw Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0113({ message: "Invalid Agent name." }), { statusCode: 400 })
+  if (name && name.length > 512) throw Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0113({ message: "Invalid Agent name." }), { statusCode: 400, statusMessage: "Invalid Agent name." })
   const names = name ? [name] : getConsoleAgents()
   const agents = await Promise.all(names.map(async name => {
     const agent = getConsoleAgentDefinition(name, "inspect")
-    if (!agent) throw Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0114({ message: "Agent status is unavailable." }), { statusCode: 404 })
+    if (!agent) throw Object.assign(viteHubErrorDiagnostics.VITE_HUB_R0114({ message: "Agent status is unavailable." }), { statusCode: 404, statusMessage: "Agent status is unavailable." })
     return readStatus(agent, name)
   }))
   return { agents, observability: observabilityStatus() }
