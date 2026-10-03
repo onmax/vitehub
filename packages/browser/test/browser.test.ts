@@ -473,16 +473,39 @@ describe("Browser Sessions", () => {
 
     await expect(session.attach(controller)).rejects.toMatchObject({ errors: [traceError, releaseError] })
     await expect(session.close()).rejects.toBe(releaseError)
-    expect(close).toHaveBeenCalledOnce()
+    expect(close).not.toHaveBeenCalled()
     expect(release).toHaveBeenCalledTimes(2)
     expect(session.inspect().state).toBe("controlled")
     expect(trace.mock.calls.map(([event]) => event.name)).not.toContain("browser.controller.detach")
 
     release.mockResolvedValue(undefined)
     await session.close()
+    expect(close).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledTimes(3)
     expect(session.inspect().state).toBe("closed")
     expect(trace.mock.calls.map(([event]) => event.name)).toContain("browser.controller.detach")
+  })
+
+  it("retries failed rollback before provider closure invalidates the controller connection", async () => {
+    const { close, controller, provider, release } = fixture()
+    const traceError = new Error("attach trace failed")
+    const releaseError = new Error("detach failed")
+    let providerClosed = false
+    close.mockImplementation(async () => { providerClosed = true })
+    release.mockRejectedValueOnce(releaseError).mockImplementation(async () => {
+      if (providerClosed) throw new Error("controller connection closed")
+    })
+    const trace = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(traceError)
+    const session = await createBrowser({ provider, trace }).open()
+
+    await expect(session.attach(controller)).rejects.toMatchObject({ errors: [traceError, releaseError] })
+    await session.close()
+
+    expect(release).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledOnce()
+    expect(session.inspect().state).toBe("closed")
   })
 
   it("allows another controller after attachment rollback succeeds even if detach tracing fails", async () => {

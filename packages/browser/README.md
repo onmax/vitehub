@@ -165,7 +165,7 @@ try {
 
 Set `executablePath` to an installed Chromium-compatible browser. The path above is a Linux example. `playwright-core` supplies the controller but does not download a browser.
 
-If attachment tracing fails, ViteHub releases the attached controller before rejecting `session.attach()`. If that release also fails, the session keeps controller ownership and rejects another attachment or handoff. Call `session.close()` to terminate the provider session and retry failed rollback cleanup, including while rollback cleanup is pending. Closure waits for rollback cleanup to succeed; if it fails again, closure rejects and can be retried.
+If attachment tracing fails, ViteHub releases the attached controller before rejecting `session.attach()`. If that release also fails, the session keeps controller ownership and rejects another attachment or handoff. Call `session.close()` to retry failed rollback cleanup before terminating the provider session. Provider cleanup is also available while rollback cleanup is already pending. Closure waits for rollback cleanup to succeed; if it fails again, closure rejects and can be retried.
 
 Concurrent `control.release()` calls wait for the same cleanup. If controller cleanup fails, the session keeps controller ownership and rejects another attachment or handoff. Retry `control.release()` or call `session.close()` to terminate the provider session. If the detach trace fails after cleanup succeeds, `control.release()` rejects with controller ownership already cleared.
 
