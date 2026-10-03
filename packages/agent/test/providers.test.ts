@@ -1434,8 +1434,8 @@ describe("agent Vite plugin", () => {
         // SAFETY: This fixture supplies the private Nitro config context consumed by the plugin.
         const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root } as never
         // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-        const result: unknown = isRuntimeFunction(plugin.config) ? await plugin.config.call({} as never, config, { command, mode: command === "serve" ? "development" : "production" }) : undefined
-        return JSON.stringify(result)
+        if (isRuntimeFunction(plugin.config)) await plugin.config.call({} as never, config, { command, mode: command === "serve" ? "development" : "production" })
+        return JSON.stringify(config)
       }
       const handler = join(root, ".vitehub", "agent", "invocations-dev-handler.ts")
       expect(await configFor("serve")).toContain(JSON.stringify({ handler, route: "/_vitehub/agent/invocations/dev" }))
@@ -1699,13 +1699,14 @@ describe("agent Vite plugin", () => {
       const plugin = hubAgent()
       if (!isRuntimeFunction(plugin.config)) throw new Error("Expected an Agent config hook")
       // SAFETY: This fixture supplies the private Nitro context and existing modules read by the hook.
-      const result = await plugin.config.call({} as never, {
+      const config = {
         [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
         root: hostedAgentRoot,
         nitro: { modules: [existingModule] },
-      } as never, { command, mode: command === "serve" ? "development" : "production" })
+      } as never
+      await plugin.config.call({} as never, config, { command, mode: command === "serve" ? "development" : "production" })
       // SAFETY: The Agent config hook preserves Nitro module and handler configuration.
-      const generated = (result as { nitro: { modules: unknown[], handlers: unknown[] } }).nitro
+      const generated = (config as { nitro: { modules: unknown[], handlers: unknown[] } }).nitro
       const options = {
         rootDir: root,
         ...(version === 2 ? { srcDir: serverDir } : { serverDir }),
@@ -1749,8 +1750,8 @@ describe("agent Vite plugin", () => {
     const middleware = { route: "/**", handler: "/app/middleware.ts", middleware: true }
     // SAFETY: This fixture supplies the private Nitro context and configured middleware read by the hook.
     const config = { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot, nitro: { handlers: [middleware] } } as never
-    const result = configHook.call({} as never, config, { command: "serve", mode: "development" })
-    expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([
+    configHook.call({} as never, config, { command: "serve", mode: "development" })
+    expect(config).toMatchObject({ nitro: { handlers: expect.arrayContaining([
       middleware,
       expect.objectContaining({ route: "/_vitehub/agent/invocations/dev", handler: expect.stringContaining("invocations-dev-handler.ts") }),
     ]) } })
