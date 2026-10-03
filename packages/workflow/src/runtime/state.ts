@@ -91,10 +91,13 @@ function isWorkflowHandle(value: unknown): value is { name: string } {
     && value !== null
     // SAFETY: The object and null checks above establish the loader value shape.
     && typeof (value as { name?: unknown }).name === "string"
+    // SAFETY: The object and null checks above establish the loader value shape.
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
     && typeof (value as { defer?: unknown }).defer === "function"
+    // SAFETY: The object and null checks above establish the loader value shape.
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
     && typeof (value as { getRun?: unknown }).getRun === "function"
+    // SAFETY: The object and null checks above establish the loader value shape.
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Workflow modules cross an untyped loader boundary and require structural runtime checks.
     && typeof (value as { run?: unknown }).run === "function"
 }
