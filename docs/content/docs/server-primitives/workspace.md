@@ -362,7 +362,7 @@ Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRe
 | `readFile(path, options?)` | `encoding?: 'utf8' \| 'binary'` | Defaults to UTF-8 text; binary reads return `Uint8Array`. |
 | `writeFile(path, content, options?)` | `mediaType?`, `metadata?` | Writes string or binary content with optional file metadata. |
 | `list(path?, options?)` | `recursive?: boolean` | Lists direct children or the complete subtree. |
-| `glob(pattern, options?)` | `cwd?: string` | Matches one pattern or an array relative to an optional Workspace directory. |
+| `glob(pattern, options?)` | `cwd?: string` | Matches one pattern or an array relative to an optional Workspace directory. Returned paths remain relative to the Workspace root. |
 | `search(query)` | `pattern`, `cwd?`, `paths?`, `regex?`, `caseSensitive?`, `limit?` | Searches text. Defaults to a case-insensitive literal pattern with a limit of `100`. |
 | `mkdir(path, options?)` | `recursive?: boolean` | Creates a Workspace directory. |
 | `rm(path, options?)` | `recursive?: boolean`, `force?: boolean` | Removes a file or directory under the active write policy. |

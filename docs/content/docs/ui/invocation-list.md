@@ -57,7 +57,7 @@ The list emits `endReached` when the viewport comes near the end and `hasMore` i
 
 ### Agent metadata
 
-`project`, `agent`, and `provider` are not rendered by default. Use the `projectIcon` and `harness` slots to show them in each row. Use `header` and `footer` for content around the list.
+Each row has three lines: the `project` name with the status and time, the `title`, and the `context` with the channel icon. `agent` and `provider` are not rendered by default. Use the `projectIcon` slot to add a mark before the project name and the `harness` slot to show them on the third line. Use `header` and `footer` for content around the list.
 
 ::component-preview{name="InvocationListSlotsExample"}
 ::

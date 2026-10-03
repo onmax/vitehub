@@ -1,3 +1,4 @@
+import { withBrowserTimeout } from "./internal/timeout.ts"
 import type {
   BrowserClaimOptions,
   BrowserClient,
@@ -23,24 +24,6 @@ import {
 } from "./errors.ts"
 import { browserErrorDiagnostics } from "./error-diagnostics.ts"
 
-const CONTROLLER_RELEASE_TIMEOUT_MS = 30_000
-
-async function releaseLateController(release: Promise<void>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    await Promise.race([
-      release,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(browserProviderError("browser", "release a late browser controller"))
-        }, CONTROLLER_RELEASE_TIMEOUT_MS)
-      }),
-    ])
-  }
-  finally {
-    if (timer) clearTimeout(timer)
-  }
-}
 export type {
   BrowserClaimOptions,
   BrowserClient,
@@ -157,6 +140,8 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
   private controller?: string
   private attaching = false
   private detaching = false
+  private pendingControllerRelease?: { release: () => Promise<void>, complete: () => Promise<void> }
+  private resourceReleased = false
   private lastControllerSupportsHandoff = true
   private state: BrowserSessionState = "released"
 
@@ -195,70 +180,83 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     }
 
     this.attaching = true
-    let attached: Awaited<ReturnType<typeof controller.attach>> | undefined
+    let releaseController: (() => Promise<void>) | undefined
+    let releaseRollback: { release: () => Promise<void>, complete: () => Promise<void> } | undefined
+    let releaseAttempted = false
     try {
-      attached = await controller.attach(this.providerSession.connection, {
+      const attached = await controller.attach(this.providerSession.connection, {
         provider: this.owner.provider,
         sessionId: this.id,
       })
+      let emitDetach = false
+      let released = false
+      let releasePromise: Promise<void> | undefined
+      let tracedReleasePromise: Promise<void> | undefined
+      let detachCompleted = false
+      const releaseControl = async (): Promise<void> => {
+        if (releasePromise) return await releasePromise
+        if (released) return
+        this.detaching = true
+        const releasing = (async () => {
+          await attached.release()
+          released = true
+          this.detaching = false
+          if (this.state === "controlled") this.state = "released"
+          this.controller = undefined
+        })()
+        releasePromise = releasing
+        try {
+          await releasing
+        }
+        finally {
+          releasePromise = undefined
+        }
+      }
+      releaseController = async () => {
+        if (tracedReleasePromise) return await tracedReleasePromise
+        if (released && (!emitDetach || detachCompleted)) return
+        const releasing = (async () => {
+          await releaseControl()
+          if (emitDetach) {
+            await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
+            detachCompleted = true
+            if (this.pendingControllerRelease === releaseRollback) this.pendingControllerRelease = undefined
+          }
+        })()
+        tracedReleasePromise = releasing
+        try {
+          await releasing
+        }
+        finally {
+          tracedReleasePromise = undefined
+        }
+      }
+      releaseRollback = { release: releaseControl, complete: releaseController }
       this.attaching = false
       if (this.closing || this.state !== "released") {
-        const lateControl = attached
-        attached = undefined
-        await releaseLateController(Promise.resolve(lateControl.release()))
+        releaseAttempted = true
+        await withBrowserTimeout(releaseControl(), () => browserProviderError("browser", "release a late browser controller"))
         throw browserSessionStateError("attach a controller to", this.state)
       }
       this.state = "controlled"
       this.controller = controller.name
       this.lastControllerSupportsHandoff = controller.features.attachExistingSession
         && attached.preservesSessionOnRelease !== false
+      const control = { client: attached.client, release: releaseController }
+      emitDetach = true
       await this.owner.emit("browser.controller.attach", this, { controller: controller.name })
-      const control = attached
-      let released = false
-      let releasePromise: Promise<void> | undefined
-      return {
-        client: control.client,
-        release: async () => {
-          if (releasePromise) return await releasePromise
-          if (released) return
-          this.detaching = true
-          const releasing = (async () => {
-            await control.release()
-            released = true
-            this.detaching = false
-            if (this.state === "controlled") this.state = "released"
-            this.controller = undefined
-            await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
-          })()
-          releasePromise = releasing
-          try {
-            await releasing
-          }
-          finally {
-            releasePromise = undefined
-          }
-        },
-      }
+      return control
     }
     catch (error) {
       this.attaching = false
       const errors = [error]
-      if (attached) {
+      if (releaseController && !releaseAttempted) {
+        this.pendingControllerRelease = releaseRollback
         try {
-          await attached.release()
+          await releaseController()
         }
         catch (releaseError) {
           errors.push(releaseError)
-        }
-      }
-      if (this.state === "controlled") this.state = "released"
-      this.controller = undefined
-      if (attached) {
-        try {
-          await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
-        }
-        catch (traceError) {
-          errors.push(traceError)
         }
       }
       if (errors.length > 1) {
@@ -303,14 +301,23 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
 
   async close(): Promise<void> {
     if (this.closePromise) return await this.closePromise
-    if (this.state === "closed") return
+    if (this.state === "closed" && !this.pendingControllerRelease) return
     if (this.state === "handed-off") throw browserSessionStateError("close", this.state)
     if (this.state === "controlled" && !this.detaching) throw browserSessionStateError("close", this.state)
     this.closing = true
     const closing = (async () => {
       try {
-        await releaseResource({ lease: this.lease, providerSession: this.providerSession })
+        const rollback = this.pendingControllerRelease
+        if (rollback) {
+          // Rollback must finish while its provider connection is still available.
+          await rollback.release()
+        }
+        if (!this.resourceReleased) {
+          await releaseResource({ lease: this.lease, providerSession: this.providerSession })
+          this.resourceReleased = true
+        }
         this.state = "closed"
+        await rollback?.complete()
       }
       finally {
         await this.owner.emit("browser.session.close", this)

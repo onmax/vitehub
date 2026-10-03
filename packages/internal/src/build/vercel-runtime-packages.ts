@@ -1,3 +1,4 @@
+import { createRuntimePackageResolver, isPackageResolutionMiss } from "./runtime-package-resolution.ts"
 import { access, copyFile, cp, mkdir, readFile, realpath, rm, stat } from "node:fs/promises"
 import { createRequire } from "node:module"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
@@ -7,6 +8,7 @@ import { createDefaultVercelOutputRoot } from "./deployment-output.ts"
 import { internalErrorDiagnostics } from "../error-diagnostics.ts"
 
 const runtimeExportConditions = new Set(["default", "import", "module", "node", "node-addons", "require"])
+const resolvePackageJson = createRuntimePackageResolver((source, path) => parsePackageJson(JSON.parse(source), path).name)
 let nodeFileTracePromise: Promise<typeof import("@vercel/nft").nodeFileTrace> | undefined
 
 export interface NodeRuntimePackage {
@@ -254,57 +256,6 @@ function hasNodeModulesSegment(path: string): boolean {
 function isInsideDirectory(parent: string, child: string): boolean {
   const childRelativePath = relative(parent, child)
   return childRelativePath === "" || (!childRelativePath.startsWith(`..${sep}`) && childRelativePath !== ".." && !isAbsolute(childRelativePath))
-}
-
-async function resolvePackageJson(name: string, resolver: NodeJS.Require, fromDir: string): Promise<string | undefined> {
-  try {
-    return resolver.resolve(`${name}/package.json`)
-  }
-  catch (error) {
-    if (!isPackageResolutionMiss(error)) throw error
-  }
-
-  try {
-    let current = dirname(resolver.resolve(name))
-    while (current !== dirname(current)) {
-      const candidate = join(current, "package.json")
-      try {
-        await access(candidate)
-        const parsedPackageJson: unknown = JSON.parse(await readFile(candidate, "utf8"))
-        // SAFETY: parsePackageJson validates the object boundary before this narrower property view.
-        const packageJson = parsePackageJson(parsedPackageJson, candidate) as { name?: string }
-        if (packageJson.name === name) return candidate
-      }
-      catch (error) {
-        // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      }
-      current = dirname(current)
-    }
-  }
-  catch (error) {
-    if (!isPackageResolutionMiss(error)) throw error
-  }
-
-  let current = fromDir
-  while (current !== dirname(current)) {
-    const candidate = join(current, "node_modules", ...name.split("/"), "package.json")
-    try {
-      await access(candidate)
-      return candidate
-    }
-    catch (error) {
-      // SAFETY: Node filesystem failures expose their stable error code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    current = dirname(current)
-  }
-}
-
-function isPackageResolutionMiss(error: unknown): boolean {
-  // SAFETY: Node module resolution failures expose their stable error code through ErrnoException.
-  const code = (error as NodeJS.ErrnoException | undefined)?.code
-  return code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
 }
 
 function parsePackageJson(value: unknown, path: string): Record<string, unknown> {

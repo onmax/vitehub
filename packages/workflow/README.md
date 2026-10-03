@@ -151,6 +151,8 @@ The other runtime helpers are:
 
 Unsupported provider operations fail with `WORKFLOW_OPERATION_UNSUPPORTED`; ViteHub does not pretend that an inline run was cancelled or resumed.
 
+Inline run inspection uses weak references while execution is active. A reachable execution remains inspectable; an abandoned execution with no remaining owner can be garbage-collected and then reports `unknown`. Completed inline runs are retained for five minutes, up to 1,024 entries per runtime. Completed history does not evict active executions. If either `WeakRef` or `FinalizationRegistry` is unavailable, active inspection uses strong references capped at 1,024 entries. Starting another run evicts the oldest active inspection entry, even if execution is still reachable; it reports `unknown` and completion does not restore it. Use a durable provider when inspection must survive abandonment or a process restart.
+
 ## Make a Vercel workflow durable
 
 A plain Vercel definition executes inline and does not survive a function restart. For durable execution, keep the same context-shaped handler and register a native Workflow DevKit entry:
@@ -240,3 +242,9 @@ await welcome.run({ email: "ada@example.com" })
 ```
 
 This is a breaking type correction. Supply the required payload at each handle call. Named operational functions do not infer a handler from a string, and persisted run results remain unknown.
+
+## Replacing the runtime registry
+
+`setWorkflowRuntimeRegistry()` from `@vite-hub/workflow/runtime/state` installs a fresh discovered-definition registry. New calls load from that registry even when an earlier registry still has pending imports. Calls already loading a definition finish with their original definition. Their completion cannot replace cached definitions or inline registrations in the new registry. Standalone inline definitions remain registered until `resetWorkflowRuntime()` clears them.
+
+Inline handles exported by a shared module retain their definitions for replacement loaders. Reset invalidates these retained definitions, including handles created later by imports that started before reset. OpenWorkflow worker startup captures the registry installation before loading definitions, so retired worker imports cannot overwrite or consume current inline registrations.

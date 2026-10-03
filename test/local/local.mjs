@@ -2,11 +2,12 @@
 // Local Provider Run orchestrator: executes built Provider Output on a local
 // runtime and runs every Primitive Suite against it. Exceptions to local
 // coverage are logged loudly, never skipped silently.
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { parseArgs } from "node:util"
 import { resolve } from "node:path"
-import { setTimeout as sleep } from "node:timers/promises"
+import { manageChild } from "./process.mjs"
+import { waitForProbe } from "./probe.mjs"
 
 import { buildPlayground } from "./build-playground.mjs"
 
@@ -16,33 +17,32 @@ const log = message => console.log(`[e2e:local] ${message}`)
 const CLOUDFLARE_PORT = 8788
 const VERCEL_PORT = 8789
 
-async function waitForProbe(url, timeoutMs = 60_000) {
-  const startedAt = Date.now()
-  let lastError
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(new URL("/api/tests/probe", url))
-      if (response.ok) return
-      lastError = new Error(`probe status ${response.status}`)
-    }
-    catch (error) {
-      lastError = error
-    }
-    await sleep(1_000)
-  }
-  throw new Error(`[e2e:local] App at ${url} never became healthy: ${lastError}`)
-}
 
-function runSuite(name, command, args, env = {}) {
+async function runSuite(name, command, args, env = {}, register) {
   log(`suite ${name}: ${command} ${args.join(" ")}`)
-  const result = spawnSync(command, args, { cwd: repoRoot, env: { ...process.env, ...env }, stdio: "inherit" })
-  if (result.status !== 0) {
-    throw new Error(`[e2e:local] Primitive Suite "${name}" failed (exit ${result.status}).`)
+  const child = spawn(command, args, {
+    cwd: repoRoot,
+    detached: process.platform !== "win32",
+    env: { ...process.env, ...env },
+    stdio: "inherit",
+  })
+  register?.addChild(child)
+  try {
+    await new Promise((resolve, reject) => {
+      child.once("error", reject)
+      child.once("exit", (code, signal) => {
+        if (code === 0) resolve()
+        else reject(new Error(`[e2e:local] Primitive Suite "${name}" failed (exit ${code ?? signal}).`))
+      })
+    })
+  }
+  finally {
+    register?.removeChild(child)
   }
 }
 
-function suiteRunner(provider, url) {
-  const runTask = (name, task, args, env) => runSuite(name, "vp", ["run", task, ...args], env)
+function suiteRunner(provider, url, register) {
+  const runTask = (name, task, args, env) => runSuite(name, "vp", ["run", task, ...args], env, register)
   return {
     // blob and database take no --provider flag (parseArgs strict), matching the live workflow.
     blob: () => runTask("blob", "blob:e2e", ["--mode", "local", "--url", url]),
@@ -61,26 +61,26 @@ async function runCloudflare() {
   log(`starting wrangler dev on ${url}`)
   const dev = spawn("vp", ["dlx", "wrangler", "dev", "--config", "wrangler.json", "--port", String(CLOUDFLARE_PORT), "--test-scheduled", "--enable-containers=false"], {
     cwd: distDir,
+    detached: process.platform !== "win32",
     env: { ...process.env, CI: "1", WRANGLER_SEND_METRICS: "false" },
     stdio: ["ignore", "inherit", "inherit"],
   })
+  const stop = manageChild(dev)
   try {
     await waitForProbe(url)
-    const run = suiteRunner("cloudflare", url)
-    run.pkg("kv")
-    run.pkg("rate-limit")
-    run.script("queue")
-    run.script("schedule", ["--timeout", "90000"])
-    run.script("workflow")
-    run.pkg("workspace")
-    run.blob()
-    run.database()
+    const run = suiteRunner("cloudflare", url, stop)
+    await run.pkg("kv")
+    await run.pkg("rate-limit")
+    await run.script("queue")
+    await run.script("schedule", ["--timeout", "90000"])
+    await run.script("workflow")
+    await run.pkg("workspace")
+    await run.blob()
+    await run.database()
     log("EXCEPTION (runtime): sandbox is live-only - it needs real containers.")
   }
   finally {
-    dev.kill("SIGTERM")
-    await sleep(500)
-    if (!dev.killed) dev.kill("SIGKILL")
+    await stop()
   }
 }
 
@@ -109,22 +109,24 @@ async function runVercel() {
   const url = `http://127.0.0.1:${VERCEL_PORT}`
   log(`starting vercel function bridge on ${url}`)
   const bridge = spawn("node", [resolve(import.meta.dirname, "vercel-bridge-server.mjs"), "--output-dir", outputDir, "--port", String(VERCEL_PORT)], {
+    detached: process.platform !== "win32",
     env: { ...process.env, ...bridgeEnv },
     stdio: ["ignore", "inherit", "inherit"],
   })
+  const stop = manageChild(bridge)
   try {
     await waitForProbe(url)
-    const run = suiteRunner("vercel", url)
+    const run = suiteRunner("vercel", url, stop)
     if (hasUpstash) {
-      run.pkg("kv")
-      run.script("schedule", ["--timeout", "90000"])
+      await run.pkg("kv")
+      await run.script("schedule", ["--timeout", "90000"])
     }
     else {
       log("EXCEPTION (env): kv and schedule on vercel-local need an Upstash-compatible endpoint (KV_REST_API_URL/TOKEN, e.g. serverless-redis-http). Suites NOT run - CI provides SRH services.")
     }
-    run.script("workflow")
+    await run.script("workflow")
     if (hasRemoteDatabase) {
-      run.database()
+      await run.database()
     }
     else {
       log("EXCEPTION (env): database on vercel-local needs a remote-shaped libSQL URL (TURSO_DATABASE_URL, e.g. a local sqld container). Suite NOT run - CI provides an sqld service.")
@@ -134,9 +136,7 @@ async function runVercel() {
     log("EXCEPTION (runtime): sandbox is live-only - it needs real containers.")
   }
   finally {
-    bridge.kill("SIGTERM")
-    await sleep(500)
-    if (!bridge.killed) bridge.kill("SIGKILL")
+    await stop()
   }
 }
 

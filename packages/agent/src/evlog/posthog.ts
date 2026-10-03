@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../internal/runtime-type.ts"
 import { sendBatchToPostHog } from "evlog/posthog"
 import { PostHog } from "posthog-node"
 import type { AgentEvlogExporter } from "../evlog.ts"

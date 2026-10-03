@@ -1,4 +1,5 @@
-import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../internal/runtime-type.ts"
 export type GitHubRequiredCheck = { context: string; appId: number | null };
 export type GitHubRequiredCheckPolicy = {
   repository: string;

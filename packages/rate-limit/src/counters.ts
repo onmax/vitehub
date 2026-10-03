@@ -1,7 +1,6 @@
 import * as v from "valibot"
 import { rateLimitErrorDiagnostics } from "./error-diagnostics.ts"
-import { listMemoryRateLimiters } from "./guard.ts"
-import { getRateLimitRuntimeConfig } from "./runtime/state.ts"
+import { getRateLimitRuntimeConfig, listMemoryRateLimiters } from "./runtime/state.ts"
 
 import type { RateLimitCounterScope, RateLimiter, RateLimitRuntimeConfig, RateLimitWindow } from "./types.ts"
 
@@ -56,8 +55,8 @@ function assertTarget(name: string, key: string): void {
   }
 }
 
-async function limitersFor(target: RateLimitCounterTarget): Promise<RateLimiter[] | undefined> {
-  return target.provider === "memory" ? await listMemoryRateLimiters(target.name) : undefined
+function limitersFor(target: RateLimitCounterTarget): RateLimiter[] | undefined {
+  return target.provider === "memory" ? listMemoryRateLimiters(target.name) : undefined
 }
 
 /**
@@ -67,7 +66,7 @@ async function limitersFor(target: RateLimitCounterTarget): Promise<RateLimiter[
 export async function peekRateLimit(name: string, key: string): Promise<RateLimitPeekInspection> {
   assertTarget(name, key)
   const target: RateLimitCounterTarget = { key, name: name.trim(), provider: getRateLimitRuntimeConfig().provider }
-  const limiters = await limitersFor(target)
+  const limiters = limitersFor(target)
   if (!limiters) return { ...target, reason: cloudflareRateLimitCounterUnsupportedReason, status: "unsupported" }
   if (limiters.length === 0) return { ...target, reason: unusedReason, status: "unused" }
   const counters: RateLimitCounterSnapshot[] = []
@@ -94,7 +93,7 @@ export async function peekRateLimit(name: string, key: string): Promise<RateLimi
 export async function resetRateLimit(name: string, key: string): Promise<RateLimitResetInspection> {
   assertTarget(name, key)
   const target: RateLimitCounterTarget = { key, name: name.trim(), provider: getRateLimitRuntimeConfig().provider }
-  const limiters = await limitersFor(target)
+  const limiters = limitersFor(target)
   if (!limiters) return { ...target, reason: cloudflareRateLimitCounterUnsupportedReason, status: "unsupported" }
   for (const limiter of limiters) {
     const result = await limiter.reset({ key })

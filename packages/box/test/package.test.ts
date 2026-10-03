@@ -7,6 +7,7 @@ describe("@vite-hub/box package contract", () => {
     await verifyBuiltPackageExports(new URL("../", import.meta.url), "@vite-hub/box", [
       ".",
       "./_internal/cloudflare",
+      "./_internal/toolchain",
       "./_internal/vercel",
     ])
   })

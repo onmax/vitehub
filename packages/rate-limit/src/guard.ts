@@ -1,12 +1,11 @@
 import { getRequestIP, HTTPError } from "h3"
 
 import { cloudflareRateLimitDriver } from "./drivers/cloudflare.ts"
-import { memoryRateLimitDriver } from "./drivers/memory.ts"
 import { getCloudflareRateLimitBindingName } from "./integrations/cloudflare.ts"
 import { createRateLimiter } from "./limiter.ts"
 import { declaredRateLimitPolicy, normalizeRateLimitPolicy, rateLimitPolicyKeys } from "./policy.ts"
 import {
-  getRateLimitLimiterCache,
+  getMemoryRateLimiter,
   getRateLimitRuntimeConfig,
 } from "./runtime/state.ts"
 
@@ -41,43 +40,6 @@ function getRequestKey(event: RateLimitRequestEvent, provider: "cloudflare" | "m
   return provider === "cloudflare"
     ? event.req.headers.get("cf-connecting-ip") || getRequestIP(event as HTTPEvent)
     : getRequestIP(event as HTTPEvent)
-}
-
-function memoryLimiterCacheKey(name: string, policy: RateLimitPolicy): string {
-  return JSON.stringify([name, policy.enforcement, policy.failure, policy.limit, policy.window])
-}
-
-function memoryLimiterCacheName(cacheKey: string): unknown {
-  const parsed: unknown = JSON.parse(cacheKey)
-  return Array.isArray(parsed) ? parsed[0] : undefined
-}
-
-/**
- * Returns the memory Rate Limiters that `requireRateLimit()` created for `name` in this process. The list is empty
- * until a request uses the Rate Limit. It has more than one entry only when calls use different policies.
- */
-export async function listMemoryRateLimiters(name: string): Promise<RateLimiter[]> {
-  const pending = [...getRateLimitLimiterCache()]
-    .filter(([cacheKey]) => memoryLimiterCacheName(cacheKey) === name)
-    .map(([, limiter]) => limiter.catch(() => undefined))
-  return (await Promise.all(pending)).filter(limiter => limiter !== undefined)
-}
-
-function getMemoryRateLimiter(name: string, policy: RateLimitPolicy): Promise<RateLimiter> {
-  const cache = getRateLimitLimiterCache()
-  const cacheKey = memoryLimiterCacheKey(name, policy)
-  const existing = cache.get(cacheKey)
-  if (existing) return existing
-  const pending = Promise.resolve(createRateLimiter({
-    ...policy,
-    driver: memoryRateLimitDriver(),
-    name,
-  })).catch((error) => {
-    cache.delete(cacheKey)
-    throw error
-  })
-  cache.set(cacheKey, pending)
-  return pending
 }
 
 function getCloudflareRateLimiter(event: RateLimitRequestEvent, name: string, policy: RateLimitPolicy): RateLimiter {
@@ -116,7 +78,7 @@ export async function requireRateLimit(event: RateLimitRequestEvent, name: strin
   }
   const limiter = provider === "cloudflare"
     ? getCloudflareRateLimiter(event, id, policy)
-    : await getMemoryRateLimiter(id, policy)
+    : getMemoryRateLimiter(id, policy)
   const decision = await limiter.consume({ key })
   if (decision.allowed) return
 

@@ -4,8 +4,10 @@ import { createStorage, normalizeKey } from "unstorage"
 import type { KVListOptions, KVListPage, ResolvedKVModuleOptions } from "../types.ts"
 import { Diagnostic } from "nostics"
 import { createLazyKVRuntimeDriver } from "./driver.ts"
+import { normalizeKVListPrefix } from "./list-prefix.ts"
 
 export interface RuntimeStorage {
+  dispose(): Promise<void>
   clear(base?: string, options?: unknown): Promise<void>
   // doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- This mirrors unstorage's caller-typed read contract.
   getItem<T = unknown>(key: string, options?: unknown): Promise<T | null>
@@ -59,7 +61,7 @@ export function createHostedKVStorage(config: false | ResolvedKVModuleOptions | 
   // doctor-disable-next-line typescript/evidence/no-chained-type-assertions -- createStorage supplies every RuntimeStorage method; listKeys is installed immediately below.
   // SAFETY: createStorage supplies the base methods, and this boundary installs the required listKeys method before returning.
   const storage = createStorage({ driver }) as unknown as RuntimeStorage
-  storage.listKeys = options => driver.listKeys(options)
+  storage.listKeys = options => driver.listKeys({ ...options, prefix: normalizeKVListPrefix(options.prefix) })
   const getAndDeleteItem = driver.getAndDeleteItem
   const incrementItem = driver.incrementItem
   if (getAndDeleteItem) {

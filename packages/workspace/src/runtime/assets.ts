@@ -1,5 +1,6 @@
 import { isWorkspaceError, workspaceError } from "../core/errors.ts"
-import { decodeFile, isExcludedWorkspacePath, matchesAny, normalizeSafeWorkspacePath, normalizeWorkspacePath, sha256 } from "../core/path.ts"
+import { decodeFile, isExcludedWorkspacePath, normalizeSafeWorkspacePath, normalizeWorkspacePath, sha256 } from "../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../core/glob.ts"
 import { searchText } from "../core/search.ts"
 
 import type {
@@ -153,10 +154,10 @@ export function createWorkspaceAssets<TKey extends string = string>(files: Works
     async list(path, options) {
       return await listEntries(path || "", options)
     },
-    async glob(pattern, _options: GlobOptions = {}) {
-      const entries = await listEntries("", { recursive: true })
-      const patterns = Array.isArray(pattern) ? pattern : [pattern]
-      return entries.filter(entry => entry.type === "file" && patterns.some(item => matchesAny(entry.path, item)))
+    async glob(pattern, options: GlobOptions = {}) {
+      const { cwd, matches } = createWorkspaceGlobMatcher(pattern, options)
+      const entries = await listEntries(cwd, { recursive: true })
+      return entries.filter(entry => entry.type === "file" && matches(entry.path))
     },
     async search(query: WorkspaceSearchQuery) {
       const result = []

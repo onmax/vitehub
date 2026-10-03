@@ -168,8 +168,9 @@ async function loadObjects(options: { append?: boolean; keepSelection?: boolean 
     cursor.value = page.cursor;
     hasMore.value = page.hasMore;
     error.value = undefined;
-    selectedPath.value = current && next.some(object => object.pathname === current)
-      ? current
+    const selection = options.append && options.keepSelection ? selectedPath.value : current;
+    selectedPath.value = selection && next.some(object => object.pathname === selection)
+      ? selection
       : next[0]?.pathname;
   } catch (cause) {
     if (cause instanceof Object && "name" in cause && cause.name === "AbortError") return;
@@ -229,7 +230,7 @@ onBeforeUnmount(() => {
       :min-size="13"
       :max-size="26"
       :menu="{ title: 'Blob objects', description: 'Browse configured Blob stores.' }"
-      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'h-11 shrink-0 border-t border-default px-2 py-1.5' }"
+      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'shrink-0 border-t border-default px-2 py-1.5' }"
       resizable
     >
       <template #header="{ collapsed }">
