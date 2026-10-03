@@ -26,6 +26,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./_internal/cloudflare": "./dist/internal/cloudflare.js",
+    "./_internal/toolchain": "./dist/internal/host-toolchain.js",
     "./_internal/vercel": "./dist/internal/vercel.js",
     "./ssh": "./dist/ssh.js",
     "./package.json": "./package.json"
@@ -38,7 +39,8 @@
   },
   "dependencies": {
     "@vite-hub/runtime": "workspace:*",
-    "nostics": "catalog:runtime"
+    "nostics": "catalog:runtime",
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "@asciidev/box-sdk": "^0.0.34",
@@ -51,7 +53,8 @@
     "typescript": "catalog:tooling",
     "vite-plus": "catalog:tooling",
     "vitest": "catalog:tooling",
-    "@types/ssh2": "^1.15.5"
+    "@types/ssh2": "^1.15.5",
+    "@types/semver": "^7.8.0"
   },
   "peerDependencies": {
     "@asciidev/box-sdk": "^0.0.34",

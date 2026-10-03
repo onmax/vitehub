@@ -84,7 +84,7 @@ import type {
 import { agentProviderCleanupTask } from "./internal/provider-cleanup-task.ts"
 import { boxSharesHostNetwork, openProviderBox, providerBoxEnvironment, startProviderBoxRelay } from "./internal/provider-box.ts"
 import type { ProviderBoxRelay, ProviderBoxSession } from "./internal/provider-box.ts"
-import type { BoxDefinition } from "@vite-hub/box"
+import type { BoxDefinition, BoxToolchain } from "@vite-hub/box"
 import { redactCredentialText } from "./internal/credential-redaction.ts"
 import { createWorkspaceSetupObservers } from "./internal/workspace-observability.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
@@ -112,7 +112,12 @@ export interface ProviderAgentAdapterOptions<
   reasoningSummary?: CodexReasoningSummary
   requirements?: readonly string[]
   sessionStorePath?: string
+  /** Provision project-pinned Node.js and a package manager for the provider and its commands. */
+  toolchain?: BoxToolchain
 }
+
+/** Commands that driver.toolchain provides after the checkout is prepared. */
+const providerToolchainCommands = new Set(["node", "npm", "npx", "pnpm", "pnpx", "yarn", "yarnpkg"])
 
 interface GeneratedProviderFile {
   root: string
@@ -468,6 +473,11 @@ function providerEnvironment(env: Record<string, string | undefined> | undefined
     ? { CLIPROXY_BASE_URL: proxyBaseUrl, CLIPROXY_API_KEY: process.env.CLIPROXY_API_KEY }
     : {}
   return Object.fromEntries(Object.entries({ ...host, ...proxy, ...env }).filter((entry): entry is [string, string] => hasRuntimeType(entry[1], "string")))
+}
+
+function withPathPrefix(env: NodeJS.ProcessEnv, prefix: readonly string[] | undefined): NodeJS.ProcessEnv {
+  if (!prefix?.length) return env
+  return { ...env, PATH: [...prefix, env.PATH].filter(Boolean).join(delimiter) }
 }
 
 function normalizedProviderEnvironment(value: unknown): AgentProviderEnvironment {
@@ -1258,7 +1268,9 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
 ): Promise<AgentProviderStatus> {
   const signal = context.abortSignal
   const checkRequirements = inspectionOptions.checkRequirements !== false
-  const requirements = checkRequirements ? options.requirements || [] : []
+  // The toolchain exists only after an invocation prepares its checkout.
+  const requirements = (checkRequirements ? options.requirements || [] : [])
+    .filter(command => options.toolchain === undefined || !providerToolchainCommands.has(command))
   let home: CodexCredentialHome | undefined
   let root: string | undefined
   try {
@@ -1625,7 +1637,11 @@ async function startToolServer(
   }
 }
 
-export function localWorkspaceHost(): WorkspaceSessionHost {
+/**
+ * Run Workspace commands on this host. `path` entries, such as a provisioned
+ * toolchain, precede the command PATH. The array can be filled after creation.
+ */
+export function localWorkspaceHost(hostOptions: { path?: readonly string[] } = {}): WorkspaceSessionHost {
   return {
     executionAuthority: normalizeExecutionAuthority({
       credentials: "ambient",
@@ -1698,13 +1714,13 @@ export function localWorkspaceHost(): WorkspaceSessionHost {
         const child = spawn(command, [...args], {
           cwd,
           detached: true,
-          env: {
+          env: withPathPrefix({
             // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
             ...providerEnvironment(options.env as Record<string, string> | undefined),
             INIT_CWD: cwd,
             OLDPWD: cwd,
             PWD: cwd,
-          },
+          }, hostOptions.path),
           signal,
         })
         let stdout = ""
@@ -1882,7 +1898,8 @@ async function prepareWorkspace(
   context: AgentAdapterRunContext,
   root: string,
   inPlace: boolean,
-): Promise<{ provenance: ProviderSourceProvenance[], pullRequestRoot: boolean, session?: WorkspaceSession } | undefined> {
+  path: readonly string[],
+): Promise<{ projectRoot?: string, provenance: ProviderSourceProvenance[], pullRequestRoot: boolean, session?: WorkspaceSession } | undefined> {
   if (!context.workspace) return
   if (process.platform === "win32") {
     throw agentDiagnostics.AGENT_R0701({ message: "[vitehub] Provider Agent Driver Workspaces require a POSIX Node host." })
@@ -1894,7 +1911,7 @@ async function prepareWorkspace(
   if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
-    host: localWorkspaceHost(),
+    host: localWorkspaceHost({ path }),
     ...(materializedSources?.ready ? { materializeSources: false } : {}),
     onProgress: createWorkspaceSetupObservers(workspaceSetupObserverOptions(context)).preparation,
     paths,
@@ -1925,7 +1942,12 @@ async function prepareWorkspace(
     await session.close({ abortSignal: context.input.abortSignal }).catch(() => undefined)
     throw new Error("Unable to initialize workspace Git repository")
   }
-  return { provenance, pullRequestRoot: Boolean(checkoutPullRequest && pullRequest?.mount === ""), session }
+  return {
+    ...(checkoutPullRequest && pullRequest.mount ? { projectRoot: join(root, pullRequest.mount) } : {}),
+    provenance,
+    pullRequestRoot: Boolean(checkoutPullRequest && pullRequest?.mount === ""),
+    session,
+  }
 }
 
 async function closeWorkspace(context: AgentAdapterRunContext, session: WorkspaceSession | undefined, error: unknown, abortSignal: AbortSignal) {
@@ -2620,6 +2642,8 @@ async function* runProvider<
     throw error
   }
   let workspaceSession: WorkspaceSession | undefined
+  // Filled after the checkout exists. Workspace commands read it when they run.
+  const toolchainPath: string[] = []
   let sourceProvenance: ProviderSourceProvenance[] = []
   let onProviderExit: AgentProviderLaunchCommand["onExit"]
   let runtime: ProviderRuntime | undefined
@@ -2741,7 +2765,7 @@ async function* runProvider<
   try {
     effectiveSignal?.throwIfAborted()
     const preparedWorkspace = await waitForProviderOperation(
-      prepareWorkspace(context, root, !ownsRoot),
+      prepareWorkspace(context, root, !ownsRoot, toolchainPath),
       effectiveSignal,
       async (lateWorkspace) => {
         try {
@@ -2756,6 +2780,15 @@ async function* runProvider<
     )
     workspaceSession = preparedWorkspace?.session
     sourceProvenance = preparedWorkspace?.provenance || []
+    if (options.toolchain !== undefined && !options.box && !auxiliary) {
+      // SAFETY: The split specifier keeps @vite-hub/box optional for bundlers. It resolves to the toolchain module.
+      const { prepareHostToolchain } = await import("@vite-hub/" + "box/_internal/toolchain") as typeof import("@vite-hub/box/_internal/toolchain")
+      const toolchain = await waitForProviderOperation(
+        prepareHostToolchain(options.toolchain, preparedWorkspace?.projectRoot ?? root, { abortSignal: effectiveSignal }),
+        effectiveSignal,
+      )
+      toolchainPath.push(...toolchain.bin)
+    }
     // An application-owned Git checkout in driver.cwd must not track generated instruction files either.
     const pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
       || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
@@ -2786,7 +2819,7 @@ async function* runProvider<
         const cwd = resolve(root, suffix)
         if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
         const { abortSignal, ...hostOptions } = execOptions || {}
-        const execution = localWorkspaceHost().exec(command, args, { ...hostOptions, cwd, signal: abortSignal }).then(result => ({
+        const execution = localWorkspaceHost({ path: toolchainPath }).exec(command, args, { ...hostOptions, cwd, signal: abortSignal }).then(result => ({
           command,
           args: args || [],
           exitCode: result.code,
@@ -2973,8 +3006,9 @@ async function* runProvider<
       ...(capabilityEnvironment?.LD_LIBRARY_PATH
         ? { LD_LIBRARY_PATH: [capabilityEnvironment.LD_LIBRARY_PATH, providerEnvironmentOverrides?.LD_LIBRARY_PATH].filter(Boolean).join(delimiter) }
         : {}),
-      ...(capabilityEnvironment?.PATH
-        ? { PATH: `${capabilityEnvironment.PATH}${delimiter}${providerEnvironmentOverrides?.PATH || process.env.PATH || ""}` }
+      // driver.toolchain comes after managed capability commands and before the host PATH.
+      ...(capabilityEnvironment?.PATH || toolchainPath.length
+        ? { PATH: `${[capabilityEnvironment?.PATH, ...toolchainPath].filter(Boolean).join(delimiter)}${delimiter}${providerEnvironmentOverrides?.PATH || process.env.PATH || ""}` }
         : {}),
     }, options.provider)
     let providerLauncher: string | undefined

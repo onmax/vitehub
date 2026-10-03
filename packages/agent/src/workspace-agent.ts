@@ -820,6 +820,7 @@ function providerMetadata(driver: {
   reasoningEffort?: AgentInspectionProviderMetadata["reasoningEffort"]
   reasoningSummary?: AgentInspectionProviderMetadata["reasoningSummary"]
   sessionStorePath?: string
+  toolchain?: AgentInspectionProviderMetadata["toolchain"]
 }): AgentInspectionProviderMetadata {
   const providerSettings = Object.entries(driver.providerSettings || {})
     .filter(([, value]) => value !== undefined)
@@ -839,6 +840,7 @@ function providerMetadata(driver: {
     ...(driver.reasoningEffort ? { reasoningEffort: driver.reasoningEffort } : {}),
     ...(driver.reasoningSummary ? { reasoningSummary: driver.reasoningSummary } : {}),
     ...(driver.sessionStorePath ? { sessionStore: "sqlite" as const } : {}),
+    ...(driver.toolchain !== undefined ? { toolchain: driver.toolchain } : {}),
   }
 }
 

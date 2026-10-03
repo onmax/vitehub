@@ -10,6 +10,7 @@ import type {
   BoxRuntimePlan,
   BoxRuntime,
   BoxRuntimeInput,
+  BoxToolchainInput,
   ResolvedBoxCheckout,
   ResolvedBoxFile,
   ResolvedBoxPlan,
@@ -40,6 +41,7 @@ interface CrabboxSandboxOptions extends CrabboxOptions {
   checkout?: ResolvedBoxCheckout
   plan: ResolvedBoxPlan;
   requirements: readonly ResolvedBoxRequirementInput[]
+  toolchain?: BoxToolchainInput
   workspace?: string
 }
 
@@ -141,6 +143,7 @@ export function createCrabboxRuntime(options: CrabboxOptions = {}): BoxRuntime {
           ...(input.checkout ? { checkout: input.checkout } : {}),
           plan: input.plan,
           requirements: input.requirements,
+          ...(input.toolchain ? { toolchain: input.toolchain } : {}),
           ...(workspace ? { workspace } : {}),
         })
       let initializedSession: ReturnType<typeof createBoxSession> | undefined
@@ -282,6 +285,17 @@ function createCrabboxProvider(options: CrabboxSandboxOptions) {
           const probeCleanup = await session.run({ abortSignal: createOptions.abortSignal,
             command: `rm -- ${shellQuote(posix.join(root, ".vitehub-copy-probe"))}` })
           if (probeCleanup.exitCode !== 0) throw crabboxError("remove Crabbox copy probe", probeCleanup)
+          if (options.toolchain) {
+            await provisionCrabboxToolchain(options.toolchain, session, {
+              abortSignal: bootstrapSignal,
+              environment: materialized.environment,
+              environmentFile: materialized.environmentFile,
+              leaseId,
+              options: sessionOptions,
+              root,
+              workspace: remoteWorkspace,
+            })
+          }
           await validateRequirements(
             session,
             options.requirements,
@@ -405,7 +419,7 @@ async function materializePlan(
   }
   appendFiles(script, home, files, cleanup);
 
-  const assignments = Object.entries({
+  const assignments = {
     HOME: home,
     LANG: "C.UTF-8",
     LOGNAME: remoteUser,
@@ -418,11 +432,8 @@ async function materializePlan(
     XDG_STATE_HOME: posix.join(home, ".local", "state"),
     ...environment,
     [crabboxSessionEnvironmentKey]: root,
-  })
-    .map(([name, value]) => `${name}=${shellQuote(value)}`)
-    .join(" ");
-  const wrapper = `#!/bin/sh\nexec env -i ${assignments} "$@"\n`;
-  appendFile(script, environmentFile, new TextEncoder().encode(wrapper), 0o700, cleanup);
+  };
+  appendFile(script, environmentFile, environmentWrapper(assignments), 0o700, cleanup);
   if (cleanup.length) {
     script.splice(
       2,
@@ -433,6 +444,7 @@ async function materializePlan(
   }
   await runCrabboxScript(options, leaseId, { abortSignal, script: `${script.join("\n")}\n` });
   return {
+    environment: assignments,
     environmentFile,
     initializedState: [...missingState].map((index) =>
       remoteStatePath(options.stateRoot!, options.plan.state[index].key)
@@ -443,6 +455,55 @@ async function materializePlan(
       ...[...seeds.values()].flatMap(seed => seed.map(file => file.contents)),
     ]),
   };
+}
+
+function environmentWrapper(assignments: Readonly<Record<string, string>>) {
+  const values = Object.entries(assignments).map(([name, value]) => `${name}=${shellQuote(value)}`).join(" ")
+  return new TextEncoder().encode(`#!/bin/sh\nexec env -i ${values} "$@"\n`)
+}
+
+/**
+ * Install into the shared target cache, then rewrite the command wrapper so
+ * every Box command sees the toolchain first on PATH.
+ */
+async function provisionCrabboxToolchain(
+  toolchain: BoxToolchainInput,
+  session: RuntimeSession,
+  context: {
+    abortSignal: AbortSignal | undefined
+    environment: Readonly<Record<string, string>>
+    environmentFile: string
+    leaseId: string
+    options: CrabboxSessionOptions
+    root: string
+    workspace: string
+  },
+) {
+  const { abortSignal, leaseId, options } = context
+  const { provisionToolchain, readProjectFilesWithShell, verifyToolchain } = await import("./toolchain.ts")
+  const run = async (script: string) => await runCrabbox(options, leaseId, { abortSignal, command: `sh -c ${shellQuote(script)}` })
+  let cacheRoot = options.stateRoot && posix.isAbsolute(options.stateRoot) ? posix.join(options.stateRoot, "toolchains") : undefined
+  if (!cacheRoot) {
+    const result = await run(`printf '%s' "\${XDG_CACHE_HOME:-$HOME/.cache}/vitehub/toolchains"`)
+    if (result.exitCode !== 0 || !posix.isAbsolute(result.stdout)) throw crabboxError("resolve the toolchain cache", result)
+    cacheRoot = result.stdout
+  }
+  const provisioned = await provisionToolchain(toolchain, {
+    abortSignal,
+    cacheRoot,
+    readProjectFiles: async paths => await readProjectFilesWithShell(run, context.workspace, paths),
+    run,
+    scratch: context.root,
+    async write(path, content) {
+      await session.writeBinaryFile({ abortSignal, content, path })
+    },
+  })
+  const environment = { ...context.environment, PATH: [...provisioned.bin, context.environment.PATH].filter(Boolean).join(":") }
+  const script = ["set -eu", "umask 077"]
+  appendFile(script, context.environmentFile, environmentWrapper(environment), 0o700, [])
+  await runCrabboxScript(options, leaseId, { abortSignal, script: `${script.join("\n")}\n` })
+  await verifyToolchain(provisioned, cacheRoot, async script => await session.run({ abortSignal, command: script }))
+  session.toolchain = provisioned
 }
 
 function appendProjectionReconciliation(
