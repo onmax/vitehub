@@ -757,6 +757,7 @@ it.each([
   'globalThis["String"] = () => getPortal().capabilities = []; const ignored = `${String("id")}`',
   'globalThis["Number"] = () => getPortal().capabilities = []; const ignored = `${Number("id")}`',
   'globalThis["Boolean"] = () => getPortal().capabilities = []; const ignored = `${Boolean("id")}`',
+  'Reflect.set(globalThis, "String", () => getPortal().capabilities = []); const ignored = `${String("id")}`',
   'const ignored = `${`${portal.capabilities = []}`}`',
   'const ignored = tag`${portal.capabilities = []}`',
   'const ignored = `${eval("portal.capabilities = []")}`',
@@ -770,6 +771,13 @@ it.each([
   await expect(discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; ${expression}; export default defineAgent({ channels: { github: portal } })`, {
     "portal.ts": `${imports} export default github({ pullRequest: false })`,
   })).rejects.toThrow("opaque Channel")
+})
+
+it("ignores unrelated member writes when recognizing global conversion calls", async () => {
+  const source = `${imports} import portal from "../../portal.ts"; const input = {}; input.String = value; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`
+  expect((await discover(source, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  }))?.workspace).toBeUndefined()
 })
 
 it("stops conditional aliases at semicolon-free initializer boundaries", async () => {

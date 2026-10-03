@@ -1248,7 +1248,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const receiverEnd = objectEnd ?? reflectEnd
       if (receiverEnd === undefined) continue
       const member = memberAccess(receiverEnd - 1)
-      if (member?.name !== "defineProperty") continue
+      if (member?.name !== "defineProperty" && member?.name !== "set") continue
       const call = memberCallEnd(member.end - 1, index)
       if (tokens[call] !== "(") continue
       const target = resolveReference(call + 1, new Set(), true)
@@ -1280,7 +1280,8 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
         && !expressionArrowParameters.some(scope => templateIndex >= scope.start && templateIndex < scope.end && scope.names.has(name))
         && !reassignedGlobalConversions.has(name)
         && ![tokens, references].some(sequence => sequence.some((token, cursor) =>
-          token === name && ["=", "+", "-"].includes(sequence[cursor + 1] ?? "")))
+          token === name && ["=", "+", "-"].includes(sequence[cursor + 1] ?? "")
+          && ![".", "?"].includes(sequence[cursor - 1] ?? "")))
     }
     const hiddenCode = references.some((token, index) =>
       (bindingReference(index) && ["eval", "import"].includes(token))
