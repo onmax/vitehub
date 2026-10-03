@@ -6935,6 +6935,7 @@ async function executeAgentInvocationWithCapacityLease<
   try {
     const adapterContext = toAgentAdapterRunContext(invocation)
     if (options.kind === "run" && !options.renderOutput) adapterContext.nativeStructuredOutput = false
+    await invocationJournal?.watchCancellation(invocationCancellationDriver(definition))
     invocation.input.abortSignal?.throwIfAborted()
     invocationJournal?.driverStarted()
     if (customRun) {

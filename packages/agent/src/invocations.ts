@@ -2408,7 +2408,13 @@ export function defineAgentInvocations(options: AgentInvocationsOptions): AgentI
         },
         async watchCancellation(driver) {
           if (finished || finishing) return
-          if (unregisterCancellation) return await cancellationRegistration
+          if (unregisterCancellation) {
+            // Re-read durable state when a caller checks immediately before Driver dispatch.
+            // The initial watch can race a cancellation written after `running()`.
+            await cancellationRegistration
+            await pollCancellationRequest()
+            return
+          }
           cancellationDriver = driver
           unregisterCancellation = registerAgentInvocationCancellation(store, recordId, { abort: requestCancellation, driver: () => driverDispatched ? driver : undefined, ownerId: cancellationOwnerId })
           // A lost lease stops writes, but the stale Driver still needs journal cancellation.
