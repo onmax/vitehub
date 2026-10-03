@@ -475,7 +475,7 @@ async function runBlobCommand(command: BlobCommand, args: string[], context: Blo
   const serverId = v.is(v.string(), server.discovery.blobDevTokenServerId) ? server.discovery.blobDevTokenServerId : undefined
   let token: string | undefined
   try {
-    const serverRoot = typeof server.discovery.root === "string" ? server.discovery.root : resolveViteHubProjectRoot(context.rootDir)
+    const serverRoot = v.is(v.string(), server.discovery.root) ? server.discovery.root : resolveViteHubProjectRoot(context.rootDir)
     token = serverId ? await readViteHubDevToken(resolveViteHubProjectRoot(serverRoot), { namespace: blobDevTokenNamespace, serverId }) : undefined
   }
   catch (error) {
