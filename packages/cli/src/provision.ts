@@ -1,4 +1,3 @@
-import { collectViteHubProvisionSteps } from "@vite-hub/internal/cli"
 import { mergeProvisionState, PROVISION_STATE_FILE, readProvisionState, writeProvisionState } from "@vite-hub/internal/provision-state"
 import { planProvisionSteps, resolveCloudflareProvisionConfig, resolveVercelProvisionConfig } from "@vite-hub/internal/provision"
 
@@ -249,8 +248,8 @@ export async function runProvisionStatus(args: string[], context: ProvisionFeatu
 }
 
 /** Built-in namespace that orchestrates package-contributed Provision Steps. */
-export function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliCommandNamespace {
-  const options: ProvisionFeatureOptions = { collectSteps: () => collectViteHubProvisionSteps(plugins) }
+export function createProvisionNamespace(steps: readonly ProvisionStep[]): ViteHubCliCommandNamespace {
+  const options: ProvisionFeatureOptions = { collectSteps: async () => [...steps] }
   return {
     description: "Idempotently create missing provider resources.",
     features: [{

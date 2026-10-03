@@ -10,7 +10,7 @@ import {
 import { getCloudflareQueueBindingName } from "../integrations/cloudflare.ts"
 import { getVercelQueueTopicName } from "../integrations/vercel.ts"
 
-import { getQueueClientCache, getQueueRuntimeClientFactory, getQueueRuntimeConfig, getQueueRuntimeEvent, loadQueueDefinition, runWithQueueRuntimeEvent } from "../internal/runtime/state.ts"
+import { getOrCreateQueueClient, getQueueRuntimeClientFactory, getQueueRuntimeConfig, getQueueRuntimeEvent, loadQueueDefinition, runWithQueueRuntimeEvent } from "../internal/runtime/state.ts"
 
 import type { CloudflareQueueClient, CloudflareQueueProviderOptions, QueueClient, QueueEnqueueOptions, QueueName, QueuePayload, QueueProviderOptions, QueueSendResult, ResolvedQueueOptions, VercelQueueProviderOptions } from "../types.ts"
 import { queueErrorDiagnostics } from "../error-diagnostics.ts"
@@ -103,19 +103,7 @@ async function getDynamicQueue(name: string): Promise<QueueClient> {
     return await createNamedQueueClient(name)
   }
 
-  const cache = getQueueClientCache()
-  const existing = cache.get(name)
-  if (existing) {
-    return await existing as QueueClient
-  }
-
-  const pending = createNamedQueueClient(name).catch((error) => {
-    cache.delete(name)
-    throw error
-  })
-
-  cache.set(name, pending)
-  return await pending
+  return await getOrCreateQueueClient(name, () => createNamedQueueClient(name))
 }
 
 async function runDynamicQueue(name: string, payload: unknown, options?: QueueEnqueueOptions): Promise<QueueSendResult> {
