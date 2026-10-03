@@ -210,7 +210,7 @@ Gmail drafts use the Connection action `gmail.users.drafts.create` as a write. G
 
 ViteHub stores activity in the `vitehub_connection_activity` table. Each entry has the actor, action (`call`, `connect`, `refresh`, `disconnect`), Operation id, effect, outcome, provider status, duration, target host and path, and trace ids. Activity never contains request bodies, response bodies, headers, or tokens.
 
-Agent tools record every call, reads included. MCP protocol messages are recorded only when they are denied or fail. The Console shows activity for each Connection.
+Agent tools record every call, reads included. MCP protocol messages record successful, denied, and failed requests. The Console shows activity for each Connection.
 
 ## Storage and security
 
