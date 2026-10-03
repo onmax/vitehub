@@ -250,6 +250,9 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
       throw error
     }
 
+    // Refreshing credentials is an explicit lifecycle boundary: close the superseded
+    // client after the replacement is ready. Callers must await database work before
+    // changing the credential because libSQL close() aborts operations still in flight.
     libsqlClient?.close?.()
     libsqlClient = client
     libsqlInstance = instance
