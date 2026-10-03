@@ -1,6 +1,6 @@
 import { isApiKeyProvider } from "./api-key.ts"
 import { ConnectionError } from "./errors.ts"
-import { providerApis } from "./policy.ts"
+import { providerApis } from "./catalog.ts"
 
 import type { ConnectionDefinition } from "./types.ts"
 

@@ -395,7 +395,7 @@ Open **Usage** in the Console sidebar to inspect provider-reported tokens and co
 
 Session details also show the normalized usage record for one invocation. Add the [Usage Capability](/docs/capabilities/usage) when the provider needs an explicit usage request, estimated cost, or a typed Agent Usage Record at finish. Providers that report usage without the Capability still appear because the recorded finish event is authoritative.
 
-The Console does not calculate missing provider data. Token counts, model metadata, and provider-reported cost remain absent when the provider does not report them.
+The Console does not calculate missing provider data. Token counts, model metadata, and provider-reported cost remain absent when the provider does not report them. Global and per-bucket model breakdowns sort by descending total tokens, then by model name.
 
 ## Fix common failures
 

@@ -320,7 +320,7 @@ onBeforeUnmount(() => {
       :min-size="13"
       :max-size="26"
       :menu="{ title: 'Database', description: 'Inspect tables and relationships.' }"
-      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'h-11 shrink-0 border-t border-default px-2 py-1.5' }"
+      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'shrink-0 border-t border-default px-2 py-1.5' }"
       resizable
     >
       <template #header="{ collapsed }">

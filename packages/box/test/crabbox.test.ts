@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { resolveBox } from "../src/index.ts"
 import { createCrabboxRuntime, pruneWorkspaceForArchive, rejectSymlinkedArchiveParents } from "../src/internal/crabbox.ts"
 import { boxProvider } from "./helpers.ts"
+import { fixtureNodeVersion, fixturePnpmVersion, hostPlatformSuffix, startToolchainFixture, writeProject } from "./toolchain-fixtures.ts"
 
 const roots: string[] = []
 const execFileAsync = promisify(execFile)
@@ -810,6 +811,51 @@ describe("createCrabboxRuntime", () => {
       expect(invocations.every(invocation => !invocation.includes("--static-work-root"))).toBe(true)
       expect(invocations.find(invocation => invocation.includes("|warmup|"))).toContain("--reclaim")
     })
+  }, 30_000)
+
+  it("provisions the project toolchain in the shared target cache before requirements", async () => {
+    const root = await temporaryRoot()
+    const workspace = join(root, "workspace")
+    const bin = join(root, "bin")
+    const stateRoot = join(root, "state")
+    await mkdir(bin)
+    await writeProject(workspace, {
+      ".node-version": fixtureNodeVersion,
+      "package.json": { packageManager: `pnpm@${fixturePnpmVersion}` },
+    })
+    await fakeCrabbox(bin)
+    await executable(bin, "node", "echo v0.0.0-host")
+    const fixture = await startToolchainFixture()
+    try {
+      await withEnvironment({ ...fixture.environment, PATH: `${bin}:${process.env.PATH || ""}` }, async () => {
+        const box = await resolveBox({
+          cwd: workspace,
+          runtime: createCrabboxRuntime({ network: "direct", profile: "babysitter", stateRoot }),
+          toolchain: "project",
+        }, {})
+        expect(box.plan.requirements.map(requirement => requirement.command)).toEqual(["node", "pnpm"])
+        // Sessions on one authoritative workspace are serialized. The second one reuses the cache.
+        for (let index = 0; index < 2; index++) {
+          const session = await box.open()
+          try {
+            const result = await session.exec("sh", ["-c", "node -v && pnpm --version && command -v node"])
+            expect(result.stdout.trim().split("\n")).toEqual([
+              `v${fixtureNodeVersion}`,
+              fixturePnpmVersion,
+              join(stateRoot, "toolchains", `node-v${fixtureNodeVersion}-${hostPlatformSuffix()}`, "bin", "node"),
+            ])
+          }
+          finally {
+            await session.close()
+          }
+        }
+        expect(fixture.count(`/dist/v${fixtureNodeVersion}/${fixture.nodeArchive}`)).toBe(1)
+      })
+    }
+    finally {
+      await fixture.close()
+      await execFileAsync("chmod", ["-R", "u+w", stateRoot]).catch(() => undefined)
+    }
   }, 30_000)
 
   it("tunnels Static SSH ports by default and reuses the forward", async () => {

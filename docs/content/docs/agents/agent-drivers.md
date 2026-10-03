@@ -160,6 +160,26 @@ export default defineAgent({
 
 The directory is the working copy. ViteHub still materializes Workspace Sources, but it does not start a Workspace session. It does not copy Workspace files into the directory, create a Git baseline, compute a diff, write changes back, or remove the directory. Generated instruction and Skill files are restored after the provider stops. When the directory is a Git repository root, Git ignores the generated files while the provider runs, so provider commits do not include them. Title and progress summary runs ignore `cwd` and use a temporary directory. The application owns the directory's contents, cleanup, and isolation between concurrent invocations. Agent inspection reports whether `cwd` is static or dynamic without resolving it.
 
+### Provision the project toolchain
+
+Set `toolchain` when the provider works on a JavaScript project that pins its own Node.js and package manager. It uses the same declaration as [`box.toolchain`](/docs/agents/boxes#provision-nodejs-and-the-package-manager):
+
+```ts [server/agents/review/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    kind: 'codex',
+    permissions: 'allow-all',
+    toolchain: 'project',
+  },
+})
+```
+
+After ViteHub prepares the pull request checkout, the Workspace, or `cwd`, it reads the pins from that directory, provisions them on this host under `$XDG_CACHE_HOME/vitehub/toolchains`, and checks `node -v` and the package manager version. The toolchain `bin` directories come before the host `PATH` for the provider process, every command it starts, and Workspace commands. With a pull request mounted below the Workspace root, ViteHub reads the pins from that mount. A launcher from `launch` receives the same `PATH` in its environment, so it must run on this host. Provider CLIs that start through `#!/usr/bin/env node`, such as the npm Codex package, also run on the project's Node.js. Title and progress summary runs do not provision a toolchain.
+
+`status()` does not report `node`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, or `yarnpkg` as missing when `toolchain` is set, because the toolchain exists only after an invocation prepares its checkout. With `box`, declare `box.toolchain` instead; the Agent rejects `driver.toolchain` with `AGENT_R0972`.
+
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
 | Option | Purpose |
@@ -179,6 +199,7 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
 | `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
 | `sessionStorePath` | Optional SQLite file for provider session cursors. Enables thread continuation after a process restart on the same persistent host volume. |
+| `toolchain` | `"project"` or `{ node, packageManager, fallbackNode }`. Provisions project-pinned Node.js and package manager for the provider and its commands. See [Provision the project toolchain](#provision-the-project-toolchain). |
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
 

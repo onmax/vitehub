@@ -26,6 +26,7 @@ import type {
   CodexReasoningEffort,
   CodexReasoningSummary,
 } from "../types.ts"
+import type { BoxToolchain } from "@vite-hub/box"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
 export type NormalizedAgentDriver<
@@ -58,6 +59,7 @@ export type NormalizedAgentDriver<
     reasoningSummary?: CodexReasoningSummary
     requirements?: readonly string[]
     sessionStorePath?: string
+    toolchain?: BoxToolchain
   }
   | {
     kind: "run"
@@ -147,7 +149,7 @@ function normalizeAgentDriverCapacity(value: unknown): AgentDriverCapacityOption
 }
 
 const modelDriverKeys = new Set(["capacity", "execution", "instructions", "maxRetries", "model", "output"])
-const providerDriverKeys = new Set(["capacity", "credentialProfile", "credentials", "cwd", "env", "execution", "instructions", "kind", "launch", "model", "output", "permissions", "providerSettings", "reasoningEffort", "reasoningSummary", "requirements", "sessionStorePath"])
+const providerDriverKeys = new Set(["capacity", "credentialProfile", "credentials", "cwd", "env", "execution", "instructions", "kind", "launch", "model", "output", "permissions", "providerSettings", "reasoningEffort", "reasoningSummary", "requirements", "sessionStorePath", "toolchain"])
 const runDriverKeys = new Set(["capacity", "output", "run"])
 const askDriverKeys = new Set(["ask", "capacity"])
 
@@ -245,6 +247,7 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   if (Array.isArray(value.requirements) && value.requirements.length > 0 && value.launch !== undefined && !isRuntimeFunction(value.launch) && !isResolver(value.launch)) {
     throw agentDiagnostics.AGENT_R0970({ message: "[vitehub] defineAgent({ driver.requirements }) requires a launch resolver when driver.launch is set." })
   }
+  validateProviderToolchain(value.toolchain)
   const codexOptions = ["credentialProfile", "credentials", "reasoningEffort", "reasoningSummary"].filter(key => value[key] !== undefined)
   if (provider !== "codex" && codexOptions.length) {
     throw agentDiagnostics.AGENT_R0477({ message: `[vitehub] defineAgent({ driver: { kind: "${provider}" } }) does not support Codex option${codexOptions.length === 1 ? "" : "s"}: ${codexOptions.join(", ")}.` })
@@ -326,6 +329,22 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
     // SAFETY: requirements is either absent or validated as a list of command names above.
     requirements: value.requirements === undefined ? undefined : [...value.requirements as string[]],
     sessionStorePath: isRuntimeString(value.sessionStorePath) ? value.sessionStorePath.trim() : undefined,
+    // SAFETY: validateProviderToolchain checks the declaration shape; @vite-hub/box validates versions at invocation time.
+    toolchain: value.toolchain as BoxToolchain | undefined,
+  }
+}
+
+const toolchainKeys = new Set(["fallbackNode", "node", "packageManager"])
+
+function validateProviderToolchain(value: unknown) {
+  if (value === undefined || value === "project") return
+  const valid = isPlainObject(value)
+    && Object.keys(value).every(key => toolchainKeys.has(key))
+    && (value.node === undefined || (isRuntimeString(value.node) && Boolean(value.node.trim())))
+    && (value.fallbackNode === undefined || (isRuntimeString(value.fallbackNode) && Boolean(value.fallbackNode.trim())))
+    && (value.packageManager === undefined || value.packageManager === false || (isRuntimeString(value.packageManager) && Boolean(value.packageManager.trim())))
+  if (!valid) {
+    throw agentDiagnostics.AGENT_R0971({ message: "[vitehub] defineAgent({ driver.toolchain }) must be \"project\" or an object with node, packageManager, or fallbackNode, such as { node: \"project\", packageManager: \"project\" }." })
   }
 }
 
