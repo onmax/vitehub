@@ -33,15 +33,7 @@ icon: i-lucide-bot
   `runAgent()` and `streamAgent()` create one Invocation with its input, result, and trace, visible in the CLI and the Console.
   :::
 
-  :::product-feature-item{title="Start from a working harness" icon="i-lucide-git-pull-request" to="/docs/agents/babysitter" link-label="Babysitter preset"}
-  Babysitter repairs pull requests, waits for checks, and merges the ready ones. Extend it and add your instructions.
-  :::
-
   :::product-feature-item{title="Protect behavior with Evals" icon="i-lucide-clipboard-check" to="/docs/agents/evals" link-label="Evals"}
   Run repeatable scenarios against a Definition and score the result before you ship a change to it.
-  :::
-
-  :::product-feature-item{title="Agent-only Capabilities" icon="i-lucide-plug" to="/docs/agents/capabilities/official" link-label="Official capabilities"}
-  MCP servers, skills, memory, web search, fetch, git, chat, LLM gates and routes, transcription, and usage records.
   :::
 ::
