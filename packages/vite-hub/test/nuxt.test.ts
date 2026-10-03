@@ -318,6 +318,50 @@ describe("ViteHub Nuxt integration", () => {
     ])
   })
 
+  it("prepares a Cloudflare Database Definition without creating a separate Nuxt D1 resource", async () => {
+    const definitionRoot = "/tmp/vitehub-nuxt/custom-server/databases"
+    await mkdir(definitionRoot, { recursive: true })
+    await writeFile(resolve(definitionRoot, "config.ts"), [
+      'export default defineDatabase({',
+      '  cloudflare: { binding: "DB", databaseId: "definition-id", databaseName: "application" },',
+      '  schema: {},',
+      '})',
+      '',
+    ].join("\n"))
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    await viteHubNuxtModule({ database: true, preset: "cloudflare" }, nuxt)
+
+    await expect(runNitroConfigHook({ preset: "cloudflare_module" })).resolves.toBeUndefined()
+    expect(nuxt.options).not.toHaveProperty("content.database")
+    expect(nitroOptions(nuxt)).not.toHaveProperty("cloudflare.wrangler.d1_databases")
+  })
+
+  it("preserves an explicit Nuxt D1 resource alongside a Cloudflare Database Definition", async () => {
+    const definitionRoot = "/tmp/vitehub-nuxt/custom-server/databases"
+    await mkdir(definitionRoot, { recursive: true })
+    await writeFile(resolve(definitionRoot, "config.ts"), [
+      'export default defineDatabase({',
+      '  cloudflare: { binding: "APP_DB", databaseId: "definition-id", databaseName: "application" },',
+      '  schema: {},',
+      '})',
+      '',
+    ].join("\n"))
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    await viteHubNuxtModule({
+      database: { driver: "d1", databaseId: "content-id", databaseName: "content" },
+      preset: "cloudflare",
+    }, nuxt)
+    const config = { preset: "cloudflare_module" }
+
+    await expect(runNitroConfigHook(config)).resolves.toBeUndefined()
+    expect(config).toHaveProperty("cloudflare.wrangler.d1_databases", [{
+      binding: "DB",
+      database_id: "content-id",
+      database_name: "content",
+    }])
+    expect(nuxt.options).toHaveProperty("content.database", { bindingName: "DB", type: "d1" })
+  })
+
   it.each(["cloudflare", "vercel"] as const)("retains %s deployment inspection metadata without installing the writer", async (preset) => {
     const { nuxt } = createNuxt()
     nuxt.options.vitehubCliDiscovery = true

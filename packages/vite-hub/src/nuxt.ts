@@ -880,7 +880,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   if (options.database) {
     const databaseOptions = options.database === true ? {} : options.database
     await hubDatabaseNuxt({
-      ...(options.preset === "cloudflare" ? { driver: "d1" as const } : {}),
       ...databaseOptions,
     })(undefined, nuxt)
   }
