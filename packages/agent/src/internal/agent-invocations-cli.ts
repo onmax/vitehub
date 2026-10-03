@@ -2,13 +2,14 @@ import { existsSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
+import { discoverViteHubDevServer } from "@vite-hub/internal/cli"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import type { AgentInvocationListResult, AgentInvocationRecord, AgentInvocationStore } from "../invocations.ts"
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
 import type { RuntimeDiagnosticError } from "@vite-hub/runtime"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { agentInvocationsDevHeader, agentInvocationsDevHeaderValue, agentInvocationsDevRoute, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
-import { readWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
+import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
 
 interface AgentInvocationsCliContext {
   env: NodeJS.ProcessEnv
@@ -376,9 +377,20 @@ function detailRecord(result: AgentInvocationDetailResult): AgentInvocationRecor
 }
 
 async function cancelInvocation(parsed: ParsedArgs, context: AgentInvocationsCliContext, fetchImpl: typeof fetch, timeout: number): Promise<number> {
-  const target = new URL(parsed.url)
-  const port = target.port || (target.protocol === "https:" ? "443" : "80")
-  const serverId = workspaceDevTokenServerId(port)
+  const discoveryError = { value: "" }
+  const server = await discoverViteHubDevServer<{ root?: unknown, workspaceDevTokenServerId?: unknown }>({
+    endpoint: { header: agentInvocationsDevHeader, headerValue: agentInvocationsDevHeaderValue, route: agentInvocationsDevRoute },
+    fetch: fetchImpl,
+    rootDir: resolve(context.rootDir ?? process.cwd()),
+    serverUrl: parsed.url,
+    signal: AbortSignal.timeout(timeout),
+    stderr: { write: chunk => { discoveryError.value += String(chunk); return true } },
+  })
+  const serverId = server && hasRuntimeType(server.discovery.workspaceDevTokenServerId, "string")
+    ? server.discovery.workspaceDevTokenServerId
+    : undefined
+  if (!server || !serverId) throw new Error(discoveryError.value.trim() || "No Compatible Vite Development Server found.")
+  const target = new URL(server.url)
   const token = await readWorkspaceDevToken(context.rootDir ?? process.cwd(), { serverId })
   if (!token) throw new Error("No private Agent Dev token found. Start the Compatible Vite Development Server first.")
   target.pathname = agentInvocationsDevRoute

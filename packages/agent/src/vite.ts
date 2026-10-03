@@ -3042,6 +3042,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
           },
           route: agentInvocationsDevRoute,
           runtimeRoute: agentInvocationsDevRuntimeRoute,
+          discovery: { workspaceDevTokenServerId: workspaceDevTokenServerId(server.config.server.port) },
           authorize: async req => req.headers[agentInvocationsDevTokenServerHeader] !== workspaceDevTokenServerId(server.config.server.port) || !await validateWorkspaceDevToken(server.config.root, req.headers, { serverId: workspaceDevTokenServerId(server.config.server.port) })
             ? new Response("Forbidden Agent Invocations Dev token.", { status: 403 })
             : undefined,

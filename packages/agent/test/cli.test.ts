@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { refreshWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
+import { refreshWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
 import { describe, expect, it, vi } from "vitest"
 
 import { createAgentCliContributor, runAgentDevCli, runAgentEvalCli, runAgentInfoCli, runAgentInvocationsCli } from "../src/cli.ts"
@@ -13,6 +13,7 @@ import { getAgentChannelSyncDefinition } from "../src/internal/channel-sync.ts"
 import { createAgentEvaliteConfigPath, writeAgentEvaliteConfig } from "../src/internal/evalite-config.ts"
 import { createTelegramChannelSyncProvider } from "../src/internal/telegram-channel-sync.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue } from "../src/invocation-stream.ts"
+import { agentInvocationsDevTokenServerHeader } from "../src/invocations-dev.ts"
 import { verifyAgentWebhookRequest } from "../src/trigger-runtime.ts"
 import { telegram } from "../src/channels.ts"
 
@@ -1433,9 +1434,12 @@ describe("agent CLI", () => {
 
   it.each([undefined, "http://localhost:5173/custom/api/invocations?status=running#details"])("cancels through the registered dev route with invocation URL %s", async (url) => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-cli-"))
-    const token = await refreshWorkspaceDevToken(rootDir, { serverId: workspaceDevTokenServerId("5173") })
+    const serverId = `${process.pid + 1}:5173`
+    const token = await refreshWorkspaceDevToken(rootDir, { serverId })
     try {
-      const fetchInvocations = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => Response.json({ id: "invocation-1", outcome: "requested" }))
+      const fetchInvocations = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => Response.json(init?.method === "POST"
+        ? { id: "invocation-1", outcome: "requested" }
+        : { root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }))
       const stderr = stream()
       const exitCode = await runAgentInvocationsCli([
         "cancel", "invocation-1", ...(url ? ["--url", url] : []),
@@ -1445,7 +1449,7 @@ describe("agent CLI", () => {
       expect(String(fetchInvocations.mock.calls[0]?.[0])).toBe("http://localhost:5173/__vitehub/agent/invocations/dev")
       expect(fetchInvocations).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({
         body: JSON.stringify({ id: "invocation-1", operation: "cancel" }),
-        headers: expect.objectContaining({ [workspaceDevTokenHeader]: token }),
+        headers: expect.objectContaining({ [workspaceDevTokenHeader]: token, [agentInvocationsDevTokenServerHeader]: serverId }),
         method: "POST",
       }))
     }
@@ -1454,9 +1458,20 @@ describe("agent CLI", () => {
     }
   })
 
+  it.each([{}, { workspaceDevTokenServerId: 42 }, { root: "/another-project", workspaceDevTokenServerId: "other-server" }])("rejects invalid cancellation discovery %j before sending a write", async (discovery) => {
+    const fetchInvocations = vi.fn(async () => Response.json(discovery))
+    const stderr = stream()
+    expect(await runAgentInvocationsCli(["cancel", "invocation-1"], {
+      env: {}, rootDir: process.cwd(), stderr, stdout: stream(),
+    }, { fetch: fetchInvocations })).toBe(1)
+    expect(fetchInvocations).toHaveBeenCalledTimes(1)
+    expect(stderr.output()).toMatch(/No Compatible Vite Development Server|root mismatch/)
+  })
+
   it.each(["requested", "terminal", "not-found", "unavailable", "invalid"])("reports cancellation outcome %s in human and JSON output", async (outcome) => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-outcome-"))
-    await refreshWorkspaceDevToken(rootDir, { serverId: workspaceDevTokenServerId("5173") })
+    const serverId = `${process.pid + 1}:5173`
+    await refreshWorkspaceDevToken(rootDir, { serverId })
     try {
       for (const json of [false, true]) {
         const stdout = stream()
@@ -1464,7 +1479,9 @@ describe("agent CLI", () => {
         const result = { id: "invocation-1", outcome }
         const exitCode = await runAgentInvocationsCli([
           "cancel", "invocation-1", ...(json ? ["--json"] : []),
-        ], { env: {}, rootDir, stderr, stdout }, { fetch: async () => Response.json(result) })
+        ], { env: {}, rootDir, stderr, stdout }, { fetch: async (_url, init) => Response.json(init?.method === "POST"
+          ? result
+          : { root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }) })
 
         expect(exitCode).toBe(outcome === "requested" || outcome === "terminal" ? 0 : 1)
         if (outcome === "invalid") {
