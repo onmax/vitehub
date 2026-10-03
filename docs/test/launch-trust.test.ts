@@ -81,7 +81,7 @@ describe("launch documentation trust boundaries", () => {
     expect(matrix).toContain("**Local-only**");
     expect(matrix).toContain("**Not provided**");
     expect(matrix).toContain("[Evidence]");
-    expect(matrix).toContain("30-day freshness window");
+    expect(matrix).toContain("last observed 2026-08-26; stale after 30 days");
     expect(matrix).not.toContain("✓ Current");
     expect(matrix).toContain("**Not published**");
     for (const primitive of [
