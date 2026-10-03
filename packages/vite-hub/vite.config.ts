@@ -145,7 +145,7 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
-        from: "src/console/runtime/components/console-session-cancel.vue",
+        from: "src/console/runtime/components/console-section-nav.vue",
         to: "dist/console/runtime/components",
       },
       {

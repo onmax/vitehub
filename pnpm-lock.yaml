@@ -1030,6 +1030,9 @@ importers:
       vitest:
         specifier: catalog:tooling
         version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@24.13.3)(@vitest/browser-preview@4.1.11)(@voidzero-dev/vite-plus-core@0.3.1(@types/node@24.13.3)(esbuild@0.27.7)(jiti@2.7.0)(publint@0.3.24)(terser@5.51.2)(tsx@4.21.0)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.0))(happy-dom@20.14.0)
+      vue:
+        specifier: 3.5.40
+        version: 3.5.40(typescript@6.0.3)
 
   packages/blob/examples/vite:
     dependencies:
@@ -8254,7 +8257,7 @@ packages:
     resolution: {integrity: sha512-K6h3iUlqeM946U4sXFYeahefR1YBbXJvko+hv8WS8/0BNJ4OHiHRywMnQUJCqkR7Y9+hqQ1TvEpiKqUhz7NEFg==}
 
   '@t3tools/contracts@https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@cb8ae81c8433fb25acbcb82884ecd9a2e365de25':
-    resolution: {integrity: sha512-tw4EgP32ylx2t/cyUlF3lGISrVh2vUSP0HIsKwBeNiMcyLGOeCdxBWXhWRYZDmYS2kR5y91B/6EGRRcwemtYNA==, tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@cb8ae81c8433fb25acbcb82884ecd9a2e365de25}
+    resolution: {tarball: https://pkg.pr.new/vite-hub/t3code/@t3tools/contracts@cb8ae81c8433fb25acbcb82884ecd9a2e365de25}
     version: 0.0.45
     peerDependencies:
       effect: 4.0.0-rc.115

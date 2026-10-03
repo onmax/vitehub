@@ -641,6 +641,31 @@ describe("ViteHub Nuxt integration", () => {
     )
   })
 
+  it.each([true, false])("preserves Nuxt Connections development navigation and production rejection (dev: %s)", async (dev) => {
+    const application = createNuxt(dev)
+    try {
+      const configure = () => viteHubNuxtModule({
+        preset: "node",
+        connections: true,
+        database: true,
+        console: dev ? { access: "auth" } : { exposure: "host-managed" },
+      }, application.nuxt)
+      if (!dev) {
+        await expect(configure()).rejects.toThrow("connections is not supported by the Nuxt module yet")
+        return
+      }
+      await configure()
+      const pages: Array<{ file: string; name: string; path: string }> = []
+      application.runPagesHook(pages)
+      expect(pages.some(page => page.name === "vitehub-console-connections")).toBe(dev)
+      const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+      expect(generated.includes('"connections"')).toBe(dev)
+    }
+    finally {
+      await application.runCloseHook()
+    }
+  })
+
   it.each([true, false])("carries the Node data directory into the Nuxt Console bootstrap (dev: %s)", async (dev) => {
     const application = createNuxt(dev)
     await viteHubNuxtModule({
@@ -3477,6 +3502,23 @@ describe("ViteHub Nuxt integration", () => {
       { from: "vite-hub/agent/vue", name: "useChat" },
       { from: "vite-hub/source/client", name: "useCollection" },
     ])
+  })
+
+  it("auto-imports the Blob upload composables only when Blob is enabled", async () => {
+    const withBlob = createNuxt()
+    const withoutBlob = createNuxt()
+
+    await viteHubNuxtModule({ blob: true, preset: "node" }, withBlob.nuxt)
+    await viteHubNuxtModule({ preset: "node" }, withoutBlob.nuxt)
+
+    // SAFETY: The module initializes Nuxt's imports collection.
+    const imports = (nuxt: typeof withBlob.nuxt) => (nuxt.options as typeof nuxt.options & { imports: { imports: Array<{ from: string, name: string }> } }).imports.imports
+    expect(imports(withBlob.nuxt)).toEqual([
+      { from: "vite-hub/source/client", name: "useCollection" },
+      { from: "vite-hub/blob/vue", name: "useMultipartUpload" },
+      { from: "vite-hub/blob/vue", name: "useUpload" },
+    ])
+    expect(imports(withoutBlob.nuxt)).toEqual([{ from: "vite-hub/source/client", name: "useCollection" }])
   })
 
   it("rejects a configured Nuxt composable that would bind a different useChat", async () => {

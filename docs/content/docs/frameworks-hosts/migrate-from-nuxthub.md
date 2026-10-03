@@ -23,7 +23,7 @@ After the move, the same KV, Blob, and Database APIs are also available to
 | `db` and `schema` from `@nuxthub/db` | `useDatabase()` from `vite-hub/database/drizzle` | Drizzle in both. ViteHub supports SQLite, libSQL, and Cloudflare D1. |
 | `hub.db: 'postgresql'` or `'mysql'` | Not supported | Keep NuxtHub or Drizzle for these databases. |
 | `hub.cache` | Nitro storage | `cachedEventHandler` and `defineCachedFunction` are Nitro APIs and keep working. |
-| `handleUpload`, multipart helpers, `useUpload` | Not available | Write an upload route with `blob.put()`. Direct uploads need driver-specific signing credentials. |
+| `handleUpload`, multipart helpers, `useUpload`, `useMultipartUpload` | Same names on `blob` and in `vite-hub/blob/vue` | Methods return `[error, value]`. Multipart works with `fs`, `cloudflare-r2` (binding), and `vercel-blob`. |
 | `hosting` auto-detection | `preset` | You must select the host. |
 | `.data/` | `.vitehub/data/` | Local development data does not move automatically. |
 | Auto-imported `kv`, `blob`, `db` | Explicit imports | Add an import to each server file. |
@@ -104,13 +104,19 @@ Import `blob` from `vite-hub/blob`. `put`, `get`, `head`, `list`, `del`, and
  })
 ```
 
-ViteHub has no `handleUpload()`, multipart helpers, or `useUpload()`
-composable. Validate files with `ensureBlob()` and call `blob.put()` in your own
-route. On Cloudflare, this works with the R2 binding shown below. Direct `PUT`
-uploads with `blob.sign()` also require `accountId`, `accessKeyId`,
-`secretAccessKey`, and `bucketName` at runtime; an R2 binding alone cannot sign
-requests. Read [Blob](/docs/server-primitives/blob) for signing configuration.
-To serve files without a route of your own, set `blob: { serve: true }`.
+`blob.handleUpload()` and `blob.handleMultipartUpload()` keep their names and
+return `[error, value]`. `handleUpload()` takes `formKey`, `multiple`, `ensure`,
+and `put` options. The multipart route uses an `[action]/[...pathname]` route,
+and the composables send ViteHub's request format. In Nuxt,
+`useUpload()` and `useMultipartUpload()` are auto-imported when `blob` is
+enabled, as in NuxtHub. Read [Upload files](/docs/server-primitives/blob#upload-files)
+and [Multipart uploads](/docs/server-primitives/blob#multipart-uploads).
+
+Multipart uploads work with the `fs`, `cloudflare-r2` (binding), and
+`vercel-blob` drivers. Direct `PUT` uploads with `blob.sign()` on Cloudflare
+also require `accountId`, `accessKeyId`, `secretAccessKey`, and `bucketName`
+at runtime; an R2 binding alone cannot sign requests. To serve files without a
+route of your own, set `blob: { serve: true }`.
 
 ## Move the database
 
