@@ -3596,6 +3596,50 @@ describe("ViteHub Nuxt integration", () => {
     expect(nitroConfigHooks).toHaveLength(1)
   })
 
+  it("auto-imports the KV, Blob, and Database handles in server code for enabled features", async () => {
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    await viteHubNuxtModule({ blob: true, database: true, kv: true, preset: "node" }, nuxt)
+
+    const config: Record<string, unknown> = { imports: { imports: [{ from: "#app", name: "useAppConfig" }] } }
+    await runNitroConfigHook(config)
+
+    expect(config).toHaveProperty("imports.imports", [
+      { from: "#app", name: "useAppConfig" },
+      { from: "vite-hub/kv", name: "kv" },
+      { from: "vite-hub/blob", name: "blob" },
+      { from: "vite-hub/database/drizzle", name: "db" },
+      { from: "vite-hub/database/drizzle", name: "schema" },
+    ])
+  })
+
+  it("adds no server auto-imports for disabled features or when Nitro auto-imports are off", async () => {
+    const kvOnly = createNuxt()
+    await viteHubNuxtModule({ kv: true, preset: "node" }, kvOnly.nuxt)
+    const kvConfig: Record<string, unknown> = { imports: { imports: [] } }
+    await kvOnly.runNitroConfigHook(kvConfig)
+    expect(kvConfig).toHaveProperty("imports.imports", [{ from: "vite-hub/kv", name: "kv" }])
+
+    const disabled = createNuxt()
+    await viteHubNuxtModule({ blob: true, kv: true, preset: "node" }, disabled.nuxt)
+    const disabledConfig: Record<string, unknown> = { imports: false }
+    await disabled.runNitroConfigHook(disabledConfig)
+    expect(disabledConfig.imports).toBe(false)
+
+    const unset = createNuxt()
+    await viteHubNuxtModule({ kv: true, preset: "node" }, unset.nuxt)
+    const unsetConfig: Record<string, unknown> = {}
+    await unset.runNitroConfigHook(unsetConfig)
+    expect(unsetConfig).not.toHaveProperty("imports")
+  })
+
+  it("rejects a server auto-import that another source already owns", async () => {
+    const { nuxt, runNitroConfigHook } = createNuxt()
+    await viteHubNuxtModule({ kv: true, preset: "node" }, nuxt)
+
+    await expect(runNitroConfigHook({ imports: { imports: [{ from: "~/server/utils/kv", name: "kv" }] } }))
+      .rejects.toThrow("Cannot auto-import kv in server code from vite-hub/kv because it is already configured from ~/server/utils/kv.")
+  })
+
   it("auto-imports Agent Vue clients only when Agent Definitions are enabled", async () => {
     const { nuxt } = createNuxt()
 

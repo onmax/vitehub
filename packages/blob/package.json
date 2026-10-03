@@ -130,7 +130,7 @@
     "@azure/storage-blob": "catalog:storage",
     "@types/node": "catalog:tooling",
     "@vite-hub/internal": "workspace:*",
-    "@vite-hub/netlify-blobs-runtime": "npm:@netlify/blobs@11.0.3",
+    "@vite-hub/netlify-blobs-runtime": "npm:@netlify/blobs@11.1.3",
     "@vercel/blob": "catalog:storage",
     "files-sdk": "catalog:storage",
     "ofetch": "catalog:unjs",
