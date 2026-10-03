@@ -16,6 +16,9 @@ a fixed set of typed questions. Use an Agent also when you want the same
 inspection, Capabilities, and Channels for application code that you run
 yourself.
 
+::agent-demo
+::
+
 ```ts [server/agents/support.ts]
 import { defineAgent } from 'vite-hub/agent'
 import { workspaceShell } from 'vite-hub/agent/capabilities'

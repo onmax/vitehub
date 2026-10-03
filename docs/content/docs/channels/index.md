@@ -33,9 +33,3 @@ Channels provide discovery, connector selection, and a normalized outbound send 
 `defineOutboundChannel()` replaces the earlier `defineChannel()` export of `vite-hub/channels`. That export remains as a deprecated alias for one release so it does not clash with `defineChannel()` from `vite-hub/agent/channels`.
 
 See [Agent Channels](/docs/agents/channels) when the destination starts or drives an Agent Invocation. Use [Email](/docs/email) to send transactional email through a built-in provider.
-
-## Next steps
-
-- [Get started](/docs/channels/get-started): enable discovery and define the first Channel.
-- [Server API](/docs/channels/server-api): send messages, read receipts, and add connectors.
-- [Agent capability](/docs/channels/agent-capability): let an Agent send its result through a Channel.

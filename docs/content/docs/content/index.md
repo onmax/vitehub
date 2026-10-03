@@ -38,12 +38,3 @@ export const content = defineContent({
 ## Connect Content to Agents
 
 Content has no Agent Capability. To give an Agent the same files, bind the Source to a [Workspace](/docs/workspace) and attach the [Workspace Shell Capability](/docs/workspace/agent-capability).
-
-## Next steps
-
-- [Get started](/docs/content/get-started): install Comark Content and read the first document.
-- [Configure](/docs/content/configure): set definition options and Source inputs, select a database, and check path rules and error codes.
-- [Server API](/docs/content/server-api): call the Content runtime, cache, and client.
-- Configure retrieval through [Source](/docs/source).
-- Persist and edit files through [Workspace](/docs/workspace).
-- Read the [Comark Content documentation](https://content.comark.dev/getting-started/introduction).

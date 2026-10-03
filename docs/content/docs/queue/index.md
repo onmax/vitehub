@@ -41,15 +41,3 @@ export default defineEventHandler(async () => {
 Queue has no official Agent Capability. An Agent can enqueue work only when you expose that behavior through an app-owned Capability or server route.
 
 Keep the Capability specific to the product task. Do not give a model arbitrary queue access because the app uses Queue internally.
-
-## Next steps
-
-- [Get started](/docs/queue/get-started): install Queue, register the integration, and enqueue a first job.
-- [Configure](/docs/queue/configure): Integration Options, Queue Providers, generated names, and Queue Definitions.
-- [Server API](/docs/queue/server-api): public imports, Queue Jobs, failure handling, and Runtime Helpers.
-- [Hosts](/docs/queue/hosts): local development and Provider Output.
-- [Limits and errors](/docs/queue/limits-and-errors): error codes and production checks.
-- Use [Workflows](/docs/workflows) for durable orchestration.
-- Use [Schedule](/docs/schedule) for recurring work.
-- Learn shared discovery rules in [Definitions and discovery](/docs/getting-started/concepts/definitions-and-discovery).
-- Expose app-owned agent actions through [Custom capabilities](/docs/agents/capabilities/custom).

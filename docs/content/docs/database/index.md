@@ -24,14 +24,3 @@ Choose the storage primitive by data shape:
 Direct Database access is for server code. To let a model inspect the schema or run guarded statements, attach the [Database Capability](/docs/database/agent-capability).
 
 The Database Capability is not a raw Drizzle client proxy. It adds agent-facing guardrails such as schema mode, data mode, write approvals, and a single-statement SQL check. Read it before you expose database access to an Agent.
-
-## Next steps
-
-- [Get started](/docs/database/get-started): install Database, define a schema, and run the first query.
-- [Configure](/docs/database/configure): set integration options and define Default and Named Databases.
-- [Server API](/docs/database/server-api): query a database from server code with `useDatabase()`.
-- [Agent capability](/docs/database/agent-capability): give an Agent guarded query, schema, and mutation tools.
-- [Hosts](/docs/database/hosts): local SQLite, hosted libSQL, Cloudflare D1, provider output, and production checks.
-- Store small key values with [KV](/docs/kv).
-- Store file-shaped objects with [Blob](/docs/blob).
-- Learn shared discovery rules in [Definitions and discovery](/docs/getting-started/concepts/definitions-and-discovery).

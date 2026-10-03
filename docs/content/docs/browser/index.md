@@ -35,14 +35,3 @@ Server code runs it by name with `runBrowser('page-html', { url })`.
 ## Connect Browser to Agents
 
 The [`browser()` Capability](/docs/browser/agent-capability) gives a Provider Agent the `agent-browser` CLI, Chromium, and the official browser Skill. It runs through the provider's native shell and does not use Browser Definitions. For a model-backed Agent, expose a narrow [custom Capability](/docs/agents/capabilities/custom) that calls `runBrowser()`.
-
-## Next steps
-
-- [Get started](/docs/browser/get-started): enable Browser and run a first Definition.
-- [Configure](/docs/browser/configure): change the binding, engine, or remote mode.
-- [Server API](/docs/browser/server-api): call Definitions, actions, and low-level sessions.
-- [Agent capability](/docs/browser/agent-capability): give a Provider Agent its own browser.
-- [Hosts](/docs/browser/hosts): check provider and host support.
-- [Limits and errors](/docs/browser/limits-and-errors): timeouts, handoff limits, and production checks.
-- Store screenshots and downloaded files with [Blob](/docs/blob).
-- Deploy Browser Run output on [Cloudflare](/docs/frameworks-hosts/cloudflare).

@@ -47,15 +47,3 @@ Read [Configure](/docs/workspace/configure) for every Definition, Store, and Sou
 Workspace isn't automatically available to a model. Attach [`workspaceShell()`](/docs/workspace/agent-capability) when a model needs to inspect or edit files. Use `access()` when trusted invocation identity selects the Workspace Scope.
 
 Read [Workspace and Sources](/docs/getting-started/concepts/workspace-and-sources) for the mental model and [Workspace context](/docs/agents/workspace-context) for Agent-specific composition.
-
-## Next steps
-
-- [Get started](/docs/workspace/get-started): install Workspace and make the first call from server code.
-- [Configure](/docs/workspace/configure): select a Store and declare Source Bindings.
-- [Server API](/docs/workspace/server-api): read, write, sync, and run sessions.
-- [Agent capability](/docs/workspace/agent-capability): give an Agent file tools with `workspaceShell()`.
-- [Hosts](/docs/workspace/hosts): generated output and Cloudflare Artifacts.
-- [Limits and errors](/docs/workspace/limits-and-errors): Local Store checks and crash recovery.
-- Use direct retrieval through [Source](/docs/source).
-- Add command inspection with [Shell](/docs/shell).
-- Expose file access to models through [Official capabilities](/docs/agents/capabilities/official).

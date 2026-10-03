@@ -33,14 +33,3 @@ export default defineEventHandler(async () => {
 ## Connect Sandbox to Agents
 
 Agents receive Sandbox through the [`sandbox()` Capability](/docs/sandbox/agent-capability). With `commands`, it gives a model-backed Agent an allowlisted `sandbox_exec` tool that delegates to this primitive.
-
-## Next steps
-
-- [Get started](/docs/sandbox/get-started): install a provider and run a first Definition.
-- [Configure](/docs/sandbox/configure): lay out package projects and set Definition options.
-- [Server API](/docs/sandbox/server-api): call `runSandbox()` from server code.
-- [Agent capability](/docs/sandbox/agent-capability): give an Agent an allowlisted `sandbox_exec` tool.
-- [Hosts](/docs/sandbox/hosts): select a Vercel or Cloudflare provider.
-- [Limits and errors](/docs/sandbox/limits-and-errors): timeouts, Box reuse, and production checks.
-- Read the [Box](/docs/agents/boxes) execution model.
-- Check host support in the [support matrix](/docs/frameworks-hosts/support-matrix).
