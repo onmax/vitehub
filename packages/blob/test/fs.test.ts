@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -101,5 +101,36 @@ describe("fs blob driver", () => {
       .rejects.toMatchObject({ code: "BLOB_R0005" })
     await expect(driver.put(".VITEHUB/blob-meta/poison.json", "{}"))
       .rejects.toMatchObject({ code: "BLOB_R0005" })
+  })
+
+  it("rejects symlink traversal for blob operations", async () => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    const outside = await mkdtemp(join(tmpdir(), "vitehub-blob-outside-"))
+    tempDirs.push(base, outside)
+    await writeFile(join(outside, "secret.txt"), "secret")
+    await symlink(outside, join(base, "link"))
+
+    const driver = createDriver({ base, driver: "fs" })
+
+    await expect(driver.get("link/secret.txt")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.head("link/secret.txt")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.put("link/created.txt", "attacker")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.delete("link/secret.txt")).rejects.toMatchObject({ code: "BLOB_R0005" })
+
+    await expect(readFile(join(outside, "secret.txt"), "utf8")).resolves.toBe("secret")
+    await expect(readFile(join(outside, "created.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("rejects symlinked internal state paths", async () => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    const outside = await mkdtemp(join(tmpdir(), "vitehub-blob-outside-"))
+    tempDirs.push(base, outside)
+    await symlink(outside, join(base, ".vitehub"))
+
+    const driver = createDriver({ base, driver: "fs" })
+
+    await expect(driver.put("safe.txt", "safe")).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(driver.createMultipartUpload!("video.mp4", {})).rejects.toMatchObject({ code: "BLOB_R0005" })
+    await expect(readFile(join(outside, "blob-meta", "safe.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" })
   })
 })
