@@ -50,6 +50,24 @@ describe("Browser Run actions", () => {
     await expect(runBrowserContent("https://example.com")).rejects.toThrow()
   })
 
+  it.each([false, true])("clears the action timer after a provider result, rejected: %s", async (reject) => {
+    vi.useFakeTimers()
+    try {
+      runtime.__env__ = { BROWSER: { quickAction: async () => {
+        if (reject) throw new Error("provider failed")
+        return new Response("complete")
+      } } }
+
+      const response = await runBrowserAction("content", "https://example.com")
+
+      expect(response.status).toBe(reject ? 500 : 200)
+      expect(vi.getTimerCount()).toBe(0)
+    }
+    finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("bounds stalled Browser Run actions", async () => {
     vi.useFakeTimers()
     try {
