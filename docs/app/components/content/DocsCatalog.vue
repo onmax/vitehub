@@ -19,18 +19,18 @@ type CatalogRow = {
 };
 
 /** Products that share a looping scene with the landing page grid. */
-const scenes: Record<string, string> = {
-  agents: "agent",
-  connections: "connections",
-  content: "content",
-  email: "email",
-  kv: "kv",
-  queue: "queue",
-  realtime: "realtime",
-  sandbox: "sandbox",
-  source: "source",
-  workflows: "workflow",
-};
+const scenes = new Map([
+  ["agents", "agent"],
+  ["connections", "connections"],
+  ["content", "content"],
+  ["email", "email"],
+  ["kv", "kv"],
+  ["queue", "queue"],
+  ["realtime", "realtime"],
+  ["sandbox", "sandbox"],
+  ["source", "source"],
+  ["workflows", "workflow"],
+]);
 
 const rows = computed<CatalogRow[]>(() =>
   getDocsCatalog(docsManifest.sections).map((group) => {
@@ -54,7 +54,7 @@ const rows = computed<CatalogRow[]>(() =>
           description: section.description,
           icon: sidebarSectionIcon(section),
           key: section.id,
-          scene: scenes[section.id] ?? null,
+          scene: scenes.get(section.id) ?? null,
           title: section.title,
           to: section.path,
         }));

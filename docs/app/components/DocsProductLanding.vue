@@ -9,20 +9,20 @@ const props = defineProps<{
 }>();
 
 /** Products that share a looping scene with the landing page grid. */
-const scenes: Record<string, string> = {
-  agents: "agent",
-  connections: "connections",
-  content: "content",
-  email: "email",
-  kv: "kv",
-  queue: "queue",
-  realtime: "realtime",
-  sandbox: "sandbox",
-  source: "source",
-  workflows: "workflow",
-};
+const scenes = new Map([
+  ["agents", "agent"],
+  ["connections", "connections"],
+  ["content", "content"],
+  ["email", "email"],
+  ["kv", "kv"],
+  ["queue", "queue"],
+  ["realtime", "realtime"],
+  ["sandbox", "sandbox"],
+  ["source", "source"],
+  ["workflows", "workflow"],
+]);
 
-const scene = computed(() => scenes[props.section.id] ?? null);
+const scene = computed(() => scenes.get(props.section.id) ?? null);
 const subpages = computed(() => getDocsSectionSubpages(props.section));
 // Sections with sidebar groups, such as Agents, list their pages by group instead of one card per page.
 const pageGroups = computed(() => getDocsSidebarGroups(props.section).filter(group => group.label));
