@@ -1817,6 +1817,7 @@ describe("agent Vite plugin", () => {
       expect(gatewayRoute).toContain("runtimeEnvValue(cloudflare, 'VITEHUB_DISCORD_GATEWAY_WEBHOOK_URL')")
       expect(gatewayRoute).toContain('const webhookRoute = "/api/_vitehub/agents/:agent/webhooks/:webhook"')
       expect(gatewayRoute).toContain("routePath(webhookRoute, { agent, webhook })")
+      expect(gatewayRoute).toContain("Object.hasOwn(values, key)")
       expect(gatewayRoute).toContain(".replace(/(^|\\/):([^/]+)/g")
       expect(gatewayRoute).toContain("process.env.NODE_ENV === 'development'")
       expect(gatewayRoute).toContain("Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.")
@@ -1959,6 +1960,7 @@ describe("agent Vite plugin", () => {
       expect(netlifyFunction).toContain('import vitehubAgentScheduleRegistry from "./schedule-registry.js"')
       expect(netlifyFunction).toContain("vitehubSetScheduleRuntimeRegistry(vitehubAgentScheduleRegistry)")
       expect(netlifyFunction).toContain("capabilities: vitehubAgentRouteCapabilities")
+      expect(netlifyFunction).toContain("Object.hasOwn(values, key)")
     } finally {
       if (isRuntimeString(previousHosting)) process.env.VITEHUB_HOSTING = previousHosting
       else delete process.env.VITEHUB_HOSTING
