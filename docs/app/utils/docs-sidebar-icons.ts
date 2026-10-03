@@ -2,7 +2,7 @@ import type { DocsPage, DocsSection } from "~~/modules/vitehub-docs/runtime/util
 import { normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
 
 /** Frontmatter icons map to the light Phosphor set so the sidebar and product select share one style. */
-const sidebarIconMap = {
+const sidebarIconMap: Record<string, string> = {
   "i-lucide-activity": "i-ph-activity-light",
   "i-lucide-audio-lines": "i-ph-waveform-light",
   "i-lucide-badge-check": "i-ph-seal-check-light",
@@ -77,17 +77,17 @@ const sidebarIconMap = {
   "i-simple-icons-cloudflare": "i-ph-cloud-light",
   "i-simple-icons-vercel": "i-ph-triangle-light",
   "i-vscode-icons-file-type-markdown": "i-ph-markdown-logo-light",
-} satisfies Record<string, string>;
+};
 
-const sidebarSectionIconMap = {
+const sidebarSectionIconMap: Record<string, string> = {
   "ai-resources": "i-ph-brain-light",
   "development": "i-ph-wrench-light",
   "frameworks-hosts": "i-ph-plug-light",
   "getting-started": "i-ph-book-open-light",
   "reference": "i-ph-book-bookmark-light",
-} satisfies Record<string, string>;
+};
 
-const sidebarPageIconMap = {
+const sidebarPageIconMap: Record<string, string> = {
   "/docs/agents": "i-ph-activity-light",
   "/docs/agents/capabilities": "i-ph-sliders-horizontal-light",
   "/docs/concepts": "i-ph-book-bookmark-light",
@@ -95,7 +95,7 @@ const sidebarPageIconMap = {
   "/docs/getting-started": "i-ph-book-open-light",
   "/docs/getting-started/server-primitives": "i-ph-cube-light",
   "/docs/reference": "i-ph-package-light",
-} satisfies Record<string, string>;
+};
 
 export function sidebarIcon(icon: string | null | undefined, fallback = "i-ph-file-text-light") {
   return icon ? sidebarIconMap[icon] || (icon.startsWith("i-ph-") ? icon : fallback) : fallback;
