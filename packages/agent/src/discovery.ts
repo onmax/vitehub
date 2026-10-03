@@ -2235,13 +2235,28 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   // `github(...)`, `channels.github(...)`, or an alias of either.
   function memberAccess(index: number): { name: string, end: number } | undefined {
     // TypeScript assertions can appear between a receiver and its member,
-    // for example `(globalThis as object).String`.
+    // for example `(globalThis as object).String` or `(globalThis!).String`.
     let receiverEnd = index + 1
-    if (tokens[receiverEnd] === "as" || tokens[receiverEnd] === "satisfies") {
-      receiverEnd++
-      while (receiverEnd < tokens.length && tokens[receiverEnd] !== ")"
-        && tokens[receiverEnd] !== "." && tokens[receiverEnd] !== "[") receiverEnd++
-      if (tokens[receiverEnd] === ")") receiverEnd++
+    let wrapped = false
+    while (receiverEnd < tokens.length) {
+      if (tokens[receiverEnd] === "!") {
+        wrapped = true
+        receiverEnd++
+        continue
+      }
+      if (tokens[receiverEnd] === "as" || tokens[receiverEnd] === "satisfies") {
+        wrapped = true
+        receiverEnd++
+        while (receiverEnd < tokens.length && tokens[receiverEnd] !== ")"
+          && tokens[receiverEnd] !== "." && tokens[receiverEnd] !== "[") receiverEnd++
+        if (tokens[receiverEnd] === ")") receiverEnd++
+        continue
+      }
+      if (tokens[receiverEnd] === ")" && wrapped) {
+        receiverEnd++
+        continue
+      }
+      break
     }
     if (tokens[receiverEnd] === ".") {
       return { name: tokens[receiverEnd + 1]!, end: receiverEnd + 2 }

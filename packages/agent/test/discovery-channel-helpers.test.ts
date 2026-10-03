@@ -65,6 +65,15 @@ export default defineAgent({ channels: { github: portal } })`, {
   })).rejects.toThrow("opaque Channel")
 })
 
+it("rejects global conversion writes through non-null assertions", async () => {
+  await expect(discover(`${imports} import portal from "../../portal.ts";
+(globalThis!).String = () => getPortal().capabilities = [{ workspace: {} }];
+const ignored = \`\${String("id")}\`;
+export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
 it.each([
   "import('./other.ts')",
   "class { #portal = portal; get value() { return this.#portal } }",
