@@ -1,5 +1,5 @@
 import { channelDeliveryHandlers } from "../src/internal/channel-delivery-handlers.ts"
-import { asUnknownBoundary, hasRuntimeType } from "../src/internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

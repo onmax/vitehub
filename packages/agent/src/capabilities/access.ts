@@ -1,7 +1,8 @@
 import { isTrustedSourceFreeInspection, markTrustedWorkspaceAccessScope, markTrustedWorkspaceSourceResolutionDefinition, registerWorkspaceAccessWrapper, workspaceOverrideSymbol } from "../access-runtime.ts"
 import { defineCapability } from "../capability-runtime.ts"
 import { agentInvocationSourceContext } from "../invocation-context.ts"
-import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { isRuntimeRecord } from "../internal/runtime-type.ts"
 
 import type {
   AgentCallbackContext,

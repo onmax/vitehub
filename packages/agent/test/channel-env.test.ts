@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { builtInChannelEnv } from "../src/channel-env.ts"
 import { discoverAgentChannelEnv, discoverBuiltInChannelUses } from "../src/channel-env-discovery.ts"
-import { hasRuntimeType } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { ViteHubError } from "@vite-hub/runtime"
 
 const kinds = Object.keys(builtInChannelEnv)

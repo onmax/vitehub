@@ -1,7 +1,7 @@
 import { getCapability, resolveRuntimeValue } from "@vite-hub/runtime"
 
 import { agentInvocationId } from "../invocations.ts"
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { defineCapability } from "../capability-runtime.ts"
 import {
   getMessageText,

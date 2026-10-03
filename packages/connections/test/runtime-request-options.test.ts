@@ -48,3 +48,22 @@ it("keeps OAuth state, PKCE, client, redirect, and scopes authoritative over pro
   expect(params.get("scope")).toBe("openid mail.modify")
   expect(params.get("access_type")).toBe("offline")
 })
+
+it.each([undefined, true, false])("requires immediate fetch permission without durable approval: %s", async (approve) => {
+  const test = createTestRuntime(mailConnection({ "agent:labeller": { read: true, write: ["fetch"], approve } }))
+  await connect(test)
+  const client = test.runtime.client("mail", { actor: "agent:labeller", rejectApprovals: true })
+  const request = () => client.fetch("https://mail.example.com/mail/v1/users/me/messages/m1/modify", { body: "{}", method: "POST" })
+  if (approve === false) {
+    expect((await request()).status).toBe(200)
+  }
+  else {
+    const calls = test.provider.calls.length
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await expect(request()).rejects.toMatchObject({ code: "CONNECTION_DENIED", requestId: undefined })
+    }
+    expect(test.provider.calls).toHaveLength(calls)
+    expect(await test.runtime.activity({ name: "mail" })).toContainEqual(expect.objectContaining({ operation: "fetch", outcome: "denied" }))
+  }
+  expect((await test.runtime.approvals({ status: "pending" })).approvals).toEqual([])
+})

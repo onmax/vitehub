@@ -78,9 +78,7 @@ async function submit(message: { text: string; files?: readonly FileUIPart[] }):
 </script>
 
 <template>
-  <div
-    class="console-invocation-composer shrink-0 bg-default px-3 pb-5 pt-3 sm:px-5 sm:pb-6"
-  >
+  <div class="console-invocation-composer shrink-0 bg-default px-3 pb-4 pt-2 sm:px-5 sm:pb-5">
     <div class="mx-auto grid w-full max-w-3xl gap-2">
       <UAlert
         v-if="error"
@@ -90,62 +88,71 @@ async function submit(message: { text: string; files?: readonly FileUIPart[] }):
         :description="errorMessage(error)"
         variant="subtle"
       />
-      <div class="relative pb-9">
-        <div
-          aria-label="Invocation context"
-          class="console-invocation-composer__context absolute inset-x-[22px] bottom-0 flex h-12 items-end gap-3 overflow-hidden rounded-b-2xl bg-elevated/60 px-4 pb-2 text-xs text-muted ring-1 ring-default"
+      <div
+        class="console-invocation-composer__surface relative rounded-[22px] bg-default ring-1 ring-default transition-shadow has-[textarea:focus-visible]:ring-accented"
+      >
+        <AgentChatPrompt
+          v-model="draft"
+          v-model:files="files"
+          aria-label="Test this Agent"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          @error="error = $event"
+          class="console-invocation-composer__prompt gap-2 rounded-[22px] bg-transparent px-3 pb-2 pt-3 sm:px-4 sm:pt-3.5 [&_.vh-prompt__spacer]:hidden"
+          color="neutral"
+          :filter-files="filterFiles"
+          :maxrows="8"
+          :placeholder="`Message ${agent}…`"
+          :rows="2"
+          :status="loading ? 'submitted' : 'ready'"
+          variant="naked"
+          :ui="{
+            body: 'min-h-[4.375rem] items-start text-sm leading-relaxed',
+            footer: 'min-h-8 items-center gap-2',
+          }"
+          @submit="submit"
         >
-          <span class="flex min-w-0 items-center gap-1.5">
-            <UIcon class="size-4 shrink-0" name="i-ph-folder-light" />
-            <span class="truncate">ViteHub Console</span>
-          </span>
-          <span class="h-4 w-px shrink-0 bg-default" />
-          <span class="flex min-w-0 items-center gap-1.5">
-            <UIcon class="size-4 shrink-0" name="i-ph-robot-light" />
-            <span v-if="profiles.length <= 1" class="truncate">{{ profiles[0]?.label || agent }}</span>
-            <USelect v-else v-model="selectedProfileId" aria-label="Invoker profile" :items="profileItems" size="sm" variant="ghost" />
-          </span>
-          <span class="ml-auto shrink-0 font-mono text-[11px]">New invocation</span>
-        </div>
-
-        <div class="console-invocation-composer__surface relative z-10 rounded-[22px] bg-default ring-1 ring-default shadow-sm transition-shadow has-[textarea:focus-visible]:ring-accented">
-          <AgentChatPrompt
-            v-model="draft"
-            v-model:files="files"
-            aria-label="Test this Agent"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            @error="error = $event"
-            class="console-invocation-composer__prompt min-h-32 gap-3 rounded-[22px] bg-default px-4 pb-3 pt-4 [&_.vh-prompt__spacer]:hidden"
-            color="neutral"
-            :filter-files="filterFiles"
-            :maxrows="8"
-            placeholder="Test this Agent..."
-            :rows="3"
-            :status="loading ? 'submitted' : 'ready'"
-            variant="naked"
-            :ui="{
-              body: 'min-h-14 items-start text-base leading-6',
-              footer: 'min-h-8 gap-2',
-            }"
-            @submit="submit"
-          >
-            <template #submit="{ canSubmit }">
-              <UButton
-                aria-label="Start Agent"
-                class="console-invocation-composer__submit size-8 rounded-full active:scale-[0.97]"
-                color="primary"
-                icon="i-ph-arrow-up-light"
-                :disabled="!canSubmit"
-                :loading="loading"
-                square
-                size="sm"
-                type="button"
-                @click="submit({ text: draft, files })"
-              />
-            </template>
-          </AgentChatPrompt>
-        </div>
+          <template #footer-leading>
+            <div class="console-invocation-composer__context flex min-w-0 items-center gap-0.5 text-xs text-muted">
+              <span class="flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2">
+                <UIcon class="size-4 shrink-0 opacity-70" name="i-ph-robot-light" />
+                <span class="truncate">{{ agent }}</span>
+              </span>
+              <template v-if="profiles.length > 1">
+                <span class="mx-0.5 h-4 w-px shrink-0 bg-default" aria-hidden="true" />
+                <USelect
+                  v-model="selectedProfileId"
+                  aria-label="Invoker profile"
+                  :items="profileItems"
+                  size="xs"
+                  variant="ghost"
+                  :ui="{ base: 'h-7 rounded-lg px-2 text-xs text-muted hover:text-default' }"
+                />
+              </template>
+              <template v-else-if="profiles[0]?.label">
+                <span class="mx-0.5 h-4 w-px shrink-0 bg-default" aria-hidden="true" />
+                <span class="flex h-7 items-center truncate px-2">{{ profiles[0].label }}</span>
+              </template>
+            </div>
+          </template>
+          <template #submit="{ canSubmit }">
+            <UButton
+              aria-label="Start Agent"
+              class="console-invocation-composer__submit size-8 rounded-full transition-transform hover:scale-105 disabled:opacity-30 active:scale-[0.97]"
+              color="primary"
+              icon="i-ph-arrow-up-bold"
+              :disabled="!canSubmit"
+              :loading="loading"
+              square
+              size="sm"
+              type="button"
+              @click="submit({ text: draft, files })"
+            />
+          </template>
+        </AgentChatPrompt>
       </div>
+      <p class="px-3 text-center text-[11px] text-dimmed">
+        Enter sends · Shift+Enter adds a line · Images up to 10 MiB
+      </p>
     </div>
   </div>
 </template>

@@ -23,7 +23,7 @@ import {
 
 export { invocationActivities } from "../internal/invocation-activity.ts";
 import { buildInvocationConversation, type InvocationConversation } from "../internal/invocation-conversation.ts";
-import { hasRuntimeType, runtimeType } from "../internal/runtime-type.ts";
+import { hasRuntimeType, runtimeType } from "@vite-hub/runtime/internal/runtime-type";
 import { AgentPatchDiff } from "./agent-code-view.ts";
 import { AgentMarkdown } from "./agent-markdown.ts";
 import { AgentToolList } from "./agent-tool-list.ts";
@@ -56,6 +56,18 @@ function formatDuration(startedAt: string | undefined, completedAt: string | und
   const seconds = Math.round(duration / 1_000);
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/** Elapsed time of a live session as `m:ss`, or `h:mm:ss` after the first hour. */
+function formatElapsed(startedAt: string | undefined, now: Date | undefined): string | undefined {
+  if (!startedAt || !now) return;
+  const elapsed = now.getTime() - Date.parse(startedAt);
+  if (!Number.isFinite(elapsed) || elapsed < 0) return;
+  const seconds = Math.floor(elapsed / 1_000);
+  const minutes = Math.floor(seconds / 60) % 60;
+  const hours = Math.floor(seconds / 3_600);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return hours ? `${hours}:${pad(minutes)}:${pad(seconds % 60)}` : `${minutes}:${pad(seconds % 60)}`;
 }
 
 function formatTimelineDuration(value: number): string | undefined {
@@ -385,6 +397,8 @@ interface MessageRendering {
   promptId?: string;
   sentAt?: string;
   now: Date;
+  /** Second-resolution clock that only ticks while the session is live. */
+  liveNow?: Date;
   mounted: boolean;
 }
 
@@ -437,6 +451,7 @@ function renderMessage(
         : null,
       hasMessageMeta
         ? h("footer", { class: "vh-invocation-message__meta" }, [
+            author ? h("span", { class: "vh-invocation-message__author" }, author) : null,
             sentAt ? h("time", { datetime: sentAt.value, title: sentAt.title }, sentAt.short) : null,
             h("button", {
               "aria-label": copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "Copy message",
@@ -486,6 +501,7 @@ function renderCopyIcon() {
 
 type ActivityIcon =
   | "activity"
+  | "alert"
   | "action"
   | "approval"
   | "brain"
@@ -505,7 +521,7 @@ type ActivityIcon =
 function activityIcon(activity: InvocationActivity): ActivityIcon {
   const name = String(activity.attributes["tool.name"] ?? "").toLocaleLowerCase();
   if (activity.command) return "command";
-  if (activity.kind === "error") return "activity";
+  if (activity.kind === "error") return "alert";
   if (activity.kind === "change") return "change";
   if (name.includes("read") || name.includes("image") || name.includes("view")) return "eye";
   if (name.includes("search") || name.includes("find")) return "search";
@@ -534,6 +550,7 @@ function activityIcon(activity: InvocationActivity): ActivityIcon {
 
 const activityIconPaths: Record<ActivityIcon, readonly string[]> = {
   activity: ["M12 12h.01"],
+  alert: ["M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20", "M12 8v4", "M12 16h.01"],
   action: ["M13 2 3 14h9l-1 8 10-12h-9z"],
   approval: ["M12 3v12", "m8 11 4 4 4-4", "M5 21h14"],
   brain: ["M9.5 4.5A3 3 0 0 0 4 6a3 3 0 0 0-1 5.25A3.5 3.5 0 0 0 6.5 17H9", "M14.5 4.5A3 3 0 0 1 20 6a3 3 0 0 1 1 5.25A3.5 3.5 0 0 1 17.5 17H15", "M9 4.5V20", "M15 4.5V20", "M9 9H7", "M15 9h2", "M9 14H6.5", "M15 14h2.5"],
@@ -812,8 +829,8 @@ function renderPreparationDetail(activity: InvocationActivity, url: string | und
 }
 
 function renderDisclosureChevron(className: string) {
-  return h("svg", { "aria-hidden": "true", class: className, viewBox: "0 0 256 256" }, [
-    h("path", { d: "m100.24 43.76 80 80a6 6 0 0 1 0 8.48l-80 80a6 6 0 0 1-8.48-8.48L167.51 128 91.76 52.24a6 6 0 0 1 8.48-8.48", fill: "currentColor" }),
+  return h("svg", { "aria-hidden": "true", class: className, fill: "none", viewBox: "0 0 24 24" }, [
+    h("path", { d: "m6 9 6 6 6-6", stroke: "currentColor", "stroke-linecap": "round", "stroke-linejoin": "round", "stroke-width": "2" }),
   ]);
 }
 
@@ -844,11 +861,11 @@ function renderPreparationGroup(
   }, [
     h("details", { class: "vh-invocation-preparation__details" }, [
       h("summary", { class: "vh-invocation-preparation__summary" }, [
-        renderDisclosureChevron("vh-invocation-preparation__disclosure"),
-        failedActivity ? renderActivityIcon(failedActivity) : null,
+        failedActivity ? renderActivityIcon(failedActivity) : renderNamedActivityIcon("folder"),
         h("strong", failedActivity ? "Session preparation failed" : "Prepared workspace"),
         failedActivity ? renderPreparationContext(invocation, url) : null,
         failedActivity ? h("small", `${activities.length} steps`) : null,
+        renderDisclosureChevron("vh-invocation-preparation__disclosure"),
       ]),
       h("ol", { class: "vh-invocation-preparation__steps" }, activities.map(activity => renderPreparationStep(activity, url, inspect))),
     ]),
@@ -860,6 +877,7 @@ function renderPreparationStep(activity: InvocationActivity, url: string | undef
     class: "vh-invocation-preparation__step",
     "data-activity-id": activity.id,
     "data-kind": "preparation",
+    "data-status": activity.status,
     key: activity.id,
   }, [
     renderActivityIcon(activity),
@@ -891,8 +909,8 @@ function renderCapabilityGroup(activities: readonly InvocationActivity[], inspec
   return h("li", { class: "vh-invocation-capabilities", key: `capabilities:${activities[0]?.id}` }, [
     h("details", { class: "vh-invocation-capabilities__details" }, [
       h("summary", { class: "vh-invocation-capabilities__summary" }, [
-        renderDisclosureChevron("vh-invocation-capabilities__disclosure"),
-        h("span", failures
+        renderNamedActivityIcon("tool"),
+        h("span", { class: "vh-invocation-event__title" }, failures
           ? `Capability activity failed · ${summary}`
           : !capabilities.length
             ? `Capability activity · ${summary}`
@@ -901,6 +919,7 @@ function renderCapabilityGroup(activities: readonly InvocationActivity[], inspec
               : [...phases].every(phase => phase === "output" || phase === "close")
                 ? `Finalized ${summary}`
                 : `Prepared ${summary}`),
+        renderDisclosureChevron("vh-invocation-capabilities__disclosure"),
       ]),
       h("ol", { class: "vh-invocation-capabilities__rows" }, activities.map(activity => renderEvent(activity, inspect))),
     ]),
@@ -909,14 +928,25 @@ function renderCapabilityGroup(activities: readonly InvocationActivity[], inspec
 
 function renderAgentConfigurationGroup(activities: readonly InvocationActivity[], inspect: InspectHandler) {
   const activity = activities[0]!;
-  return h("li", { class: "vh-invocation-capabilities", key: `configuration:${activity.id}` }, [
+  return h("li", {
+    class: "vh-invocation-capabilities",
+    "data-activity-id": activity.id,
+    "data-kind": activity.kind,
+    "data-status": activity.status,
+    key: `configuration:${activity.id}`,
+  }, [
     h("details", { class: "vh-invocation-capabilities__details" }, [
       h("summary", { class: "vh-invocation-capabilities__summary" }, [
+        h("span", { "aria-hidden": "true", class: "vh-invocation-event__icon" }, [frameworkMark()]),
+        h("span", { class: "vh-invocation-event__title" }, invocationActivityTitle(activity)),
+        agentConfigurationSummary(activity) ? h("code", { class: "vh-invocation-event__suffix" }, agentConfigurationSummary(activity)) : null,
         renderDisclosureChevron("vh-invocation-capabilities__disclosure"),
-        h("span", invocationActivityTitle(activity)),
-        agentConfigurationSummary(activity) ? h("small", agentConfigurationSummary(activity)) : null,
       ]),
-      h("ol", { class: "vh-invocation-capabilities__rows" }, activities.map(item => renderEvent(item, inspect))),
+      h("ol", { class: "vh-invocation-capabilities__rows" }, activities.map(item => h("li", { key: item.id }, [
+        item.body ? h("div", { class: "vh-invocation-event__body" }, [markdown(item.body, "vh-invocation-event__markdown")]) : null,
+        item.truncated ? h("p", { class: "vh-invocation-event__notice" }, "Some activity details were omitted.") : null,
+        h("button", { class: "vh-invocation-event__inspect", onClick: () => inspect("agent"), type: "button" }, "Inspect agent"),
+      ]))),
     ]),
   ]);
 }
@@ -1391,6 +1421,7 @@ function renderWorkSummary(
   const detailsOpen = active || open;
   const endedAt = invocation.completedAt ?? invocation.failedAt ?? invocation.cancelledAt ?? invocation.updatedAt;
   const duration = formatDuration(invocation.startedAt, endedAt);
+  const elapsed = active ? formatElapsed(invocation.startedAt, messageRendering.liveNow) : undefined;
   return h("li", { class: "vh-invocation-work", key: "invocation-work" }, [
     h("details", {
       class: "vh-invocation-work__details",
@@ -1399,8 +1430,9 @@ function renderWorkSummary(
       open: detailsOpen,
     }, [
       h("summary", { class: "vh-invocation-work__summary" }, [
-        renderDisclosureChevron("vh-invocation-work__disclosure"),
         h("span", { class: "vh-invocation-work__title" }, active ? "Working…" : duration ? `Worked for ${duration}` : "Work details"),
+        elapsed ? h("time", { class: "vh-invocation-work__elapsed", datetime: invocation.startedAt }, elapsed) : null,
+        renderDisclosureChevron("vh-invocation-work__disclosure"),
       ]),
       h("div", { "aria-hidden": "true", class: "vh-invocation-work__divider" }),
       detailsOpen
@@ -1422,8 +1454,8 @@ function renderPreviousMessages(
   return h("li", { class: "vh-invocation-history", key: "invocation-history" }, [
     h("details", { class: "vh-invocation-history__details" }, [
       h("summary", { class: "vh-invocation-history__summary" }, [
-        renderDisclosureChevron("vh-invocation-history__disclosure"),
         h("span", `${messages.length} previous ${messages.length === 1 ? "message" : "messages"}`),
+        renderDisclosureChevron("vh-invocation-history__disclosure"),
       ]),
       h("ol", { class: "vh-invocation-history__messages" },
         renderActivitySequence(messages, invocation, expanded, toggleExpanded, inspect, messageRendering)),
@@ -1488,6 +1520,8 @@ export const AgentInvocation = defineComponent({
     const expandedMessages = ref<ReadonlySet<string>>(new Set());
     const mounted = useMounted();
     const now = useNow({ interval: 60_000 });
+    const liveNow = ref<Date>();
+    let liveClock: ReturnType<typeof setInterval> | undefined;
     const workOpen = ref(false);
     const messageCopy = ref<{ id: string; status: "copied" | "failed" }>();
     const root = ref<HTMLElement>();
@@ -1568,9 +1602,17 @@ export const AgentInvocation = defineComponent({
       if ((previousStatus === "pending" || previousStatus === "running")
         && status !== "pending" && status !== "running") workOpen.value = false;
     });
+    // The elapsed time of a live session ticks every second; a settled session shows its fixed duration.
+    watch([() => props.invocation.status === "pending" || props.invocation.status === "running", mounted], ([live, isMounted]) => {
+      if (liveClock) clearInterval(liveClock);
+      liveClock = undefined;
+      liveNow.value = live && isMounted ? new Date() : undefined;
+      if (live && isMounted) liveClock = setInterval(() => liveNow.value = new Date(), 1_000);
+    }, { immediate: true });
     onBeforeUnmount(() => {
       clearSelectedElement();
       if (copyTimer) clearTimeout(copyTimer);
+      if (liveClock) clearInterval(liveClock);
     });
 
     return () => {
@@ -1612,6 +1654,7 @@ export const AgentInvocation = defineComponent({
               {
                 ...promptMetadata,
                 now: now.value,
+                liveNow: liveNow.value,
                 mounted: mounted.value,
                 copy: activity => void copyMessage(activity),
                 copiedId: messageCopy.value?.id,
@@ -1620,7 +1663,7 @@ export const AgentInvocation = defineComponent({
             ))]),
             activities.value.length
               ? null
-              : h("div", { class: "vh-invocation-empty", role: "status" }, [h("span", { "aria-hidden": "true" }, "○"), h("p", "Waiting for the first update…")]),
+              : h("div", { class: "vh-invocation-empty", role: "status" }, [h("p", "Waiting for the first update…")]),
             slots.footer?.({ invocation: props.invocation }),
           ]),
         ]),

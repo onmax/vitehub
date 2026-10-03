@@ -5,7 +5,7 @@ export default defineConfig({
     tsconfig: "tsconfig.build.json",
     copy: [{ from: "styles.css", to: "dist" }],
     deps: {
-      alwaysBundle: [/@pierre\//, "@vite-hub/runtime"],
+      alwaysBundle: [/@pierre\//, /^@vite-hub\/runtime(?:\/|$)/],
       neverBundle: [
         "#app",
         "@comark/vue",

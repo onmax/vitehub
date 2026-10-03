@@ -1,5 +1,5 @@
 import { stringAttribute, type InvocationActivity } from "./invocation-activity.ts";
-import { hasRuntimeType } from "./runtime-type.ts";
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type";
 
 export type InvocationConversation = {
   deliveredAnswerCount: number;
@@ -18,8 +18,9 @@ export type InvocationConversation = {
 
 /** Selects the current turn and separates visible answers from their work receipts. */
 export function buildInvocationConversation(activities: readonly InvocationActivity[]): InvocationConversation {
-  const promptId = activities[promptActivityIndex(activities)]?.id;
-  const orderedActivities = activities.filter(activity => activity.kind !== "message" || isVisibleMessage(activity));
+  const inputActivities = withoutInitialDriverEcho(activities);
+  const promptId = inputActivities[promptActivityIndex(inputActivities)]?.id;
+  const orderedActivities = inputActivities.filter(activity => activity.kind !== "message" || isVisibleMessage(activity));
   const firstUser = promptActivityIndex(orderedActivities);
   const lastUser = orderedActivities.findLastIndex(activity => activity.kind === "message" && activity.role === "user");
   const lastAssistant = orderedActivities.findLastIndex((activity, index) => index > lastUser
@@ -38,7 +39,7 @@ export function buildInvocationConversation(activities: readonly InvocationActiv
   const hasLaterCommentary = lastAssistant >= 0 && orderedActivities.slice(lastAssistant + 1).some(activity =>
     activity.kind === "message" && activity.role === "assistant" && activity.attributes["message.phase"] === "commentary");
   if (hasLaterCommentary) {
-    const beforeAnswer = orderedActivities.slice(firstUser + 1, lastAssistant);
+    const beforeAnswer = orderedActivities.slice(firstUser + 1, lastAssistant).filter(activity => !repeatsPrompt(activity, prompt));
     const followup = orderedActivities.slice(lastAssistant);
     return {
       ...metadata,
@@ -58,12 +59,37 @@ export function buildInvocationConversation(activities: readonly InvocationActiv
     kind: "conversation",
     history,
     prompt,
-    work: coalesceAgentConfiguration([...workBeforePrompt, ...tail.filter((_, offset) => firstUser + 1 + offset !== lastAssistant)])
+    work: coalesceAgentConfiguration([...workBeforePrompt, ...tail.filter((activity, offset) => firstUser + 1 + offset !== lastAssistant && !repeatsPrompt(activity, prompt))])
       .map(activity => isDeliveredAnswer(activity) ? deliveryReceipt(activity) : activity),
     answers: [...[...answers].map(deliveryAnswer), ...(lastAssistant >= 0 ? [orderedActivities[lastAssistant]!] : [])]
       .sort((left, right) => left.sequence - right.sequence),
     followup: [],
   };
+}
+
+// The input snapshot and the first driver input event use independent IDs.
+// Match only that initial pair, before any response or subsequent user turn.
+function withoutInitialDriverEcho(activities: readonly InvocationActivity[]): readonly InvocationActivity[] {
+  const lastInput = activities.findLastIndex(activity => activity.attributes["message.origin"] === "invocation-input");
+  const prompt = activities[lastInput];
+  if (!prompt || prompt.role !== "user") return activities;
+  const firstMessage = activities.findIndex((activity, index) => index > lastInput && activity.kind === "message");
+  const echo = activities[firstMessage];
+  if (!echo || echo.name !== "agent.input.message" || echo.role !== "user"
+    || echo.attributes["input.mode"] === "steer" || echo.truncated || prompt.truncated
+    || echo.body?.trim() !== prompt.body?.trim()) return activities;
+  return activities.filter((_, index) => index !== firstMessage);
+}
+
+function repeatsPrompt(activity: InvocationActivity, prompt: InvocationActivity | undefined): boolean {
+  const promptMessageId = prompt && stringAttribute(prompt.attributes, "message.id");
+  return Boolean(promptMessageId)
+    && activity !== prompt
+    && activity.kind === "message"
+    && activity.role === "user"
+    && activity.attributes["input.mode"] !== "steer"
+    && stringAttribute(activity.attributes, "message.id") === promptMessageId
+    && (activity.body?.trim() ?? "") === (prompt!.body?.trim() ?? "");
 }
 
 function promptActivityIndex(activities: readonly InvocationActivity[]): number {
@@ -74,6 +100,9 @@ function promptActivityIndex(activities: readonly InvocationActivity[]): number 
       && activity.name !== "agent.input.message"
       && activity.attributes["input.mode"] !== "steer") return index;
   }
+  const inputPrompt = activities.findLastIndex(activity => activity.role === "user"
+    && activity.attributes["message.origin"] === "invocation-input");
+  if (inputPrompt >= 0) return inputPrompt;
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index]!;
     if (activity.kind === "message" && activity.role === "user" && activity.attributes["input.mode"] !== "steer") return index;
