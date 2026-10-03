@@ -477,13 +477,24 @@ describe("Browser Sessions", () => {
     expect(release).toHaveBeenCalledTimes(2)
     expect(session.inspect().state).toBe("controlled")
     expect(trace.mock.calls.map(([event]) => event.name)).not.toContain("browser.controller.detach")
+    expect(trace.mock.calls.map(([event]) => event.name)).toEqual([
+      "browser.session.acquire",
+      "browser.controller.attach",
+      "browser.session.close",
+    ])
 
     release.mockResolvedValue(undefined)
     await session.close()
     expect(close).toHaveBeenCalledOnce()
     expect(release).toHaveBeenCalledTimes(3)
     expect(session.inspect().state).toBe("closed")
-    expect(trace.mock.calls.map(([event]) => event.name)).toContain("browser.controller.detach")
+    expect(trace.mock.calls.map(([event]) => event.name)).toEqual([
+      "browser.session.acquire",
+      "browser.controller.attach",
+      "browser.session.close",
+      "browser.controller.detach",
+      "browser.session.close",
+    ])
   })
 
   it("retries failed rollback before provider closure invalidates the controller connection", async () => {

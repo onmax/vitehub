@@ -304,32 +304,32 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     if (this.state === "controlled" && !this.detaching) throw browserSessionStateError("close", this.state)
     this.closing = true
     const closing = (async () => {
-      if (this.pendingControllerRelease && !this.controllerReleaseInFlight) {
-        // A failed rollback must retry while its provider connection is still available.
-        await this.pendingControllerRelease()
-      }
-      let closeError: unknown
       try {
-        await releaseResource({ lease: this.lease, providerSession: this.providerSession })
-      }
-      catch (error) {
-        closeError = error
-      }
-      try {
-        await this.pendingControllerRelease?.()
-      }
-      catch (error) {
-        closeError = closeError
-          ? new AggregateError([closeError, error], "[vitehub:browser] Browser Session close and controller release failed.")
-          : error
-      }
-      try {
+        if (this.pendingControllerRelease && !this.controllerReleaseInFlight) {
+          // A failed rollback must retry while its provider connection is still available.
+          await this.pendingControllerRelease()
+        }
+        let closeError: unknown
+        try {
+          await releaseResource({ lease: this.lease, providerSession: this.providerSession })
+        }
+        catch (error) {
+          closeError = error
+        }
+        try {
+          await this.pendingControllerRelease?.()
+        }
+        catch (error) {
+          closeError = closeError
+            ? new AggregateError([closeError, error], "[vitehub:browser] Browser Session close and controller release failed.")
+            : error
+        }
         if (!closeError) this.state = "closed"
+        if (closeError) throw closeError
       }
       finally {
         await this.owner.emit("browser.session.close", this)
       }
-      if (closeError) throw closeError
     })()
     this.closePromise = closing
     try {
