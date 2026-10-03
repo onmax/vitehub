@@ -3,7 +3,7 @@ import type { AgentChannelDefinition } from '../types.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile, spawn } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
-import { createHash, createSign } from "node:crypto"
+import { createHash, createSign, randomUUID } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
 import { lstatSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -473,11 +473,19 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
       // Never recursively remove a replacement at the original pathname.
       for (const entry of await readdir(anchoredPrivateRoot)) {
         const child = join(anchoredPrivateRoot, entry)
-        await lstat(child)
-        // Keep the identity check and removal in one synchronous turn. This
-        // prevents callback-controlled code from replacing the child between
-        // validation and recursive cleanup.
-        rmSync(child, { force: true, recursive: true })
+        const identity = await lstat(child)
+        // Rename the validated entry before recursive removal. This keeps the
+        // removal bound to the object that was inspected: a replacement at
+        // the visible child pathname is left untouched.
+        const quarantine = join(anchoredPrivateRoot, `.removing-${randomUUID()}`)
+        await rename(child, quarantine)
+        const moved = await lstat(quarantine)
+        if (moved.dev !== identity.dev || moved.ino !== identity.ino) {
+          // A concurrent replacement won the rename. Keep the moved object and
+          // fail closed rather than recursively deleting an unknown tree.
+          continue
+        }
+        rmSync(quarantine, { force: true, recursive: true })
       }
       const retained = await privateParent.stat()
       const current = await lstat(privateRoot).catch((error: unknown) => {
