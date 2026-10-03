@@ -149,6 +149,11 @@ import { defineDatabase } from "vite-hub/database"
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
 
 export default defineDatabase({
+  cloudflare: {
+    binding: "DB",
+    databaseId: process.env.CLOUDFLARE_D1_DATABASE_ID,
+    databaseName: process.env.CLOUDFLARE_D1_DATABASE_NAME,
+  },
   schema: {
     users: sqliteTable("users", {
       id: integer("id").primaryKey(),
@@ -195,11 +200,19 @@ pnpm vitehub db migrate
 ```
 
 For a database that already has your tables, back it up first. Then read the
-first generated migration before you run `vitehub db migrate`, because it
+first generated migration before you run a migration command, because it
 creates every table in the schema. Use `vitehub db generate --custom` to write a
 migration by hand. NuxtHub applied migrations during `nuxt dev` and
-`nuxt build`. With ViteHub, run `vitehub db migrate` in your deployment
-workflow. Read [Database](/docs/server-primitives/database).
+`nuxt build`. `vitehub db migrate` applies SQLite, libSQL, and D1 HTTP
+migrations. For a Cloudflare binding deployment, apply the generated migrations
+to the remote D1 database with Wrangler and the generated Wrangler config:
+
+```bash [Terminal]
+pnpm wrangler d1 migrations apply <database-name> --remote --config .output/server/wrangler.json
+```
+
+The `databaseId` and `databaseName` in the Definition must identify that same
+database. Read [Database](/docs/server-primitives/database).
 
 ## Keep the cache
 
@@ -228,8 +241,31 @@ export default defineNuxtConfig({
 ## Deploy
 
 ViteHub uses the same Cloudflare binding names as NuxtHub: `DB` for D1, `KV` for
-Workers KV, and `BLOB` for R2. Existing resources keep their data when the
-binding names match.
+Workers KV, and `BLOB` for R2. Keep each existing resource's identity as well as
+its binding: set the D1 `databaseId` and `databaseName`, the KV `namespaceId`
+(or `namespaceName` for provisioning), and the R2 `bucketName`. Binding names
+alone can point at a new empty resource.
+
+```ts [vite.config.ts]
+import { hubBlob } from "@vite-hub/blob/vite"
+import { hubKv } from "@vite-hub/kv/vite"
+import { defineConfig } from "vite"
+
+export default defineConfig({
+  plugins: [
+    hubKv({
+      driver: "cloudflare-kv-binding",
+      binding: "KV",
+      namespaceId: process.env.CLOUDFLARE_KV_NAMESPACE_ID,
+    }),
+    hubBlob({
+      driver: "cloudflare-r2",
+      binding: "BLOB",
+      bucketName: process.env.CLOUDFLARE_R2_BUCKET_NAME,
+    }),
+  ],
+})
+```
 
 | Host | What changes |
 | --- | --- |
