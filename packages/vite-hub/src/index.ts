@@ -879,6 +879,7 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     plugins.push(consoleVitePlugin({
       blobStores: consoleBlobStores,
       console: options.console === true ? true : options.console,
+      connections: options.connections,
       resolveD1Binding: (root, serverDirs) => consoleD1Binding(plan.preset, options.database, { root, serverDirs }),
       databaseUrl: consoleDatabaseUrl(options),
       databaseDiscoveryRoot: options.database && options.database !== true ? options.database.projectRoot : undefined,
