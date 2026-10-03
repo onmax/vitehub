@@ -347,6 +347,7 @@ function createCheckoutPool(root: string) {
           await lstat(entry.directory)
         }
         catch (error: unknown) {
+          // SAFETY: Node filesystem errors expose their stable errno code through NodeJS.ErrnoException.
           if ((error as NodeJS.ErrnoException).code === "ENOENT") await rename(quarantine, entry.directory)
         }
         return
