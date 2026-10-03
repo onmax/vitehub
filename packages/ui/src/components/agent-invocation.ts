@@ -877,6 +877,7 @@ function renderPreparationStep(activity: InvocationActivity, url: string | undef
     class: "vh-invocation-preparation__step",
     "data-activity-id": activity.id,
     "data-kind": "preparation",
+    "data-status": activity.status,
     key: activity.id,
   }, [
     renderActivityIcon(activity),
