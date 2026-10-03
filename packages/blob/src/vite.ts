@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises"
 
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { getViteMode } from "@vite-hub/internal/build/mode"
-import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
+import { composeNitroCloudflareProviderOutput, contributeCloudflareProviderOutput, contributeProviderDeploymentOutput, createDefaultCloudflareOutputRoot, createDefaultVercelOutputRoot, createProviderDeploymentOutputGenerationState, finalizeProviderDeploymentOutputs, resetProviderOutputRuntime, shouldSkipViteProviderBuild, useProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import { removeProviderOutputArtifactDir } from "@vite-hub/internal/build/provider-output-sources"
 import { createNoExternalAddition, hasNitroConfigContext, isServerEnvironment, resolveNitroVercelFunctionName, resolveViteHubProjectRoot, VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 import { renderViteHubNitroDevHandler } from "@vite-hub/internal/dev-endpoint"
@@ -98,6 +98,12 @@ function getNitroHostingProvider(value: unknown): ReturnType<typeof getHostingPr
   const nitro = cloneNitroConfig(value)
   const preset = typeof nitro.preset === "string" ? nitro.preset : process.env.NITRO_PRESET || process.env.SERVER_PRESET || process.env.VITEHUB_HOSTING
   return typeof preset === "string" ? getHostingProvider(preset) : undefined
+}
+
+function blobCreatesProviderOutput(blob: BlobViteRuntimeConfig["blob"]): boolean {
+  if (!blob) return false
+  const stores = "stores" in blob && blob.stores ? Object.values(blob.stores) : [blob.store]
+  return stores.every(store => store.driver !== "fs")
 }
 
 function isNitroCloudflareHost(value: unknown): boolean {
@@ -388,6 +394,17 @@ export function hubBlob(options?: BlobModuleOptions, internalOptions: InternalBl
         return {
           namespaces: createBlobCliNamespaces(),
           provision: [createBlobCloudflareProvisionStep(() => blob), createBlobVercelProvisionStep(() => blob)],
+        }
+      },
+      inspect: () => {
+        if (!runtimeConfig || !blobCreatesProviderOutput(runtimeConfig.blob) || cloudflareOwnedByNitro) return
+        const projectRoot = resolveViteHubProjectRoot(resolved?.root ?? process.cwd())
+        const functionName = resolveNitroVercelFunctionName(resolved ?? {}, "blob") ?? "__server.func"
+        return {
+          providerOutput: [
+            { description: "Generated Cloudflare Blob worker", owner: "blob", path: resolve(createDefaultCloudflareOutputRoot(projectRoot), "index.js") },
+            { description: "Generated Vercel Blob function", owner: "blob", path: resolve(createDefaultVercelOutputRoot(projectRoot), "functions", functionName, "index.mjs") },
+          ],
         }
       },
     },
