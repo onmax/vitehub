@@ -473,13 +473,20 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let maxRuns = Math.max(1_000, text.length + 1)
       const budgetedCommands = new Set<string>()
       let budgetText: string | undefined
+      let budgetCommand: string | undefined
       while (cursor <= text.length) {
         // Each registered command can credit newly introduced work only once.
         // Repeated or alternating recursive handlers cannot keep raising the allowance.
-        if (budgetText !== undefined) {
-          maxRuns += Math.max(0, countInputCommandInvocations(text, trigger, commands) - countInputCommandInvocations(budgetText, trigger, commands))
-          budgetText = undefined
+        if (budgetText !== undefined && text !== budgetText) {
+          const addedRuns = Math.max(0, countInputCommandInvocations(text, trigger, commands) - countInputCommandInvocations(budgetText, trigger, commands))
+          if (addedRuns > 0 && budgetCommand !== undefined && !budgetedCommands.has(budgetCommand)) {
+            // Credit the rewritten invocation too, which may consume the base allowance.
+            maxRuns += addedRuns + 1
+            budgetedCommands.add(budgetCommand)
+          }
         }
+        budgetText = undefined
+        budgetCommand = undefined
         const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
         if (!invocation) break
         if (++runs > maxRuns) throw agentDiagnostics.AGENT_R0103({ message: "[vitehub] inputCommands exceeded the maximum command expansion depth." })
@@ -491,8 +498,8 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           continue
         }
         if (!budgetedCommands.has(invocation.name)) {
-          budgetedCommands.add(invocation.name)
           budgetText = text
+          budgetCommand = invocation.name
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,
@@ -557,6 +564,10 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         }
 
         if (text.slice(invocation.start, invocation.end) === invocation.text) {
+          if (!command.hooks?.["agent:input"]) {
+            budgetText = undefined
+            budgetCommand = undefined
+          }
           input = removeInputCommandText(input, target, invocation)
           context.input.set(input)
           target = getInputCommandTarget(input)

@@ -18,7 +18,7 @@ describe("inputCommands", () => {
     const capability = inputCommands({
       commands: {
         loop: {
-          call({ text, context }) {
+          call({ text }) {
             if (++calls > 1_500) throw new Error("Expansion did not stop")
             const prompt = `${text} x`
             if (mode === "replacement") return prompt
@@ -75,6 +75,33 @@ describe("inputCommands", () => {
 
     await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/first" }))
       .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBe(1_004)
+  })
+
+  it.each(["replacement", "result", "mutation"] as const)("allows delayed finite expansion by the same command through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const capability = inputCommands({
+      commands: {
+        same: {
+          call({ context }) {
+            calls++
+            if (calls > 1_000) return
+            const prompt = calls === 1_000 ? "/same /same" : `/same ${calls}`
+            if (mode === "replacement") return prompt
+            if (mode === "mutation") {
+              context.input.set({ prompt })
+              return
+            }
+            return { prompt }
+          },
+        },
+      },
+    })
+
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same start" })
+    expect(resolved.input.prompt).toBe("")
     expect(calls).toBe(1_002)
   })
 
