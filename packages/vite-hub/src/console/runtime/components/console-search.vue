@@ -354,7 +354,9 @@ async function selectDefinition(item: ConsoleDefinitionSearchItem): Promise<void
   open.value = false
   await router.push({
     name: resolveConsoleRouteName(route.name, item.details.routeName),
-    query: { definition: item.name },
+    ...(item.details.routeName === consoleSectionDetails.databases.routeName
+      ? { params: { database: item.name } }
+      : { query: { definition: item.name } }),
   })
 }
 

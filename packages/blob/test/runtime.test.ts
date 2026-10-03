@@ -692,6 +692,27 @@ describe("blob runtime", () => {
     ])
   })
 
+  it.each([
+    ["", ["docs/"]],
+    ["doc", ["docs/"]],
+    ["docs", ["docs/"]],
+    ["docs/", ["docs/reports/"]],
+    ["docs/re", ["docs/reports/"]],
+  ])("returns exact folded files-sdk folder keys for prefix %j", async (prefix, folders) => {
+    filesSdkMock.list.mockResolvedValueOnce({ items: [{
+      etag: "etag",
+      key: "docs/reports/one.txt",
+      lastModified: "2026-01-01T00:00:00.000Z",
+      metadata: {},
+      size: 3,
+      type: "text/plain",
+    }] })
+    setBlobRuntimeConfig({ store: { bucket: "assets", driver: "s3" } })
+
+    const result = expectBlobSuccess(await blob.list({ folded: true, prefix }))
+    expect(result).toMatchObject({ blobs: [], folders, hasMore: false })
+  })
+
   it("resumes folded files-sdk listings within and across provider pages", async () => {
     const items = (keys: string[]) => keys.map(key => ({
       etag: "etag",

@@ -1,6 +1,9 @@
 import { hasRuntimeType, isRuntimeObject } from "./internal/runtime-type.ts"
 import { ViteHubError } from "./errors.ts"
 import { runtimeErrorDiagnostics } from "./error-diagnostics.ts"
+import { normalizeTraceAttributes } from "./internal/trace-attributes.ts"
+
+export { isTraceContentAttributeKey } from "./internal/trace-attributes.ts"
 
 export { decodeRouteSegment, encodeRouteSegment } from "./route-segment.ts"
 export { consoleInvocationUrl, registerPublicUrlAgentName, resetPublicUrlAgentNames, resolvePublicUrl, type PublicUrlConfig } from "./public-url.ts"
@@ -345,80 +348,10 @@ export interface RunLifecycleHooks<TContext extends RuntimeHostContext<any> = Ru
   trace?: (event: TraceEvent, context: TContext) => MaybePromise<void>
 }
 
-const contentAttributeKeys = new Set([
-  "args",
-  "body",
-  "content",
-  "data",
-  "input",
-  "message",
-  "messages",
-  "output",
-  "payload",
-  "progress",
-  "prompt",
-  "raw",
-  "request",
-  "response",
-  "result",
-  "text",
-  "title",
-])
-
-export function isTraceContentAttributeKey(key: string): boolean {
-  if (key === "error.message") return false
-  if (contentAttributeKeys.has(key)) return true
-  return key.split(".").some((part, index) => index > 0 && contentAttributeKeys.has(part))
-}
-
-function metadataValue(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (!value || !hasRuntimeType(value, "object")) return value
-  if (seen.has(value)) return "[Circular]"
-  seen.add(value)
-  if (Array.isArray(value)) {
-    const next = value.map(child => metadataValue(child, seen))
-    seen.delete(value)
-    return next
-  }
-  const omitted: string[] = []
-  let entries: [string, unknown][]
-  try {
-    entries = Object.entries(value)
-  }
-  catch {
-    seen.delete(value)
-    return undefined
-  }
-  const next = Object.fromEntries(entries.flatMap(([key, child]) => {
-    if (isTraceContentAttributeKey(key)) {
-      omitted.push(key)
-      return []
-    }
-    return [[key, metadataValue(child, seen)]]
-  }))
-  seen.delete(value)
-  if (omitted.length) next["content.omitted"] = omitted
-  return next
-}
-
 function timestamp(value: Date | string | undefined): string {
   if (value instanceof Date) return value.toISOString()
   if (hasRuntimeType(value, "string")) return value
   return new Date().toISOString()
-}
-
-function metadataAttributes(attributes: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
-  if (!attributes) return undefined
-  const omitted: string[] = []
-  const next = Object.fromEntries(Object.entries(attributes).flatMap(([key, value]) => {
-    if (isTraceContentAttributeKey(key)) {
-      omitted.push(key)
-      return []
-    }
-    return [[key, metadataValue(value)]]
-  }))
-  if (omitted.length) next["content.omitted"] = omitted
-  return Object.keys(next).length ? next : undefined
 }
 
 function normalizedTraceActivity(activity: TraceActivityContext | undefined): TraceActivityContext | undefined {
@@ -711,49 +644,7 @@ function traceEventAttributes(
 ): Record<string, unknown> | undefined {
   const activity = normalized ? event.activity : normalizedTraceActivity(event.activity)
   const payload = normalized ? event.payload : normalizedTracePayload(event.payload)
-  let source: Record<string, unknown> = {}
-  const skippedMetadataContent = new Set<string>()
-  try {
-    for (const key of Reflect.ownKeys(event.attributes || {})) {
-      if (!hasRuntimeType(key, "string")) continue
-      const descriptor = Object.getOwnPropertyDescriptor(event.attributes!, key)
-      if (descriptor?.enumerable && "value" in descriptor) source[key] = descriptor.value
-      else if (content === "metadata" && descriptor?.enumerable && isTraceContentAttributeKey(key)) {
-        skippedMetadataContent.add(key)
-      }
-    }
-  }
-  catch {
-    source = {}
-  }
-  delete source["vitehub.activity.owner"]
-  delete source["vitehub.activity.phase"]
-  delete source["vitehub.payload.summary"]
-  delete source["vitehub.payload.value"]
-  delete source["vitehub.payload.visibility"]
-  try {
-    if (Array.isArray(source["content.omitted"])) {
-      const omitted = source["content.omitted"].filter(key => hasRuntimeType(key, "string") && ![
-        "vitehub.activity.owner",
-        "vitehub.activity.phase",
-        "vitehub.payload.summary",
-        "vitehub.payload.value",
-        "vitehub.payload.visibility",
-      ].includes(key))
-      if (omitted.length) source["content.omitted"] = omitted
-      else delete source["content.omitted"]
-    }
-  }
-  catch {
-    delete source["content.omitted"]
-  }
-  if (skippedMetadataContent.size) {
-    const omitted = new Set(Array.isArray(source["content.omitted"]) ? source["content.omitted"] : [])
-    for (const key of skippedMetadataContent) omitted.add(key)
-    source["content.omitted"] = [...omitted]
-  }
-  const attributes = content === "metadata" ? metadataAttributes(source) : source
-  const next: Record<string, unknown> = { ...attributes }
+  const next: Record<string, unknown> = { ...normalizeTraceAttributes(event.attributes, content) }
   if (activity) {
     next["vitehub.activity.owner"] = activity.owner
     next["vitehub.activity.phase"] = activity.phase

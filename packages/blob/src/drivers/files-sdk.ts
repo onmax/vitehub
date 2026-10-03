@@ -181,10 +181,10 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
           let consumed = start
           for (const item of result.items.slice(start)) {
             consumed += 1
-            const remainder = item.key.slice(prefix.length).replace(/^\/+/, "")
+            const remainder = item.key.slice(prefix.length)
             const firstSlash = remainder.indexOf("/")
             if (firstSlash !== -1) {
-              folders.add(`${prefix.replace(/\/?$/, "/")}${remainder.slice(0, firstSlash + 1)}`)
+              folders.add(item.key.slice(0, prefix.length + firstSlash + 1))
               continue
             }
             blobs.push(mapStoredFile(item))

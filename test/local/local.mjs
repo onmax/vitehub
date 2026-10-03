@@ -8,6 +8,8 @@ import { parseArgs } from "node:util"
 import { resolve } from "node:path"
 import { setTimeout as sleep } from "node:timers/promises"
 
+import { waitForProbe } from "./probe.mjs"
+
 import { buildPlayground } from "./build-playground.mjs"
 
 const repoRoot = resolve(import.meta.dirname, "..", "..")
@@ -16,22 +18,6 @@ const log = message => console.log(`[e2e:local] ${message}`)
 const CLOUDFLARE_PORT = 8788
 const VERCEL_PORT = 8789
 
-async function waitForProbe(url, timeoutMs = 60_000) {
-  const startedAt = Date.now()
-  let lastError
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(new URL("/api/tests/probe", url))
-      if (response.ok) return
-      lastError = new Error(`probe status ${response.status}`)
-    }
-    catch (error) {
-      lastError = error
-    }
-    await sleep(1_000)
-  }
-  throw new Error(`[e2e:local] App at ${url} never became healthy: ${lastError}`)
-}
 
 function runSuite(name, command, args, env = {}) {
   log(`suite ${name}: ${command} ${args.join(" ")}`)

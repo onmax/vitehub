@@ -134,6 +134,11 @@ secret detection. Arbitrary names such as `token` or `authorization` are not
 automatically redacted, and `error.message` is retained. `{ content: "content" }`
 retains all supplied attributes.
 
+Attribute projection reads own data properties. It does not invoke attribute
+getters. In `metadata` mode this also applies to nested objects and array entries;
+accessor-backed content keys are recorded as omitted, and other accessors are
+skipped. In `content` mode nested attribute values remain unchanged.
+
 Own trace access, retention, size limits, redaction, and durable export in the
 host. `entries()` returns the current in-memory entries; it does not persist or
 stream them by itself.

@@ -1559,6 +1559,7 @@ describe("local workspace store", () => {
     }
   })
 
+  // Creating 1025 files and validating their sidecars three times can exceed the default timeout on CI.
   it("revalidates sidecars across large repeated listings", async () => {
     const store = await createStore()
     const root = tempDirs.at(-1)!
@@ -1586,7 +1587,7 @@ describe("local workspace store", () => {
     finally {
       read.mockRestore()
     }
-  })
+  }, 30_000)
 
   it("supports file tree operations, snapshots, and diffs", async () => {
     const store = await createStore()

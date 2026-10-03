@@ -107,32 +107,8 @@ function usesWorkspaceNetworkGrant(command: string) {
 
 async function preflightWorkspaceInspectionCommand(command: string, fs: WorkspaceShellFileSystem, broadSearchPaths: string[] = [], cwd = workspaceMountPoint): Promise<ShellObservation | undefined> {
   try {
-    let currentCwd = cwd
-    let skipAndChain = false
-    let skipOrChain = false
-    for (const segment of analyzeWorkspaceInspectionCommand(command)) {
-      if (skipAndChain) {
-        skipAndChain = segment.separatorAfter === "&&"
-        continue
-      }
-      if (skipOrChain) {
-        skipOrChain = segment.separatorAfter === "||"
-        continue
-      }
-      const words = segment.words
-      if (words[0] === "cd") {
-        const path = words[1] || workspaceMountPoint
-        if (!isWorkspacePathCandidate(path)) continue
-        const resolvedPath = resolveWorkspaceShellPath(currentCwd, path)
-        const directory = await workspacePathIsDirectory(fs, resolvedPath)
-        if (segment.separatorAfter === "&&" && !directory) skipAndChain = true
-        if (segment.separatorAfter === "||" && directory) skipOrChain = true
-        if (directory) {
-          currentCwd = resolvedPath ? posix.join(workspaceMountPoint, resolvedPath) : workspaceMountPoint
-        }
-        continue
-      }
-      if (isBroadWorkspaceSearch(segment, broadSearchPaths, currentCwd)) return broadWorkspaceSearchFeedback(broadSearchPaths)
+    for await (const { segment, cwd: segmentCwd } of walkWorkspaceInspectionCommand(command, fs, cwd)) {
+      if (isBroadWorkspaceSearch(segment, broadSearchPaths, segmentCwd)) return broadWorkspaceSearchFeedback(broadSearchPaths)
     }
   }
   catch {
@@ -142,34 +118,10 @@ async function preflightWorkspaceInspectionCommand(command: string, fs: Workspac
 
 async function preflightMissingWorkspacePath(command: string, fs: WorkspaceShellFileSystem, cwd = workspaceMountPoint): Promise<ShellObservation | undefined> {
   try {
-    let currentCwd = cwd
-    let skipAndChain = false
-    let skipOrChain = false
-    for (const segment of analyzeWorkspaceInspectionCommand(command)) {
-      if (skipAndChain) {
-        skipAndChain = segment.separatorAfter === "&&"
-        continue
-      }
-      if (skipOrChain) {
-        skipOrChain = segment.separatorAfter === "||"
-        continue
-      }
-      const words = segment.words
-      if (words[0] === "cd") {
-        const path = words[1] || workspaceMountPoint
-        if (!isWorkspacePathCandidate(path)) continue
-        const resolvedPath = resolveWorkspaceShellPath(currentCwd, path)
-        const directory = await workspacePathIsDirectory(fs, resolvedPath)
-        if (segment.separatorAfter === "&&" && !directory) skipAndChain = true
-        if (segment.separatorAfter === "||" && directory) skipOrChain = true
-        if (directory) {
-          currentCwd = resolvedPath ? posix.join(workspaceMountPoint, resolvedPath) : workspaceMountPoint
-        }
-        continue
-      }
+    for await (const { segment, cwd: segmentCwd } of walkWorkspaceInspectionCommand(command, fs, cwd)) {
       for (const path of segment.paths) {
         if (!isConcreteWorkspacePath(path)) continue
-        const resolvedPath = resolveWorkspaceShellPath(currentCwd, path)
+        const resolvedPath = resolveWorkspaceShellPath(segmentCwd, path)
         if (await fs.exists(resolvedPath)) continue
         if (segment.separatorAfter === "||") continue
         return missingWorkspacePathFeedback(command, resolvedPath)
@@ -179,6 +131,36 @@ async function preflightMissingWorkspacePath(command: string, fs: WorkspaceShell
   }
   catch {
     return undefined
+  }
+}
+
+async function* walkWorkspaceInspectionCommand(command: string, fs: WorkspaceShellFileSystem, cwd: string) {
+  let currentCwd = cwd
+  let skipAndChain = false
+  let skipOrChain = false
+  for (const segment of analyzeWorkspaceInspectionCommand(command)) {
+    if (skipAndChain) {
+      skipAndChain = segment.separatorAfter === "&&"
+      continue
+    }
+    if (skipOrChain) {
+      skipOrChain = segment.separatorAfter === "||"
+      continue
+    }
+    const words = segment.words
+    if (words[0] === "cd") {
+      const path = words[1] || workspaceMountPoint
+      if (!isWorkspacePathCandidate(path)) continue
+      const resolvedPath = resolveWorkspaceShellPath(currentCwd, path)
+      const directory = await workspacePathIsDirectory(fs, resolvedPath)
+      if (segment.separatorAfter === "&&" && !directory) skipAndChain = true
+      if (segment.separatorAfter === "||" && directory) skipOrChain = true
+      if (directory) {
+        currentCwd = resolvedPath ? posix.join(workspaceMountPoint, resolvedPath) : workspaceMountPoint
+      }
+      continue
+    }
+    yield { segment, cwd: currentCwd }
   }
 }
 
