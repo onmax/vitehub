@@ -84,6 +84,12 @@
   font-weight: 500 !important;
 }
 
+.session-inspector__tab {
+  align-items: center;
+  display: flex;
+  min-width: 0;
+}
+
 .session-inspector__tab-close {
   align-items: center;
   background: transparent;
@@ -111,14 +117,6 @@
   width: 0.75rem;
 }
 .session-inspector__surface-close {
-  display: none;
-}
-.session-inspector__tabs [data-slot="trigger"]:hover .session-inspector__surface-icon,
-.session-inspector__tab-close:focus-visible .session-inspector__surface-icon {
-  display: none;
-}
-.session-inspector__tabs [data-slot="trigger"]:hover .session-inspector__surface-close,
-.session-inspector__tab-close:focus-visible .session-inspector__surface-close {
   display: block;
 }
 
