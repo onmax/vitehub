@@ -408,6 +408,42 @@ it('reuses a pooled checkout, keeps ignored files, and resets the rest', async (
   expect(await readFile(join(firstPath, 'node_modules/marker'), 'utf8')).toBe('warm')
 }, 30_000)
 
+it.each(['directory', 'symlink'])('preserves a callback replacement %s and its metadata without pooling it', async (replacement) => {
+  const { root, source, head } = await fixture()
+  const pool = join(root, 'pool')
+  const config = join(root, 'gitconfig')
+  await writeFile(config, '')
+  await git(root, 'config', '--file', config, `url.file://${source}.insteadOf`, 'https://github.com/acme/base.git')
+  vi.stubEnv('GIT_CONFIG_GLOBAL', config)
+  vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1')
+  vi.stubEnv('GIT_ALLOW_PROTOCOL', 'file')
+  const host = createGitHubHost({
+    checkouts: { root: pool },
+    credentials: () => ({ token: 'test-token', rateLimitKey: 'offline-test' }),
+  })
+  const pullRequest = { repository: 'acme/base', number: 1, headSha: head }
+  let checkout = ''
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => {
+    checkout = await realpath(path)
+    await rename(path, join(root, 'displaced'))
+    const outside = join(root, 'outside')
+    if (replacement === 'symlink') {
+      await mkdir(outside)
+      await symlink(outside, path)
+    }
+    else await mkdir(path)
+    await writeFile(join(path, 'marker'), 'untouched')
+    await writeFile(`${path}.meta.json`, 'replacement metadata')
+  })
+  expect(await readFile(join(checkout, 'marker'), 'utf8')).toBe('untouched')
+  expect(await readFile(`${checkout}.meta.json`, 'utf8')).toBe('replacement metadata')
+  await host.withPullRequestCheckout(pullRequest, async ({ path }) => {
+    expect(await realpath(path)).not.toBe(checkout)
+    expect(await git(path, 'rev-parse', 'HEAD')).toBe(head)
+  })
+  expect(await readFile(join(checkout, 'marker'), 'utf8')).toBe('untouched')
+}, 30_000)
+
 it('keeps reset Git operations private when the checkout path is replaced', async () => {
   const { root, source, head } = await fixture()
   const pool = join(root, 'pool')
@@ -456,7 +492,9 @@ process.exit(result.status ?? 1);
   for (const args of commands) expect(args[1]).toMatch(/^\/proc\/\d+\/fd\/\d+\/(?:replacement-|checkout)/)
   expect(await readdir(outside)).toEqual(['marker'])
   expect(await readFile(join(outside, 'marker'), 'utf8')).toBe('untouched')
-  expect(await readdir(pool)).toEqual([])
+  // Cleanup leaves the replacement pathname untouched after custody is lost.
+  expect(await realpath(checkout)).toBe(outside)
+  expect(await readdir(pool)).toEqual([basename(checkout)])
 }, 30_000)
 
 it('cleans the retained reset directory without deleting a replacement root', async () => {

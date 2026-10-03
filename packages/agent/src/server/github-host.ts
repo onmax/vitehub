@@ -5,7 +5,7 @@ import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, rmdir, writeFile } from "node:fs/promises"
-import { rmSync } from "node:fs"
+import { lstatSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -379,6 +379,7 @@ function createCheckoutPool(root: string) {
         return {
           directory: join(root, basename(anchoredDirectory)),
           anchoredDirectory,
+          identity: await lstat(anchoredDirectory),
           anchoredRoot,
           reused: Boolean(checkout),
           adopted: checkout?.adopted ?? false,
@@ -946,7 +947,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     let checkout = pooled?.anchoredDirectory ?? await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
     const operation = controlledOperation(options)
     let keepCheckout = false
-    let checkoutIdentity: { dev: number, ino: number } | undefined
+    let checkoutIdentity: { dev: number, ino: number } | undefined = pooled?.identity
     let reset: Awaited<ReturnType<typeof resetPooledCheckout>> | undefined
     let submodules: string[] = []
     try {
@@ -1088,8 +1089,16 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         }
         if (!retainedCheckout) {
           const discard = pooled?.anchoredDirectory ?? checkout
-          await rm(discard, { force: true, recursive: true })
-          if (pooled) await rm(`${discard}.meta.json`, { force: true })
+          if (pooled && checkoutIdentity) {
+            const current = lstatSync(discard, { throwIfNoEntry: false })
+            // Do not yield between checking custody and cleanup. A callback
+            // may replace this child while the pool's parent stays retained.
+            if (current?.dev === checkoutIdentity.dev && current.ino === checkoutIdentity.ino) {
+              rmSync(discard, { force: true, recursive: true })
+              rmSync(`${discard}.meta.json`, { force: true })
+            }
+          }
+          else await rm(discard, { force: true, recursive: true })
         }
       }
       finally {
