@@ -968,6 +968,35 @@ it("does not treat async global helpers as global object aliases", async () => {
 })
 
 it.each([
+  '(_unused) => globalThis',
+  '_unused => globalThis',
+  '(_unused, other) => ((globalThis))',
+  '(_unused = {}) => globalThis',
+  '({ globalThis: ignored }) => globalThis',
+  '(...unused) => globalThis',
+])("rejects conversion replacements through parameterized global arrows: %s", async helper => {
+  await expect(discover(`${imports} import portal from "../../portal.ts"; const globals = ${helper}; globals().String = replacement; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it.each([
+  '(globalThis) => globalThis',
+  'globalThis => globalThis',
+  '(globalThis = {}) => globalThis',
+  '({ globalThis }) => globalThis',
+  '({ value: globalThis }) => globalThis',
+  'async (_unused) => globalThis',
+  '(_unused) => ({ value: globalThis })',
+  '(_unused) => globalThis.input',
+])("ignores conversion writes through parameterized local arrows: %s", async helper => {
+  const definition = await discover(`${imports} import portal from "../../portal.ts"; const globals = ${helper}; globals().String = replacement; const ignored = \`\${String(input.id)}\`; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
   'globalThis.String = replacement',
   '(globalThis).String = replacement',
   '((globalThis) as object).String = replacement',

@@ -1353,8 +1353,9 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     const templateFunctionScopes = [...templateLocalBindings]
     for (let index = 0; index < references.length; index++) {
       const keyword = references[index]!
-      if (!["const", "let", "var"].includes(keyword)
-        || !["{", ";", "}"].includes(references[index - 1] ?? "") && !referenceLineBreaks.has(index)) continue
+      const declarationStart = keyword === "function" && references[index - 1] === "async" ? index - 1 : index
+      if (!["const", "let", "var", "function", "class"].includes(keyword)
+        || !["{", ";", "}"].includes(references[declarationStart - 1] ?? "") && !referenceLineBreaks.has(declarationStart)) continue
       const owner = templateFunctionScopes.filter(scope => index > scope.start && index < scope.end)
         .sort((a, b) => b.start - a.start)[0]
       if (!owner) continue
@@ -1364,6 +1365,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       if (!block) continue
       const start = keyword === "var" ? owner.start : block[0]
       const end = keyword === "var" ? owner.end : block[1]
+      // Statement declarations bind their name throughout the containing
+      // block. A named expression instead binds only inside its own body.
+      if (keyword === "function" || keyword === "class") {
+        const name = keyword === "function" ? functionExpression(index)?.name : references[index + 1]
+        if (name !== undefined && isIdentifier(name)) templateLocalBindings.push({ start, end, names: new Set([name]) })
+        continue
+      }
       const names = new Set<string>()
       let binding = index + 1
       while (binding < end) {
@@ -1710,10 +1718,14 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   }
 
   function arrowGlobalHelper(name: string): boolean {
-    for (let index = 0; index + 5 < tokens.length; index++) {
-      if (tokens[index] !== name || tokens[index + 1] !== "=" || tokens[index + 2] !== "(" || tokens[index + 3] !== ")"
-        || tokens[index + 4] !== "=" || tokens[index + 5] !== ">") continue
-      let cursor = index + 6
+    for (let index = 0; index + 4 < tokens.length; index++) {
+      if (tokens[index] !== name || tokens[index + 1] !== "=") continue
+      const parameters = index + 2
+      const parameterEnd = tokens[parameters] === "("
+        ? [...openingDelimiters].find(([, opening]) => opening === parameters)?.[0]
+        : isIdentifier(tokens[parameters]) ? parameters : undefined
+      if (parameterEnd === undefined || tokens[parameterEnd + 1] !== "=" || tokens[parameterEnd + 2] !== ">") continue
+      let cursor = parameterEnd + 3
       const parentheses: number[] = []
       while (tokens[cursor] === "(") parentheses.push(cursor++)
       if (tokens[cursor] !== "globalThis" || !globalBindingUnshadowed(cursor, "globalThis")) continue
