@@ -604,6 +604,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               while (generated) {
                 const generatedDepth = inputCommandNumericDepth(generated.args)
                 if (generatedDepth === undefined || budgetDepth === undefined || generatedDepth >= budgetDepth) generatedNumericDecrease = false
+                // SAFETY: Input command parsing only yields registered command names.
                 if (generated.name !== budgetCommand && commandAllowsCurrentChannel(commands[generated.name]!, context as AgentCapabilityRuntimeContext)) {
                   generatedNames.add(generated.name)
                   const successors = transitionGraph.get(budgetCommand) || new Set<string>()
