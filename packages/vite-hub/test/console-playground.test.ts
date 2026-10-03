@@ -85,6 +85,16 @@ it("returns succeeded Schedule runs and consistent run history", async () => {
   ]) })
 })
 
+it.each(["reindex-console", "sched_console_reindex", "unknown-schedule"])("rejects non-runnable Schedule %j", async (name) => {
+  await expect(playgroundRequest("/api/_vitehub/console/schedule-run", { name }, 404))
+    .resolves.toEqual({ message: "Schedule run is not available. Set manual: true on the Schedule Definition and enable Console invocation." })
+})
+
+it.each([null, {}, { name: "" }, { name: 42 }])("rejects invalid Schedule payload %j", async (input) => {
+  await expect(playgroundRequest("/api/_vitehub/console/schedule-run", input, 400))
+    .resolves.toEqual({ message: "Schedule run requires a Schedule Definition name." })
+})
+
 it.each(["", "Inspect this screenshot"])("preserves images in a new chat with prompt %j", async (prompt) => {
   const file = { url: "data:image/png;base64,aW1hZ2U=", filename: "screenshot.png" }
   const created = await playgroundRequest("/api/_vitehub/console/agents/interface-engineer/invocations", { prompt, files: [file] })

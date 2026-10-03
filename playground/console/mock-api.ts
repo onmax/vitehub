@@ -691,11 +691,19 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path === "/api/_vitehub/console/schedule-run" && request.method === "POST") {
     // SAFETY: The playground validates the name immediately after decoding this local JSON request.
-    const input = await body(request) as { name?: unknown }
+    const input: unknown = await body(request)
+    const requestedName = input instanceof Object && "name" in input ? input.name : undefined
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The playground validates the untrusted request name before answering.
-    const name = typeof input.name === "string" && input.name ? input.name : undefined
+    const name = typeof requestedName === "string" && requestedName ? requestedName : undefined
     if (!name) {
       json(response, { message: "Schedule run requires a Schedule Definition name." }, 400)
+      return true
+    }
+    const runnable = scheduleRecords.some(record => record.cells.kind === "Definition"
+      && record.cells.schedule === name
+      && record.fields.some(field => field.label === "Manual" && field.value === "Enabled"))
+    if (!runnable) {
+      json(response, { message: "Schedule run is not available. Set manual: true on the Schedule Definition and enable Console invocation." }, 404)
       return true
     }
     const startedAt = new Date()
