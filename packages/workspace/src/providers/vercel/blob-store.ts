@@ -2,7 +2,7 @@ import { workspaceConflict, workspaceError } from "../../core/errors.ts"
 import { contentToBytes, isExcludedWorkspacePath, normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern, normalizeWorkspacePath, sha256 } from "../../core/path.ts"
 import { createWorkspaceGlobMatcher } from "../../core/glob.ts"
 import { resolveRuntimeVercelBlobWorkspaceStore } from "../../storage/provider.ts"
-import { createSnapshotFromEntries, diffSnapshots } from "../../storage/utils.ts"
+import { createCurrentSnapshotFromStore, diffSnapshots } from "../../storage/utils.ts"
 import * as bundledVercelBlob from "@vercel/blob"
 
 import type {
@@ -36,7 +36,7 @@ type BlobListResult = {
 
 type VercelBlobModule = {
   del(key: string, options?: { token?: string }): Promise<void>
-  get(key: string, options: { access: "private" | "public", token?: string }): Promise<{
+  get(key: string, options: { access: "private" | "public", token?: string, useCache?: boolean, headers?: Record<string, string> }): Promise<{
     blob: { contentType: string, size: number }
     statusCode: 200
     stream: ReadableStream<Uint8Array>
@@ -76,6 +76,10 @@ function auth(options: VercelBlobWorkspaceStoreOptions) {
   return options.token ? { token: options.token } : {}
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return Object(error).code === "NotFound"
+}
+
 async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) {
   const blob = await importVercelBlobPeer()
   const access = options.access || "private"
@@ -84,7 +88,15 @@ async function createVercelBlobClient(options: VercelBlobWorkspaceStoreOptions) 
       await blob.del(key, auth(options))
     },
     async download(key: string): Promise<Blob | undefined> {
-      const result = await blob.get(key, { access, ...auth(options) })
+      const readKey = access === "public"
+        ? `${key}?vitehubCacheBust=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+        : key
+      const result = await blob.get(readKey, {
+        access,
+        headers: { "cache-control": "no-cache, no-store" },
+        useCache: false,
+        ...auth(options),
+      })
       if (!result) return undefined
       if (result.statusCode !== 200) throw workspaceErrorDiagnostics.WORKSPACE_R0033({ message: `Unexpected Vercel Blob response: ${result.statusCode}.` })
       return await new Response(result.stream, {
@@ -165,7 +177,10 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   async readFile(path: string): Promise<WorkspaceFile | undefined> {
     const normalized = normalizeSafeWorkspacePath(path)
     const pathname = this.#fileKey(normalized)
-    const file = await (await this.#client()).download(pathname)
+    const file = await (await this.#client()).download(pathname).catch((error: unknown) => {
+      if (isNotFoundError(error)) return undefined
+      throw error
+    })
     if (!file) return undefined
     const bytes = await file.arrayBuffer()
     return { path: normalized, content: new Uint8Array(bytes) }
@@ -268,7 +283,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
   }
 
   async snapshot(options: SnapshotOptions = {}): Promise<WorkspaceSnapshot> {
-    const snapshot = await createSnapshotFromEntries(await this.list("", { recursive: true }), options.name)
+    const snapshot = await createCurrentSnapshotFromStore(this, options.name)
     await (await this.#client()).upload(this.#snapshotKey(snapshot.id), JSON.stringify(snapshot), {
       contentType: "application/json; charset=utf-8",
     })
@@ -278,7 +293,7 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
 
   async diff(options: DiffOptions = {}): Promise<WorkspaceDiff> {
     const from = options.from || this.#baseline
-    const to = await createSnapshotFromEntries(await this.list("", { recursive: true }))
+    const to = await createCurrentSnapshotFromStore(this)
     return diffSnapshots(from, to)
   }
 

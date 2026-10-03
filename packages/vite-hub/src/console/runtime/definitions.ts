@@ -22,6 +22,8 @@ export interface ConsoleRecord {
   cells: Readonly<Record<string, string>>
   fields: readonly ConsoleDefinitionField[]
   id: string
+  /** The Console can run this record when it represents a runnable Schedule Definition. */
+  runnable?: boolean
 }
 
 export type ConsoleSectionView =
@@ -114,6 +116,7 @@ function parseConsoleRecords(value: unknown): ConsoleRecord[] {
       cells: Object.fromEntries(Object.entries(cells).filter((cell): cell is [string, string] => text(cell[1]))),
       fields: parseConsoleDefinitionFields(row.fields),
       id: row.id,
+      runnable: row.runnable === true ? true : undefined,
     }]
   })
 }

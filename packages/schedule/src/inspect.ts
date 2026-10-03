@@ -88,6 +88,7 @@ function definitionRecord(summary: ViteHubDefinitionSummary): ViteHubConsoleReco
       },
     ],
     id: `definition:${summary.name}`,
+    runnable: field("Manual") === "Enabled",
   }
 }
 

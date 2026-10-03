@@ -26,11 +26,12 @@ describe("shared Console navigation layout", () => {
     expect(component("console-database")).not.toContain("tracking-[.1em] text-muted\">\n            Database")
   })
 
-  it("keeps contributed sections read-only", () => {
+  it("shows Run now next to the Read-only badge only for runnable Schedules", () => {
     const definitions = component("console-definitions")
-    expect(definitions).toMatch(/<template #right>\s*<UBadge color="neutral" label="Read-only"/)
-    expect(definitions).not.toContain('label="Run now"')
-    expect(definitions).not.toContain("scheduleRunBase")
+    expect(definitions).toMatch(/<template #right>\s*<UButton\s+v-if="canRunSelected"[\s\S]*?label="Run now"[\s\S]*?<UBadge color="neutral" label="Read-only"/)
+    expect(definitions).toContain("Boolean(props.scheduleRunBase && (selectedDefinition.value?.runnable || selectedRecord.value?.runnable))")
+    expect(readFileSync(new URL("../src/console/runtime/client/main.js", import.meta.url), "utf8")).toContain('scheduleRunBase: "/api/_vitehub/console/schedule-run"')
+    expect(readFileSync(new URL("../src/console/runtime/pages/section.vue", import.meta.url), "utf8")).toContain(':schedule-run-base="`${appBaseURL}/api/_vitehub/console/schedule-run`"')
   })
 
   it("renders Usage as the same accessible icon primitive everywhere", () => {
