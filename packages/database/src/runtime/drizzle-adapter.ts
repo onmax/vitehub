@@ -227,6 +227,7 @@ export function createDrizzleSqliteAdapter<TSchema extends Record<string, unknow
       return libsqlInstance
     }
 
+    // SAFETY: The injected libSQL adapters expose the same Drizzle database contract as the runtime schema generic.
     libsqlInstance = options.libsql.drizzle({
       casing: config.drizzle.casing,
       client: options.libsql.createClient({
