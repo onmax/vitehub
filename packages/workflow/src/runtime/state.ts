@@ -34,7 +34,7 @@ let collectedRuns: FinalizationRegistry<{ key: string, reference: WeakRef<Workfl
 const completedRuns = new Map<string, WorkflowRunState>()
 
 function isWeakReference(reference: ActiveRunReference): reference is WeakRef<WorkflowRunState> {
-  return typeof reference === "object" && reference !== null && "deref" in reference
+  return reference !== null && "deref" in reference
 }
 
 function getRunKey(name: string, id: string): string {
@@ -230,7 +230,7 @@ export function setWorkflowRun<TResult = unknown>(
 ): WorkflowRunState<TResult> {
   pruneWorkflowRuns()
   const key = getRunKey(name, id)
-  const canUseWeakReferences = typeof WeakRef === "function" && typeof FinalizationRegistry === "function"
+  const canUseWeakReferences = globalThis.WeakRef !== undefined && globalThis.FinalizationRegistry !== undefined
   if (canUseWeakReferences) {
     collectedRuns ??= new FinalizationRegistry(({ key, reference }) => {
       if (runs.get(key) === reference) runs.delete(key)
