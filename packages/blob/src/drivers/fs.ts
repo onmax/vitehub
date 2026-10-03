@@ -151,10 +151,10 @@ function foldedList(entries: FsBlobEntry[], options: BlobListOptions): BlobListR
 
   for (const entry of entries.slice(start)) {
     consumed += 1
-    const remainder = entry.path.slice(prefix.length).replace(/^\/+/, "")
+    const remainder = entry.path.slice(prefix.length)
     const firstSlash = remainder.indexOf("/")
     if (firstSlash !== -1) {
-      folders.add(`${prefix.replace(/\/?$/, "/")}${remainder.slice(0, firstSlash + 1)}`)
+      folders.add(entry.path.slice(0, prefix.length + firstSlash + 1))
       continue
     }
 
