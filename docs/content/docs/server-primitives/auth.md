@@ -197,6 +197,7 @@ export default defineEventHandler(async (event) => {
 | `handleAuth(input, runtimeOptions?)` | Handles an Auth HTTP request. |
 | `handleAuthRequest(definition, request, runtimeOptions?, event?)` | Handles an Auth request for an explicit Auth Definition. |
 | `createAuthHandler(definition, runtimeOptions?)` | Creates a Better Auth handler from a Definition. |
+| `createAuthAccessHandler(routes, definition?)` | Creates a handler that matches discovered route metadata, then authenticates and runs every matching authorization rule. |
 | `requireAuth(input, definition?)` | Returns `undefined` when a session exists. Otherwise returns an unauthorized or sign-in response. |
 | `authorizeRequest(input, authorize, definition?)` | Returns `undefined` when allowed, JSON `401` without a session, `403` when `authorize` returns `false`, or the callback's `Response`. |
 
@@ -232,6 +233,8 @@ export default defineAuth({
 The callback receives the authenticated `user`, `session`, and request. ViteHub does not define an admin role. Map your own role or permission model here.
 
 The same callback signature protects [Blob serve routes](/docs/server-primitives/blob#protect-served-objects) and [Collections](/docs/server-primitives/source#protect-a-collection). Their generated routes call `authorizeRequest(input, authorize)`. Unlike `requireAuth()`, it does not start a sign-in redirect, so image and fetch requests receive a status code.
+
+Generated access middleware calls `createAuthAccessHandler(routes, definition?)`. Manual hosts can use it with a Web `Request` or `{ req: Request }`. Pass `{ route, method?, authorize?: true }` metadata in the same order as the Definition's `access.routes`. A route ending in `/**` matches its base path and descendants. Exact routes match only that path. All matching rules apply, and `authorize: true` requires the corresponding runtime callback. Unmatched requests do not load the Auth Definition or session.
 
 `requireAuthAccessRoutes(input, routeIndexes, definition, requiredAuthorizeRouteIndexes, { redirectToSignIn: false })` returns `401` for an unauthenticated browser request instead of starting the configured provider sign-in redirect. Use it when the host shows its own sign-in page and starts provider sign-in after an explicit action. By default, it keeps the `access.signIn` redirect.
 

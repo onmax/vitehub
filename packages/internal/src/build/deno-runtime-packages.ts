@@ -1,3 +1,4 @@
+import { createRuntimePackageResolver } from "./runtime-package-resolution.ts"
 import { randomUUID } from "node:crypto"
 import { access, cp, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises"
 import { builtinModules, createRequire } from "node:module"
@@ -10,6 +11,8 @@ import { satisfies, validRange } from "semver"
 import { bundleEsmEntry, type ViteAlias } from "./esbuild.ts"
 import { publishProviderSourcesToDeploymentOutputs } from "./provider-output-sources.ts"
 import { internalErrorDiagnostics } from "../error-diagnostics.ts"
+
+const resolvePackageJson = createRuntimePackageResolver(source => parseRuntimePackageJson(source).name)
 
 const builtinModuleNames = new Set([
   ...builtinModules,
@@ -954,49 +957,6 @@ function supportsConstraint(values: string[] | undefined, target: string): boole
   if (values.includes(`!${target}`)) return false
   const included = values.filter(value => !value.startsWith("!"))
   return included.length === 0 || included.includes(target)
-}
-
-async function resolvePackageJson(name: string, resolver: NodeJS.Require, fromDir: string): Promise<string | undefined> {
-  try {
-    return resolver.resolve(name + "/package.json")
-  } catch (error) {
-    if (!isPackageResolutionMiss(error)) throw error
-  }
-  try {
-    let current = dirname(resolver.resolve(name))
-    while (current !== dirname(current)) {
-      const candidate = join(current, "package.json")
-      try {
-        await access(candidate)
-        const packageJson = parseRuntimePackageJson(await readFile(candidate, "utf8"))
-        if (packageJson.name === name) return candidate
-      } catch (error) {
-        // SAFETY: Node filesystem failures expose their stable code through ErrnoException.
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-      }
-      current = dirname(current)
-    }
-  } catch (error) {
-    if (!isPackageResolutionMiss(error)) throw error
-  }
-  let current = fromDir
-  while (current !== dirname(current)) {
-    const candidate = join(current, "node_modules", ...name.split("/"), "package.json")
-    try {
-      await access(candidate)
-      return candidate
-    } catch (error) {
-      // SAFETY: Node filesystem failures expose their stable code through ErrnoException.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-    }
-    current = dirname(current)
-  }
-}
-
-function isPackageResolutionMiss(error: unknown): boolean {
-  // SAFETY: Node module-resolution failures expose their stable code through ErrnoException.
-  const code = (error as NodeJS.ErrnoException | undefined)?.code
-  return code === "MODULE_NOT_FOUND" || code === "ERR_MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
 }
 
 async function runtimeSourceFiles(serverDir: string): Promise<string[]> {

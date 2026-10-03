@@ -39,6 +39,44 @@ export interface ProvisionStep {
   plan: (context: ProvisionContext) => Promise<ProvisionAction[]>
 }
 
+export interface PlannedProvisionAction {
+  action: ProvisionAction
+  step: string
+}
+
+export interface ProvisionPlan {
+  actions: PlannedProvisionAction[]
+  checked: boolean
+  warnings: string[]
+}
+
+/** Plans one provider in step order and collects warnings and explicit unchecked state. */
+export async function planProvisionSteps(
+  provider: ProvisionProvider,
+  steps: readonly ProvisionStep[],
+  context: Omit<ProvisionContext, "markPlanUnchecked">,
+): Promise<ProvisionPlan> {
+  const warnings: string[] = []
+  let checked = true
+  const planContext: ProvisionContext = {
+    ...context,
+    logger: {
+      log: message => context.logger.log(message),
+      warn(message) {
+        warnings.push(message)
+        context.logger.warn(message)
+      },
+    },
+    markPlanUnchecked: () => { checked = false },
+  }
+  const actions: PlannedProvisionAction[] = []
+  for (const step of steps) {
+    if (step.provider !== provider) continue
+    for (const action of await step.plan(planContext)) actions.push({ action, step: step.id })
+  }
+  return { actions, checked, warnings }
+}
+
 export interface CloudflareProvisionConfig {
   accountId: string
   token: string

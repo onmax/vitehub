@@ -81,6 +81,8 @@ export default defineEventHandler(async () => {
 })
 ```
 
+`workspace.fs.glob("*.md", { cwd: "guides" })` matches Markdown files directly inside `guides`. It returns Workspace-relative paths such as `guides/start.md`. Pattern arrays and recursive patterns use the same directory.
+
 `useWorkspace(name)` returns read access. For read-only inspection of an existing Workspace, use `useWorkspace("docs", { refresh: false })` to reuse current persisted snapshots of Sources with `materialize: "startup"`. Snapshots are reused when they are ready and match the current Source configuration, even if upstream content has changed. Missing snapshots or snapshots that no longer match the configuration still materialize. Omitting `refresh`, or setting it to `true`, keeps normal startup Source refresh behavior. Custom Stores that omit `getMeta` or `setMeta` retain ownership and Source snapshots only for the lifetime of the Store instance.
 
 Workspace shell tools exclude controlled `curl` by default. Set `sourceRequests: true` in `createWorkspaceTools(workspace, { sourceRequests: true })` or `workspace.tools.inspect({ sourceRequests: true })` to permit requests to visible Source targets. This does not grant access to other network targets. The Agent `workspaceShell()` Capability enables these scoped Source requests explicitly.

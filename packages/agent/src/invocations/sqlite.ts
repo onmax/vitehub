@@ -1,3 +1,4 @@
+import { normalizeAgentInvocationListOptions } from "./list-options.ts"
 import { createClient } from "@libsql/client"
 
 import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
@@ -123,22 +124,6 @@ function agentNameRecord(record: Omit<AgentInvocationRecord, "cursor">): string 
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`)
-}
-
-function listLimit(limit: number | undefined): number {
-  if (limit === undefined) return 50
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw agentDiagnostics.AGENT_R0629({ message: "[vitehub] Agent Invocation list limit must be a positive integer." })
-  }
-  return Math.min(limit, 100)
-}
-
-function searchValue(search: string | undefined): string | undefined {
-  if (search === undefined) return
-  if (typeof search !== "string") throw agentDiagnostics.AGENT_R0630({ message: "[vitehub] Agent Invocation search must be a string." })
-  const value = search.trim()
-  if (value.length > 256) throw agentDiagnostics.AGENT_R0631({ message: "[vitehub] Agent Invocation search must be at most 256 characters." })
-  return value || undefined
 }
 
 function retentionValue(value: false | number | undefined, fallback: number, name: string, maximum = Number.MAX_SAFE_INTEGER): false | number {
@@ -649,18 +634,24 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     },
     get: read,
     getSummary: readSummary,
-    async list(listOptions: AgentInvocationListOptions = {}): Promise<AgentInvocationListResult> {
+    async list(input: AgentInvocationListOptions = {}): Promise<AgentInvocationListResult> {
       await initialize()
       startSummaryBackfill()
-      const limit = listLimit(listOptions.limit)
+      const listOptions = normalizeAgentInvocationListOptions(input, {
+        sequenceCursor: true,
+        diagnostics: {
+          limit: agentDiagnostics.AGENT_R0629,
+          searchType: agentDiagnostics.AGENT_R0630,
+          searchLength: agentDiagnostics.AGENT_R0631,
+          cursor: agentDiagnostics.AGENT_R0635,
+        },
+      })
+      const { limit, search } = listOptions
       const statuses = listOptions.status === undefined
         ? []
         : Array.isArray(listOptions.status) ? listOptions.status : [listOptions.status]
       if (Array.isArray(listOptions.status) && listOptions.status.length === 0) return { invocations: [] }
       const before = listOptions.cursor === undefined ? undefined : numberValue(listOptions.cursor)
-      if (before !== undefined && (!Number.isSafeInteger(before) || before < 1 || String(before) !== listOptions.cursor)) {
-        throw agentDiagnostics.AGENT_R0635({ message: "[vitehub] Agent Invocation cursor is invalid." })
-      }
       const filters: string[] = []
       const args: Array<number | string> = []
       if (before !== undefined) {
@@ -691,7 +682,6 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
         filters.push("json_type(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy') = 'text' AND trim(json_extract(CASE WHEN json_valid(summary) THEN summary ELSE record END, '$.annotations.triggeredBy'), ?) = ?")
         args.push(sqlTrimWhitespace, triggeredBy)
       }
-      const search = searchValue(listOptions.search)
       if (search) {
         await ensureSearchBackfill()
         filters.push("search LIKE ? ESCAPE '\\'")

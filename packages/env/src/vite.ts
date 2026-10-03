@@ -22,6 +22,12 @@ import { formatDiagnostics } from "./core/diagnostics.ts"
 import { env, runtimeValueSchema } from "./core/declarations.ts"
 import { createRuntimeRegistry, createSourceContext, resolveBuildConfig, resolveEnvEntries, validateEnvConfigShape } from "./core/resolve.ts"
 import { parseSchema } from "./schema.ts"
+import {
+  isRuntimeEnvEntry as isEnvEntry,
+  isRuntimeLiteralEntry as isLiteralEntry,
+  isRuntimeProviderEntry as isProviderEntry,
+  runtimeRegistryEntries,
+} from "./core/registry.ts"
 import { envValueTypeName, stringValueSchema } from "./core/values.ts"
 
 export { createRuntimeRegistry as createRuntimeEnvRegistry } from "./core/resolve.ts"
@@ -32,7 +38,6 @@ import type {
   EnvRuntimeImportSpecifiers,
   EnvRuntimeRegistry,
   EnvRuntimeRegistryValue,
-  EnvValueSchema,
   EnvViteConfigOptions,
   EnvViteUserConfig,
 } from "./types.ts"
@@ -340,18 +345,11 @@ function resolveProviderModules(providers: Record<string, string> | undefined, r
 }
 
 function assertConfiguredProviders(registry: EnvRuntimeRegistry, providers: Record<string, string>): void {
-  const visit = (value: EnvRuntimeRegistryValue, path: string) => {
-    if (!isRecord(value)) return
-    if (isProviderEntry(value)) {
-      if (!Object.hasOwn(providers, value.source.provider)) {
-        throw envErrorDiagnostics.ENV_B0005({ message: `[vitehub] ${path} references Env provider ${JSON.stringify(value.source.provider)}, but hubEnv({ providers }) does not configure it.` })
-      }
-      return
+  for (const { entry, path } of runtimeRegistryEntries(registry)) {
+    if (isProviderEntry(entry) && !Object.hasOwn(providers, entry.source.provider)) {
+      throw envErrorDiagnostics.ENV_B0005({ message: `[vitehub] ${path} references Env provider ${JSON.stringify(entry.source.provider)}, but hubEnv({ providers }) does not configure it.` })
     }
-    if (isLiteralEntry(value) || isEnvEntry(value)) return
-    for (const [key, child] of Object.entries(value)) visit(child as EnvRuntimeRegistryValue, `${path}.${key}`)
   }
-  for (const [key, value] of Object.entries(registry)) visit(value, `env.server.${key}`)
 }
 
 async function refreshEnvGeneratedFiles(
@@ -512,16 +510,9 @@ function encodeModulePath(path: string): string {
 
 function referencedProviderNames(registry: EnvRuntimeRegistry): Set<string> {
   const names = new Set<string>()
-  const visit = (value: EnvRuntimeRegistryValue) => {
-    if (!isRecord(value)) return
-    if (isProviderEntry(value)) {
-      names.add(value.source.provider)
-      return
-    }
-    if (isLiteralEntry(value) || isEnvEntry(value)) return
-    for (const child of Object.values(value)) visit(child as EnvRuntimeRegistryValue)
+  for (const { entry } of runtimeRegistryEntries(registry)) {
+    if (isProviderEntry(entry)) names.add(entry.source.provider)
   }
-  for (const value of Object.values(registry)) visit(value)
   return names
 }
 
@@ -668,39 +659,6 @@ function literalType(value: unknown): string {
     default:
       return "unknown"
   }
-}
-
-function isLiteralEntry(value: EnvRuntimeRegistryValue): value is Extract<EnvRuntimeRegistryValue, { kind: "literal" }> {
-  if (!isRecord(value)) return false
-  const record = value as Record<string, unknown>
-  return record.kind === "literal"
-}
-
-function isEnvEntry(value: EnvRuntimeRegistryValue): value is Extract<EnvRuntimeRegistryValue, { source: unknown }> {
-  if (!isRecord(value)) return false
-  const record = value as Record<string, unknown>
-  return isRecord(record.source)
-    && record.source.kind === "env"
-    && typeof record.required === "boolean"
-    && typeof record.secret === "boolean"
-}
-
-function isProviderEntry(value: EnvRuntimeRegistryValue): value is EnvRuntimeRegistryValue & {
-  default?: unknown
-  required: boolean
-  schema?: EnvValueSchema
-  secret: boolean
-  source: { kind: "provider", provider: string }
-} {
-  if (!isRecord(value)) return false
-  const record = value as Record<string, unknown>
-  return isRecord(record.source)
-    && record.source.kind === "provider"
-    && typeof record.source.provider === "string"
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 declare module "vite" {
