@@ -334,11 +334,23 @@ function createCheckoutPool(root: string) {
   const evict = async (entry: { directory: string, identity: { dev: number, ino: number } }) => {
     const quarantine = join(root, `.vitehub-evict-${randomUUID()}`)
     try {
-      // Move the pathname atomically before removing it. If a callback replaced
-      // the idle entry, the identity check fails and the replacement is kept.
+      // Check the visible entry before moving it. A callback can replace an
+      // idle checkout after release, and that replacement must stay visible.
+      const visible = await lstat(entry.directory)
+      if (visible.dev !== entry.identity.dev || visible.ino !== entry.identity.ino) return
       await rename(entry.directory, quarantine)
       const current = await lstat(quarantine)
-      if (current.dev !== entry.identity.dev || current.ino !== entry.identity.ino) return
+      if (current.dev !== entry.identity.dev || current.ino !== entry.identity.ino) {
+        // If the replacement was moved by the race, put it back when the
+        // original pathname is still vacant. Never overwrite a new object.
+        try {
+          await lstat(entry.directory)
+        }
+        catch (error: unknown) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") await rename(quarantine, entry.directory)
+        }
+        return
+      }
       await rm(quarantine, { force: true, recursive: true })
     }
     catch {
