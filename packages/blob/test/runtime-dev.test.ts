@@ -51,6 +51,18 @@ async function run(body: unknown): Promise<{ body: Record<string, unknown>, stat
 const binary = Uint8Array.from([0, 255, 1, 128, 10, 13, 0xef, 0xbb, 0xbf, 0xc3, 0x28])
 
 describe("Blob dev runtime handler", () => {
+  it("streams downloads without reading the whole file into memory", async () => {
+    await run({ operation: "put", pathname: "stream.txt", data: Buffer.from("streamed").toString("base64") })
+    const file = (await blob.get("stream.txt"))[1]!
+    const buffered = vi.spyOn(file, "arrayBuffer").mockRejectedValue(new Error("must stream"))
+    const get = vi.spyOn(blob, "get").mockResolvedValue([null, file])
+    try {
+      const response = await handleBlobDevRequest(devRequest({ operation: "get", pathname: "stream.txt" }))
+      expect(await response.text()).toBe("streamed")
+      expect(buffered).not.toHaveBeenCalled()
+    }
+    finally { get.mockRestore(); buffered.mockRestore() }
+  })
   it("reports the pre-write metadata result even when it is stale", async () => {
     await run({ operation: "put", pathname: "recent.txt", data: Buffer.from("original").toString("base64") })
     const missing = await blob.head("absent.txt")

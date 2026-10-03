@@ -31,6 +31,7 @@ import { registerBlobDevEndpoint } from "./vite-dev.ts"
 import type { BlobViteRuntimeConfig } from "./vite-config.ts"
 import type { BlobModuleOptions, BlobServeConfig } from "./types.ts"
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli"
+import type { ViteHubInspectionContributor } from "@vite-hub/internal/inspect"
 import { blobErrorDiagnostics } from "./error-diagnostics.ts"
 import type { ProviderOutputCatalog } from "@vite-hub/internal/build/deployment-output"
 import type { Plugin, ResolvedConfig } from "vite"
@@ -53,7 +54,10 @@ export interface BlobVitePluginAPI {
 }
 
 interface BlobProvisionContributingPlugin {
-  vitehub?: { cli?: () => Promise<ViteHubCliContributor> }
+  vitehub?: {
+    cli?: () => Promise<ViteHubCliContributor>
+    inspect?: () => ViteHubInspectionContributor | undefined
+  }
 }
 
 export type BlobVitePlugin = Plugin & BlobProvisionContributingPlugin & { api: BlobVitePluginAPI }

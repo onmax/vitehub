@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events"
 import { readFile } from "node:fs/promises"
-import { Readable } from "node:stream"
+import { Readable, Writable } from "node:stream"
 import { describe, expect, it, vi } from "vitest"
 
 import {
@@ -49,18 +49,21 @@ async function call(middleware: Middleware, init: { body?: string, headers?: Rec
   const done = new EventEmitter()
   const chunks: Buffer[] = []
   const headers: Record<string, string> = {}
-  const res = {
-    end() {
-      done.emit("end")
+  const res = Object.assign(new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(Buffer.from(chunk))
+      callback()
     },
+    final(callback) {
+      done.emit("end")
+      callback()
+    },
+  }), {
     setHeader(name: string, value: string) {
       headers[name] = value
     },
     statusCode: 200,
-    write(chunk: Buffer) {
-      chunks.push(chunk)
-    },
-  }
+  })
   const ended = new Promise(resolve => done.once("end", resolve))
   middleware(incoming(init), res as unknown as ServerResponse, () => done.emit("end"))
   await ended
@@ -76,6 +79,21 @@ function nitroRequest(init: { headers?: Record<string, string>, method?: string 
 }
 
 describe("Nitro dev forwarding", () => {
+  it("forwards streamed bytes without buffering the response", async () => {
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("first"))
+        controller.enqueue(new TextEncoder().encode("second"))
+        controller.close()
+      },
+    }))
+    const buffered = vi.spyOn(response, "arrayBuffer").mockRejectedValue(new Error("must stream"))
+    const { server, middlewares } = fakeServer({ nitro: { dispatchFetch: async () => response } })
+    registerViteHubNitroDevEndpoint(server, { ...guard, route, runtimeRoute, streamResponse: true })
+    const result = await call(middlewares[0]!, { body: "{}", headers: json, method: "POST" })
+    expect(result).toMatchObject({ body: "firstsecond", status: 200 })
+    expect(buffered).not.toHaveBeenCalled()
+  })
   it("adds trusted runtime headers without forwarding incoming credentials", async () => {
     const dispatchFetch = vi.fn(async (_request: Request) => new Response())
     await forwardViteHubDevRequestToNitro({ environments: { nitro: { dispatchFetch } } }, incoming({ body: "{}", headers: { "x-runtime-token": "forged", authorization: "incoming-secret" }, method: "POST" }), {

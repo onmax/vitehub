@@ -49,6 +49,7 @@ export function registerBlobDevEndpoint(server: BlobDevServer, options: BlobDevE
     nitroBaseURL: options.nitroBaseURL,
     route: blobDevRoute,
     runtimeRoute: blobDevRuntimeRoute,
+    streamResponse: true,
     unavailable: { code: "BLOB_DEV_RUNTIME_UNAVAILABLE", message: blobDevRuntimeUnavailableMessage },
   })
 }

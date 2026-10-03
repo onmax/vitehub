@@ -159,12 +159,20 @@ export function isViteHubDevRoute(req: IncomingMessage, route: string): boolean 
   return new URL(req.url || "/", "http://localhost").pathname === route
 }
 
-async function writeResponse(res: ServerResponse, response: Response): Promise<void> {
+async function writeResponse(res: ServerResponse, response: Response, stream = false): Promise<void> {
   res.statusCode = response.status
   for (const [name, value] of response.headers) res.setHeader(name, value)
-  const body = await response.arrayBuffer()
-  if (body.byteLength) res.write(Buffer.from(body))
-  res.end()
+  if (stream && response.body) {
+    // Only Vite calls this writer. Nitro guards also load this module in Worker runtimes.
+    const { Readable } = await import("node:stream")
+    const { pipeline } = await import("node:stream/promises")
+    await pipeline(Readable.fromWeb(response.body), res)
+  }
+  else {
+    const body = await response.arrayBuffer()
+    if (body.byteLength) res.write(Buffer.from(body))
+    res.end()
+  }
 }
 
 /**
@@ -224,6 +232,8 @@ export interface ViteHubNitroDevForwardOptions extends ViteHubDevEndpointGuard {
 }
 
 export interface ViteHubNitroDevEndpointOptions extends ViteHubNitroDevForwardOptions {
+  /** Stream large runtime responses with backpressure and cancellation on disconnect. */
+  streamResponse?: boolean
   /** Owner authorization before POST bodies are read or forwarded. */
   authorize?: (request: IncomingMessage) => Promise<Response | undefined>
   /** Public discovery metadata. Never include credentials. */
@@ -322,13 +332,13 @@ export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, o
   }
   const write = (res: ServerResponse, response: Response) => {
     res.setHeader("cache-control", "no-store")
-    return writeResponse(res, response)
+    return writeResponse(res, response, options.streamResponse)
   }
   registerViteHubDevEndpoint(server, {
     handle: (req, res) => {
       respond(req)
         .then(response => write(res, response))
-        .catch(error => write(res, Response.json({
+        .catch(error => res.destroyed ? undefined : write(res, Response.json({
           error: { message: redactInspectionText(`${options.label} request failed: ${error instanceof Error ? error.message : String(error)}`) },
         }, { status: 500 })))
     },

@@ -29,6 +29,16 @@ async function runProviderOutputHooks(plugin: ReturnType<typeof hubQueue>) {
 }
 
 describe("hubQueue", () => {
+  it("resets omitted Queue options to the plugin options on each config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-queue-options-"))
+    roots.push(root)
+    const plugin = hubQueue(false)
+    const configResolved = plugin.configResolved as (config: unknown) => Promise<void>
+    await configResolved({ root, command: "build", queue: { provider: "cloudflare" } })
+    expect(await collectViteHubProviderOutputEntries([plugin])).not.toEqual([])
+    await configResolved({ root, command: "build" })
+    expect(await collectViteHubProviderOutputEntries([plugin])).toEqual([])
+  })
   it("resolves Nuxt-owned relative Cloudflare output from the Nuxt project root", async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "vitehub-queue-nuxt-inspection-"))
     roots.push(projectRoot)

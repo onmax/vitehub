@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
-import { Readable } from "node:stream"
+import { Readable, Writable } from "node:stream"
 
 import { describe, expect, it } from "vitest"
 import { createServer } from "vite"
@@ -40,19 +40,21 @@ async function viaMiddlewares(middlewares: Connect.Server, input: string | URL |
   return await new Promise<Response>((resolveResponse, reject) => {
     const chunks: Buffer[] = []
     const headers = new Headers()
-    const res = {
-      end(chunk?: Buffer | string) {
-        if (chunk) chunks.push(Buffer.from(chunk))
-        resolveResponse(new Response(Buffer.concat(chunks), { headers, status: res.statusCode }))
+    const res = Object.assign(new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk))
+        callback()
       },
+      final(callback) {
+        resolveResponse(new Response(Buffer.concat(chunks), { headers, status: res.statusCode }))
+        callback()
+      },
+    }), {
       setHeader(name: string, value: string) {
         headers.set(name, value)
       },
       statusCode: 200,
-      write(chunk: Buffer | string) {
-        chunks.push(Buffer.from(chunk))
-      },
-    }
+    })
     middlewares(req, res as unknown as ServerResponse, (error?: unknown) => {
       if (error) reject(error)
       else resolveResponse(new Response("Not found", { status: 404 }))

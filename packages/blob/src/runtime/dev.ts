@@ -255,15 +255,14 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
       const pathname = requirePathname(body)
       const file = unwrap(await selected.storage.get(pathname))
       if (!file) throw notFound(pathname, selected.name)
-      const bytes = new Uint8Array(await file.arrayBuffer())
       const header: BlobDevFileHeader = {
         pathname,
-        size: bytes.byteLength,
+        size: file.size,
         store: selected.name,
       }
       if (file.type) header.contentType = file.type
       // The body is the raw file. JSON is only used for the metadata header, so binary data stays unchanged.
-      return new Response(bytes, {
+      return new Response(file.stream(), {
         headers: {
           "cache-control": "no-store",
           "content-type": "application/octet-stream",

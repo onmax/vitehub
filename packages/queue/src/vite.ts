@@ -270,7 +270,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
       },
     },
     config(config) {
-      queue = config.queue ?? queue
+      queue = config.queue ?? options
       // SAFETY: Vite preserves this ViteHub server directory field on config, while UserConfig omits framework extensions.
       serverDirs = (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS] ?? serverDirs
       const nitro = (config as { nitro?: unknown }).nitro
@@ -278,7 +278,7 @@ export function hubQueue(options?: QueueModuleOptions): QueueVitePlugin {
     },
     async configResolved(config) {
       resolved = config
-      queue = config.queue ?? queue
+      queue = config.queue ?? options
       const configuredNitro = (config as { nitro?: unknown }).nitro
       const configuredNitroConfig = cloneNitroConfig(configuredNitro)
       nitroOwnsCloudflareWorker = hasNitroConfigContext(config) && resolveNitroHosting(configuredNitroConfig) === "cloudflare" && supportsCloudflareQueues(configuredNitroConfig)
