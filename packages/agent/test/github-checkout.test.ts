@@ -391,7 +391,7 @@ process.exit(result.status ?? 1);
   })).rejects.toThrow()
   const commands: string[][] = (await readFile(commandLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
   expect(commands.some(args => args.includes('init'))).toBe(true)
-  for (const args of commands) expect(args[1]).toMatch(/\.git\.replacement-/)
+  for (const args of commands) expect(args[1]).toMatch(/vitehub-github-reset-.*replacement-/)
   expect(await readdir(outside)).toEqual(['marker'])
   expect(await readFile(join(outside, 'marker'), 'utf8')).toBe('untouched')
   expect(await readdir(pool)).toEqual([])

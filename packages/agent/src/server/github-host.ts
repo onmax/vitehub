@@ -399,10 +399,10 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     }
     await rm(target, { force: true, recursive: true })
   }
-  // Keep the quarantine outside the callback-controlled checkout. A callback can
-  // race with validation by replacing any path beneath the checkout after it is
-  // renamed, but it cannot enumerate or replace this sibling path.
-  const gitQuarantine = `${checkout}.git.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  // Keep all temporary metadata in a private directory that callbacks cannot
+  // discover by enumerating the checkout's parent.
+  const privateRoot = await mkdtemp(join(tmpdir(), "vitehub-github-reset-"))
+  const gitQuarantine = join(privateRoot, "git")
   await rename(gitMetadata, gitQuarantine)
   try {
     // Retained objects and their subdirectories must not redirect later fetches outside the checkout.
@@ -411,7 +411,7 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
     // Build replacement metadata outside every callback-controlled path. Install
     // the completed directory with one rename, which cannot follow a .git symlink.
-    const replacement = await mkdtemp(`${checkout}.git.replacement-`)
+    const replacement = await mkdtemp(join(privateRoot, "replacement-"))
     try {
       await exec("git", ["-C", replacement, "init", "-q", "--template="], commandOptions)
       const replacementGit = join(replacement, ".git")
@@ -426,14 +426,24 @@ async function resetPooledCheckout(checkout: string, repository: string, command
         ["remote.origin.promisor", "true"],
         ["remote.origin.partialclonefilter", "blob:none"],
       ] as const) await exec("git", ["-C", replacement, "config", key, value], commandOptions)
-      await rename(replacementGit, gitMetadata)
+      // Move the checkout itself while installing metadata. This prevents a
+      // callback from swapping its parent between validation and the rename.
+      const parkedCheckout = join(privateRoot, "checkout")
+      await rename(checkout, parkedCheckout)
+      try {
+        await assertCheckoutDirectories(parkedCheckout)
+        await rename(replacementGit, join(parkedCheckout, ".git"))
+      }
+      finally {
+        await rename(parkedCheckout, checkout)
+      }
     }
     finally {
       await rm(replacement, { force: true, recursive: true })
     }
   }
   finally {
-    await rm(gitQuarantine, { force: true, recursive: true })
+    await rm(privateRoot, { force: true, recursive: true })
   }
   await quarantine(join(checkout, ".vitehub"))
   await quarantine(`${checkout}.meta.json`)
