@@ -399,19 +399,26 @@ async function resetPooledCheckout(checkout: string, repository: string, command
     }
     await rm(target, { force: true, recursive: true })
   }
-  const gitQuarantine = `${gitMetadata}.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+  // Keep the quarantine outside the callback-controlled checkout. A callback can
+  // race with validation by replacing any path beneath the checkout after it is
+  // renamed, but it cannot enumerate or replace this sibling path.
+  const gitQuarantine = `${checkout}.git.reset-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`
   await rename(gitMetadata, gitQuarantine)
-  // Retained objects and their subdirectories must not redirect later fetches outside the checkout.
-  await assertGitObjectStore(join(gitQuarantine, "objects"))
-  // Object-store metadata can borrow objects from outside the checkout through alternates.
-  await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
-  await mkdir(gitMetadata)
-  await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
-  // Rebuild the index, including split-index state, from the incoming checkout.
-  await rename(join(gitQuarantine, "HEAD"), join(gitMetadata, "HEAD")).catch((error: unknown) => {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
-  })
-  await rm(gitQuarantine, { force: true, recursive: true })
+  try {
+    // Retained objects and their subdirectories must not redirect later fetches outside the checkout.
+    await assertGitObjectStore(join(gitQuarantine, "objects"))
+    // Object-store metadata can borrow objects from outside the checkout through alternates.
+    await rm(join(gitQuarantine, "objects/info"), { force: true, recursive: true })
+    await mkdir(gitMetadata)
+    await rename(join(gitQuarantine, "objects"), join(gitMetadata, "objects"))
+    // Rebuild the index, including split-index state, from the incoming checkout.
+    await rename(join(gitQuarantine, "HEAD"), join(gitMetadata, "HEAD")).catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    })
+  }
+  finally {
+    await rm(gitQuarantine, { force: true, recursive: true })
+  }
   await quarantine(join(checkout, ".vitehub"))
   await quarantine(`${checkout}.meta.json`)
   await exec("git", ["-C", checkout, "init", "-q", "--template="], commandOptions)
