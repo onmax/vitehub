@@ -410,7 +410,7 @@ describe("ViteHub Nuxt integration", () => {
 
   it("replays Markdown Template resolution during Nitro bundling", async () => {
     const defaultPlugins = mocks.vitehub()
-    const resolveId = vi.fn((id: string, importer?: string) => id.endsWith("reply.template.md") ? `${id}?markdown-template` : undefined)
+    const resolveId = vi.fn((id: string) => id.endsWith("reply.template.md") ? `${id}?markdown-template` : undefined)
     const load = vi.fn((id: string) => id.endsWith("?markdown-template") ? "export default () => 'rendered'" : undefined)
     mocks.vitehub.mockReturnValueOnce([
       defaultPlugins,
@@ -427,8 +427,11 @@ describe("ViteHub Nuxt integration", () => {
     const plugins = (nitroConfig.rollupConfig as { plugins: Plugin[] }).plugins
     const resolver = plugins.find(plugin => plugin.name === "vite-hub/nuxt-runtime-resolver:@vite-hub/markdown-template/vite")
     expect(resolver).toBeDefined()
-    expect(await resolver?.resolveId?.("/tmp/vitehub-nuxt/server/agents/reply.template.md", "/tmp/vitehub-nuxt/server/agents/agent.ts")).toBe("/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template")
-    expect(await resolver?.load?.("/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template")).toBe("export default () => 'rendered'")
+    const resolveHook = resolver?.resolveId
+    const loadHook = resolver?.load
+    if (typeof resolveHook !== "function" || typeof loadHook !== "function") throw new TypeError("Expected Nitro Markdown Template resolver hooks.")
+    expect(await Reflect.apply(resolveHook, {}, ["/tmp/vitehub-nuxt/server/agents/reply.template.md", "/tmp/vitehub-nuxt/server/agents/agent.ts", { ssr: true, isEntry: false }])).toBe("/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template")
+    expect(await Reflect.apply(loadHook, {}, ["/tmp/vitehub-nuxt/server/agents/reply.template.md?markdown-template"])).toBe("export default () => 'rendered'")
     expect(resolveId).toHaveBeenCalled()
     expect(load).toHaveBeenCalled()
   })
