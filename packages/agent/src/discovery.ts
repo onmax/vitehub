@@ -270,7 +270,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     if (!lineBreaks.has(index) || !(isIdentifier(tokens[index]) || /^["'0-9]/.test(tokens[index] ?? ""))) return false
     if (["in", "instanceof", "as", "satisfies"].includes(tokens[index])) return false
     const previous = tokens[index - 1]
-    return [")", "]", "}"].includes(previous) ||
+    return [")", "]", "}"].includes(previous) || /^(?:\d|\.\d|["'`]|\/.)/.test(previous ?? "") ||
       (isIdentifier(previous ?? "") && !["return", "throw", "yield", "await", "new", "typeof", "void", "delete", "in", "instanceof", "as", "satisfies"].includes(previous))
   }
   const declarations = new Map<string, number>()
@@ -844,7 +844,7 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       let nesting = 0
       while (aliasEnd < tokens.length) {
         const token = tokens[aliasEnd]
-        if (nesting === 0 && [";", ","].includes(token!)) break
+        if (nesting === 0 && ([";", ","].includes(token!) || startsStatement(aliasEnd))) break
         if (["(", "[", "{"].includes(token!)) nesting++
         else if ([")", "]", "}"].includes(token!)) {
           if (nesting === 0) break
@@ -1159,9 +1159,16 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
   if (directEvalCalls.size > 0) invalidateCapturedBindings()
   // Template interpolations execute expressions hidden inside a literal token.
   // Their side effects cannot be inspected by this scanner.
-  if (tokens.some(token => token.startsWith("`") && /(?<!\\)(?:\\\\)*\$\{/.test(token))) {
+  const interpolatedTemplates = tokens.filter(token => token.startsWith("`") && /(?<!\\)(?:\\\\)*\$\{/.test(token))
+  if (interpolatedTemplates.length > 0) {
     invalidateCapturedBindings()
-    for (const name of imported) mutatedBindings.add(name)
+    for (const template of interpolatedTemplates) {
+      const references = tokenizeAgentSource(template.slice(1, -1)).tokens
+      // Imports cannot be reassigned. Only an interpolation that can access an
+      // imported value, or evaluate hidden code, can mutate that value.
+      const hiddenCode = references.includes("eval") || references.includes("import")
+      for (const name of imported) if (hiddenCode || references.includes(name)) mutatedBindings.add(name)
+    }
   }
   // Invoking an extracted member of an opaque result may mutate captured
   // options even though the invocation has no receiver or arguments.

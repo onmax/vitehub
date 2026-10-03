@@ -715,6 +715,46 @@ it.each([
 })
 
 it.each([
+  'driver: { instructions: ({ input }) => `Review ${input.id}` }',
+  'box: { env: { THREAD_ID: ({ input }) => `pr-${input.id}` } }',
+])("keeps unrelated callback templates separate from imported Channels: %s", async settings => {
+  const definition = await discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; export default defineAgent({ channels: { github: portal }, ${settings} })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
+  'const ignored = `${portal.capabilities = []}`',
+  'const ignored = `${`${portal.capabilities = []}`}`',
+  'const ignored = tag`${portal.capabilities = []}`',
+  'const ignored = `${eval("portal.capabilities = []")}`',
+])("rejects imported Channel mutations hidden in templates: %s", async expression => {
+  await expect(discover(`import { defineAgent } from "vite-hub/agent"; import portal from "../../portal.ts"; ${expression}; export default defineAgent({ channels: { github: portal } })`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })).rejects.toThrow("opaque Channel")
+})
+
+it("stops conditional aliases at semicolon-free initializer boundaries", async () => {
+  const definition = await discover(`import { defineAgent } from "vite-hub/agent"
+import { join } from "node:path"
+import { readFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import portal from "../../portal.ts"
+const authPath = join(process.env.HOME || "/tmp", "config")
+const setup = String.raw\`prepare\`
+export default defineAgent({
+  box: { home: { files: existsSync(authPath) ? { config: { contents: () => readFile(authPath) } } : {} }, env: { THREAD_ID: ({ input }) => \`pr-\${input.id}\` } },
+  channels: { github: portal },
+})`, {
+    "portal.ts": `${imports} export default github({ pullRequest: false })`,
+  })
+  expect(definition).toBeDefined()
+  expect(definition?.workspace).toBeUndefined()
+})
+
+it.each([
   'const ignored = `${options.pullRequest = true}`',
   'const ignored = tag`${options.pullRequest = true}`',
   'const ignored = `${`${options.pullRequest = true}`}`',
