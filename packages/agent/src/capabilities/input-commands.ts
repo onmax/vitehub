@@ -650,9 +650,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             } else if (!finiteSameCommandGrowth) {
               transitionLineage = []
               blockedTransitions.clear()
-              const previousOwnRuns = previousCounts.byName.get(budgetCommand) || 0
-              const nextOwnRuns = nextCounts.byName.get(budgetCommand) || 0
-              if (!(previousOwnRuns > 1 && nextOwnRuns > 0)) creditedCyclicTransitions.clear()
+              creditedCyclicTransitions.clear()
             }
             if (!graphCreditBlocked && !numericTransitionBlocked && (!nextInvocation || cycleDetected || advancesNumericStage
               || !blockedTransitions.has(`${budgetCommand}->${nextInvocation.name}`))

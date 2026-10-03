@@ -245,6 +245,45 @@ describe("inputCommands", () => {
     expect(bCalls).toBe(2)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("clears cyclic credits after a completed lineage through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let aCalls = 0
+    let bCalls = 0
+    const capability = inputCommands({
+      commands: {
+        a: {
+          call({ context, text }) {
+            aCalls++
+            const replacement = aCalls === 1 ? "/b" : aCalls === 2 ? "" : Array.from({ length: 1_004 }, () => "/b").join(" ")
+            if (mode === "replacement") return replacement
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const rewritten = prompt.replace(text, replacement)
+            if (mode === "mutation") context.input.set({ prompt: rewritten })
+            else return { prompt: rewritten }
+          },
+        },
+        b: {
+          call({ context, text }) {
+            bCalls++
+            const replacement = bCalls === 1 ? "/a" : ""
+            if (mode === "replacement") return replacement
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const rewritten = prompt.replace(text, replacement)
+            if (mode === "mutation") context.input.set({ prompt: rewritten })
+            else return { prompt: rewritten }
+          },
+        },
+      },
+    })
+
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a /a" })
+    expect(aCalls).toBe(3)
+    expect(bCalls).toBe(1_005)
+  })
+
   it("bounds cycles longer than two commands that introduce more commands", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
