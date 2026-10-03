@@ -582,12 +582,13 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
               && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start
             let cycleDetected = false
             let numericTransitionBlocked = false
+            let generatedNumericDecrease = false
             const budgetDepth = inputCommandNumericDepth(budgetArgs)
             const nextDepth = inputCommandNumericDepth(nextInvocation?.args)
-            const advancesNumericStage = Boolean(
+            let advancesNumericStage = Boolean(
               budgetDepth !== undefined && nextDepth !== undefined && nextDepth < budgetDepth
               // Same-command fan-out must decrease every child, including siblings.
-              && (nextInvocation?.name !== budgetCommand || finiteSameCommandGrowth),
+              && (nextInvocation?.name !== budgetCommand || finiteSameCommandGrowth || generatedNumericDecrease),
             )
             // Keep every generated edge after leading commands finish and are removed.
             // A cyclic edge can receive credit once, but cannot renew it indefinitely.
@@ -600,11 +601,15 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             if (changedRange) {
               const generatedNames = new Set<string>()
               const generatedText = text.slice(changedRange.start, changedRange.end)
-              let generatedNumericDecrease = budgetDepth !== undefined
+              generatedNumericDecrease = budgetDepth !== undefined
+              let generatedSameCommand = false
               let generated = findInputCommandInvocation(generatedText, trigger, commands)
               while (generated) {
                 const generatedDepth = inputCommandNumericDepth(generated.args)
-                if (generatedDepth === undefined || budgetDepth === undefined || generatedDepth >= budgetDepth) generatedNumericDecrease = false
+                if (generated.name === budgetCommand) {
+                  generatedSameCommand = true
+                  if (generatedDepth === undefined || budgetDepth === undefined || generatedDepth >= budgetDepth) generatedNumericDecrease = false
+                }
                 // SAFETY: Input command parsing only yields registered command names.
                 if (generated.name !== budgetCommand && commandAllowsCurrentChannel(commands[generated.name]!, context as AgentCapabilityRuntimeContext)) {
                   generatedNames.add(generated.name)
@@ -614,6 +619,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
                 }
                 generated = findInputCommandInvocation(generatedText, trigger, commands, Math.max(generated.end, generated.start + 1))
               }
+              if (!generatedSameCommand) generatedNumericDecrease = false
               const reachesBudget = (name: string, seen: Set<string>): boolean => {
                 if (name === budgetCommand) return true
                 if (seen.has(name)) return false
@@ -627,6 +633,10 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
                 creditedCyclicTransitions.add(transition)
               }
             }
+            advancesNumericStage = Boolean(
+              budgetDepth !== undefined && nextDepth !== undefined && nextDepth < budgetDepth
+              && (nextInvocation?.name !== budgetCommand || finiteSameCommandGrowth || generatedNumericDecrease),
+            )
             if (introducesNextInvocation && nextInvocation) {
               if (!transitionLineage.length) transitionLineage.push(budgetCommand)
               const transition = `${budgetCommand}->${nextInvocation.name}`
@@ -685,7 +695,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         budgetInvocationRange = { start: invocation.start, end: invocation.end }
         if (transitionLineage.length && transitionLineage[transitionLineage.length - 1] !== invocation.name) {
           transitionLineage = []
-          numericTransitionDepths.clear()
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,
@@ -771,6 +780,12 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             budgetText = undefined
             budgetCommand = undefined
           }
+          // A removed command ends its recursive lineage. Do not let credits from
+          // that branch suppress a later independent sibling branch.
+          transitionLineage = []
+          blockedTransitions.clear()
+          creditedCyclicTransitions.clear()
+          numericTransitionDepths.clear()
           input = removeInputCommandText(input, target, invocation)
           context.input.set(input)
           target = getInputCommandTarget(input)
