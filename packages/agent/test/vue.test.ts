@@ -246,7 +246,7 @@ describe("Agent Vue clients", () => {
     }))!
 
     scope.stop()
-    await new Promise(resolve => queueMicrotask(resolve))
+    await new Promise<void>(resolve => queueMicrotask(resolve))
 
     expect(fetch).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ method: "GET" }))
     expect(chat.status.value).toBe("ready")
