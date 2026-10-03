@@ -476,6 +476,15 @@ onBeforeUnmount(() => request?.abort());
               </dl>
             </section>
             <UAlert
+              v-if="selectedRun"
+              :color="selectedRun.status === 'succeeded' ? 'success' : selectedRun.status === 'failed' || selectedRun.status === 'unavailable' ? 'error' : 'neutral'"
+              :icon="selectedRun.status === 'succeeded' ? 'i-ph-check-circle-light' : 'i-ph-warning-circle-light'"
+              :title="selectedRun.status === 'unavailable' ? 'Could not run this Schedule' : `Run ${selectedRun.status}`"
+              :description="consoleScheduleRunDescription(selectedRun)"
+              variant="subtle"
+            />
+            <UAlert
+              v-else
               color="neutral"
               icon="i-ph-info-light"
               title="Read-only records"
