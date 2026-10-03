@@ -25,7 +25,7 @@ import {
 } from "../console-route";
 import { isRetryableConsoleRequestError, requestConsole } from "../client/request";
 import { useConsoleConnectionUnavailable } from "./console-connection";
-import { consoleSectionDetails, rememberConsoleSection } from "../sections";
+import { rememberConsoleSection } from "../sections";
 import ConsoleFrame from "./console-frame.vue";
 import ConsoleConnectionState from "./console-connection-state.vue";
 import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
@@ -1168,23 +1168,10 @@ onBeforeUnmount(() => {
             aria-label="Back to sessions"
             @click="toggleUsage"
           />
-          <div class="flex min-w-0 items-center gap-0.5">
-            <ConsolePrimitiveSwitcher
-              :active="isUsageRoute ? 'usage' : 'agents'"
-              :exclude="['usage']"
-              :sections-base="sectionsBase"
-            />
-            <UTooltip v-if="!isUsageRoute" text="Usage">
-              <UButton
-                :icon="consoleSectionDetails.usage.icon"
-                color="neutral"
-                variant="ghost"
-                size="xs"
-                aria-label="Open Usage"
-                @click="toggleUsage"
-              />
-            </UTooltip>
-          </div>
+          <ConsolePrimitiveSwitcher
+            :active="isUsageRoute ? 'usage' : 'agents'"
+            :sections-base="sectionsBase"
+          />
         </div>
       </template>
     </UDashboardSidebar>
