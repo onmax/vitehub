@@ -52,7 +52,7 @@ export function diffSnapshots(from: WorkspaceSnapshot | undefined, to: Workspace
     const after = to.entries[path]
     if (!before && after) entries.push({ path, type: "added", after })
     else if (before && !after) entries.push({ path, type: "removed", before })
-    else if (before && after && (before.digest !== after.digest || before.type !== after.type || before.size !== after.size || JSON.stringify(before.metadata) !== JSON.stringify(after.metadata))) {
+    else if (before && after && ((before.digest !== undefined && after.digest !== undefined && before.digest !== after.digest) || before.type !== after.type || before.size !== after.size || JSON.stringify(before.metadata) !== JSON.stringify(after.metadata))) {
       entries.push({ path, type: "modified", before, after })
     }
   }
