@@ -57,9 +57,9 @@ function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | und
   return candidates.some(candidate => values.includes(candidate))
 }
 
-function project<T>(item: unknown, select: string[] | undefined): T {
-  if (!select?.length) return item as T
-  return Object.fromEntries(select.map(field => [field, valueAt(item, field)])) as T
+function project(item: unknown, select: string[] | undefined): Record<string, unknown> {
+  if (!select?.length) return item as Record<string, unknown>
+  return Object.fromEntries(select.map(field => [field, valueAt(item, field)]))
 }
 
 async function digest(value: string): Promise<string> {
@@ -166,14 +166,14 @@ export async function createWorkspaceCollectionQuery(raw: string, snapshot: { di
   const contentDigest = snapshot.digest || await digest(raw)
 
   return {
-    async page<T = Record<string, unknown>>(options: CollectionPageLimits = {}): Promise<WorkspaceCollectionPage<T>> {
+    async page(options: CollectionPageLimits = {}): Promise<WorkspaceCollectionPage> {
       const query = options.query || {}
       const filtered = filterItems(items, query)
       const limit = resolveLimit(query, options)
       const signature = await queryDigest(query, limit)
       const offset = decodeCursor(query.cursor, { digest: contentDigest, query: signature })
       if (offset > filtered.length) throw workspaceCollectionCursorError("malformed")
-      const pageItems = filtered.slice(offset, offset + limit).map(item => project<T>(item, query.select))
+      const pageItems = filtered.slice(offset, offset + limit).map(item => project(item, query.select))
       const nextOffset = offset + pageItems.length
       return {
         digest: contentDigest,
@@ -183,12 +183,12 @@ export async function createWorkspaceCollectionQuery(raw: string, snapshot: { di
         total: filtered.length,
       }
     },
-    get<T = Record<string, unknown>>(query: WorkspaceCollectionItemQuery): WorkspaceCollectionItem<T> {
+    get(query: WorkspaceCollectionItemQuery): WorkspaceCollectionItem {
       const expected = String(query.value)
       const item = items.find(item => scalarValues(valueAt(item, query.key)).some(value => value === expected))
       return {
         digest: contentDigest,
-        item: item === undefined ? null : project<T>(item, query.select),
+        item: item === undefined ? null : project(item, query.select),
       }
     },
   }

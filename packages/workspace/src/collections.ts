@@ -80,11 +80,11 @@ async function readCollection<Name extends WorkspaceName>(options: WorkspaceColl
 export async function queryWorkspaceCollection<T = Record<string, unknown>, Name extends WorkspaceName = WorkspaceName>(
   options: WorkspaceCollectionPageOptions<Name>,
 ): Promise<WorkspaceCollectionPage<T>> {
-  return await (await readCollection(options)).page<T>(options)
+  return await (await readCollection(options)).page(options) as WorkspaceCollectionPage<T>
 }
 
 export async function getWorkspaceCollectionItem<T = Record<string, unknown>, Name extends WorkspaceName = WorkspaceName>(
   options: WorkspaceCollectionItemOptions<Name>,
 ): Promise<WorkspaceCollectionItem<T>> {
-  return (await readCollection(options)).get<T>(options.query)
+  return (await readCollection(options)).get(options.query) as WorkspaceCollectionItem<T>
 }
