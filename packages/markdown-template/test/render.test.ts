@@ -398,6 +398,13 @@ Unavailable
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<img src="data:text/html,<script>alert(1)</script>">'))
       .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<object data="data:text/html,<script>alert(1)</script>"></object>'))
+      .rejects.toThrow("must resolve to a safe destination")
+  })
+
+  it("preserves URL-like attributes on custom tags", async () => {
+    await expect(renderMarkdownTemplate('<policy action="review now">Use it.</policy>'))
+      .resolves.toBe('<policy action="review now">Use it.</policy>')
   })
 
   it("renders scalar bindings in quoted XML attributes", async () => {

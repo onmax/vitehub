@@ -14,7 +14,29 @@ import type { RenderMarkdownTemplateInternalOptions, RenderMarkdownTemplateOptio
 
 const parserOptions = { autoClose: false, autoUnwrap: false, linkify: false, plugins: [binding()] }
 const literalHtmlTags = new Set(["code", "pre", "script", "style", "textarea", "kbd", "samp", "var"])
-const urlAttributes = new Set(["action", "cite", "formaction", "href", "poster", "src", "xlink:href"])
+const urlAttributesByTag = new Map([
+  ["a", new Set(["href"])],
+  ["area", new Set(["href"])],
+  ["audio", new Set(["src"])],
+  ["base", new Set(["href"])],
+  ["blockquote", new Set(["cite"])],
+  ["button", new Set(["formaction"])],
+  ["del", new Set(["cite"])],
+  ["embed", new Set(["src"])],
+  ["form", new Set(["action"])],
+  ["iframe", new Set(["src"])],
+  ["img", new Set(["src"])],
+  ["input", new Set(["formaction", "src"])],
+  ["ins", new Set(["cite"])],
+  ["link", new Set(["href"])],
+  ["object", new Set(["data"])],
+  ["q", new Set(["cite"])],
+  ["script", new Set(["src"])],
+  ["source", new Set(["src"])],
+  ["track", new Set(["src"])],
+  ["video", new Set(["poster", "src"])],
+])
+const svgUrlAttributes = new Set(["a", "animate", "feimage", "image", "use"])
 
 export async function renderMarkdownTemplate(template: string, options: RenderMarkdownTemplateOptions = {}): Promise<string> {
   return await renderMarkdownTemplateInternal(template, options)
@@ -82,7 +104,7 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         handler: async (node, state, parent) => {
           const [tag, attrs, ...children] = node
           const props = resolveScalarTemplateAttributes(attrs, renderData(state))
-          const sanitized = await sanitizeUrlAttributes(props, attrs)
+          const sanitized = await sanitizeUrlAttributes(tag, props, attrs)
           const escaped = Object.fromEntries(Object.entries(sanitized).map(([key, value]) =>
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- String XML attributes need escaping; Comark serializes boolean and numeric attributes.
             [key, typeof value === "string" ? escapeHtml(value) : value]))
@@ -97,10 +119,13 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
   })).trim())
 }
 
-async function sanitizeUrlAttributes(props: Record<string, unknown>, source: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>, source: Record<string, unknown>): Promise<Record<string, unknown>> {
   const sanitized = { ...props }
   for (const [key, value] of Object.entries(props)) {
-    if (typeof value !== "string" || !urlAttributes.has(key.toLowerCase())) continue
+    const attribute = key.toLowerCase()
+    const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
+      || attribute === "xlink:href" && svgUrlAttributes.has(tag.toLowerCase())
+    if (typeof value !== "string" || !isUrl) continue
     sanitized[key] = await safeLinkDestination(value, String(source[`:${key}`] ?? key))
   }
   return sanitized
