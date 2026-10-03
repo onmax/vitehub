@@ -509,7 +509,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let budgetText: string | undefined
       let budgetCommand: string | undefined
       let budgetArgs: string | undefined
-      let budgetStart: number | undefined
+      let budgetReplacementRange: { start: number, end: number } | undefined
       const invocationCounts = new Map<string, InputCommandInvocationCounts>()
       const cacheInvocationCounts = (value: string, counts: InputCommandInvocationCounts): void => {
         invocationCounts.set(value, counts)
@@ -538,11 +538,24 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             const finiteStage = nextOwnRuns === 0 && addedRuns > 0
             const ownGrowth = nextOwnRuns > previousOwnRuns && !creditedGrowth.has(budgetCommand)
             const wasBlocked = blockedCommands.has(budgetCommand)
-            // Only inspect the invocation produced at the current cursor. Other
-            // invocations in the prompt are independent siblings and must not
-            // create a false recursive cycle.
+            // Only record transitions into rewritten command tokens. Unchanged
+            // siblings can move when a replacement changes the prompt length.
             const nextInvocation = findInputCommandInvocation(text, trigger, commands, cursor)
-            if (nextInvocation && nextInvocation.start === budgetStart && nextInvocation.name !== budgetCommand) {
+            let changedRange = budgetReplacementRange
+            if (nextInvocation && nextInvocation.name !== budgetCommand && !changedRange) {
+              let start = 0
+              while (start < budgetText.length && start < text.length && budgetText[start] === text[start]) start++
+              let previousEnd = budgetText.length
+              let end = text.length
+              while (previousEnd > start && end > start && budgetText[previousEnd - 1] === text[end - 1]) {
+                previousEnd--
+                end--
+              }
+              changedRange = { start, end }
+            }
+            if (nextInvocation && nextInvocation.name !== budgetCommand && changedRange
+              && nextInvocation.start < changedRange.end
+              && nextInvocation.start + trigger.length + nextInvocation.name.length > changedRange.start) {
               const transition = `${budgetCommand}->${nextInvocation.name}`
               transitions.add(transition)
               let nextCommands = transitionGraph.get(budgetCommand)
@@ -574,7 +587,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         budgetText = undefined
         budgetCommand = undefined
         budgetArgs = undefined
-        budgetStart = undefined
+        budgetReplacementRange = undefined
         const invocation = findInputCommandInvocation(text, trigger, commands, cursor)
         if (!invocation) break
         if (++runs > maxRuns) throw agentDiagnostics.AGENT_R0103({ message: "[vitehub] inputCommands exceeded the maximum command expansion depth." })
@@ -589,7 +602,6 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           budgetText = text
           budgetCommand = invocation.name
           budgetArgs = invocation.args
-          budgetStart = invocation.start
         }
         const result = await inputCommandCall(command)({
           args: invocation.args,
@@ -619,6 +631,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           const replacement = commandReplacementText(text, invocation, result)
           const nextText = `${text.slice(0, invocation.start)}${replacement}${text.slice(invocation.end)}`
           if (budgetText === text && nextText !== text) {
+            budgetReplacementRange = { start: invocation.start, end: invocation.start + replacement.length }
             // The invocation has whitespace boundaries, so only its replacement
             // can add or remove commands. Preserve counts for unchanged siblings.
             const previousCounts = getInvocationCounts(text)

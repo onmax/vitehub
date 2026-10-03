@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
+import type { InputCommand } from "../src/capabilities/input-commands.ts"
 import { createMessage, getMessageText } from "../src/messages.ts"
 
 const runtime = () => ({
@@ -196,6 +197,31 @@ describe("inputCommands", () => {
     expect(calls).toBeLessThan(1_500)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("bounds recursive stages after leading text through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let calls = 0
+    const rewrite = (next: string): InputCommand["call"] => ({ context }) => {
+      if (++calls > 1_500) throw new Error("Expansion did not stop")
+      if (mode === "replacement") return `x ${next}`
+      const prompt = context.input.get().prompt
+      if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+      const rewritten = prompt.replace(/\/(first|second)/, `x ${next}`)
+      if (mode === "mutation") context.input.set({ prompt: rewritten })
+      else return { prompt: rewritten }
+    }
+    const capability = inputCommands({
+      commands: {
+        first: { call: rewrite("/second") },
+        second: { call: rewrite("/first") },
+      },
+    })
+
+    await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/first" }))
+      .rejects.toThrow("maximum command expansion depth")
+    expect(calls).toBeLessThan(1_500)
+  })
+
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
@@ -216,15 +242,24 @@ describe("inputCommands", () => {
     expect(calls).toBe(1_023)
   })
 
-  it("does not treat untouched sibling commands as a recursive cycle", async () => {
+  it.each(["replacement", "result", "mutation"] as const)("does not treat untouched sibling commands as a recursive cycle through %s", async (mode) => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     let marks = 0
     let aCalls = 0
+    const rewrite = (replacement: () => string): InputCommand["call"] => ({ context, text }) => {
+      const value = replacement()
+      if (mode === "replacement") return value
+      const prompt = context.input.get().prompt
+      if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+      const rewritten = prompt.replace(text, value)
+      if (mode === "mutation") context.input.set({ prompt: rewritten })
+      else return { prompt: rewritten }
+    }
     const capability = inputCommands({
       commands: {
-        a: { call: () => ++aCalls === 1 ? "text" : Array.from({ length: 1_001 }, () => "/mark").join(" ") },
-        b: { call: () => "text" },
+        a: { call: rewrite(() => ++aCalls === 1 ? "text" : Array.from({ length: 1_001 }, () => "/mark").join(" ")) },
+        b: { call: rewrite(() => "text") },
         mark: { call: () => { marks++ } },
       },
     })
