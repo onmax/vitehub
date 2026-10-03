@@ -107,6 +107,18 @@ const global = {
 };
 
 describe("AgentChatPrompt", () => {
+  it("renders the leading footer slot before the prompt actions", () => {
+    const wrapper = mount(AgentChatPrompt, {
+      global,
+      slots: {
+        "footer-leading": () => h("span", { class: "footer-leading" }, "Profile"),
+      },
+    });
+
+    expect(wrapper.get(".footer-leading").text()).toBe("Profile");
+    expect(wrapper.html()).toContain('<span class="footer-leading">Profile</span>');
+  });
+
   it("names the composer and keeps the programmatic picker out of the tab order", () => {
     const wrapper = mount(AgentChatPrompt, { global });
 

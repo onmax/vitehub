@@ -156,6 +156,7 @@ export const AgentChatPrompt = defineComponent({
                 tabindex: -1,
                 type: "file",
               }),
+              slots["footer-leading"]?.(),
               h("span", { class: "vh-prompt__spacer" }),
               slots.actions?.() ??
                 h(UButton, {
