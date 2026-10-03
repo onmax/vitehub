@@ -30,16 +30,16 @@ function offset(index: number) {
         <h2
           class="max-w-[16ch] text-3xl/9 font-semibold tracking-[-0.03em] text-highlighted text-balance sm:text-4xl/10"
         >
-          Built on Server Primitives.
+          One server API, Agents included.
         </h2>
         <div class="max-w-[40ch] lg:justify-self-end">
           <p class="text-base/7 text-muted">
-            Capabilities use the same storage, queue, and sandbox APIs that your routes can call
-            without an Agent.
+            The Agent is one primitive among the others. Call any primitive from a route, a job, or
+            an Agent. Each one works without the others.
           </p>
           <NuxtLink
             to="/docs/server-primitives"
-            class="group mt-3 inline-flex min-h-10 items-center gap-2 text-sm font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+            class="group mt-3 mr-5 inline-flex min-h-10 items-center gap-2 text-sm font-medium text-highlighted focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
           >
             Explore Server Primitives
             <UIcon
@@ -60,10 +60,16 @@ function offset(index: number) {
 
       <ul
         ref="grid"
-        class="mt-10 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-3 lg:mt-12 lg:grid-cols-6"
+        class="mt-10 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-4 lg:mt-12 lg:grid-cols-5"
         role="list"
       >
-        <li v-for="(primitive, index) in landingPrimitives" :key="`${primitive.id}-${replay}`" class="min-w-0 bg-default">
+        <!-- The Agent tile spans two cells, so 20 cells fill every row at 2, 4, and 5 columns. -->
+        <li
+          v-for="(primitive, index) in landingPrimitives"
+          :key="`${primitive.id}-${replay}`"
+          class="min-w-0 bg-default"
+          :class="{ 'col-span-2': primitive.id === 'agent' }"
+        >
           <NuxtLink
             :to="primitive.to"
             class="primitive-tile group flex h-full flex-col gap-3 p-4 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary"

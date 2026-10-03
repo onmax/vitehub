@@ -1867,6 +1867,34 @@ describe("ViteHub Nuxt integration", () => {
     expect(generated).toContain(`observations: ${JSON.stringify(observations)}`)
   })
 
+  it.each([true, false])("preserves Console retention through Nuxt plugin refreshes with dev %s", async (dev) => {
+    const application = createNuxt(dev)
+    await viteHubNuxtModule({
+      agent: true,
+      console: { exposure: "host-managed", retention: { maxAgeMs: false, maxRecords: 10 } },
+      preset: "node",
+    }, application.nuxt)
+    const plugin = "/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs"
+    const retention = "retention: { maxAgeMs: false, maxRecords: 10 }"
+    expect(await readFile(plugin, "utf8")).toContain(retention)
+
+    await application.runNitroConfigHook(nitroOptions(application.nuxt))
+    expect(await readFile(plugin, "utf8")).toContain(retention)
+    if (dev) {
+      await application.runBuilderWatchHook("/tmp/vitehub-nuxt/custom-server/agents/support.ts")
+      expect(await readFile(plugin, "utf8")).toContain(retention)
+    }
+  })
+
+  it("validates retention when installing the Nuxt development Console journal", async () => {
+    const development = createNuxt(true)
+    await expect(viteHubNuxtModule({
+      agent: true,
+      console: { exposure: "host-managed", retention: { maxRecords: 0 } },
+      preset: "node",
+    }, development.nuxt)).rejects.toThrow("must be a positive safe integer or false")
+  })
+
   it.each([undefined, "/tmp/vitehub-nuxt/persistent data"])("rejects bare production Console enablement with dataDir %s", async (dataDir) => {
     const production = createNuxt(false)
 
@@ -1898,6 +1926,58 @@ describe("ViteHub Nuxt integration", () => {
     } finally {
       await rm(authDefinition, { force: true })
     }
+  })
+
+  it("rejects Connections in production Nuxt applications", async () => {
+    const production = createNuxt(false)
+
+    await expect(viteHubNuxtModule({
+      connections: { management: true },
+      database: true,
+      console: { exposure: "host-managed" },
+      preset: "node",
+    }, production.nuxt)).rejects.toThrow("connections is not supported by the Nuxt module yet")
+  })
+
+  it.each(["none", "app-auth", "console-auth"] as const)("resolves the Nuxt Connections management actor with %s", async (source) => {
+    const development = createNuxt(true)
+    development.nuxt.options.vite.root = "/tmp/vitehub-nuxt/app"
+    await viteHubNuxtModule({
+      auth: source === "app-auth",
+      connections: { management: true },
+      database: true,
+      console: source === "console-auth"
+        ? { access: "auth", auth: { provider: "github", allowedEmails: ["maintainer@example.com"], databasePath: "/data/console-auth.sqlite" } }
+        : { exposure: "host-managed" },
+      preset: "node",
+    }, development.nuxt)
+    const config = nitroOptions(development.nuxt)
+    await development.runNitroConfigHook(config)
+
+    const pages: Array<{ file: string; name: string; path: string }> = []
+    development.runPagesHook(pages)
+    expect(pages).toContainEqual(expect.objectContaining({
+      file: expect.stringContaining("pages/connections.vue"),
+      name: "vitehub-console-connections",
+      path: "/_vitehub/connections",
+    }))
+
+    const actor = "/tmp/vitehub-nuxt/app/.vitehub/nitro/console/connections-actor.mjs"
+    expect(config.alias).toMatchObject({ "#vitehub/console/connections-actor": actor })
+    const generated = await readFile(actor, "utf8")
+    if (source === "console-auth") {
+      expect(generated).toContain('import { definition } from "./auth-definition.mjs"')
+      expect(generated).toContain("createAuthForRequest(definition, event.req")
+    }
+    else if (source === "app-auth") {
+      expect(generated).toContain("getAuthForRequest(event.req")
+    }
+    else {
+      expect(generated).toContain("return undefined")
+    }
+    await development.runNitroConfigHook(config)
+    expect(await readFile(actor, "utf8")).toBe(generated)
+    expect(config.alias).toMatchObject({ "#vitehub/console/connections-actor": actor })
   })
 
   it("mounts independent Console Auth below the Nuxt app base URL", async () => {

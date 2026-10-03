@@ -450,6 +450,20 @@ The Blob package selects the default or named store and loads its driver. Put pr
 
 Application code keeps importing `blob` from `@vite-hub/blob` when you switch providers.
 
+## Read and write blobs during development
+
+`hubBlob()` contributes the `vitehub blob` CLI namespace. Start the Vite Development Server, then read and write blobs from another terminal.
+
+```bash [Terminal]
+pnpm vitehub blob list --prefix avatars/
+pnpm vitehub blob head avatars/ada.png --json
+pnpm vitehub blob put avatars/ada.png ./ada.png
+pnpm vitehub blob get avatars/ada.png --output ./copy.png
+pnpm vitehub blob del avatars/ada.png
+```
+
+The commands call the same Blob storage as the running app. Pass `--store <name>` for a named store. Each write command prints what it changed. `get` writes the bytes unchanged to a file or to stdout. `put` sends the file as base64 JSON through the dev endpoint, so it accepts files up to 8 MiB. The commands do not print blob URLs. The commands call a guarded endpoint that exists only on the Vite Development Server. Nuxt and plain Vite do not run Nitro in the Vite process, so the endpoint returns status 501 there. Read [CLI](/docs/development/cli#read-and-write-blobs) for every command and option.
+
 ## Connect Blob to Agents
 
 Direct Blob access is for server code. To let a model inspect or edit scoped object storage, attach the Blob Capability.
