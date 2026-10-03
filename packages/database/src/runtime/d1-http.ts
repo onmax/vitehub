@@ -13,7 +13,7 @@ interface D1HttpQuery {
 interface D1HttpPayload {
   errors?: D1HttpErrorInfo[]
   result?: Array<{
-    error?: unknown
+    error?: string
     errors?: D1HttpErrorInfo[]
     results?: { rows?: unknown[][] }
     success?: boolean
@@ -22,19 +22,19 @@ interface D1HttpPayload {
 }
 
 interface D1HttpErrorInfo {
-  message?: unknown
+  message?: string
 }
 
 interface D1HttpErrorSource {
-  error?: unknown
+  error?: string
   errors?: D1HttpErrorInfo[]
 }
 
 function getD1HttpErrorDetail(...sources: Array<D1HttpErrorSource | undefined>) {
   const messages = sources.flatMap(source => [
-    ...(typeof source?.error === "string" ? [source.error] : []),
+    ...(source?.error ? [source.error] : []),
     ...(Array.isArray(source?.errors) ? source.errors : []).map(error => error.message),
-  ]).filter((message): message is string => typeof message === "string" && Boolean(message.trim()))
+  ]).filter((message): message is string => Boolean(message?.trim()))
   return messages.join("; ")
 }
 
@@ -53,10 +53,14 @@ function validateD1HttpUrl(value: string, name: string) {
 }
 
 function isD1HttpPayload(value: unknown): value is D1HttpPayload {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  if (!isRecord(value)) return false
   const result = "result" in value ? value.result : undefined
-  return typeof result === "undefined"
-    || (Array.isArray(result) && result.every(item => Boolean(item) && typeof item === "object" && !Array.isArray(item)))
+  return result === undefined
+    || (Array.isArray(result) && result.every(item => isRecord(item)))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Object.prototype.toString.call(value) === "[object Object]"
 }
 
 function resolveCloudflareD1HttpConnection(config: RuntimeDrizzleDatabaseConfig, databaseId: string) {
@@ -124,9 +128,11 @@ function createCloudflareD1HttpDb<TSchema extends Record<string, unknown>>(
   }
 
   function formatResult(rows: unknown[][], method: "run" | "all" | "values" | "get") {
+    // SAFETY: sqlite-proxy returns one row with the get method, and its row type is unknown[].
     return { rows: method === "get" ? rows[0] as unknown[] : rows }
   }
 
+  // SAFETY: drizzleProxy returns the runtime database interface for the supplied schema.
   return drizzleProxy(
     async (sql, params, method) => formatResult((await execute([{ params, sql }]))[0]!, method),
     async queries => (await execute(queries.map(({ params, sql }) => ({ params, sql }))))
