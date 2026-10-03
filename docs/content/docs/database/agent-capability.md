@@ -2,13 +2,13 @@
 title: Database capability
 description: Give an Agent guarded SQL query and schema tools and, in write modes, one mutation tool.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-database
 ---
 
 `db()` gives an Agent the `db_query` tool for one read-only SQL statement and the `db_schema` tool for schema inspection. When `mode` or `schemaMode` is `"write"`, it also gives the `db_exec` tool for one mutation statement with a rationale.
 All tools call the configured [Database primitive](/docs/database).
-The Database primitive page covers application code. This page covers the Agent tools.
+The [Database server API](/docs/database/server-api) covers application code. This page covers the Agent tools.
 
 ## Configure database access
 
@@ -71,7 +71,7 @@ The guard rejects multi-statement input before the statement reaches the databas
 - `policy` applies only to `db_exec`. The single-statement, rationale, and SQL-kind checks run also when `policy` allows the call.
 - `policy` accepts `'allow'`, `'require-approval'`, `'deny'`, `'retryable-failure'`, or a function that receives `{ name, input }` and returns one of these values.
 - Without `policy`, an enabled `db_exec` call runs when the Agent calls it.
-- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The request input contains the statement and the rationale. See [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces).
+- `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The request input contains the statement and the rationale. See [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces).
 
 ## Driver support
 
@@ -101,4 +101,4 @@ The guard rejects multi-statement input before the statement reaches the databas
 
 - [Database primitive](/docs/database)
 - [Official capabilities](/docs/agents/capabilities/official)
-- [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces)
+- [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces)

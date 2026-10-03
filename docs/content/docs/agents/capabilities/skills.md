@@ -9,7 +9,7 @@ icon: i-lucide-scroll-text
 
 `skills()` makes a Skill file in the [Workspace](/docs/workspace), or from an external [Source](/docs/source), available to an Agent Invocation. It adds no model-facing tools unless `shellExecution` is set. Then model-backed Agents receive the Workspace Shell tools in that mode.
 
-The Workspace and Source primitive pages cover application code. This page covers how an Agent receives a Skill.
+The [Workspace server API](/docs/workspace/server-api) and [Source server API](/docs/source/server-api) cover application code. This page covers how an Agent receives a Skill.
 
 Agent-owned Skills do not need this Capability. Use a folder Agent Definition whose entry file is `agent.ts`, `agent.js`, `index.ts`, or `index.js` (including the `c` and `m` variants), and place `skills/` beside that entry file. ViteHub discovers and materializes those files. Flat files such as `server/agents/support.ts` do not discover sibling Skills.
 

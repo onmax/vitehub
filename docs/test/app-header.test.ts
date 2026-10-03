@@ -13,6 +13,8 @@ describe("docs header", () => {
       'text="Just a library where I test different solutions and agents. APIs break all the time."',
     );
     expect(header).toContain('aria-label="ViteHub alpha"');
+    // The brand opens the product catalog on docs routes and the home page elsewhere.
+    expect(header).toContain(":to=\"isDocsRoute ? '/docs' : '/'\"");
     expect(header).toContain('<span class="vh-brand-alpha">alpha</span>');
     // The mobile menu focuses the brand link on open; the tooltip must not cover the menu.
     expect(header).toContain("ignore-non-keyboard-focus");

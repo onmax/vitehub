@@ -2,13 +2,13 @@
 title: Email capability
 description: Let an Agent send plain-text email from an application-owned sender to allowed recipients.
 navigation.title: Agent capability
-navigation.order: 2
+navigation.order: 5
 icon: i-lucide-mail
 ---
 
 `email()` gives an Agent one external side effect: the `email_send` tool sends a plain-text message from an application-owned sender.
 The tool calls the configured [Email primitive](/docs/email). Restrict exact addresses with `recipients`, then add `policy` when delivery requires approval or contextual authorization.
-The Email primitive page covers application code and provider setup. This page covers the Agent tool.
+The [Email server API](/docs/email/server-api) covers application code, and [Email configuration](/docs/email/configure) covers provider setup. This page covers the Agent tool.
 
 ::warning
 An approved call can contact real people and incur provider charges.
@@ -97,7 +97,7 @@ ViteHub-wrapped provider failures remain in `cause` for protected server-side di
 ## Keep Dynamic Markdown application-owned
 
 `email_send` is plain-text-only by design.
-It does not render model-authored Markdown into HTML because [`renderEmailMarkdown()`](/docs/email#compose-dynamic-markdown) accepts trusted templates and does not sanitize authored HTML or trusted fragments.
+It does not render model-authored Markdown into HTML because [`renderEmailMarkdown()`](/docs/email/server-api#compose-dynamic-markdown) accepts trusted templates and does not sanitize authored HTML or trusted fragments.
 
 When a product needs branded HTML, compose a trusted template in application code and call the Email primitive directly, or expose a [Custom Capability](/docs/agents/capabilities/custom) with a narrow set of escaped template values.
 Do not pass unrestricted model output into a trusted HTML fragment.
@@ -131,7 +131,7 @@ export default defineConfig({
 })
 ```
 
-Follow [Configure Resend](/docs/email#configure-resend), or select the `cloudflare-email` provider through the same `driver` option.
+Follow [Configure Resend](/docs/email/get-started#configure-resend), or select the `cloudflare-email` provider through the same `driver` option.
 Keep credentials in Server Env or the deployment platform's secret store and reference them with an Env declaration without a default. Literal options and non-secret Env defaults are included in build output. ViteHub rejects defaults on declarations marked secret. The Capability never exposes runtime credentials to the model.
 
 ## Security and approval
@@ -163,7 +163,7 @@ It cannot widen `recipients`: a configured `policy: 'allow'` still denies an add
 Without `policy`, allowed recipients send immediately. A policy function receives `{ name, input }` and can apply contextual authorization by returning `'allow'`, `'deny'`, `'require-approval'`, or `'retryable-failure'`.
 
 `'require-approval'` stops the call with `APPROVAL_REQUIRED` and an Approval Request. The message is sent only after approval.
-Read [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces) before enabling unattended delivery.
+Read [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces) before enabling unattended delivery.
 
 ## Driver support
 
@@ -192,4 +192,4 @@ Read [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-appro
 
 - [Email primitive](/docs/email)
 - [Official capabilities](/docs/agents/capabilities/official)
-- [Runtime policy, approvals, and traces](/docs/concepts/runtime-policy-approvals-and-traces)
+- [Runtime policy, approvals, and traces](/docs/getting-started/concepts/runtime-policy-approvals-and-traces)

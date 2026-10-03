@@ -16,6 +16,7 @@ import {
   blob,
   browser,
   chat,
+  channelDelivery,
   chatSummary,
   title,
   db,
@@ -73,6 +74,7 @@ import {
 | Blob storage | [`blob()`](/docs/blob/agent-capability) | The Agent needs scoped object read or edit tools. |
 | Database | [`db()`](/docs/database/agent-capability) | The Agent needs guarded SQL query, schema, or mutation tools. |
 | Email | [`email()`](/docs/email/agent-capability) | Send authorized plain-text messages through the configured Email primitive. |
+| Channel delivery | [`channelDelivery()`](/docs/channels/agent-capability) | Send the Agent result through a Channel to a recipient that the application selects. |
 | Sandbox execution | [`sandbox()`](/docs/sandbox/agent-capability) | The Agent may run an allowlisted executable in an isolated runtime. |
 | Schedules | [`schedule()`](/docs/schedule/agent-capability) | The Agent declares scheduled invocations or manages Runtime Schedules through tools. |
 | OTLP telemetry | [`otlp()`](/docs/agents/capabilities/otlp) | Live Agent Invocation events and completed traces should be exported to an OpenTelemetry receiver. |

@@ -2,36 +2,55 @@
 import { normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
 
 const route = useRoute();
-const currentPath = computed(() => normalizeDocsPath(route.path));
-const isSupportMatrix = computed(() => currentPath.value === "/docs/frameworks-hosts/support-matrix");
-// The product catalog on `/docs` is the navigation. It has no sidebar.
-const isCatalog = computed(() => currentPath.value === "/docs");
+const isSupportMatrix = computed(() => normalizeDocsPath(route.path) === "/docs/frameworks-hosts/support-matrix");
+
+// The sidebar sits on the left edge of the viewport. The page content centers in the remaining space.
+const docsShellUi = {
+  root: "lg:!flex lg:!flex-row lg:!items-start lg:!gap-0",
+  left: "lg:!w-(--vh-sidebar-width) lg:shrink-0",
+  center: "lg:!flex-1 lg:!min-w-0",
+};
 </script>
 
 <template>
   <UMain>
-    <UContainer :class="{ 'max-w-(--vh-docs-width) mx-auto': !isSupportMatrix }">
-      <template v-if="isSupportMatrix">
-        <AnnouncementBanner />
-        <slot />
+    <UContainer v-if="isSupportMatrix">
+      <AnnouncementBanner />
+      <slot />
+    </UContainer>
+
+    <UPage v-else :ui="docsShellUi">
+      <template #left>
+        <UPageAside class="vh-docs-aside">
+          <DocsAsideLeftTop />
+          <DocsAsideLeftBody />
+        </UPageAside>
       </template>
 
-      <UPage v-else-if="isCatalog" :ui="{ root: 'lg:!grid-cols-1 lg:!gap-0', center: 'lg:!col-span-1' }">
+      <div class="vh-docs-main">
         <AnnouncementBanner />
         <slot />
-      </UPage>
-
-      <UPage v-else>
-        <template #left>
-          <UPageAside>
-            <DocsAsideLeftTop />
-            <DocsAsideLeftBody />
-          </UPageAside>
-        </template>
-
-        <AnnouncementBanner />
-        <slot />
-      </UPage>
-    </UContainer>
+      </div>
+    </UPage>
   </UMain>
 </template>
+
+<style scoped>
+.vh-docs-main {
+  max-width: calc(var(--vh-content-width) + var(--vh-toc-width) + 4rem);
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+@media (min-width: 40rem) {
+  .vh-docs-main {
+    padding: 0 2rem;
+  }
+}
+
+@media (min-width: 64rem) {
+  .vh-docs-aside {
+    border-right: 1px solid var(--ui-border);
+  }
+}
+</style>

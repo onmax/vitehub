@@ -36,13 +36,13 @@ Memory stores lose their contents when the process exits. Filesystem and file-ba
 
 For Agents, [Chat History and sessions](/docs/agents/chat-history-sessions#partition-transcripts) explains Agent State selection, and [Invocations](/docs/agents/invocations#observe-the-outcome) explains journals. Configuring one does not replace the other. Retaining a transcript also does not make a running model call resumable after a crash.
 
-[Schedule stores](/docs/schedule#storage) persist records and run history. A KV store does not elect one Process Runtime or make its deduplication work across replicas. Run one scheduler for that store, or supply coordination in the host and make target side effects safe to repeat.
+[Schedule stores](/docs/schedule/configure#storage) persist records and run history. A KV store does not elect one Process Runtime or make its deduplication work across replicas. Run one scheduler for that store, or supply coordination in the host and make target side effects safe to repeat.
 
 Before rollout, write representative data, replace the process or container, and read the data again. Test backup restoration separately. Set retention and deletion rules for customer data, traces, uploaded attachments, and provider session files.
 
 ## Protect every entry point
 
-Authenticate requests at their trusted entry point, then authorize the specific operation and resource. Configuring [Auth](/docs/auth) does not require authentication on every Agent. Use an [authenticated invoker](/docs/concepts/auth-users-and-agent-invokers) and [Access policy](/docs/agents/capabilities/access) where needed.
+Authenticate requests at their trusted entry point, then authorize the specific operation and resource. Configuring [Auth](/docs/auth) does not require authentication on every Agent. Use an [authenticated invoker](/docs/getting-started/concepts/auth-users-and-agent-invokers) and [Access policy](/docs/agents/capabilities/access) where needed.
 
 Validate HTTP bodies, webhook payloads, and stored job inputs at runtime. TypeScript types and generated Definition registries check callers during development; they cannot validate JSON received over the network or records written by an earlier release. Verify webhook signatures before supplying trusted caller metadata. Derive tenant, user, and session identity from the authenticated request rather than accepting an unrestricted client value.
 
@@ -56,7 +56,7 @@ A Queue enqueue result confirms acceptance, not completion. A retry can repeat a
 
 For external effects, use the service's idempotency support. A welcome-email job can complete the send and then fail before acknowledgement; retrying it must reuse the same email-service idempotency key. If the service cannot deduplicate requests, define how the application reconciles an unknown delivery outcome before retrying. Apply the same rule to retryable Workflow steps and scheduled targets.
 
-Set execution timeouts and resource limits for model calls, shells, and sandboxes. Test cancellation and shutdown while work is active. Streaming Agent routes need a real [host background lifetime](/docs/concepts/runtime-context#background-work-and-cleanup); a promise started after the response is not durable work by itself.
+Set execution timeouts and resource limits for model calls, shells, and sandboxes. Test cancellation and shutdown while work is active. Streaming Agent routes need a real [host background lifetime](/docs/getting-started/concepts/runtime-context#background-work-and-cleanup); a promise started after the response is not durable work by itself.
 
 ## Exercise the deployed application
 

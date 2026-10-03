@@ -66,6 +66,8 @@ export default defineNuxtModule({
       config.publicAssets.push({
         baseURL: "/raw",
         dir: resolve(outputDir, "raw"),
+        // A removed page has no raw file. Fall through so its redirect route rule answers.
+        fallthrough: true,
         maxAge: 300,
       });
       config.plugins ||= [];

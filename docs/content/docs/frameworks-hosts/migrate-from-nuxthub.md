@@ -109,8 +109,8 @@ return `[error, value]`. `handleUpload()` takes `formKey`, `multiple`, `ensure`,
 and `put` options. The multipart route uses an `[action]/[...pathname]` route,
 and the composables send ViteHub's request format. In Nuxt,
 `useUpload()` and `useMultipartUpload()` are auto-imported when `blob` is
-enabled, as in NuxtHub. Read [Upload files](/docs/blob#upload-files)
-and [Multipart uploads](/docs/blob#multipart-uploads).
+enabled, as in NuxtHub. Read [Upload files](/docs/blob/server-api#upload-files)
+and [Multipart uploads](/docs/blob/server-api#multipart-uploads).
 
 Multipart uploads work with the `fs`, `cloudflare-r2` (binding), and
 `vercel-blob` drivers. Direct `PUT` uploads with `blob.sign()` on Cloudflare
