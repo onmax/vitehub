@@ -26,7 +26,7 @@ export function createKVContinuations<T>(options: {
   }
 
   function release(value: T, surfaceFailure = false): Promise<void> {
-    const pending = Promise.resolve().then(() => options.release?.(value)).catch((error: unknown) => {
+    const pending: Promise<void> = Promise.resolve().then(() => options.release?.(value)).then(() => undefined).catch((error: unknown) => {
       // Retain one cleanup failure until disposal, without growing with abandoned listings.
       if (failures.length === 0) failures.push(error)
       if (surfaceFailure) throw error
