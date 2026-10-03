@@ -191,7 +191,7 @@ export async function runWithWorkflowRuntimeEvent<T>(event: unknown, run: () => 
 export async function loadWorkflowDefinition(name: string): Promise<WorkflowDefinition | undefined> {
   const generation = runtimeRegistryGeneration
   const inlineDefinition = inlineRegistry.get(name)
-  const entry = runtimeRegistry?.[name]
+  const entry = runtimeRegistry && Object.hasOwn(runtimeRegistry, name) ? runtimeRegistry[name] : undefined
 
   if (entry && loadedRegistryEntries.has(name)) {
     return loadedRegistryEntries.get(name)
