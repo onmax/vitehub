@@ -283,6 +283,36 @@ describe("Provider Agent Driver", () => {
     })
   })
 
+  it("scopes the Agent GitHub environment to the pull request from the Babysitter input context", async () => {
+    const threadId = "thread-babysitter-github-environment"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    // Multi-installation GitHub Apps can only resolve credentials for a repository.
+    const access = vi.fn(async (input?: { repository?: string }) => {
+      if (!input?.repository) throw new Error("credentials require a repository")
+      const token = input.repository === "contributor/portal" ? "fork-token" : "installation-token"
+      return { env: { GH_TOKEN: token }, token }
+    })
+    const base = context(threadId)
+    // Babysitter passes these flat fields directly as the Agent input context.
+    base.context.set("preparedCheckout", "/caller/prepared-checkout")
+    base.context.set("pullRequestHead", "a".repeat(40))
+    base.context.set("pullRequestNumber", 42)
+    base.context.set("pullRequestRepository", "acme/portal")
+    base.context.set("pullRequestSourceBranch", "feature")
+    base.context.set("pullRequestSourceRepository", "contributor/portal")
+    base.context.set("pullRequestTitle", "Fix portal")
+    base.context.set("pullRequestUrl", "https://github.com/acme/portal/pull/42")
+    await createProviderAgentAdapter({ provider: "codex" }).generate({ ...base, runtime: { ...base.runtime, githubIdentity: { access } } } as never)
+
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "acme/portal" }))
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "contributor/portal" }))
+    expect(access).not.toHaveBeenCalledWith(expect.not.objectContaining({ repository: expect.any(String) }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({
+      GH_TOKEN: "installation-token",
+      VITEHUB_GITHUB_HEAD_TOKEN: "fork-token",
+    })
+  })
+
   it("adds fork credentials while preserving base API access in the Driver environment", async () => {
     const threadId = "thread-github-fork-environment"
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])

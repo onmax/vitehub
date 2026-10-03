@@ -80,6 +80,22 @@ describe("pull request checkout", () => {
     expect(pullRequestRepositories(undefined)).toBeUndefined()
   })
 
+  it("reads repository scope from the Babysitter input context without planning a checkout", () => {
+    const values = new Map<string, unknown>([
+      ["pullRequestRepository", "vite-hub/vitehub"],
+      ["pullRequestSourceRepository", "contributor/vitehub"],
+    ])
+    const context = { get: (key: string) => values.get(key) }
+    expect(pullRequestCheckoutPlan(context)).toBeUndefined()
+    expect(pullRequestRepositories(context)).toEqual({ headRepository: "contributor/vitehub", repository: "vite-hub/vitehub" })
+    values.set("pullRequestSourceRepository", "VITE-HUB/VITEHUB")
+    expect(pullRequestRepositories(context)).toEqual({ repository: "vite-hub/vitehub" })
+    values.set("pullRequestSourceRepository", "(unavailable)")
+    expect(pullRequestRepositories(context)).toEqual({ repository: "vite-hub/vitehub" })
+    values.set("pullRequestRepository", "invalid repository")
+    expect(pullRequestRepositories(context)).toBeUndefined()
+  })
+
   it.each(["", "vitehub"])("rejects a deleted fork head before preparing the %j mount", async (mount) => {
     const fixture = await githubFixture()
     const exec = vi.spyOn(fixture.session, "exec")
