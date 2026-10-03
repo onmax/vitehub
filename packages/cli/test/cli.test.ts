@@ -486,6 +486,39 @@ describe("ViteHub CLI", () => {
     expect(stdout.output()).toContain("create\ttest-resource\tdemo")
   })
 
+  it.each([
+    ["run", "--dry-run"],
+    ["status"],
+  ])("resolves contributors once per %s invocation and refreshes the next invocation", async (...args) => {
+    const rootDir = await createTempDir()
+    const apply = vi.fn(async () => ({}))
+    const contributor = vi.fn(async () => {
+      const revision = contributor.mock.calls.length
+      return {
+        namespaces: [],
+        provision: [{
+          id: "test:cloudflare",
+          provider: "cloudflare",
+          plan: async () => [{ kind: "test-resource", name: `revision-${revision}`, exists: false, apply }],
+        }],
+      }
+    })
+    const loadConfig = async () => ({ plugins: [{ vitehub: { cli: contributor } }], root: rootDir })
+    for (const revision of [1, 2]) {
+      const stdout = stream()
+      await expect(runViteHubCli({
+        args: ["provision", ...args, "--provider", "cloudflare", "--json"],
+        cwd: rootDir,
+        env: { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "test-token" },
+        loadConfig,
+        stdout,
+      })).resolves.toBe(0)
+      expect(stdout.output()).toContain(`revision-${revision}`)
+      expect(contributor).toHaveBeenCalledTimes(revision)
+    }
+    expect(apply).not.toHaveBeenCalled()
+  })
+
   it("collects provision steps installed by Nuxt modules", async () => {
     const rootDir = await createTempDir()
     const apply = vi.fn(async () => ({ ids: { cloudflare: { test: { demo: "id" } } } }))

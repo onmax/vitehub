@@ -7,6 +7,7 @@ icon: i-lucide-terminal-square
 ---
 
 The ViteHub CLI loads the local Vite config and collects package-contributed command namespaces.
+Each invocation resolves each active plugin's CLI contributor once and uses its command namespaces and Provision Steps together. A later invocation resolves fresh contributions.
 Commands stay owned by the package that understands the workflow, while `vitehub` gives agents and developers one predictable entry point.
 The official [`vite-hub` package on npm](https://www.npmjs.com/package/vite-hub) publishes both `vitehub` and `vite-hub` binaries.
 
