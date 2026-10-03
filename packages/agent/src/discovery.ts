@@ -1347,8 +1347,11 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       // An immediately invoked arrow wrapped in parentheses is followed by
       // the grouping closers before its call, for example `(() => value)()`.
       // Skip those closers when deciding whether the body executes.
+      // Consume the single grouping delimiter that wraps an immediately
+      // invoked arrow. Do not skip delimiters belonging to an enclosing call:
+      // `consume(() => value)()` invokes `consume`, not the callback arrow.
       let invocation = end + 1
-      while ([")", "]", "}"].includes(references[invocation] ?? "")) invocation++
+      if ([")", "]", "}"].includes(references[invocation] ?? "")) invocation++
       if (end >= start && references[invocation] !== "(") uncalledFunctionBodies.push({ start, end })
     }
     const functionExpressionCall = (index: number) => {
@@ -1533,10 +1536,18 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
       const receiverEnd = objectEnd ?? reflectEnd
       if (receiverEnd === undefined) continue
       const member = memberAccess(receiverEnd - 1)
+      const call = member === undefined ? undefined : memberCallEnd(member.end - 1, index)
+      if (member !== undefined && tokens[call!] !== "(") continue
+      if (member?.name === "setPrototypeOf") {
+        reassignedGlobalConversions.add("String")
+        reassignedGlobalConversions.add("Number")
+        reassignedGlobalConversions.add("Boolean")
+        continue
+      }
       if (member?.name !== "defineProperty" && member?.name !== "defineProperties" && member?.name !== "set" && member?.name !== "assign") continue
-      const call = memberCallEnd(member.end - 1, index)
-      if (tokens[call] !== "(") continue
-      const target = call + 1
+      const callEnd = memberCallEnd(member.end - 1, index)
+      if (tokens[callEnd] !== "(") continue
+      const target = callEnd + 1
       let targetEnd = target
       let depth = 0
       for (; targetEnd < tokens.length; targetEnd++) {
