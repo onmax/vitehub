@@ -462,7 +462,9 @@ function inputCommandNumericDepth(args: string | undefined): number | undefined 
   return Number.isSafeInteger(depth) ? depth : undefined
 }
 
-const MAX_NUMERIC_EXPANSION_DEPTH = 2_000
+// Keep a finite resource bound for numeric chains, while allowing chains whose
+// decreasing measure is larger than the ordinary command budget.
+const MAX_NUMERIC_EXPANSION_DEPTH = 1_000_000
 
 export function inputCommands(options: InputCommandsOptions): AgentCapabilityDefinition {
   const commands = normalizeInputCommands(options)
@@ -510,6 +512,32 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
         const counts = countInputCommandInvocations(value, trigger, commands)
         cacheInvocationCounts(value, counts)
         return counts
+      }
+      const updateInvocationCounts = (previous: string, next: string): void => {
+        const previousCounts = getInvocationCounts(previous)
+        let start = 0
+        while (start < previous.length && start < next.length && previous[start] === next[start]) start++
+        let previousEnd = previous.length
+        let nextEnd = next.length
+        while (previousEnd > start && nextEnd > start && previous[previousEnd - 1] === next[nextEnd - 1]) {
+          previousEnd--
+          nextEnd--
+        }
+        // A changed slice can split a token when a mutation edits inside a
+        // command. Fall back to a complete count in that case.
+        const boundarySafe = (value: string, begin: number, end: number): boolean =>
+          (begin === 0 || /\s/.test(value[begin - 1]!))
+          && (end === value.length || /\s/.test(value[end]!))
+        if (!boundarySafe(previous, start, previousEnd) || !boundarySafe(next, start, nextEnd)) {
+          cacheInvocationCounts(next, countInputCommandInvocations(next, trigger, commands))
+          return
+        }
+        const removed = countInputCommandInvocations(previous.slice(start, previousEnd), trigger, commands)
+        const added = countInputCommandInvocations(next.slice(start, nextEnd), trigger, commands)
+        const byName = new Map(previousCounts.byName)
+        for (const [name, count] of removed.byName) byName.set(name, (byName.get(name) || 0) - count)
+        for (const [name, count] of added.byName) byName.set(name, (byName.get(name) || 0) + count)
+        cacheInvocationCounts(next, { byName, total: previousCounts.total - removed.total + added.total })
       }
       while (cursor <= text.length) {
         // Each registered command can credit growth or a new rewrite stage only once.
@@ -762,6 +790,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           if (!target) return
           text = target.text
           if (text !== previousText) {
+            updateInvocationCounts(previousText, text)
             // SAFETY: Input command parsing establishes the asserted command contract.
             await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
             cursor = 0

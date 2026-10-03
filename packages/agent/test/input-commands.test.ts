@@ -437,8 +437,8 @@ describe("inputCommands", () => {
       },
     })
 
-    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a 2000" })
-    expect(calls).toBe(2001)
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/a 2001" })
+    expect(calls).toBe(2002)
   })
 
   it("bounds numeric cycles that restore their depth", async () => {
