@@ -1,4 +1,3 @@
-import { collectViteHubProvisionSteps } from "@vite-hub/internal/cli"
 import { mergeProvisionState, PROVISION_STATE_FILE, readProvisionState, writeProvisionState } from "@vite-hub/internal/provision-state"
 import { resolveCloudflareProvisionConfig, resolveVercelProvisionConfig } from "@vite-hub/internal/provision"
 
@@ -13,10 +12,6 @@ import type {
 
 type ProvisionFeatureContext = Pick<ViteHubCliContext, "env" | "rootDir" | "stderr" | "stdout">
 type ProvisionCommand = "run" | "status"
-
-interface ProvisionFeatureOptions {
-  collectSteps: () => Promise<ProvisionStep[]>
-}
 
 interface ParsedProvisionArgs {
   dryRun: boolean
@@ -46,8 +41,6 @@ const USAGE = {
   run: "vitehub provision run --provider <cloudflare|vercel> [--dry-run] [--json]",
   status: "vitehub provision status --provider <cloudflare|vercel> [--json]",
 } as const satisfies Record<ProvisionCommand, string>
-
-export const provisionUsage = USAGE
 
 function isProvisionProvider(value: string | undefined): value is ProvisionProvider {
   return PROVISION_PROVIDERS.some(provider => provider === value)
@@ -130,7 +123,7 @@ function hasProviderCredentials(provider: ProvisionProvider, env: ProvisionFeatu
 }
 
 // Runs only the plan phase. Step messages go to stderr so stdout stays one JSON document in --json mode.
-async function planProvision(provider: ProvisionProvider, context: ProvisionFeatureContext, options: ProvisionFeatureOptions, json: boolean): Promise<ProvisionPlan> {
+async function planProvision(provider: ProvisionProvider, context: ProvisionFeatureContext, steps: readonly ProvisionStep[], json: boolean): Promise<ProvisionPlan> {
   const warnings: string[] = []
   let checked = true
   const provisionContext: ProvisionContext = {
@@ -147,8 +140,7 @@ async function planProvision(provider: ProvisionProvider, context: ProvisionFeat
   }
 
   const actions: PlannedProvisionAction[] = []
-  const steps = (await options.collectSteps()).filter(step => step.provider === provider)
-  for (const step of steps) {
+  for (const step of steps.filter(step => step.provider === provider)) {
     for (const action of await step.plan(provisionContext)) {
       actions.push({ action, step: step.id })
     }
@@ -173,7 +165,7 @@ function writeActions(actions: PlannedProvisionAction[], stdout: ProvisionFeatur
   }
 }
 
-export async function runProvision(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
+async function runProvision(args: string[], context: ProvisionFeatureContext, steps: readonly ProvisionStep[]): Promise<number> {
   const parsed = parseArgs("run", args)
   const resolved = resolveProvider("run", parsed, context)
   if ("exitCode" in resolved) return resolved.exitCode
@@ -186,7 +178,7 @@ export async function runProvision(args: string[], context: ProvisionFeatureCont
     return 1
   }
 
-  const { actions, warnings } = await planProvision(provider, context, options, parsed.json)
+  const { actions, warnings } = await planProvision(provider, context, steps, parsed.json)
   if (!parsed.json) {
     if (!actions.length) {
       context.stdout.write(`provision: no ${provider} resources to create.\n`)
@@ -223,7 +215,7 @@ export async function runProvision(args: string[], context: ProvisionFeatureCont
   return 0
 }
 
-export async function runProvisionStatus(args: string[], context: ProvisionFeatureContext, options: ProvisionFeatureOptions): Promise<number> {
+async function runProvisionStatus(args: string[], context: ProvisionFeatureContext, steps: readonly ProvisionStep[]): Promise<number> {
   const parsed = parseArgs("status", args)
   const resolved = resolveProvider("status", parsed, context)
   if ("exitCode" in resolved) return resolved.exitCode
@@ -232,7 +224,7 @@ export async function runProvisionStatus(args: string[], context: ProvisionFeatu
   const recorded = (await readProvisionState(context.rootDir))[provider] ?? {}
   const hasCredentials = hasProviderCredentials(provider, context.env)
   const { actions, checked, warnings } = hasCredentials
-    ? await planProvision(provider, context, options, parsed.json)
+    ? await planProvision(provider, context, steps, parsed.json)
     : { actions: [], checked: false, warnings: [`provision: plan not checked, missing ${PROVIDER_CREDENTIALS[provider]}.`] }
   const pending = actions.filter(({ action }) => action.pending ?? !action.exists).length
 
@@ -275,19 +267,18 @@ export async function runProvisionStatus(args: string[], context: ProvisionFeatu
 }
 
 /** Built-in namespace that orchestrates package-contributed Provision Steps. */
-export function createProvisionNamespace(plugins: readonly unknown[]): ViteHubCliCommandNamespace {
-  const options: ProvisionFeatureOptions = { collectSteps: () => collectViteHubProvisionSteps(plugins) }
+export function createProvisionNamespace(steps: readonly ProvisionStep[]): ViteHubCliCommandNamespace {
   return {
     description: "Idempotently create missing provider resources.",
     features: [{
       description: "Create missing provider resources for the app's Definitions.",
       name: "run",
-      run: (args, context) => runProvision(args, context, options),
+      run: (args, context) => runProvision(args, context, steps),
       usage: USAGE.run,
     }, {
       description: "Show recorded provider ids and pending plan actions.",
       name: "status",
-      run: (args, context) => runProvisionStatus(args, context, options),
+      run: (args, context) => runProvisionStatus(args, context, steps),
       usage: USAGE.status,
     }],
     name: "provision",
