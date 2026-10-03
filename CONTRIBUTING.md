@@ -4,7 +4,7 @@ Use this guide to turn a requested behavior into a tested change. [AGENTS.md](AG
 
 ## Set up a checkout
 
-Use the Node version required by `package.json`. For the full verification gate, install the Deno version in `.tool-versions` with the [official Deno installation guide](https://docs.deno.com/runtime/getting_started/installation/). CI reads the same pin.
+Use the Node version required by `package.json`. For the full verification gate, install the Deno version in `.deno-version` with the [official Deno installation guide](https://docs.deno.com/runtime/getting_started/installation/). CI reads the same pin.
 
 From a clean checkout, let Corepack select pnpm from `package.json` and install the workspace dependencies. This also installs Vite+.
 
@@ -26,7 +26,7 @@ corepack pnpm exec vp run verify
 
 `verify` runs the preflight first and includes the native Deno package consumer test. A missing or different Deno version is a contributor setup error, not a ViteHub runtime failure. Package scripts own package-local test, build, and typecheck behavior.
 
-A global `vp` installation is not required. Use `corepack pnpm exec vp` after installation. Node and pnpm requirements come from `package.json`; the Deno pin comes from `.tool-versions`. The current preflight checks Deno. It does not validate credentials or every provider tool.
+A global `vp` installation is not required. Use `corepack pnpm exec vp` after installation. Node and pnpm requirements come from `package.json`; the Deno pin comes from `.deno-version`. The current preflight checks Deno. It does not validate credentials or every provider tool.
 
 ## Start with one user outcome
 
