@@ -499,14 +499,16 @@ describe("Browser Sessions", () => {
     const result = expect(attaching).rejects.toBe(traceError)
     await started
 
-    try {
-      await expect(session.close()).resolves.toBeUndefined()
-      expect(close).toHaveBeenCalledOnce()
-    }
-    finally {
-      finishRelease()
-      await result
-    }
+    const closing = session.close()
+    await Promise.resolve()
+    expect(close).toHaveBeenCalledOnce()
+    let closed = false
+    void closing.then(() => { closed = true })
+    await Promise.resolve()
+    expect(closed).toBe(false)
+    finishRelease()
+    await result
+    await expect(closing).resolves.toBeUndefined()
     expect(session.inspect().state).toBe("closed")
   })
 

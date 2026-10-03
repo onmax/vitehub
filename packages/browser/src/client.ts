@@ -157,6 +157,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
   private controller?: string
   private attaching = false
   private detaching = false
+  private pendingControllerRelease?: () => Promise<void>
   private lastControllerSupportsHandoff = true
   private state: BrowserSessionState = "released"
 
@@ -215,6 +216,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
             this.detaching = false
             if (this.state === "controlled") this.state = "released"
             this.controller = undefined
+            if (this.pendingControllerRelease === control?.release) this.pendingControllerRelease = undefined
             await this.owner.emit("browser.controller.detach", this, { controller: controller.name })
           })()
           releasePromise = releasing
@@ -226,6 +228,7 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
           }
         },
       }
+      this.pendingControllerRelease = control.release
       this.attaching = false
       if (this.closing || this.state !== "released") {
         await releaseLateController(control.release())
@@ -296,13 +299,28 @@ class BrowserSessionImpl<TConnection> implements BrowserSession<TConnection> {
     if (this.state === "controlled" && !this.detaching) throw browserSessionStateError("close", this.state)
     this.closing = true
     const closing = (async () => {
+      let closeError: unknown
       try {
         await releaseResource({ lease: this.lease, providerSession: this.providerSession })
-        this.state = "closed"
+      }
+      catch (error) {
+        closeError = error
+      }
+      try {
+        await this.pendingControllerRelease?.()
+      }
+      catch (error) {
+        closeError = closeError
+          ? new AggregateError([closeError, error], "[vitehub:browser] Browser Session close and controller release failed.")
+          : error
+      }
+      try {
+        if (!closeError) this.state = "closed"
       }
       finally {
         await this.owner.emit("browser.session.close", this)
       }
+      if (closeError) throw closeError
     })()
     this.closePromise = closing
     try {
