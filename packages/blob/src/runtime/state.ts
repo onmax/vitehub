@@ -20,11 +20,14 @@ let runtimeStorages = new Map<string, BlobStorage>()
 let pendingStorages = new Map<string, Promise<BlobStorage>>()
 
 function isCallable(value: unknown): value is Function {
-  const tag = Object.prototype.toString.call(value)
-  return tag === "[object Function]"
-    || tag === "[object AsyncFunction]"
-    || tag === "[object GeneratorFunction]"
-    || tag === "[object AsyncGeneratorFunction]"
+  if (value === null || value === undefined) return false
+  try {
+    Function.prototype.bind.call(value as Function, undefined)
+    return true
+  }
+  catch {
+    return false
+  }
 }
 
 export {

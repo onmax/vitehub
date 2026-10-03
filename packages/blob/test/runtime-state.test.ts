@@ -98,4 +98,21 @@ describe("Blob runtime storage lifetime", () => {
     expect(getNamedBlobRuntimeStorage("assets")).toBe(second)
     expect(second).not.toBe(first)
   })
+
+  it("tracks callback credentials wrapped in a Proxy", async () => {
+    const firstToken = new Proxy((() => "before") as () => string, {})
+    const secondToken = new Proxy((() => "after") as () => string, {})
+    const config = { store: { accessToken: firstToken, driver: "dropbox" as const } }
+    setBlobRuntimeConfig(config)
+    const first = blob.store("assets")
+    await resolveNamedBlobRuntimeStorage("assets", async () => first)
+
+    config.store.accessToken = secondToken
+    setBlobRuntimeConfig(config)
+    const second = blob.store("assets")
+    await resolveNamedBlobRuntimeStorage("assets", async () => second)
+
+    expect(getNamedBlobRuntimeStorage("assets")).toBe(second)
+    expect(second).not.toBe(first)
+  })
 })
