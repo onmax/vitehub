@@ -1848,8 +1848,8 @@
     },
     {
       "ruleId": "typescript/strict/no-runtime-typeof",
-      "file": "packages/email/src/drivers/cloudflare-email.ts",
-      "fingerprint": "18cafc7467465fd421f7eaecfe708b8c1ec63db4b651b5ab6146b26d4a448150"
+      "file": "packages/email/src/drivers/cloudflare-mime.ts",
+      "fingerprint": "0dfe6510a12924fed7f95afbda859c3c7878eb1249e2a2b029884d9a847733da"
     },
     {
       "ruleId": "typescript/strict/no-runtime-typeof",
