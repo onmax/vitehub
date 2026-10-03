@@ -4,9 +4,9 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { promisify } from "node:util"
 import { Diagnostic } from "nostics"
 
@@ -356,6 +356,27 @@ function createCheckoutPool(root: string) {
 
 type GitHubCommandOptions = { env: NodeJS.ProcessEnv, maxBuffer: number, signal: AbortSignal }
 
+async function renameThroughParent(source: string, target: string, retainedTargetParent?: import("node:fs/promises").FileHandle) {
+  // Resolve the source and destination parents through directory handles. A
+  // concurrent process can replace a path component after lstat, but it cannot
+  // replace the directory represented by an open descriptor.
+  if (process.platform !== "linux") {
+    await rename(source, target)
+    return
+  }
+  const sourceParent = await open(dirname(source), "r")
+  const targetParent = retainedTargetParent ?? (dirname(target) === dirname(source)
+    ? sourceParent
+    : await open(dirname(target), "r"))
+  try {
+    await rename(join(`/proc/self/fd/${sourceParent.fd}`, basename(source)), join(`/proc/self/fd/${targetParent.fd}`, basename(target)))
+  }
+  finally {
+    if (!retainedTargetParent && targetParent !== sourceParent) await targetParent.close()
+    await sourceParent.close()
+  }
+}
+
 async function assertCheckoutDirectories(path: string) {
   for (let directory = resolve(path); ; directory = dirname(directory)) {
     const entry = await lstat(directory)
@@ -381,7 +402,14 @@ async function resetPooledCheckout(checkout: string, repository: string, submodu
   // moves a replaced symlink itself, so validation below never traverses it.
   const privateRoot = await mkdtemp(join(dirname(checkout), "vitehub-github-reset-"))
   const parkedCheckout = join(privateRoot, "checkout")
-  const close = () => rm(privateRoot, { force: true, recursive: true })
+  const checkoutParent = await open(dirname(checkout), "r")
+  let closed = false
+  const close = async () => {
+    if (closed) return
+    closed = true
+    await checkoutParent.close()
+    await rm(privateRoot, { force: true, recursive: true })
+  }
   try {
     await assertCheckoutDirectories(dirname(checkout))
     await rename(checkout, parkedCheckout)
@@ -429,7 +457,7 @@ async function resetPooledCheckout(checkout: string, repository: string, submodu
       close,
       async restore() {
         await assertCheckoutDirectories(dirname(checkout))
-        await rename(parkedCheckout, checkout)
+        await renameThroughParent(parkedCheckout, checkout, checkoutParent)
         await close()
       },
     }
