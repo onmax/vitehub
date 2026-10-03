@@ -469,7 +469,9 @@ function maskAssertionTypeArguments(source: string) {
     const close = masked[index] === "{" ? "}" : masked[index] === "[" ? "]" : masked[index] === "(" ? ")" : undefined
     if (!close) continue
     const prefix = masked.slice(0, index).trimEnd()
-    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|?:])$/.test(prefix)) continue
+    // Function and constructor return types can start with a structural
+    // region. Keep runtime suffixes outside that region visible.
+    if (!/(?:\b(?:as|satisfies|keyof|readonly)|[&|?:]|=>)$/.test(prefix)) continue
     const end = findMatching(masked, index, masked[index]!, close)
     if (end === undefined) continue
     output.fill(" ", index + 1, end)

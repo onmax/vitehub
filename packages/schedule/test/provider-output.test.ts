@@ -1132,6 +1132,13 @@ describe("schedule provider output", () => {
     "as keyof Record<string, unknown> extends PropertyKey ? Definition : never",
     "as unknown as typeof shape<string, unknown>",
     "as unknown as typeof /* value */ shapes.schedule /* args */ <string, unknown>",
+    "as unknown as () => { config: Record<string, unknown> }",
+    "as unknown as new () => { config: Record<string, unknown> }",
+    "as unknown as () => [config: Record<string, unknown>, extra: string]",
+    "as unknown as new () => [config: Record<string, unknown>, extra: string]",
+    "as unknown as () => ({ config: Record<string, unknown> })",
+    "as unknown as () => /* return */ { config: Record<string, unknown> }",
+    "as unknown as () => () => { config: Record<string, unknown> }",
     "as unknown as () => Result<string, unknown>",
     "as unknown as new () => Result<string, unknown>",
     "as unknown as (value: unknown) => asserts value is Result<string, unknown>",
@@ -1175,6 +1182,9 @@ describe("schedule provider output", () => {
 
   it.each([
     "as Foo<string> ^ (bar())",
+    "as unknown as () => { config: Record<string, unknown> } + fallback",
+    "as unknown as new () => [config: Record<string, unknown>] (argument)",
+    "as unknown as () => { config: string } ? fallback : alternate",
     "as unknown as () => Result<string, unknown> + fallback",
     "as unknown as () => Result<string, unknown> || fallback",
     "as unknown as () => Result<string, unknown> ? fallback : alternate",
