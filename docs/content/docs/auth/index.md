@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-shield-check
 ---
 
-::product-hero{tagline="Better Auth sessions and route guards from one Auth Definition that ViteHub discovers and mounts for your host." providers="Better Auth"}
+::product-hero{tagline="Better Auth sessions and route guards from one Auth Definition that ViteHub discovers and mounts for your host." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [Definition]
   import { defineAuth } from '@vite-hub/auth'
@@ -67,18 +67,6 @@ icon: i-lucide-shield-check
   :::
 ::
 
-::product-flow{caption="A listed route reaches its handler only after a session exists and authorize allows it."}
-  :::product-flow-step{label="Better Auth route" detail="/api/auth/**"}
-  :::
-  :::product-flow-step{label="Session" detail="getSession({ headers })"}
-  :::
-  :::product-flow-step{label="Access rule" detail="access.routes"}
-  :::
-  :::product-flow-step{label="Authorize" detail="authorize({ user })"}
-  :::
-  :::product-flow-step{label="Result" detail="handler · 401 · 403"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Read the session in any server route" icon="i-lucide-user-check" to="/docs/auth/server-api"}
@@ -101,7 +89,7 @@ icon: i-lucide-shield-check
   `authenticated()` maps the session to an `authUser` Invoker.
   :::
 
-  :::product-feature-item{title="Not for third-party account grants" icon="i-lucide-plug" to="/docs/connections"}
-  Use Connections for OAuth grants to third-party accounts.
+  :::product-feature-item{title="Sessions carry identity" icon="i-lucide-user-round-check" to="/docs/auth/server-api"}
+  Route guards can read the authenticated user without provider details.
   :::
 ::

@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-terminal-square
 ---
 
-::product-hero{tagline="Run a named package project in an isolated Box, on Cloudflare or Vercel Sandbox chosen in config." providers="Vercel, Cloudflare"}
+::product-hero{tagline="Run a named package project in an isolated Box, on Cloudflare or Vercel Sandbox chosen in config." hosts="Vercel, Cloudflare"}
   :::code-group
   ```ts [Definition and route]
   // server/sandboxes/release-notes/index.ts
@@ -55,18 +55,6 @@ icon: i-lucide-terminal-square
   :::
 ::
 
-::product-flow{caption="Every run returns a native Response, including failures and timeouts."}
-  :::product-flow-step{label="Route" detail="runSandbox(name, payload)"}
-  :::
-  :::product-flow-step{label="Provider" detail="vercel · cloudflare"}
-  :::
-  :::product-flow-step{label="Box" detail="package.json · install"}
-  :::
-  :::product-flow-step{label="Entrypoint" detail="index.ts default export"}
-  :::
-  :::product-flow-step{label="Response" detail="Response · SANDBOX_TIMEOUT"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="A Sandbox is a package project" icon="i-lucide-box" to="/docs/sandbox/configure"}
@@ -89,7 +77,7 @@ icon: i-lucide-terminal-square
   `sandbox_exec` runs only executable names listed in `commands`.
   :::
 
-  :::product-feature-item{title="Not for single commands or durable files" icon="i-lucide-git-branch" to="/docs/shell"}
-  Use Shell for single commands and Workspace for durable files.
+  :::product-feature-item{title="Sessions expose status" icon="i-lucide-activity" to="/docs/sandbox/server-api"}
+  Read logs, exit state, and outputs from the same session handle.
   :::
 ::

@@ -6,9 +6,9 @@ navigation.order: 1
 icon: i-lucide-files
 ---
 
-::product-hero{providers="Local filesystem, Cloudflare R2, Vercel Blob, Netlify Blobs, S3, Google Cloud Storage" tagline="One object-storage import for uploads and generated files on the local file system, Cloudflare R2, Vercel Blob, and S3."}
+::product-hero{tagline="One object-storage import for uploads and generated files across local and hosted object stores." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
-  ```ts [Route]
+  ```ts [server/api/upload.post.ts]
   import { blob } from '@vite-hub/blob'
 
   export default defineEventHandler(async (event) => {
@@ -38,24 +38,18 @@ icon: i-lucide-files
   })
   ```
 
-  ```ts [Agent]
+  ```ts [server/agents/publisher.ts]
   import { defineAgent } from 'vite-hub/agent'
   import { blob } from 'vite-hub/agent/capabilities'
-  import { github } from 'vite-hub/agent/channels'
 
   export default defineAgent({
     capabilities: [
       blob({ assetPaths: ['artifacts'], mode: 'write', policy: 'deny' }),
     ],
-    channels: {
-      github: github({ pullRequest: true }),
-    },
-    driver: 'codex',
-    workspace: { commit: true, mode: 'write' },
   })
   ```
 
-  ```bash [CLI]
+  ```bash [Terminal]
   pnpm vitehub blob list --prefix avatars/
   pnpm vitehub blob head avatars/ada.png --json
   pnpm vitehub blob put avatars/ada.png ./ada.png
@@ -65,18 +59,6 @@ icon: i-lucide-files
   :::
 ::
 
-::product-flow{caption="blob.put() stores the object with contentType and customMetadata; blob.head() reads them back."}
-  :::product-flow-step{label="Route" detail="blob.put(pathname, body)"}
-  :::
-  :::product-flow-step{label="Store" detail="default or blob.store(name)"}
-  :::
-  :::product-flow-step{label="Driver" detail="fs · cloudflare-r2 · vercel-blob · s3"}
-  :::
-  :::product-flow-step{label="Object" detail="contentType · customMetadata"}
-  :::
-  :::product-flow-step{label="Result" detail="[error, value]"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Every method returns an error and a value" icon="i-lucide-code-2" to="/docs/blob/server-api"}
@@ -95,11 +77,11 @@ icon: i-lucide-files
   `assetPaths` publishes linked files and rewrites the links to public URLs.
   :::
 
-  :::product-feature-item{title="Manage the running app's objects from a terminal" icon="i-lucide-terminal" to="/docs/blob/hosts"}
-  The CLI uses the app's storage; the build emits the binding.
+  :::product-feature-item{title="Objects from a terminal" icon="i-lucide-terminal" to="/docs/blob/hosts"}
+  Run Blob commands against the Vite Development Server.
   :::
 
-  :::product-feature-item{title="Not for file trees or rich queries" icon="i-lucide-git-branch" to="/docs/workspace"}
-  Use Workspace for paths and diffs, KV or Database for queries.
+  :::product-feature-item{title="Metadata travels with objects" icon="i-lucide-tag" to="/docs/blob/server-api"}
+  Set content type and custom metadata while storing the object.
   :::
 ::

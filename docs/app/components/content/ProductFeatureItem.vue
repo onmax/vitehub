@@ -7,16 +7,18 @@ defineProps<{
   icon?: string;
   /** Docs page that explains the feature in full. */
   to: string;
+  /** Give the primary feature more space in the desktop bento grid. */
+  size?: "default" | "large";
 }>();
 </script>
 
 <template>
-  <NuxtLink :to="to" class="vh-feature-item group">
+  <NuxtLink :to="to" class="vh-feature-item group" :class="{ 'is-large': size === 'large' }">
     <UIcon v-if="icon" :name="icon" class="size-4 shrink-0 text-muted transition-colors group-hover:text-highlighted" />
-    <h3 class="vh-feature-item-title">
+    <h2 class="vh-feature-item-title">
       <span>{{ title }}</span>
       <UIcon name="i-lucide-arrow-right" class="landing-cta-arrow size-3.5 shrink-0 text-muted transition-transform duration-200 motion-reduce:transition-none" aria-hidden="true" />
-    </h3>
+    </h2>
     <div class="vh-feature-item-body">
       <slot />
     </div>
@@ -28,8 +30,7 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  border-right: 1px solid var(--ui-border);
-  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-bg);
   padding: 1.125rem 1.25rem;
   transition: background-color 200ms ease;
 }
@@ -71,7 +72,31 @@ defineProps<{
 }
 
 .vh-feature-item-body :deep(code) {
+  display: inline;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 0;
+  color: var(--ui-text-toned);
   font-size: 0.75rem;
+}
+
+@media (min-width: 40rem) {
+  .vh-feature-item:last-child,
+  .vh-feature-item.is-large {
+    grid-column: span 2;
+  }
+}
+
+@media (min-width: 64rem) {
+  .vh-feature-item {
+    grid-column: span 2;
+  }
+
+  .vh-feature-item.is-large {
+    grid-column: span 4;
+    grid-row: span 2;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

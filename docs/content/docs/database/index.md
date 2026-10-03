@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-database
 ---
 
-::product-hero{providers="SQLite, libSQL, Cloudflare D1" tagline="Relational tables defined with Drizzle and queried through one typed client on local SQLite, hosted libSQL, and Cloudflare D1."}
+::product-hero{tagline="Relational tables defined with Drizzle and queried through one typed client on local SQLite, hosted libSQL, and Cloudflare D1." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [Route]
   import { useDatabase } from '@vite-hub/database/drizzle'
@@ -59,18 +59,6 @@ icon: i-lucide-database
   :::
 ::
 
-::product-flow{caption="useDatabase(name) returns a typed Drizzle client and schema for each database."}
-  :::product-flow-step{label="Route" detail="useDatabase('default')"}
-  :::
-  :::product-flow-step{label="Definition" detail="defineDatabase({ schema })"}
-  :::
-  :::product-flow-step{label="Drizzle client" detail="{ db, schema }"}
-  :::
-  :::product-flow-step{label="Connection" detail="SQLite · libSQL · Cloudflare D1"}
-  :::
-  :::product-flow-step{label="Typed rows" detail="db.select().from(schema.notes)"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="The Drizzle schema is the source of truth" icon="i-lucide-code-2" to="/docs/database/configure"}
@@ -93,7 +81,7 @@ icon: i-lucide-database
   Local SQLite, hosted libSQL, or Cloudflare D1, with the same imports.
   :::
 
-  :::product-feature-item{title="Not for small values, files, or file trees" icon="i-lucide-git-branch" to="/docs/kv"}
-  Use KV for values, Blob for files, Workspace for file trees.
+  :::product-feature-item{title="Queries return typed rows" icon="i-lucide-table-2" to="/docs/database/server-api"}
+  Keep joins, constraints, and migrations in the database layer.
   :::
 ::

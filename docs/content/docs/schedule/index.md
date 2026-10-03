@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-calendar-clock
 ---
 
-::product-hero{providers="Cloudflare, Vercel, Deno, Node.js" tagline="Run server code at cron times from a file that builds to Cloudflare, Vercel, or Deno cron output."}
+::product-hero{tagline="Run server code at cron times from a file that builds to Cloudflare, Vercel, or Deno cron output." hosts="Cloudflare, Vercel, Deno, Node, Docker"}
   :::code-group
   ```ts [Definition]
   import { defineSchedule } from '@vite-hub/schedule'
@@ -59,16 +59,6 @@ icon: i-lucide-calendar-clock
   :::
 ::
 
-::product-flow{caption="Static schedules run in UTC; Runtime Schedules can follow an IANA timeZone."}
-  :::product-flow-step{label="Schedule" detail="defineSchedule · schedules.create()"}
-  :::
-  :::product-flow-step{label="Wake" detail="Cloudflare · Vercel · Deno.cron · process" loop}
-  :::
-  :::product-flow-step{label="Handler" detail="handler({ scheduledAt, waitUntil })"}
-  :::
-  :::product-flow-step{label="Run record" detail="vitehub schedule runs"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="The file is the schedule, in UTC" icon="i-lucide-code-2" to="/docs/schedule/configure#define-a-static-schedule"}
@@ -91,7 +81,7 @@ icon: i-lucide-calendar-clock
   Lists Runtime Schedules with their next due time and last run.
   :::
 
-  :::product-feature-item{title="Not for delays or multi-step work" icon="i-lucide-git-branch" to="/docs/workflows"}
-  Use Queue for enqueue delays, Workflows for durable multi-step work.
+  :::product-feature-item{title="Cron output stays portable" icon="i-lucide-calendar-clock" to="/docs/schedule/server-api"}
+  One schedule definition builds to the host's native trigger format.
   :::
 ::

@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-folder-input
 ---
 
-::product-hero{providers="Local files, Glob, GitHub, MCP Resources, Custom" tagline="Typed read-only loaders for files, GitHub, and MCP Resources, defined once and shared by routes, Content, and Workspaces."}
+::product-hero{tagline="Typed read-only loaders for files, GitHub, and MCP Resources, defined once and shared by routes, Content, and Workspaces." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [Collection]
   import { eq } from 'drizzle-orm'
@@ -76,16 +76,6 @@ icon: i-lucide-folder-input
   :::
 ::
 
-::product-flow{caption="Routes, Content, and Workspaces read the same typed items from one loader."}
-  :::product-flow-step{label="Loader" detail="file() · glob() · github() · mcpResources()"}
-  :::
-  :::product-flow-step{label="Reader" detail="createSource(docs)"}
-  :::
-  :::product-flow-step{label="Cache" detail="cachedSource(reader, options)"}
-  :::
-  :::product-flow-step{label="Read or Collection" detail="source.read() · server/collections"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Local files, GitHub, and MCP share one reader" icon="i-lucide-files" to="/docs/source/configure"}
@@ -108,7 +98,7 @@ icon: i-lucide-folder-input
   `authorize` checks the session; the client gets `401` or `403`.
   :::
 
-  :::product-feature-item{title="Not for parsed documents or mutable trees" icon="i-lucide-git-branch" to="/docs/content"}
-  Use Content for parsed documents and Workspace for mutable trees.
+  :::product-feature-item{title="Sources mount cleanly" icon="i-lucide-folder-tree" to="/docs/source/server-api"}
+  Mount a named source when an operation needs a stable file root.
   :::
 ::

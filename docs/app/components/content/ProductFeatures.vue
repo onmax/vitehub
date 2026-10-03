@@ -29,12 +29,12 @@ defineProps<{
   letter-spacing: -0.02em;
 }
 
-/* Each item draws its right and bottom line, so a short last row leaves no filler cells. */
 .vh-features-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  border-top: 1px solid var(--ui-border);
-  border-left: 1px solid var(--ui-border);
+  gap: 1px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-border);
 }
 
 @media (min-width: 40rem) {
@@ -45,7 +45,8 @@ defineProps<{
 
 @media (min-width: 64rem) {
   .vh-features-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-auto-rows: minmax(9rem, auto);
   }
 }
 </style>

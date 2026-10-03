@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-workflow
 ---
 
-::product-hero{providers="Cloudflare, Vercel, OpenWorkflow" tagline="Start long-running work as a tracked run with an id, status, and result on Cloudflare, Vercel, or OpenWorkflow."}
+::product-hero{tagline="Start long-running work as a tracked run with an id, status, and result on Cloudflare, Vercel, or OpenWorkflow." hosts="Cloudflare, Vercel, Node, Docker"}
   :::code-group
   ```ts [Route]
   import { runWorkflow } from '@vite-hub/workflow'
@@ -53,18 +53,6 @@ icon: i-lucide-workflow
   :::
 ::
 
-::product-flow{caption="A durable provider keeps run state across restarts; read it by run id."}
-  :::product-flow-step{label="Route" detail="runWorkflow('onboard-user', body)"}
-  :::
-  :::product-flow-step{label="Provider" detail="cloudflare · vercel · openworkflow"}
-  :::
-  :::product-flow-step{label="Handler" detail="defineWorkflow · steps" loop}
-  :::
-  :::product-flow-step{label="Run state" detail="getWorkflowRun(name, id)"}
-  :::
-  :::product-flow-step{label="Result" detail="{ id, status, result }"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="One file, one named Workflow" icon="i-lucide-code-2" to="/docs/workflows/configure"}
@@ -87,7 +75,7 @@ icon: i-lucide-workflow
   Cloudflare or Vercel by host; OpenWorkflow with `postgres.url` or `sqlite.path`.
   :::
 
-  :::product-feature-item{title="Not for plain job delivery or cron times" icon="i-lucide-git-branch" to="/docs/queue"}
-  Use Queue for plain delivery, Schedule for cron times.
+  :::product-feature-item{title="Steps survive retries" icon="i-lucide-refresh-cw" to="/docs/workflows/server-api"}
+  Durable steps resume after a worker or provider failure.
   :::
 ::

@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-folder-git-2
 ---
 
-::product-hero{providers="Local, Memory, Cloudflare Artifacts, Vercel Blob, GitHub, Custom" tagline="A persistent file tree for server code and Agents, with the same calls on every Store provider."}
+::product-hero{tagline="A persistent file tree for server code and Agents, with the same calls on every Store provider." hosts="Node, Docker, Cloudflare, Vercel"}
   :::code-group
   ```ts [Session]
   import { resolveBox } from '@vite-hub/box'
@@ -70,18 +70,6 @@ icon: i-lucide-folder-git-2
   :::
 ::
 
-::product-flow{caption="Every write passes the path rules, and the diff shows what changed."}
-  :::product-flow-step{label="Definition" detail="server/workspaces/docs.ts"}
-  :::
-  :::product-flow-step{label="Sources sync" detail="glob() · github() · workspace.sync()" loop}
-  :::
-  :::product-flow-step{label="Rules" detail="'/drafts/**': { write: true }"}
-  :::
-  :::product-flow-step{label="Write" detail="workspace.fs.writeFile()"}
-  :::
-  :::product-flow-step{label="Snapshot or diff" detail="snapshot() · diff()"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="One file declares Sources and rules" icon="i-lucide-folder-tree" to="/docs/workspace/configure"}
@@ -104,7 +92,7 @@ icon: i-lucide-folder-git-2
   `workspaceShell()` adds shell and file tools, bound by Workspace rules.
   :::
 
-  :::product-feature-item{title="Not for plain objects or read-only retrieval" icon="i-lucide-git-branch" to="/docs/blob"}
-  Use Blob for plain objects and Source for read-only retrieval.
+  :::product-feature-item{title="Changes stay inspectable" icon="i-lucide-history" to="/docs/workspace/server-api"}
+  Read diffs and snapshots before an Agent writes them back.
   :::
 ::

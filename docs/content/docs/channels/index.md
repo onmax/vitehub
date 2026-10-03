@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-send
 ---
 
-::product-hero{tagline="Send outbound messages to a named destination from server code, through connectors you write and select per call." providers="Telegram, Slack"}
+::product-hero{tagline="Send outbound messages to a named destination from server code, through connectors you write and select per call." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [Definition]
   import { defineOutboundChannel } from 'vite-hub/channels'
@@ -71,16 +71,6 @@ icon: i-lucide-send
   :::
 ::
 
-::product-flow{caption="send() returns [null, receipt] or [error, null]; logs omit the message text."}
-  :::product-flow-step{label="Route" detail="useChannel('alerts')"}
-  :::
-  :::product-flow-step{label="Send" detail="send(text, options)"}
-  :::
-  :::product-flow-step{label="Connector" detail="telegram · slack"}
-  :::
-  :::product-flow-step{label="Receipt" detail="channel · connector · deliveryId · id"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="You write the connector, Channels selects it" icon="i-lucide-plug" to="/docs/channels/get-started"}

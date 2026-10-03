@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-terminal
 ---
 
-::product-hero{tagline="Run Unix-like commands from server code through Just Bash, Cloudflare, or a custom Execution Provider." providers="Just Bash, Cloudflare, Custom"}
+::product-hero{tagline="Run Unix-like commands from server code through Just Bash, Cloudflare, or a custom Execution Provider." hosts="Node, Docker, Cloudflare"}
   :::code-group
   ```ts [Runtime]
   import { createShellRuntime } from '@vite-hub/shell'
@@ -68,16 +68,6 @@ icon: i-lucide-terminal
   :::
 ::
 
-::product-flow{caption="Every command returns an Observation; a policy denial returns exit code 126."}
-  :::product-flow-step{label="Command" detail="session.exec(command)" loop}
-  :::
-  :::product-flow-step{label="Session policy" detail="maxShellCalls · timeout"}
-  :::
-  :::product-flow-step{label="Execution Provider" detail="just-bash · cloudflare"}
-  :::
-  :::product-flow-step{label="Observation" detail="exitCode · stdout · stderr"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Each command returns a Shell Observation" icon="i-lucide-terminal" to="/docs/shell/server-api"}

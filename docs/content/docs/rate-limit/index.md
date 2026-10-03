@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-gauge
 ---
 
-::product-hero{tagline="One guard caps requests per client, user, or tenant, with atomic drivers: memory on Node, Cloudflare Rate Limiting on Cloudflare." providers="memory, Cloudflare Rate Limiting"}
+::product-hero{tagline="One guard caps requests per client, user, or tenant, with atomic drivers: memory on Node, Cloudflare Rate Limiting on Cloudflare." hosts="Node, Docker, Cloudflare"}
   :::code-group
   ```ts [Route]
   import { auth } from '@vite-hub/auth/server'
@@ -73,18 +73,6 @@ icon: i-lucide-gauge
   :::
 ::
 
-::product-flow{caption="Allowed requests reach the handler; limited requests get 429 before it runs."}
-  :::product-flow-step{label="Request" detail="key or client address"}
-  :::
-  :::product-flow-step{label="Guard" detail="requireRateLimit(event, 'image-upload')"}
-  :::
-  :::product-flow-step{label="Driver budget" detail="memory · cloudflare"}
-  :::
-  :::product-flow-step{label="Decision" detail="allowed · limited · unavailable"}
-  :::
-  :::product-flow-step{label="429 or handler" detail="HTTPError · retry-after"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Limited requests get a 429 from the guard" icon="i-lucide-shield-alert" to="/docs/rate-limit/server-api"}

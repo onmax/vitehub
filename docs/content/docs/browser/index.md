@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-monitor
 ---
 
-::product-hero{tagline="Name a browser operation and run it from a route, Queue, or Workflow, with no Cloudflare imports or credentials." providers="Cloudflare"}
+::product-hero{tagline="Name a browser operation and run it from a route, Queue, or Workflow, with no Cloudflare imports or credentials." hosts="Cloudflare"}
   :::code-group
   ```ts [Definition and route]
   // server/browsers/page-title.ts
@@ -58,18 +58,6 @@ icon: i-lucide-monitor
   :::
 ::
 
-::product-flow{caption="runBrowser() returns a native Response, and ViteHub closes the page session."}
-  :::product-flow-step{label="Route" detail="runBrowser(name, input)"}
-  :::
-  :::product-flow-step{label="Definition" detail="defineBrowser(handler)"}
-  :::
-  :::product-flow-step{label="Page session" detail="browser.open() · page.goto()" loop}
-  :::
-  :::product-flow-step{label="Browser Run" detail="binding: 'BROWSER'"}
-  :::
-  :::product-flow-step{label="Response" detail="Response"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="One file per browser operation" icon="i-lucide-code-2" to="/docs/browser/server-api"}

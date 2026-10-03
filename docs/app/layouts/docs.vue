@@ -52,7 +52,7 @@ const docsShellUi = {
 }
 
 .vh-docs-landing {
-  max-width: 84rem;
+  max-width: var(--vh-landing-width);
 }
 
 @media (min-width: 40rem) {

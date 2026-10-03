@@ -6,9 +6,9 @@ navigation.order: 1
 icon: i-lucide-mail
 ---
 
-::product-hero{tagline="One message contract for transactional email: the Vite config selects Resend or Cloudflare Email, and routes stay unchanged." providers="Resend, Cloudflare Email"}
+::product-hero{tagline="One message contract for transactional email: the Vite config selects Resend or Cloudflare Email, and routes stay unchanged." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
-  ```ts [Send]
+  ```ts [server/api/send-welcome.post.ts]
   import renderWelcome from '#vitehub/emails/welcome'
   import { renderEmailMarkdown } from 'vite-hub/email/markdown'
   import { email } from 'vite-hub/email/server'
@@ -26,7 +26,7 @@ icon: i-lucide-mail
   }
   ```
 
-  ```md [Template]
+  ```md [server/emails/welcome.md]
   # Welcome {{ data.user.name }}
 
   Your workspace is ready.
@@ -48,12 +48,12 @@ icon: i-lucide-mail
   })
   ```
 
-  ```ts [Agent]
+  ```ts [server/agents/mailer.ts]
   import { defineAgent } from 'vite-hub/agent'
   import { email } from 'vite-hub/agent/capabilities'
 
   export default defineAgent({
-    driver: { model },
+    driver: { model: 'openai/gpt-5.1-mini' },
     capabilities: [
       email({
         from: 'support@example.com',
@@ -69,18 +69,6 @@ icon: i-lucide-mail
   :::
 ::
 
-::product-flow{caption="The route never names the provider; in vite dev the outbox records each send."}
-  :::product-flow-step{label="Template" detail="#vitehub/emails/welcome"}
-  :::
-  :::product-flow-step{label="Render" detail="renderEmailMarkdown()"}
-  :::
-  :::product-flow-step{label="Send" detail="email.send()"}
-  :::
-  :::product-flow-step{label="Driver" detail="resend · cloudflare-email"}
-  :::
-  :::product-flow-step{label="Delivery or outbox" detail="id · driver · outbox-1"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Config picks the driver, runtime keeps the secret" icon="i-lucide-sliders-horizontal" to="/docs/email/configure"}
@@ -103,7 +91,7 @@ icon: i-lucide-mail
   The sender is fixed; recipients outside `recipients` deny the call.
   :::
 
-  :::product-feature-item{title="Retries belong in Queue or Workflows" icon="i-lucide-circle-alert" to="/docs/queue"}
+  :::product-feature-item{title="Delivery errors stay explicit" icon="i-lucide-circle-alert" to="/docs/email/limits-and-errors"}
   Email maps failures to `EMAIL_*` codes and does not retry.
   :::
 ::

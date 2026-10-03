@@ -1,15 +1,15 @@
 <script setup lang="ts">
 // `::product-hero` opens a product landing page. The copy comes from the page frontmatter and the
-// section manifest. The default slot renders in the right column: a `::code-group` with the real
-// examples that prove the claims on the page, or an interactive component.
+// section manifest. The default slot renders in the right column: a `::code-group` whose tabs become
+// a file list beside the code, or an interactive component.
 import { docsManifest, getDocsPageByPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
-import { getDocsSectionForPath, getDocsSectionSubpages } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+import { getDocsSectionForPath, getDocsSectionSubpages, getDocsSidebarGroups } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
 
 const props = defineProps<{
   /** One sentence of 20 words or fewer, shown instead of the frontmatter description. */
   tagline?: string;
-  /** Comma-separated providers or hosts the primitive runs on, in the order the docs list them. */
-  providers?: string;
+  /** Comma-separated hosts the primitive deploys on, as the product's hosts page lists them. */
+  hosts?: string;
 }>();
 
 const route = useRoute();
@@ -18,60 +18,40 @@ const section = computed(() => getDocsSectionForPath(docsManifest.sections, rout
 const subpages = computed(() => section.value ? getDocsSectionSubpages(section.value) : []);
 const getStarted = computed(() => subpages.value.find(candidate => candidate.id === "get-started") ?? subpages.value[0]);
 const serverApi = computed(() => subpages.value.find(candidate => candidate.id === "server-api"));
+const secondaryPage = computed(() => serverApi.value ?? subpages.value.find(candidate => candidate.id === "invocations"));
+const heroPages = computed(() => {
+  if (!section.value) return [];
+  if (section.value.id !== "agents") return subpages.value;
+  return getDocsSidebarGroups(section.value)
+    .map(group => group.pages[0])
+    .filter((page): page is NonNullable<typeof page> => Boolean(page));
+});
+const hostsPage = computed(() => section.value?.pages.find(candidate => candidate.id === "hosts"));
 
-/** Brand icons for the providers row. Unknown names get a neutral mark. */
-const providerIcons = new Map([
+/** Host marks. The row shows where the primitive deploys, not which driver it uses. */
+const hostIcons = new Map([
   ["cloudflare", "i-simple-icons-cloudflare"],
-  ["cloudflare d1", "i-simple-icons-cloudflare"],
-  ["cloudflare r2", "i-simple-icons-cloudflare"],
-  ["cloudflare kv", "i-simple-icons-cloudflare"],
-  ["durable objects", "i-simple-icons-cloudflare"],
   ["vercel", "i-simple-icons-vercel"],
-  ["vercel blob", "i-simple-icons-vercel"],
   ["netlify", "i-simple-icons-netlify"],
-  ["netlify blobs", "i-simple-icons-netlify"],
   ["deno", "i-simple-icons-deno"],
-  ["deno kv", "i-simple-icons-deno"],
   ["node", "i-simple-icons-nodedotjs"],
   ["docker", "i-simple-icons-docker"],
-  ["upstash", "i-simple-icons-upstash"],
-  ["sqlite", "i-simple-icons-sqlite"],
-  ["libsql", "i-simple-icons-turso"],
-  ["turso", "i-simple-icons-turso"],
-  ["s3", "i-simple-icons-amazons3"],
-  ["google cloud storage", "i-simple-icons-googlecloud"],
-  ["azure blob storage", "i-simple-icons-microsoftazure"],
-  ["supabase", "i-simple-icons-supabase"],
-  ["supabase storage", "i-simple-icons-supabase"],
-  ["resend", "i-simple-icons-resend"],
-  ["github", "i-simple-icons-github"],
-  ["slack", "i-simple-icons-slack"],
-  ["discord", "i-simple-icons-discord"],
-  ["telegram", "i-simple-icons-telegram"],
-  ["teams", "i-simple-icons-microsoftteams"],
-  ["gmail", "i-simple-icons-gmail"],
-  ["google", "i-simple-icons-google"],
-  ["openai", "i-simple-icons-openai"],
-  ["codex", "i-simple-icons-openai"],
-  ["claude code", "i-simple-icons-anthropic"],
   ["nuxt", "i-simple-icons-nuxt"],
-  ["vite", "i-simple-icons-vite"],
-  ["mcp", "i-lucide-plug"],
-  ["http", "i-lucide-globe"],
-  ["web chat", "i-lucide-message-square"],
-  ["local", "i-lucide-hard-drive"],
-  ["file system", "i-lucide-hard-drive"],
-  ["fs", "i-lucide-hard-drive"],
-  ["memory", "i-lucide-cpu"],
-  ["process", "i-lucide-cpu"],
+  ["nitro", "i-lucide-server"],
 ]);
+const hostOrder = ["node", "docker", "cloudflare", "vercel", "netlify", "deno", "nuxt", "nitro"];
 
-const providers = computed(() =>
-  (props.providers ?? "")
+const hosts = computed(() =>
+  (props.hosts ?? "")
     .split(",")
     .map(name => name.trim())
     .filter(Boolean)
-    .map(name => ({ name, icon: providerIcons.get(name.toLowerCase()) ?? "i-lucide-box" })),
+    .map(name => ({ name, icon: hostIcons.get(name.toLowerCase()) ?? "i-lucide-server" }))
+    .sort((left, right) => {
+      const leftOrder = hostOrder.indexOf(left.name.toLowerCase());
+      const rightOrder = hostOrder.indexOf(right.name.toLowerCase());
+      return (leftOrder < 0 ? hostOrder.length : leftOrder) - (rightOrder < 0 ? hostOrder.length : rightOrder);
+    }),
 );
 </script>
 
@@ -86,17 +66,32 @@ const providers = computed(() =>
           {{ getStarted.title }}
           <UIcon name="i-lucide-arrow-right" class="landing-cta-arrow size-4 shrink-0 transition-transform duration-200 motion-reduce:transition-none" aria-hidden="true" />
         </NuxtLink>
-        <NuxtLink v-if="serverApi" :to="serverApi.path" class="vh-hero-secondary">
-          {{ serverApi.title }}
+        <NuxtLink v-if="secondaryPage" :to="secondaryPage.path" class="vh-hero-secondary">
+          {{ secondaryPage.title }}
         </NuxtLink>
       </div>
 
-      <ul v-if="providers.length" class="vh-hero-providers" aria-label="Runs on">
-        <li v-for="provider in providers" :key="provider.name" class="vh-hero-provider">
-          <UIcon :name="provider.icon" class="size-3.5 shrink-0" aria-hidden="true" />
-          <span>{{ provider.name }}</span>
-        </li>
-      </ul>
+      <nav v-if="heroPages.length" class="vh-hero-pages" aria-label="Product pages">
+        <NuxtLink v-for="heroPage in heroPages" :key="heroPage.path" :to="heroPage.path">
+          {{ heroPage.title }}
+        </NuxtLink>
+      </nav>
+
+      <div v-if="hosts.length" class="vh-hero-hosts">
+        <span class="vh-hero-hosts-label">Deploys on</span>
+        <ul class="vh-hero-hosts-list" aria-label="Hosts">
+          <li v-for="host in hosts" :key="host.name" class="vh-hero-host">
+            <NuxtLink v-if="hostsPage" :to="hostsPage.path" class="vh-hero-host-link">
+              <UIcon :name="host.icon" class="size-4 shrink-0" aria-hidden="true" />
+              <span>{{ host.name }}</span>
+            </NuxtLink>
+            <span v-else class="vh-hero-host-link">
+              <UIcon :name="host.icon" class="size-4 shrink-0" aria-hidden="true" />
+              <span>{{ host.name }}</span>
+            </span>
+          </li>
+        </ul>
+      </div>
     </div>
 
     <div class="vh-hero-panel">
@@ -109,13 +104,13 @@ const providers = computed(() =>
 .vh-hero {
   display: grid;
   gap: 2.5rem;
-  align-items: center;
-  padding: 2.5rem 0 1.5rem;
+  align-items: start;
+  padding: 2.5rem 0 1rem;
 }
 
 @media (min-width: 64rem) {
   .vh-hero {
-    grid-template-columns: minmax(20rem, 0.75fr) minmax(0, 1.25fr);
+    grid-template-columns: minmax(20rem, 0.7fr) minmax(0, 1.3fr);
     gap: 4rem;
     padding: 4rem 0 2rem;
   }
@@ -183,25 +178,64 @@ const providers = computed(() =>
   color: var(--ui-text-highlighted);
 }
 
-/* Providers read as a fact row: mono, muted, no chips. */
-.vh-hero-providers {
+.vh-hero-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-top: 1rem;
+  color: var(--ui-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+
+.vh-hero-pages a:hover {
+  color: var(--ui-text-highlighted);
+}
+
+.vh-hero-hosts {
+  margin-top: 2.25rem;
+}
+
+.vh-hero-hosts-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--ui-text-dimmed);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.vh-hero-hosts-list {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 1.25rem;
-  margin: 2rem 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.vh-hero-provider {
+.vh-hero-host {
   display: inline-flex;
   align-items: center;
-  gap: 0.375rem;
   color: var(--ui-text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.8125rem;
 }
 
+.vh-hero-host-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.vh-hero-host-link:hover {
+  color: var(--ui-text-highlighted);
+}
+
+/*
+ * The slot is a prose code group. Its tab list becomes a file list on the left and the active
+ * code fills a fixed-height panel on the right, so switching files does not move the page.
+ */
 .vh-hero-panel {
   min-width: 0;
 }
@@ -210,9 +244,116 @@ const providers = computed(() =>
   margin: 0;
 }
 
+.vh-hero-panel :deep(> div:has(> [role="tablist"])) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-bg);
+}
+
+@media (min-width: 40rem) {
+  .vh-hero-panel :deep(> div:has(> [role="tablist"])) {
+    grid-template-columns: 14rem minmax(0, 1fr);
+  }
+}
+
+/* The tab list is a file list: one file per row, long paths cut from the start. */
+.vh-hero-panel :deep([role="tablist"]) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  border-right: 1px solid var(--ui-border);
+  border-bottom: 0;
+  background: var(--ui-bg-muted);
+  padding: 0.5rem 0;
+}
+
+.vh-hero-panel :deep(> div:has(> [role="tablist"]) > [role="tablist"]) {
+  grid-area: 1 / 1;
+}
+
+.vh-hero-panel :deep(> div:has(> [role="tablist"]) > [role="tabpanel"]) {
+  grid-area: 1 / 2;
+}
+
+.vh-hero-panel :deep(> div:has(> [role="tablist"]) > [role="tabpanel"][data-state="inactive"]),
+.vh-hero-panel :deep(> div:has(> [role="tablist"]) > [role="tabpanel"][hidden]) {
+  display: block;
+  visibility: hidden;
+}
+
+.vh-hero-panel :deep([role="tab"]) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  overflow: hidden;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  padding: 0.375rem 0.875rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.vh-hero-panel :deep([role="tab"] > .iconify) {
+  filter: grayscale(1);
+  opacity: 0.7;
+}
+
+.vh-hero-panel :deep([role="tab"][data-state="active"]),
+.vh-hero-panel :deep([role="tab"][aria-selected="true"]) {
+  border-left-color: var(--ui-text-highlighted);
+  background: color-mix(in srgb, var(--ui-text-highlighted) 6%, transparent);
+  color: var(--ui-text-highlighted);
+}
+
+.vh-hero-panel :deep([role="tabpanel"]) {
+  min-width: 0;
+}
+
+.vh-hero-panel :deep([role="tabpanel"] > div),
+.vh-hero-panel :deep([role="tabpanel"] pre) {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
 .vh-hero-panel :deep(pre) {
+  min-height: 100%;
+  white-space: pre;
   font-size: 0.8125rem;
   line-height: 1.75;
+}
+
+@media (max-width: 39.99rem) {
+  .vh-hero-panel :deep(> div:has(> [role="tablist"]) > [role="tabpanel"]) {
+    grid-area: 2 / 1;
+  }
+
+  .vh-hero-panel :deep([role="tablist"]) {
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
+  }
+
+  .vh-hero-panel :deep([role="tab"]) {
+    width: auto;
+    flex: 0 0 auto;
+  }
+}
+
+.vh-agent-demo :deep(.playground-stage) {
+  border-radius: var(--ui-radius);
+  box-shadow: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

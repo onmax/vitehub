@@ -6,27 +6,18 @@ navigation.order: 1
 icon: i-lucide-list-ordered
 ---
 
-::product-hero{providers="Cloudflare, Vercel" tagline="One runQueue() call sends a job to Cloudflare Queues or Vercel Queues, and the request returns before it runs."}
+::product-hero{tagline="One runQueue() call sends a job to Cloudflare Queues or Vercel Queues, and the request returns before it runs." hosts="Cloudflare, Vercel"}
   :::code-group
-  ```ts [Route]
-  import { deferQueue, runQueue } from '@vite-hub/queue'
+  ```ts [server/api/signup.post.ts]
+  import { runQueue } from '@vite-hub/queue'
 
   export default defineEventHandler(async (event) => {
-    const body = await readBody<{ email: string }>(event)
-
-    // Resolves with { messageId, status: 'queued' } once the provider accepts the job.
-    const queued = await runQueue('welcome-email', { email: body.email }, {
-      delaySeconds: 60,
-    })
-
-    // Enqueues through waitUntil, so the response does not wait for the provider.
-    deferQueue('report', { reportId: `signup:${body.email}` })
-
-    return queued
+    const { email } = await readBody<{ email: string }>(event)
+    return await runQueue('welcome-email', { email })
   })
   ```
 
-  ```ts [Definition]
+  ```ts [server/queues/welcome-email.ts]
   import { defineQueue } from '@vite-hub/queue'
 
   export default defineQueue<{ email: string }>(async ({ payload }) => {
@@ -43,24 +34,14 @@ icon: i-lucide-list-ordered
   })
   ```
 
-  ```bash [CLI]
-  pnpm vite build
+  ```bash [Terminal]
   pnpm add vite-hub
+  pnpm vite build
   pnpm vitehub inspect definitions --kind queue
   ```
   :::
 ::
 
-::product-flow{caption="runQueue() returns when the provider accepts the job, before the handler runs."}
-  :::product-flow-step{label="Route" detail="runQueue('welcome-email', payload)"}
-  :::
-  :::product-flow-step{label="Provider" detail="cloudflare · vercel"}
-  :::
-  :::product-flow-step{label="Accepted" detail="{ status: 'queued', messageId }"}
-  :::
-  :::product-flow-step{label="Handler" detail="server/queues/<name>.ts" loop}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="The file name is the queue name" icon="i-lucide-code-2" to="/docs/queue/configure"}
@@ -83,7 +64,7 @@ icon: i-lucide-list-ordered
   No local delivery; build and inspect the Wrangler or Vercel output.
   :::
 
-  :::product-feature-item{title="Not for tracked runs or cron times" icon="i-lucide-git-branch" to="/docs/workflows"}
-  Use Workflows for run status, Schedule for cron times.
+  :::product-feature-item{title="Delayed delivery stays typed" icon="i-lucide-clock-3" to="/docs/queue/server-api"}
+  Pass `delaySeconds` when the provider supports delayed jobs.
   :::
 ::

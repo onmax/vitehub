@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-key-round
 ---
 
-::product-hero{tagline="Declare public, build-time, server, and secret values in the Vite config, and read them through generated typed imports." providers="Host env, Custom, Git, Build timestamp, package.json, Env provider"}
+::product-hero{tagline="Declare public, build-time, server, and secret values in the Vite config, and read them through generated typed imports." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [vite.config.ts]
   import { env, hubEnv } from '@vite-hub/env/vite'
@@ -50,16 +50,6 @@ icon: i-lucide-key-round
   :::
 ::
 
-::product-flow{caption="Server code reads typed values; a secret stays redacted until unseal()."}
-  :::product-flow-step{label="Declaration" detail="env({ secret: true })"}
-  :::
-  :::product-flow-step{label="Source" detail="env.source('GITHUB_TOKEN')"}
-  :::
-  :::product-flow-step{label="Typed accessor" detail="useServerEnv()"}
-  :::
-  :::product-flow-step{label="Secret" detail="github.token.unseal()"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Host strings become typed values" icon="i-lucide-sliders-horizontal" to="/docs/env/configure"}
@@ -82,7 +72,7 @@ icon: i-lucide-key-round
   A secret store with per-key grants and a durable activity log.
   :::
 
-  :::product-feature-item{title="Not for connected account tokens" icon="i-lucide-plug" to="/docs/connections"}
-  Use Connections for OAuth tokens of connected accounts.
+  :::product-feature-item{title="Secrets resolve at runtime" icon="i-lucide-lock-keyhole" to="/docs/env/server-api"}
+  Keep secret values out of generated client and provider output.
   :::
 ::

@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-radio
 ---
 
-::product-hero{tagline="Collaborative TipTap editing of Workspace Markdown over Yjs, with rooms in memory on Node or Durable Objects on Cloudflare." providers="Cloudflare Durable Objects, memory"}
+::product-hero{tagline="Collaborative TipTap editing of Workspace Markdown over Yjs, with rooms in memory on Node or Durable Objects on Cloudflare." hosts="Cloudflare, Node, Docker"}
   :::code-group
   ```ts [Editor]
   import { useEditor } from '@tiptap/vue-3'
@@ -62,16 +62,6 @@ icon: i-lucide-radio
   :::
 ::
 
-::product-flow{caption="Edits stay room state until a checkpoint writes canonical Markdown to Workspace."}
-  :::product-flow-step{label="Editor" detail="useRealtimeTiptap('docs', path)"}
-  :::
-  :::product-flow-step{label="Room authority" detail="memory · cloudflare · auto" loop}
-  :::
-  :::product-flow-step{label="Checkpoint" detail="history.checkpoint()"}
-  :::
-  :::product-flow-step{label="Workspace file" detail="guides/getting-started.md"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="One composable for editor, presence, and sync" icon="i-lucide-code-2" to="/docs/realtime/get-started#connect-a-tiptap-editor"}

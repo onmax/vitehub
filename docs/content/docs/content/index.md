@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-file-text
 ---
 
-::product-hero{providers="Node SQLite, SQLite WASM" tagline="Parsed Markdown, JSON, YAML, and media from Sources, with navigation and search, served from one generated route on every preset."}
+::product-hero{tagline="Parsed Markdown, JSON, YAML, and media from Sources, with navigation and search, served from one generated route on every preset." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [Definition]
   import sqlite from 'comark-content/database/sqlite-node'
@@ -47,16 +47,6 @@ icon: i-lucide-file-text
   :::
 ::
 
-::product-flow{caption="Server code and the client read the same parsed index through one Definition."}
-  :::product-flow-step{label="Source" detail="glob() · defineSource() · contentSource()"}
-  :::
-  :::product-flow-step{label="Definition" detail="defineContent() in server/content.ts"}
-  :::
-  :::product-flow-step{label="Parse and index" detail="content.init() · sqlite-full-text-search" loop}
-  :::
-  :::product-flow-step{label="Query or serve" detail="content.get() · content.search() · /api/content/**"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="One Source definition feeds Content and direct reads" icon="i-lucide-folder-input" to="/docs/content/configure"}
@@ -79,7 +69,7 @@ icon: i-lucide-file-text
   Bind the same Source to a Workspace and attach `workspaceShell()`.
   :::
 
-  :::product-feature-item{title="Not for raw records or mutable trees" icon="i-lucide-git-branch" to="/docs/source"}
-  Use Source for raw records and Workspace for mutable file trees.
+  :::product-feature-item{title="Templates stay typed" icon="i-lucide-file-code-2" to="/docs/content/server-api"}
+  Render Markdown and data with one server-side content import.
   :::
 ::

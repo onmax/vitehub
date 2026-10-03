@@ -6,7 +6,7 @@ navigation.order: 1
 icon: i-lucide-plug
 ---
 
-::product-hero{tagline="Call provider APIs as an app-owned account: OAuth 2 or API key, sealed in the app database, checked per call." providers="Google, OAuth 2, API key"}
+::product-hero{tagline="Call provider APIs as an app-owned account: OAuth 2 or API key, sealed in the app database, checked per call." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
   :::code-group
   ```ts [Definition]
   import { useServerEnv } from '#vitehub/env/server'
@@ -56,18 +56,6 @@ icon: i-lucide-plug
   :::
 ::
 
-::product-flow{caption="Each call is checked, sent only to declared origins, and recorded without bodies or tokens."}
-  :::product-flow-step{label="Route" detail="useConnection('google')"}
-  :::
-  :::product-flow-step{label="Access rule" detail="read · write · approve"}
-  :::
-  :::product-flow-step{label="Provider origin" detail="https://*.googleapis.com"}
-  :::
-  :::product-flow-step{label="Provider API" detail="refresh · retry once on 401" loop}
-  :::
-  :::product-flow-step{label="Activity" detail="vitehub_connection_activity"}
-  :::
-::
 
 ::product-features
   :::product-feature-item{title="Writes are denied until a rule allows them" icon="i-lucide-shield-check" to="/docs/connections/configure#access-rules"}
@@ -90,7 +78,7 @@ icon: i-lucide-plug
   An `approve` match makes the Agent tool ask for approval.
   :::
 
-  :::product-feature-item{title="Not for static secrets without access rules" icon="i-lucide-git-branch" to="/docs/env"}
-  Use Env for static secrets without access rules or activity.
+  :::product-feature-item{title="Access stays scoped" icon="i-lucide-shield-check" to="/docs/connections/configure"}
+  Store provider credentials with an explicit account and grant policy.
   :::
 ::

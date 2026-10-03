@@ -21,14 +21,23 @@ type CatalogRow = {
 /** Products that share a looping scene with the landing page grid. */
 const scenes = new Map([
   ["agents", "agent"],
+  ["auth", "auth"],
+  ["blob", "blob"],
+  ["browser", "browser"],
   ["connections", "connections"],
   ["content", "content"],
+  ["database", "database"],
+  ["env", "env"],
   ["email", "email"],
   ["kv", "kv"],
   ["queue", "queue"],
+  ["rate-limit", "rate-limit"],
   ["realtime", "realtime"],
   ["sandbox", "sandbox"],
+  ["schedule", "schedule"],
+  ["shell", "shell"],
   ["source", "source"],
+  ["workspace", "workspace"],
   ["workflows", "workflow"],
 ]);
 
