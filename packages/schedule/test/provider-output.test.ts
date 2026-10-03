@@ -1168,6 +1168,18 @@ describe("schedule provider output", () => {
 
   it.each([
     "as Foo<string> ^ (bar())",
+    "as unknown as () => Result<string, unknown> + fallback",
+    "as unknown as () => Result<string, unknown> || fallback",
+    "as unknown as () => Result<string, unknown> ? fallback : alternate",
+    "as unknown as () => Result<string, unknown> (argument)",
+    "as unknown as new () => Result<string, unknown> + fallback",
+    "as unknown as new () => Result<string, unknown> || fallback",
+    "as unknown as new () => Result<string, unknown> ? fallback : alternate",
+    "as unknown as new () => Result<string, unknown> (argument)",
+    "as unknown as (value: unknown) => asserts value is Result<string, unknown> + fallback",
+    "as unknown as (value: unknown) => asserts value is Result<string, unknown> || fallback",
+    "as unknown as (value: unknown) => asserts value is Result<string, unknown> ? fallback : alternate",
+    "as unknown as (value: unknown) => asserts value is Result<string, unknown> (argument)",
     "as Definition ? fallback : fallback",
     "as true extends true ? Definition : never ? fallback : fallback",
     "as Definition ? { config: string, other: number } : fallback",

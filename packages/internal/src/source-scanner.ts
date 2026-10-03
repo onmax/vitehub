@@ -616,7 +616,10 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // punctuation that is valid inside TypeScript type expressions (for
       // example generic arguments and tuple types).
       if (!assertion) return false
-      if (/(?:\([^)]*\)|\bnew\s+\([^)]*\))\s*=>\s*(?:[A-Za-z_$][\w$]*\s*\.\s*)*[A-Za-z_$][\w$]*(?!\s*\()/.test(value)) return true
+      // Function and constructor signatures contain an arrow and parameter
+      // syntax that are valid in types. Mask only that signature so the return
+      // type and any runtime suffix still pass through every validation below.
+      value = value.replace(/(?:\bnew\s+)?\([^)]*\)\s*=>/g, signature => " ".repeat(signature.length))
       // Each conditional type question mark must follow an `extends` clause.
       // Track nested true branches until their colon; a further question mark
       // in a completed false branch is a runtime ternary.
