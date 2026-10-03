@@ -246,150 +246,44 @@ describe("mcp capability", () => {
     }
   })
 
-  it("authorizes a config server through a Connection and checks each tool call", async () => {
+  it.each([false, true])("governs a static or resolved MCP transport through the native Connection client: %s", async (dynamic) => {
     const createdClient = createClient({ search: { execute: vi.fn(async () => "ok") } })
     const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createdClient)
     vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
-    const connections = {
-      decide: vi.fn(async (_name: string, _actor: unknown, operation: { id: string }) => operation.id === "mcp.executor.tools.search" ? "allow" as const : "deny" as const),
-      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
-      record: vi.fn(async () => {}),
-    }
-
+    const client = { call: vi.fn(), fetch: vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response("{}")) }
+    const connections = { client: vi.fn((_name: string, _options: unknown) => client) }
     try {
       const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
       const { mcp } = await import("../src/capabilities.ts")
-      const capability = mcp({
-        servers: { executor: { connection: "executor", transport: { type: "http", url: "https://executor.test/mcp" } } },
-      })
-      expect(capability.requires).toEqual([{ primitive: "connections" }])
+      const server = { connection: " executor ", transport: { type: "http" as const, url: "https://executor.test/mcp" } }
+      const capability = mcp({ servers: { executor: dynamic ? () => server : server } })
+      if (!dynamic) expect(capability.requires).toEqual([{ primitive: "connections" }])
+      await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), {})).rejects.toThrow('mcp() uses Connection "executor", so it requires Connections')
       const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
-        ...runtime(),
-        capabilities: { connections: { runtime: () => connections } },
+        ...runtime(), capabilities: { connections: { runtime: () => connections } },
       }, {})
-
-      const config = createMCPClient.mock.calls[0]?.[0]
+      const config = createMCPClient.mock.calls.at(-1)?.[0]
       expect(config).not.toHaveProperty("connection")
       const transport = config?.transport as { fetch: typeof globalThis.fetch, type: string, url: string }
       expect(transport).toMatchObject({ type: "http", url: "https://executor.test/mcp" })
-
-      await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } }), method: "POST" })
-      await transport.fetch("https://executor.test/mcp", { body: JSON.stringify({ id: 2, jsonrpc: "2.0", method: "tools/list" }), method: "POST" })
+      expect(connections.client).toHaveBeenCalledWith("executor", { actor: "agent:agent" })
+      const controller = new AbortController()
+      const body = JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } })
+      await transport.fetch("https://executor.test/mcp", { body, method: "POST" })
       await transport.fetch(new URL("https://executor.test/mcp"), { method: "GET" })
-      await transport.fetch(new Request("https://executor.test/mcp", { body: JSON.stringify({ id: 3, jsonrpc: "2.0", method: "tools/call", params: { name: "search" } }), headers: { "mcp-session-id": "s1" }, method: "POST" }))
-      expect(connections.fetch.mock.calls.map(([name, url, , options]) => [name, String(url), options])).toEqual([
-        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "all", effect: "write", operation: "mcp.executor.tools.search", trace: expect.objectContaining({ tool: "mcp_executor_search" }) })],
-        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.tools/list" })],
-        ["executor", "https://executor.test/mcp", expect.objectContaining({ audit: "changes", effect: "read", operation: "mcp.executor.rpc.stream" })],
-        ["executor", "https://executor.test/mcp", expect.objectContaining({ effect: "write", operation: "mcp.executor.tools.search" })],
-      ])
-      // A Request keeps its method, headers, and body.
-      const requestInit = connections.fetch.mock.calls[3]?.[2]
-      expect(requestInit?.method).toBe("POST")
-      expect(new Headers(requestInit?.headers).get("mcp-session-id")).toBe("s1")
-      expect(JSON.parse(String(requestInit?.body))).toMatchObject({ method: "tools/call" })
-
-      const tool = resolved.tools?.mcp_executor_search
-      expect(tool?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" }, mcpServer: "executor" })
-      if (typeof tool?.policy !== "function") throw new Error("expected a Connection tool policy")
-      await expect(tool.policy({ name: "mcp_executor_search" })).resolves.toBe("allow")
-      connections.decide.mockResolvedValue("deny")
-      await expect(tool.policy({ name: "mcp_executor_search" })).resolves.toBe("deny")
-      expect(connections.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "mcp.executor.tools.search", outcome: "denied", tool: "mcp_executor_search" }), undefined)
+      await transport.fetch(new Request("https://executor.test/mcp", { body, headers: { "mcp-session-id": "s1" }, method: "POST", signal: controller.signal }), { headers: { "mcp-session-id": "s2" }, redirect: "manual" })
+      expect(client.fetch.mock.calls.map(([url]) => String(url))).toEqual(Array(3).fill("https://executor.test/mcp"))
+      const init = client.fetch.mock.calls[2]?.[1]
+      expect(init?.method).toBe("POST")
+      expect(init?.redirect).toBe("manual")
+      expect(new Headers(init?.headers).get("mcp-session-id")).toBe("s2")
+      expect(init?.body).toBe(body)
+      controller.abort("stop")
+      expect(init?.signal?.aborted).toBe(true)
+      expect(resolved.tools?.mcp_executor_search?.metadata).toMatchObject({ connection: { name: "executor", operation: "fetch" }, mcpServer: "executor", originalName: "search" })
       await resolved.close()
     }
-    finally {
-      vi.doUnmock("@ai-sdk/mcp")
-    }
-  })
-
-  it("passes an approved MCP tool run to its tools/call request only", async () => {
-    let transportFetch: typeof globalThis.fetch | undefined
-    const callTool = async (args: unknown) => transportFetch?.("https://executor.test/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: args, name: "execute" } }), method: "POST" })
-    let release: (() => void) | undefined
-    const paused = new Promise<void>(resolve => (release = resolve))
-    let executions = 0
-    const createMCPClient = vi.fn(async (config: { transport: { fetch: typeof globalThis.fetch } }) => {
-      transportFetch = config.transport.fetch
-      return createClient({ execute: { execute: vi.fn(async (input: { code: string }) => {
-        if (++executions === 1) await paused
-        await callTool(input)
-        return "ok"
-      }) } })
-    })
-    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
-    const connections = {
-      decide: vi.fn(async () => "require-approval" as const),
-      fetch: vi.fn(async (_name: string, _url: string | URL, init: RequestInit | undefined, _options: unknown) => new Response(String(init?.body ?? ""))),
-      record: vi.fn(async () => {}),
-    }
-    const approvedCalls = () => connections.fetch.mock.calls.map(([, , init, options]) => [JSON.parse(String(init?.body)).params.arguments, (options as { approved?: boolean }).approved === true])
-    try {
-      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
-      const { mcp } = await import("../src/capabilities.ts")
-      const resolved = await resolveAgentCapabilities({ capabilities: [mcp({ servers: { executor: { connection: "executor", transport: { type: "http", url: "https://executor.test/mcp" } } } })] }, {
-        ...runtime(),
-        capabilities: { connections: { runtime: () => connections } },
-      }, {})
-      const tool = resolved.tools?.mcp_executor_execute
-      if (typeof tool?.policy !== "function" || !tool.execute) throw new Error("expected a Connection tool")
-
-      // Run A is approved and pauses. An identical concurrent tool execution cannot consume its grant.
-      const approvedInput = { code: "approved" }
-      await expect(tool.policy({ input: approvedInput, name: "mcp_executor_execute" })).resolves.toBe("require-approval")
-      // SAFETY: The MCP tool wrapper does not read the execution options.
-      const runA = tool.execute(approvedInput, {} as never)
-      await tool.execute({ code: "approved" }, {} as never)
-      await callTool({ code: "other" })
-      release?.()
-      await runA
-      // A later run with the same content is not approved either.
-      // SAFETY: The MCP tool wrapper does not read the execution options.
-      await tool.execute({ code: "approved" }, {} as never)
-      expect(approvedCalls()).toEqual([
-        [{ code: "approved" }, false],
-        [{ code: "other" }, false],
-        [{ code: "approved" }, true],
-        [{ code: "approved" }, false],
-      ])
-      await resolved.close()
-    }
-    finally {
-      vi.doUnmock("@ai-sdk/mcp")
-    }
-  })
-
-  it("authorizes a resolved server config through a Connection", async () => {
-    const createMCPClient = vi.fn(async (_config: Record<string, unknown>) => createClient({ search: { execute: vi.fn(async () => "ok") } }))
-    vi.doMock("@ai-sdk/mcp", () => ({ createMCPClient }))
-    const connections = {
-      decide: vi.fn(async () => "allow" as const),
-      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => new Response("{}")),
-      record: vi.fn(async () => {}),
-    }
-
-    try {
-      const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
-      const { mcp } = await import("../src/capabilities.ts")
-      const capability = mcp({
-        servers: { executor: () => ({ connection: "executor", transport: { type: "http", url: "https://executor.test/tenant/mcp" } }) },
-      })
-      await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), {}))
-        .rejects.toThrow("mcp() uses Connection \"executor\", so it requires Connections")
-
-      const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
-        ...runtime(),
-        capabilities: { connections: { runtime: () => connections } },
-      }, {})
-      const transport = createMCPClient.mock.calls.at(-1)?.[0]?.transport as { fetch: typeof globalThis.fetch }
-      await transport.fetch("https://executor.test/tenant/mcp", { body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { name: "search" } }), method: "POST" })
-      expect(connections.fetch).toHaveBeenCalledWith("executor", "https://executor.test/tenant/mcp", expect.anything(), expect.objectContaining({ operation: "mcp.executor.tools.search" }))
-      expect(resolved.tools?.mcp_executor_search?.metadata).toMatchObject({ connection: { name: "executor", operation: "mcp.executor.tools.search" } })
-      await resolved.close()
-    }
-    finally {
-      vi.doUnmock("@ai-sdk/mcp")
-    }
+    finally { vi.doUnmock("@ai-sdk/mcp") }
   })
 
   it("rejects a Connection on a transport it cannot authorize", async () => {

@@ -118,17 +118,17 @@ openapi({
 })
 ```
 
-The Connection adds its credentials after `hooks.request`, so hooks never see the token. Each operation has the Connection Operation id `openapi.<operationId>`. `GET` and `HEAD` operations are reads. Other methods are writes. Without a matching rule, writes are denied, so allow them in the Agent rule of the Connection:
+The Connection adds its credentials after `hooks.request`, so hooks never see the token. The capability sends requests through the Connection client as the `fetch` action. `GET` and `HEAD` requests are reads. Other methods are writes. Without a matching `fetch` rule, writes are denied, so allow them in the Agent rule of the Connection:
 
 ```ts [server/connections/billing.ts]
 access: {
   agents: {
-    support: { allow: ['openapi.billingCreateTicket'] },
+    support: { read: true, write: ['fetch'] },
   },
 },
 ```
 
-ViteHub checks access before a tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` asks for tool approval: in a provider Agent session, an approved call runs. Otherwise it fails with `APPROVAL_REQUIRED`. A generated CLI command fails with `CONNECTIONS_DENIED` or `CONNECTIONS_APPROVAL_REQUIRED` before the request. Each call is recorded as Connection activity with the Agent name, run id, Invocation trace id, and operation id.
+ViteHub checks access before a tool runs. A denied request fails with `CONNECTION_DENIED`. A write that requires approval creates a durable Connection approval and fails with `CONNECTION_APPROVAL_REQUIRED` until an administrator approves it. Each call is recorded as Connection activity with the Agent actor, invocation trace id, and `fetch` action.
 
 ## Override the request server
 
@@ -217,7 +217,7 @@ openapi({
 | `description` | `string` | none | Prefix for generated operation-tool descriptions and fallback description for the generated Capability CLI. |
 | `hooks.request` | `(context) => patch \| void` or `{ provides?, handler }` | none | Fetch-style request preparation hook for runtime headers, cookies, path, query, body, timeout, and `maxResponseBytes` values. |
 | `hooks.request.provides` | `{ body?, path?, query? }` | none | Runtime-owned OpenAPI input fields to remove from model and generated CLI schemas before caller validation. |
-| `connection` | `string` | none | Name of a Connection in `server/connections/`. It adds credentials, checks access for `openapi.<operationId>`, and records activity. |
+| `connection` | `string` | none | Name of a Connection in `server/connections/`. It adds credentials, checks access for `fetch`, and records activity. |
 | `server` | `string \| URL \| function` | OpenAPI server | Override escape hatch for specs without a usable `servers[0].url` or spec URL origin. |
 | `cli` | `false \| { name, description? }` | `false` | Generates a Capability CLI instead of one model-facing tool per operation. |
 | `responseType` | `"json" \| "text"` | `"json"` | Response parser for operation results. |

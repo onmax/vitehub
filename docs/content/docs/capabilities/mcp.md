@@ -87,20 +87,20 @@ Each request maps to a Connection Operation id:
 
 | Request | Operation id | Effect | Activity |
 | --- | --- | --- | --- |
-| Tool call | `mcp.<server>.tools.<tool>` | write | Every call. |
-| Protocol message, such as `initialize` or `tools/list` | `mcp.<server>.rpc.<method>` | read | Only denials and failures. |
+| HTTP `GET` or `HEAD` request | `fetch` | read | Every request. |
+| HTTP write request, including a tool call or protocol message | `fetch` | write | Every request. |
 
-ViteHub treats every tool call as a write, because tool annotations come from the MCP Server. Without a matching rule, writes are denied, so the Agent rule in the Connection must allow the tools:
+The MCP transport uses the native Connection `fetch` client. GET and HEAD requests are reads. POST requests, including tool calls and protocol messages, are writes. Without a matching `fetch` rule, writes are denied, so the Agent rule in the Connection must allow the transport:
 
 ```ts [server/connections/docs.ts]
 access: {
   agents: {
-    support: { allow: ['mcp.docs.tools.*'] },
+    support: { read: true, write: ['fetch'] },
   },
 },
 ```
 
-ViteHub checks access before the tool runs. A denied tool fails with `CAPABILITY_DENIED`. A tool that matches `approve` asks for tool approval: in a provider Agent session, an approved call runs. Otherwise it fails with `APPROVAL_REQUIRED`.
+ViteHub checks access before the tool runs. A denied request fails with `CONNECTION_DENIED`. A write that requires approval creates a durable Connection approval and fails with `CONNECTION_APPROVAL_REQUIRED` until an administrator approves it.
 
 ## Executor through `mcp()`
 
@@ -119,7 +119,7 @@ mcp({
 })
 ```
 
-Allow the tools in the Connection with `agents: { support: { allow: ['mcp.executor.tools.*'] } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/server-primitives/connections#api-key-connections) with a personal Executor API key.
+Allow the transport in the Connection with `agents: { support: { read: true, write: ['fetch'] } }`. The `executor` Connection can use an OAuth client for your app, or an [API key Connection](/docs/server-primitives/connections#api-key-connections) with a personal Executor API key.
 
 Without Connections, you can also send an Executor API key from Server Env in a resolver. Use a personal API key: Executor rejects organization keys for MCP sessions.
 

@@ -201,10 +201,10 @@ Agent Capabilities call a Connection with the Agent name as the actor. The rule 
 | Capability | Option | Operation ids |
 | --- | --- | --- |
 | [`gmail()`](/docs/capabilities/gmail) | `connection`, default `'google'` | `gmail.messages.list`, `gmail.messages.get`, `gmail.drafts.create` |
-| [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `openapi.<operationId>` |
-| [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `mcp.<server>.tools.<tool>`, `mcp.<server>.rpc.<method>` |
+| [`openapi()`](/docs/capabilities/openapi#authenticate-through-a-connection) | `connection` | `fetch` |
+| [`mcp()`](/docs/capabilities/mcp#authenticate-through-a-connection) | `servers.<name>.connection` | `fetch` |
 
-`gmail.drafts.create`, OpenAPI operations other than `GET` and `HEAD`, and all MCP tool calls are writes. Without a matching rule they are denied, so allow or approve them in the Agent rule.
+`gmail.users.drafts.create`, OpenAPI operations other than `GET` and `HEAD`, and MCP POST requests use the Connection `fetch` action as writes. Without a matching rule they are denied, so allow or approve them in the Agent rule.
 
 ## Activity
 

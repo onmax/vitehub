@@ -439,13 +439,10 @@ describe("openapi capability", () => {
     expect((init.headers as Headers).get("x-cube-token")).toBe("cube-token")
   })
 
-  it("sends requests through a Connection after the request hook", async () => {
+  it("sends requests through a native Connection client after the request hook", async () => {
     const global = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse({ unexpected: true }))
-    const connections = {
-      decide: vi.fn(async (_name: string, _actor: unknown, operation: { effect: string }) => operation.effect === "read" ? "allow" as const : "deny" as const),
-      fetch: vi.fn(async (_name: string, _url: string | URL, _init: RequestInit | undefined, _options: unknown) => jsonResponse({ customers: [] })),
-      record: vi.fn(async () => {}),
-    }
+    const client = { call: vi.fn(), fetch: vi.fn(async (_url: string | URL, _init?: RequestInit) => jsonResponse({ customers: [] })) }
+    const connections = { client: vi.fn((_name: string, _options: unknown) => client) }
     const hookHeaders: Array<string | null> = []
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { openapi } = await import("../src/capabilities.ts")
@@ -460,79 +457,44 @@ describe("openapi capability", () => {
     })
     expect(capability.requires).toEqual([{ primitive: "connections" }])
     const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, {
-      ...runtime(),
-      capabilities: { connections: { runtime: () => connections } },
+      ...runtime(), capabilities: { connections: { runtime: () => connections } },
     }, { prompt: "list" })
-    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    // SAFETY: The resolver exposes the tool set constructed by this Capability.
     const tools = resolved.tools as AgentToolSet
-
     await expect(tools.listCustomers.execute?.({ query: { region: "eu" } })).resolves.toEqual({ customers: [] })
     expect(global).not.toHaveBeenCalled()
     expect(hookHeaders).toEqual([null])
-    const [name, url, init, options] = connections.fetch.mock.calls[0] ?? []
-    expect([name, url]).toEqual(["portal", "https://portal.example.com/runtime/customers?region=eu"])
+    const [url, init] = client.fetch.mock.calls[0] ?? []
+    expect(url).toBe("https://portal.example.com/runtime/customers?region=eu")
     expect(new Headers(init?.headers).get("x-hook")).toBe("yes")
-    expect(options).toMatchObject({ audit: "all", effect: "read", operation: "openapi.listCustomers", trace: { tool: "listCustomers" } })
-    expect(tools.listCustomers.metadata).toMatchObject({ connection: { name: "portal", operation: "openapi.listCustomers" } })
-
-    if (typeof tools.createOrder.policy !== "function") throw new Error("expected a Connection tool policy")
-    await expect(tools.createOrder.policy({ name: "createOrder" })).resolves.toBe("deny")
-    expect(connections.decide).toHaveBeenLastCalledWith("portal", { id: "agent", kind: "agent" }, { effect: "write", id: "openapi.createOrder" })
-    expect(connections.record).toHaveBeenCalledWith(expect.objectContaining({ operation: "openapi.createOrder", outcome: "denied" }), undefined)
+    expect(connections.client).toHaveBeenCalledWith("portal", { actor: "agent:agent" })
+    expect(tools.listCustomers.metadata).toMatchObject({ connection: { name: "portal", operation: "fetch" } })
     await resolved.close()
   })
 
-  it.each(["CONNECTIONS_DENIED", "CONNECTIONS_APPROVAL_REQUIRED"])("calls the Connection guard once for CLI policy rejection %s", async (code) => {
-    const failure = new ViteHubError(code, "Connection policy rejected")
-    const connection = {
-      fetch: vi.fn(async () => { throw failure }),
-      record: vi.fn(async () => {}),
-    }
+  it.each(["CONNECTION_DENIED", "CONNECTION_APPROVAL_REQUIRED", "CONNECTION_INVALID", "CONNECTION_REAUTH_REQUIRED"])("calls the Connection guard once for CLI rejection %s", async (code) => {
+    const failure = new ViteHubError(code, "Connection rejected the request")
+    const client = { call: vi.fn(), fetch: vi.fn(async () => { throw failure }) }
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { openapi } = await import("../src/capabilities.ts")
     const resolved = await resolveAgentCapabilities({ capabilities: [openapi({
       cli: { name: "portal" }, connection: "portal", operations: ["listCustomers"], spec: portalSpec(),
-    })] }, { ...runtime(), capabilities: { connections: { runtime: () => connection } } }, {})
+    })] }, { ...runtime(), capabilities: { connections: { runtime: () => ({ client: () => client }) } } }, {})
     await expect(resolved.tools?.portal?.execute?.({ argv: ["list-customers", "--json"] })).rejects.toBe(failure)
-    expect(connection.fetch).toHaveBeenCalledOnce()
-    await resolved.close()
-  })
-
-  it("passes tool approval to the Connection fetch of that operation", async () => {
-    const connections = {
-      decide: vi.fn(async () => "require-approval" as const),
-      fetch: vi.fn(async (_name: string, _url: string | URL, _init?: RequestInit, _options?: unknown) => jsonResponse({ id: "o1" })),
-      record: vi.fn(async () => {}),
-    }
-    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
-    const { openapi } = await import("../src/capabilities.ts")
-    const resolved = await resolveAgentCapabilities({ capabilities: [openapi({ connection: "portal", operations: ["createOrder"], spec: portalSpec() })] }, {
-      ...runtime(),
-      capabilities: { connections: { runtime: () => connections } },
-    }, { prompt: "order" })
-    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-    const tool = (resolved.tools as AgentToolSet).createOrder
-    if (typeof tool.policy !== "function") throw new Error("expected a Connection tool policy")
-    const input = { body: { cubeToken: "c", sku: "s" }, path: { tenantId: "t1" } }
-    await expect(tool.policy({ input, name: "createOrder" })).resolves.toBe("require-approval")
-    await tool.execute?.(input)
-    expect(connections.fetch.mock.calls[0]?.[3]).toMatchObject({ approved: true, operation: "openapi.createOrder" })
-    // A later run was not approved.
-    await tool.execute?.({ ...input })
-    expect(connections.fetch.mock.calls[1]?.[3]).not.toHaveProperty("approved")
+    expect(client.fetch).toHaveBeenCalledOnce()
     await resolved.close()
   })
 
   it("uses the trimmed Connection name", async () => {
-    const connections = { decide: vi.fn(async () => "allow" as const), fetch: vi.fn(async (_name: string, _url: string | URL, _init?: RequestInit, _options?: unknown) => jsonResponse({ customers: [] })), record: vi.fn(async () => {}) }
+    const client = { call: vi.fn(), fetch: vi.fn(async () => jsonResponse({ customers: [] })) }
+    const connections = { client: vi.fn((_name: string, _options: unknown) => client) }
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { openapi } = await import("../src/capabilities.ts")
     const capability = openapi({ connection: " portal ", operations: ["listCustomers"], spec: portalSpec() })
     expect(capability.metadata).toMatchObject({ connection: "portal" })
     const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, { ...runtime(), capabilities: { connections: { runtime: () => connections } } }, { prompt: "list" })
-    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-    await (resolved.tools as AgentToolSet).listCustomers.execute?.({})
-    expect(connections.fetch.mock.calls[0]?.[0]).toBe("portal")
+    await resolved.tools?.listCustomers.execute?.({})
+    expect(connections.client.mock.calls[0]?.[0]).toBe("portal")
     await resolved.close()
   })
 
