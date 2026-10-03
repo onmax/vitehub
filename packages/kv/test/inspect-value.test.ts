@@ -1,0 +1,36 @@
+import { describe, expect, it, vi } from "vitest"
+
+import { inspectKVValue } from "../src/runtime/inspect-value.ts"
+
+describe("KV inspection values", () => {
+  it("returns JSON data independently from the stored value", () => {
+    const shared = { count: 9007199254740993n }
+    const value = { first: shared, second: shared }
+    const inspected = inspectKVValue(value)
+    expect(inspected).toEqual({ type: "object", value: { first: { count: "9007199254740993" }, second: { count: "9007199254740993" } } })
+    expect(inspected?.value).not.toBe(value)
+    expect(inspectKVValue(null)).toEqual({ type: "null", value: null })
+    expect(inspectKVValue(new Uint8Array([0, 127, 255]))).toEqual({ encoding: "base64", type: "bytes", value: "AH//" })
+  })
+
+  it("rejects object behavior without running getters or toJSON", () => {
+    const getter = vi.fn(() => "secret")
+    const toJSON = vi.fn(() => "secret")
+    expect(inspectKVValue(Object.defineProperty({}, "secret", { enumerable: true, get: getter }))).toBeUndefined()
+    expect(inspectKVValue({ toJSON })).toBeUndefined()
+    expect(getter).not.toHaveBeenCalled()
+    expect(toJSON).not.toHaveBeenCalled()
+  })
+
+  it("rejects values JSON would lose while allowing shared references", () => {
+    const cyclic: { self?: unknown } = {}
+    cyclic.self = cyclic
+    const sparse = ["first", "second", "third"]
+    Reflect.deleteProperty(sparse, "1")
+    for (const value of [cyclic, undefined, -0, Number.POSITIVE_INFINITY, sparse, { nested: new Uint8Array([1]) }]) {
+      expect(inspectKVValue(value)).toBeUndefined()
+    }
+    const shared = { entry: "kept" }
+    expect(inspectKVValue([shared, shared])).toEqual({ type: "array", value: [{ entry: "kept" }, { entry: "kept" }] })
+  })
+})

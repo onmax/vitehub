@@ -78,6 +78,12 @@ export default defineDatabase({
 
 Remote access is explicit. Omitting `cloudflare.http` keeps the local SQLite default, and a Cloudflare deployment still prefers its D1 binding.
 
+When a libSQL connection URL or auth token changes at runtime, the next database
+access creates a client with the new credentials and closes the previous client.
+Credential refresh is therefore a lifecycle boundary: await outstanding database
+work before changing the credential, because libSQL closes can abort operations
+that are still in flight.
+
 ## Nuxt D1 host wiring
 
 Nuxt apps can declare one D1 database resource and let the Database Nuxt bridge wire framework consumers and Cloudflare output.

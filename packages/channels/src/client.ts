@@ -40,9 +40,22 @@ function logDelivery(event: string, deliveryId: string, channel: string, connect
 }
 
 function normalizeConnectorResult(result: ChannelConnectorResult): ChannelConnectorResult {
-  const normalized: ChannelConnectorResult = Object.fromEntries(Reflect.ownKeys(result)
-    .filter(key => key !== "id" && Object.prototype.propertyIsEnumerable.call(result, key))
-    .map(key => [key, Reflect.get(result, key)]))
+  const entries: Array<[PropertyKey, unknown]> = []
+  try {
+    for (const key of Reflect.ownKeys(result)) {
+      if (key === "id") continue
+      try {
+        if (Object.prototype.propertyIsEnumerable.call(result, key)) entries.push([key, Reflect.get(result, key)])
+      }
+      catch {
+        // Optional metadata must not turn an accepted delivery into a retry.
+      }
+    }
+  }
+  catch {
+    // A connector proxy can reject enumeration while still exposing its ID.
+  }
+  const normalized: ChannelConnectorResult = Object.fromEntries(entries)
   try {
     const id = result.id
     if (id !== undefined) normalized.id = id
