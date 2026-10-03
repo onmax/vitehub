@@ -787,6 +787,31 @@ describe("ViteHub Nuxt integration", () => {
     )
   })
 
+  it.each([true, false])("preserves Nuxt Connections development navigation and production rejection (dev: %s)", async (dev) => {
+    const application = createNuxt(dev)
+    try {
+      const configure = () => viteHubNuxtModule({
+        preset: "node",
+        connections: true,
+        database: true,
+        console: dev ? { access: "auth" } : { exposure: "host-managed" },
+      }, application.nuxt)
+      if (!dev) {
+        await expect(configure()).rejects.toThrow("connections is not supported by the Nuxt module yet")
+        return
+      }
+      await configure()
+      const pages: Array<{ file: string; name: string; path: string }> = []
+      application.runPagesHook(pages)
+      expect(pages.some(page => page.name === "vitehub-console-connections")).toBe(dev)
+      const generated = await readFile("/tmp/vitehub-nuxt/.vitehub/nitro/console/plugin.mjs", "utf8")
+      expect(generated.includes('"connections"')).toBe(dev)
+    }
+    finally {
+      await application.runCloseHook()
+    }
+  })
+
   it.each([true, false])("carries the Node data directory into the Nuxt Console bootstrap (dev: %s)", async (dev) => {
     const application = createNuxt(dev)
     await viteHubNuxtModule({
