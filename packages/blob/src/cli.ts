@@ -1,5 +1,9 @@
-import { readFile, stat, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { createWriteStream } from "node:fs"
+import { readFile, rename, rm, stat } from "node:fs/promises"
 import { resolve } from "node:path"
+import { Readable, Transform, Writable } from "node:stream"
+import { pipeline } from "node:stream/promises"
 import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
@@ -235,10 +239,6 @@ async function readUpload(path: string): Promise<{ data: string } | BlobCliFailu
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return v.is(v.record(v.string(), v.unknown()), value)
-}
-
 function formatSize(size: number | undefined): string {
   return size === undefined ? "-" : `${size} B`
 }
@@ -375,25 +375,44 @@ function readFileHeader(response: Response, fallback: { pathname: string, store:
 }
 
 async function writeDownload(response: Response, parsed: ParsedBlobArgs, context: BlobCliContext): Promise<number> {
-  let bytes: Uint8Array
+  const output = parsed.output ? resolve(context.cwd, parsed.output) : undefined
+  const temporaryOutput = output ? `${output}.${randomUUID()}.tmp` : undefined
+  const destination = output
+    ? createWriteStream(temporaryOutput!, { flags: "wx" })
+    : context.stdout instanceof Writable
+      ? context.stdout
+      : new Writable({
+          write(chunk: Uint8Array, _encoding, callback) {
+            try {
+              context.stdout.write(chunk)
+              callback()
+            }
+            catch (error) {
+              callback(error instanceof Error ? error : new Error(String(error)))
+            }
+          },
+        })
+  let size = 0
+  const source = response.body ? Readable.fromWeb(response.body) : Readable.from([])
+  let failureSource: "read" | "write" | undefined
+  source.once("error", () => { failureSource ??= "read" })
+  destination.once("error", () => { failureSource ??= "write" })
+  const counter = new Transform({
+    transform(chunk: Uint8Array, _encoding, callback) {
+      size += chunk.byteLength
+      callback(null, chunk)
+    },
+  })
   try {
-    bytes = new Uint8Array(await response.arrayBuffer())
+    await pipeline(source, counter, destination, { end: Boolean(output) })
+    if (output) await rename(temporaryOutput!, output)
   }
   catch (error) {
-    return writeFailure(parsed, context, { message: `Could not read the Blob download: ${error instanceof Error ? error.message : String(error)}` })
+    if (temporaryOutput) await rm(temporaryOutput, { force: true }).catch(() => {})
+    return writeFailure(parsed, context, { message: `${failureSource === "read" || !output ? "Could not read the Blob download" : `Could not write ${output}`}: ${error instanceof Error ? error.message : String(error)}` })
   }
-  const header = readFileHeader(response, { pathname: parsed.pathname!, store: parsed.store ?? "default" }, bytes.byteLength)
-  if (!parsed.output) {
-    context.stdout.write(bytes)
-    return 0
-  }
-  const output = resolve(context.cwd, parsed.output)
-  try {
-    await writeFile(output, bytes)
-  }
-  catch (error) {
-    return writeFailure(parsed, context, { message: `Could not write ${output}: ${error instanceof Error ? error.message : String(error)}` })
-  }
+  if (!output) return 0
+  const header = readFileHeader(response, { pathname: parsed.pathname!, store: parsed.store ?? "default" }, size)
   if (parsed.json) context.stdout.write(`${JSON.stringify({ ...header, output }, null, 2)}\n`)
   else context.stdout.write(`Wrote blob ${header.pathname} from store ${header.store} to ${output} (${formatSize(header.size)}).\n`)
   return 0

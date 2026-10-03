@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events"
-import { mkdir, mkdtemp, readFile, rm, truncate, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable, Writable } from "node:stream"
@@ -207,7 +207,7 @@ describe("vitehub blob", () => {
     const fetch = fileServer(binary, header)
     await expect(runBlobCli(["get", "raw.bin"], piped.context, { fetch })).resolves.toBe(0)
     expect(sentBody(fetch)).toEqual({ operation: "get", pathname: "raw.bin" })
-    expect(piped.stdout.bytes()).toEqual([binary])
+    expect(piped.stdout.bytes().map(chunk => new Uint8Array(chunk))).toEqual([binary])
     expect(piped.stdout.output()).toBe("")
 
     const saved = context()
@@ -218,6 +218,86 @@ describe("vitehub blob", () => {
     const json = context()
     await expect(runBlobCli(["get", "raw.bin", "--output=copy.bin", "--json"], json.context, { fetch: fileServer(binary, header) })).resolves.toBe(0)
     expect(JSON.parse(json.stdout.output())).toEqual({ ...header, output: join(cwd, "copy.bin") })
+  })
+
+  it("writes a download before the response finishes and waits for stdout backpressure", async () => {
+    let finishResponse: (() => void) | undefined
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(binary)
+        finishResponse = () => {
+          controller.enqueue(binary)
+          controller.close()
+        }
+      },
+    }))
+    const bufferedRead = vi.spyOn(response, "arrayBuffer")
+    let releaseWrite: (() => void) | undefined
+    const chunks: Uint8Array[] = []
+    let firstWrite: (() => void) | undefined
+    const started = new Promise<void>((resolve) => { firstWrite = resolve })
+    const stdout = new Writable({
+      highWaterMark: 1,
+      write(chunk: Uint8Array, _encoding, callback) {
+        chunks.push(new Uint8Array(chunk))
+        if (chunks.length === 1) {
+          releaseWrite = callback
+          firstWrite!()
+        }
+        else callback()
+      },
+    })
+    const output = context()
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json(discovery()))
+    let finished = false
+    const result = runBlobCli(["get", "raw.bin"], { ...output.context, stdout }, { fetch }).then((code) => {
+      finished = true
+      return code
+    })
+    await started
+    finishResponse!()
+    await new Promise(resolve => setImmediate(resolve))
+    expect(chunks).toEqual([binary])
+    expect(finished).toBe(false)
+    releaseWrite!()
+    await expect(result).resolves.toBe(0)
+    expect(chunks).toEqual([binary, binary])
+    expect(bufferedRead).not.toHaveBeenCalled()
+    expect(stdout.writableEnded).toBe(false)
+    stdout.end()
+  })
+
+  it("cancels a stalled download when stdout fails", async () => {
+    const cancel = vi.fn()
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(binary) },
+      cancel,
+    }))
+    const stdout = new Writable({
+      write(_chunk, _encoding, callback) { callback(new Error("broken pipe")) },
+    })
+    const output = context()
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json(discovery()))
+    await expect(runBlobCli(["get", "raw.bin"], { ...output.context, stdout }, { fetch })).resolves.toBe(1)
+    expect(output.stderr.output()).toContain("broken pipe")
+    expect(cancel).toHaveBeenCalledOnce()
+  })
+
+  it("preserves an existing output file and removes temporary data after a partial download fails", async () => {
+    await writeFile(join(cwd, "saved.bin"), "existing data")
+    let pullCount = 0
+    const response = new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pullCount++ === 0) controller.enqueue(binary)
+        else controller.error(new Error("download interrupted"))
+      },
+    }))
+    const output = context()
+    const fetch = vi.fn(async (_url: string | URL | Request, request?: RequestInit) => request?.method === "POST" ? response : Response.json(discovery()))
+    await expect(runBlobCli(["get", "raw.bin", "--output", "saved.bin", "--json"], output.context, { fetch })).resolves.toBe(1)
+    expect(JSON.parse(output.stdout.output())).toEqual({ error: { message: "Could not read the Blob download: download interrupted" } })
+    expect(await readFile(join(cwd, "saved.bin"), "utf8")).toBe("existing data")
+    expect((await readdir(cwd)).filter(name => name.endsWith(".tmp"))).toEqual([])
   })
 
   it("uploads a file as base64 and prints what changed", async () => {
