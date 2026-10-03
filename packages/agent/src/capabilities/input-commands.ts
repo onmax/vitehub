@@ -472,7 +472,9 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
       let cursor = 0
       let runs = 0
       let maxRuns = Math.max(1_000, text.length + 1)
-      const budgetedCommands = new Set<string>()
+      const creditedGrowth = new Set<string>()
+      const transitions = new Set<string>()
+      const blockedCommands = new Set<string>()
       let budgetText: string | undefined
       let budgetCommand: string | undefined
       while (cursor <= text.length) {
@@ -482,14 +484,25 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           const nextRuns = countInputCommandInvocations(text, trigger, commands)
           const previousRuns = countInputCommandInvocations(budgetText, trigger, commands)
           const addedRuns = Math.max(0, nextRuns - previousRuns)
-          if (budgetCommand !== undefined && !budgetedCommands.has(budgetCommand)) {
+          if (budgetCommand !== undefined) {
             const previousOwnRuns = countInputCommandInvocations(budgetText, trigger, commands, budgetCommand)
             const nextOwnRuns = countInputCommandInvocations(text, trigger, commands, budgetCommand)
             const advancesStage = nextOwnRuns < previousOwnRuns && nextRuns - nextOwnRuns > previousRuns - previousOwnRuns
-            if (addedRuns > 0 || advancesStage) {
+            const finiteStage = nextOwnRuns === 0 && addedRuns > 0
+            const ownGrowth = nextOwnRuns > previousOwnRuns && !creditedGrowth.has(budgetCommand)
+            const wasBlocked = blockedCommands.has(budgetCommand)
+            const nextNames = Object.keys(commands).filter(name => countInputCommandInvocations(text, trigger, commands, name) > 0)
+            for (const nextName of nextNames) {
+              if (nextName !== budgetCommand && transitions.has(`${nextName}->${budgetCommand}`)) {
+                blockedCommands.add(nextName)
+                blockedCommands.add(budgetCommand)
+              }
+              if (nextName !== budgetCommand) transitions.add(`${budgetCommand}->${nextName}`)
+            }
+            if (!wasBlocked && (finiteStage || advancesStage || ownGrowth)) {
               // Credit the rewritten invocation too, which may consume the base allowance.
               maxRuns += (addedRuns > 0 ? addedRuns : nextRuns) + 1
-              budgetedCommands.add(budgetCommand)
+              if (ownGrowth) creditedGrowth.add(budgetCommand)
             }
           }
         }
@@ -505,7 +518,7 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           cursor = invocation.end
           continue
         }
-        if (!budgetedCommands.has(invocation.name)) {
+        if (!blockedCommands.has(invocation.name)) {
           budgetText = text
           budgetCommand = invocation.name
         }

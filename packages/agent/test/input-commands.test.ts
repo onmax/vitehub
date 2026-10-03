@@ -88,6 +88,33 @@ describe("inputCommands", () => {
     expect(calls).toBe(2_000)
   })
 
+  it.each(["replacement", "result", "mutation"] as const)("allows finite command fan-out through %s", async (mode) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let markCalls = 0
+    let doneCalls = 0
+    const capability = inputCommands({
+      commands: {
+        seed: { call: () => Array.from({ length: 1_000 }, () => "/mark").join(" ") },
+        mark: {
+          call({ context }) {
+            markCalls++
+            if (mode === "replacement") return "/done /done"
+            const prompt = context.input.get().prompt
+            if (typeof prompt !== "string") throw new Error("Expected a string prompt")
+            const next = prompt.replace("/mark", "/done /done")
+            if (mode === "mutation") context.input.set({ prompt: next })
+            else return { prompt: next }
+          },
+        },
+        done: { call: () => { doneCalls++ } },
+      },
+    })
+    await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/seed" })
+    expect(markCalls).toBe(1_000)
+    expect(doneCalls).toBe(2_000)
+  })
+
   it("allows finite void mutations that retain the invoked command", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
