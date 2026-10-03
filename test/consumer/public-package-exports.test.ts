@@ -464,9 +464,12 @@ async function typecheckPackageExports(packageName: string, runnerDir: string, i
     .map((contract, index) => ({ contract, index }))
   // Every export of a package shares one declaration closure. One program per
   // compiler configuration checks that closure once instead of once per export.
-  const groups = Map.groupBy(modules, ({ contract }) =>
-    `${usesNodeDeclarationTypes(contract)}:${usesCloudflareHost(contract)}`,
-  )
+  const groups = Map.groupBy(modules, ({ contract }) => {
+    // Virtual exports load ambient module declarations. Keep them isolated so
+    // a sibling export cannot make a missing declaration appear available.
+    const isolation = contract.specifier.endsWith("/virtual") ? contract.specifier : "shared"
+    return `${usesNodeDeclarationTypes(contract)}:${usesCloudflareHost(contract)}:${isolation}`
+  })
   for (const group of groups.values()) {
     const diagnostics = await packageModulesDiagnostics(
       packageName,
