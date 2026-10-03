@@ -462,6 +462,8 @@ function inputCommandNumericDepth(args: string | undefined): number | undefined 
   return Number.isSafeInteger(depth) ? depth : undefined
 }
 
+const MAX_NUMERIC_EXPANSION_DEPTH = 2_000
+
 export function inputCommands(options: InputCommandsOptions): AgentCapabilityDefinition {
   const commands = normalizeInputCommands(options)
   const trigger = normalizeInputCommandTrigger(options.trigger)
@@ -586,7 +588,9 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             // Keep every generated edge after leading commands finish and are removed.
             // A cyclic edge can receive credit once, but cannot renew it indefinitely.
             let graphCreditBlocked = false
-            if (budgetDepth !== undefined && nextDepth !== undefined && (nextDepth >= budgetDepth || nextDepth === 0)) {
+            if (budgetDepth !== undefined && budgetDepth > MAX_NUMERIC_EXPANSION_DEPTH) {
+              graphCreditBlocked = true
+            } else if (budgetDepth !== undefined && nextDepth !== undefined && (nextDepth >= budgetDepth || nextDepth === 0)) {
               graphCreditBlocked = true
             }
             if (changedRange) {
