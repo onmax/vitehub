@@ -6,10 +6,12 @@ import { resolveViteHubProjectRoot, VITEHUB_GENERATED_ROOT, VITEHUB_NITRO_CONFIG
 import { describeDeploymentPlanOutput } from "@vite-hub/internal/build/deployment-plan-output"
 import { normalizeNitroPreset, resolveDeploymentPlan } from "@vite-hub/internal/deployment"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
+import { isPlainObject as isRecord } from "@vite-hub/internal/object"
 import hubAuthNuxt from "@vite-hub/auth/nuxt"
 import { resolveAuthViteConfig } from "@vite-hub/auth/vite"
 import { resolveBlobViteConfig } from "@vite-hub/blob/vite"
 import { hubDb as hubDatabaseNuxt } from "@vite-hub/database/nuxt"
+import { resolveDBViteConfig } from "@vite-hub/database/config"
 import { resolveEmailTemplateModulePath } from "@vite-hub/email/vite"
 import { createEnvImportAliases } from "@vite-hub/env/vite"
 import { resolveKVViteConfig } from "@vite-hub/kv/vite"
@@ -781,24 +783,6 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   const plan = resolveDeploymentPlan(options.preset)
   const rootDir = nuxt.options.rootDir || process.cwd()
   const projectRoot = resolveViteHubProjectRoot(rootDir)
-  const configuredOptions = options.database && nuxt.options.database && typeof nuxt.options.database === "object"
-    ? {
-        ...options,
-        database: {
-          ...nuxt.options.database,
-          ...(options.database === true ? {} : options.database),
-        },
-      }
-    : options
-  // Explicit Database roots are relative to Nuxt's rootDir; automatic discovery uses the ViteHub project root.
-  const consoleDatabaseRoot = configuredOptions.database && configuredOptions.database !== true && configuredOptions.database.projectRoot !== undefined
-    ? rootDir
-    : projectRoot
-  const consoleJournal = resolveConsoleJournal(
-    consoleDatabaseUrl(options),
-    consoleD1Binding(plan.preset, configuredOptions.database, { root: consoleDatabaseRoot, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
-    !nuxt.options.dev,
-  )
   const nitro = (nuxt.options.nitro ??= {})
   const nitroPreset = plan.preset === "cloudflare" && options.realtime
     ? "cloudflare-durable"
@@ -814,8 +798,26 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   nuxt.options.vite ??= {}
   nuxt.options.vite.root ??= rootDir
   const viteRoot = resolve(rootDir, typeof nuxt.options.vite?.root === "string" ? nuxt.options.vite.root : rootDir)
-  const configuredDatabaseDiscoveryRoot = configuredProjectRoot(viteRoot, nuxt.options.vite?.database)
-    ?? configuredProjectRoot(rootDir, options.database)
+  const databaseOptions = options.database && options.database !== true ? options.database : {}
+  const configuredDatabaseDiscoveryRoot = configuredProjectRoot(rootDir, databaseOptions)
+    ?? configuredProjectRoot(rootDir, nuxt.options.database)
+    ?? configuredProjectRoot(viteRoot, nuxt.options.vite?.database)
+  const effectiveDatabaseOptions = {
+    ...(isRecord(nuxt.options.vite?.database) ? nuxt.options.vite.database : {}),
+    ...(isRecord(nuxt.options.database) ? nuxt.options.database : {}),
+    ...databaseOptions,
+    ...(configuredDatabaseDiscoveryRoot ? { projectRoot: configuredDatabaseDiscoveryRoot } : {}),
+  }
+  const configuredOptions = options.database
+    ? { ...options, database: effectiveDatabaseOptions }
+    : options
+  // Explicit Database roots are normalized above; automatic discovery uses the ViteHub project root.
+  const consoleDatabaseRoot = configuredDatabaseDiscoveryRoot ? rootDir : projectRoot
+  const consoleJournal = resolveConsoleJournal(
+    consoleDatabaseUrl(options),
+    consoleD1Binding(plan.preset, configuredOptions.database, { root: consoleDatabaseRoot, serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined }),
+    !nuxt.options.dev,
+  )
   // SAFETY: ViteHub Blob extends Vite's open user config with the documented top-level `blob` key.
   const viteBlob = (nuxt.options.vite as UserConfig & { blob?: Parameters<typeof vitehub>[0]["blob"] }).blob
   const effectiveBlob = options.console ? viteBlob ?? options.blob : false
@@ -914,10 +916,21 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   addTypeScriptDefaults(nuxt.options, generatedTypes, generatedData)
   addTypeScriptDefaults((nuxt.options.nitro ??= {}), generatedTypes, generatedData)
   if (options.database) {
-    const databaseOptions = options.database === true ? {} : options.database
+    // A discovered Definition owns its Cloudflare binding. Keep the historical
+    // implicit D1 resource only when no Definition is available to own it.
+    const databaseRoot = resolveViteHubProjectRoot(rootDir, {
+      projectRoot: effectiveDatabaseOptions.projectRoot,
+    })
+    const discoveredDatabase = resolveDBViteConfig(effectiveDatabaseOptions, databaseRoot, {
+      serverDirs: effectiveDatabaseOptions.projectRoot
+        ? [resolve(databaseRoot, "server")]
+        : nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined,
+    })
     await hubDatabaseNuxt({
-      ...(options.preset === "cloudflare" ? { driver: "d1" as const } : {}),
-      ...databaseOptions,
+      ...effectiveDatabaseOptions,
+      ...(options.preset === "cloudflare" && !discoveredDatabase && !effectiveDatabaseOptions.driver
+        ? { driver: "d1" as const }
+        : {}),
     })(undefined, nuxt)
   }
 
