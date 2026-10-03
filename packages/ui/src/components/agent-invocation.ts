@@ -1722,7 +1722,7 @@ export const AgentInvocation = defineComponent({
     watch([() => props.invocation.status === "pending" || props.invocation.status === "running", mounted], ([live, isMounted]) => {
       if (liveClock) clearInterval(liveClock);
       liveClock = undefined;
-      liveNow.value = live ? new Date() : undefined;
+      liveNow.value = live && isMounted ? new Date() : undefined;
       if (live && isMounted) liveClock = setInterval(() => liveNow.value = new Date(), 1_000);
     }, { immediate: true });
     onBeforeUnmount(() => {

@@ -121,6 +121,43 @@ describe("Agent Invocation UI", () => {
     }
   });
 
+  it.each(["pending", "running"] as const)("hydrates %s work before starting its live elapsed timer", async (status) => {
+    const timestamp = "2026-09-05T00:00:00.000Z";
+    const invocation: AgentInvocationView = {
+      id: "live-hydration", status, traceId: "trace", createdAt: timestamp, startedAt: timestamp, updatedAt: timestamp,
+      observations: [{ name: "agent.message", type: "lifecycle", timestamp, sequence: 1, attributes: {
+        "message.content": "Run it.", "message.id": "user", "message.role": "user",
+      } }, { name: "agent.tool.start", type: "run", timestamp, sequence: 2, attributes: {
+        "tool.id": "shell", "tool.name": "shell", "tool.input": { command: "pnpm test" },
+      } }],
+    };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-05T00:00:01.000Z"));
+    const component = { render: () => h(AgentInvocation, { invocation }) };
+    const app = createSSRApp(component);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const html = await renderToString(createSSRApp(component));
+      const container = document.createElement("div");
+      container.innerHTML = html;
+      expect(container.querySelector(".vh-invocation-work__elapsed")).toBeNull();
+      vi.setSystemTime(new Date("2026-09-05T00:00:02.000Z"));
+      app.mount(container);
+      await nextTick();
+      expect(container.querySelector(".vh-invocation-work__elapsed")?.textContent).toBe("0:02");
+      expect(warn.mock.calls.flat().join(" ")).not.toMatch(/hydration/i);
+      expect(error.mock.calls.flat().join(" ")).not.toMatch(/hydration/i);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(container.querySelector(".vh-invocation-work__elapsed")?.textContent).toBe("0:03");
+    } finally {
+      app.unmount();
+      warn.mockRestore();
+      error.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("places one semantic run timestamp before the session activities and falls back to creation time", () => {
     const invocation: AgentInvocationView = { id: "time", status: "completed", traceId: "trace", createdAt: "2026-09-05T10:00:00Z", startedAt: "2026-09-05T10:01:00Z", updatedAt: "2026-09-05T10:02:00Z", observations: [] };
     const wrapper = mount(AgentInvocation, { props: { invocation } });
