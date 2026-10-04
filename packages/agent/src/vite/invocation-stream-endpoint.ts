@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 
 import { createGitHubWorkspaceStore } from "@vite-hub/workspace/internal/stores/github"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"

@@ -78,7 +78,9 @@ function isQueueDefinition(value: unknown): value is QueueDefinition {
 }
 
 export async function loadQueueDefinition(name: string): Promise<QueueDefinition | undefined> {
-  const entry = registryOverride?.[name]
+  const registry = registryOverride
+  if (!registry || !Object.hasOwn(registry, name)) return undefined
+  const entry = registry[name]
   if (!entry) {
     return undefined
   }
