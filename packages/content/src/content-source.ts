@@ -13,6 +13,7 @@ export interface ContentSourceOptions {
 }
 
 type ContentSourceItem = SourceItem<string, unknown, object>
+type RuntimeObject = Record<string, unknown>
 type ContentSourceFactory = {
   create(options?: ContentSourceOptions): ComarkContentSource
 }
@@ -75,23 +76,23 @@ function isRuntimeFunction(value: unknown): value is Function {
   }
 }
 
-function isRuntimeObject(value: unknown): value is object {
+function isRuntimeObject(value: unknown): value is RuntimeObject {
   return value !== null && Object(value) === value && !isRuntimeFunction(value)
 }
 
-function isConstructorPrototype(prototype: object): boolean {
+function isConstructorPrototype(prototype: RuntimeObject): boolean {
   if (!Object.hasOwn(prototype, "constructor")) return false
-  const constructor = (prototype as Record<string, unknown>).constructor
+  const constructor = prototype.constructor
   return isRuntimeFunction(constructor)
-    && (constructor as { prototype?: unknown }).prototype === prototype
+    && Object.getOwnPropertyDescriptor(constructor, "prototype")?.value === prototype
     // Object constructors have the same native representation across realms.
     // Exclude their prototypes while allowing classes that extend null.
     && Function.prototype.toString.call(constructor) !== Function.prototype.toString.call(Object)
 }
 
-function hasCallableMethod(value: object, key: string): boolean {
+function hasCallableMethod(value: RuntimeObject, key: string): boolean {
   if (Object.hasOwn(value, key)) {
-    return isRuntimeFunction((value as Record<string, unknown>)[key])
+    return isRuntimeFunction(value[key])
   }
 
   // Native class-based Sources keep their methods on a prototype. Treat a
@@ -101,7 +102,7 @@ function hasCallableMethod(value: object, key: string): boolean {
   // Source marker from that object (or from any realm's Object.prototype).
   let prototype = Object.getPrototypeOf(value)
   while (prototype && isConstructorPrototype(prototype)) {
-    if (Object.hasOwn(prototype, key)) return isRuntimeFunction((value as Record<string, unknown>)[key])
+    if (Object.hasOwn(prototype, key)) return isRuntimeFunction(value[key])
     prototype = Object.getPrototypeOf(prototype)
   }
   return false
