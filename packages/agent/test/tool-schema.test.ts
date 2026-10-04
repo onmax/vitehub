@@ -1,4 +1,4 @@
-import { expect, it } from "vitest"
+import { expect, it, vi } from "vitest"
 import * as v from "valibot"
 import { z } from "zod"
 
@@ -68,4 +68,22 @@ it("ignores inherited Standard JSON Schema converters", () => {
 
   expect(agentToolJsonSchema(schema as never, "input")).toBeUndefined()
   expect(inspectAgentTools({ send_message: { inputSchema: schema } })?.[0]?.inputSchema).toBeUndefined()
+})
+
+it.each(["getter", "proxy"])("ignores inherited marker %s access without side effects", (kind) => {
+  const read = vi.fn(() => { throw new Error("Inherited marker must not be read") })
+  const jsonSchema = { properties: { message: { type: "string" } }, type: "object" }
+  const schema = kind === "getter"
+    ? Object.assign(Object.create(Object.defineProperty({}, "~standard", { enumerable: true, get: read })), jsonSchema)
+    : new Proxy(jsonSchema, {
+        get(target, key, receiver) {
+          if (key === "~standard") return read()
+          return Reflect.get(target, key, receiver)
+        },
+      })
+
+  expect(withAgentToolJsonSchema(schema as never)).toBe(schema)
+  expect(agentToolJsonSchema(schema as never, "input")).toEqual(jsonSchema)
+  expect(inspectAgentTools({ send_message: { inputSchema: schema } })?.[0]?.inputSchema).toEqual(jsonSchema)
+  expect(read).not.toHaveBeenCalled()
 })

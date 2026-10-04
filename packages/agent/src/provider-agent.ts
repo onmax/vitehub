@@ -29,7 +29,7 @@ import { defaultAgentProviderPermissions } from "./internal/agent-driver.ts"
 import { resolveInstalledProviderExecutable } from "./internal/provider-runtime-packages.ts"
 import { updateAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { inspectAgentTools } from "./tool-inspection.ts"
-import { agentToolJsonSchema } from "./tool-schema.ts"
+import { agentToolJsonSchema, hasAgentToolStandardSchema } from "./tool-schema.ts"
 import { agentOutputInstructions } from "./internal/agent-structured-output.ts"
 import { registerAgentInvocationInputHandler } from "./internal/agent-invocation-control.ts"
 import { ownedAgentInvocationControlId } from "./internal/agent-invocation-response-owner.ts"
@@ -1493,8 +1493,8 @@ function toolJsonSchema(schema: AgentToolSchema | undefined): Record<string, unk
 
 async function validateToolInput(tool: AgentToolDefinition, input: unknown): Promise<unknown> {
   if (!tool.inputSchema) return input
-  const standard = tool.inputSchema["~standard"]
-  if (Object.hasOwn(tool.inputSchema, "~standard")) {
+  if (hasAgentToolStandardSchema(tool.inputSchema)) {
+    const standard = tool.inputSchema["~standard"]
     if (!standard) throw agentDiagnostics.AGENT_R0696({ message: `[vitehub] Invalid schema for Agent tool "${tool.name}".` })
     const result = await standard.validate(input)
     if (result.issues?.length) throw agentDiagnostics.AGENT_R0697({ message: `[vitehub] Invalid input for Agent tool "${tool.name}".` })
@@ -1502,7 +1502,7 @@ async function validateToolInput(tool: AgentToolDefinition, input: unknown): Pro
   }
   const { Validator } = await import("@cfworker/json-schema")
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
-  const result = new Validator(tool.inputSchema as never, "7").validate(input)
+  const result = new Validator({ ...tool.inputSchema } as never, "7").validate(input)
   if (!result.valid) throw agentDiagnostics.AGENT_R0698({ message: `[vitehub] Invalid input for Agent tool "${tool.name}": ${result.errors.map(error => error.error).join("; ")}` })
   return input
 }

@@ -1,5 +1,6 @@
 import { toJsonSchema } from "@valibot/to-json-schema"
 
+import { isRuntimeRecord } from "./internal/runtime-type.ts"
 import { copyToolWithOverrides } from "./tool-runtime.ts"
 
 import type { BaseIssue, BaseSchema } from "valibot"
@@ -8,11 +9,27 @@ import type { AgentToolSchema, AgentToolSet } from "./types.ts"
 
 type JsonStandardSchema = AgentToolSchema & StandardJSONSchemaV1
 
+/** Recognize own markers, with bounded lazy initialization for Zod 4 schemas. */
+export function hasAgentToolStandardSchema(schema: object): boolean {
+  try {
+    if (Object.hasOwn(schema, "~standard")) return true
+    // Zod 4 puts its lazy marker on the prototype and brands each schema with _zod.
+    const zod: unknown = Object.getOwnPropertyDescriptor(schema, "_zod")?.value
+    if (!isRuntimeRecord(zod)) return false
+    const traits: unknown = Object.getOwnPropertyDescriptor(zod, "traits")?.value
+    if (!(traits instanceof Set) || !traits.has("$ZodType")) return false
+    Reflect.get(schema, "~standard")
+    return Object.hasOwn(schema, "~standard")
+  }
+  catch {
+    return false
+  }
+}
+
 /** Add JSON Schema conversion to Valibot's Standard Schema validation contract. */
 export function withAgentToolJsonSchema<TSchema extends AgentToolSchema>(schema: TSchema): TSchema {
-  // Zod materializes its own Standard Schema property on first access.
+  if (!hasAgentToolStandardSchema(schema)) return schema
   const standard = schema["~standard"]
-  if (!Object.hasOwn(schema, "~standard")) return schema
   if (!standard) return schema
   if (Object.hasOwn(standard, "jsonSchema") && (standard as Partial<StandardJSONSchemaV1["~standard"]>).jsonSchema) return schema
   if (standard.vendor !== "valibot") return schema
