@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { z } from "zod"
 
 import { env } from "../src/index.ts"
 import { defaultStringSchema } from "../src/core/declarations.ts"
@@ -442,5 +443,17 @@ describe("env declarations", () => {
         validate: () => ({ issues: [], value: "ok" }),
       },
     }, "ok", "env.test")).toBe("ok")
+  })
+
+  it("validates and transforms normal Zod 4 schemas", () => {
+    const schema = z.string().min(3)
+    expect(Object.hasOwn(schema, "safeParse")).toBe(false)
+    expect(() => parseSchema(schema, "x", "env.test")).toThrow("Invalid env.test")
+    expect(parseSchema(schema, "valid", "env.test")).toBe("valid")
+    expect(parseSchema(z.string().transform(value => value.length), "valid", "env.test")).toBe(5)
+  })
+
+  it("does not accept an inherited Zod identity", () => {
+    expect(parseSchema(Object.create(z.string().min(3)), "x", "env.test")).toBe("x")
   })
 })

@@ -25,6 +25,7 @@ interface SafeParseFailure {
 }
 
 interface ZodLikeSchema {
+  _zod?: { traits?: Set<string> }
   parse?: (input: unknown) => unknown
   safeParse?: (input: unknown) => SafeParseFailure | SafeParseSuccess
 }
@@ -44,8 +45,8 @@ export function parseSchema(schema: unknown, value: unknown, label: string): unk
     return result.value
   }
 
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Schema objects are untyped user input; validate the own method before invoking it.
-  if (isZodLike(schema) && Object.hasOwn(schema, "safeParse") && typeof schema.safeParse === "function") {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Schema objects are untyped user input; validate the method before invoking it.
+  if (isZodLike(schema) && hasSchemaMethod(schema, "safeParse") && typeof schema.safeParse === "function") {
     const result = schema.safeParse(value)
     if (!result.success) {
       throw envErrorDiagnostics.ENV_R0017({ message: `[vitehub] Invalid ${label}: ${formatIssues(result.error)}` })
@@ -53,7 +54,8 @@ export function parseSchema(schema: unknown, value: unknown, label: string): unk
     return result.data
   }
 
-  if (isZodLike(schema) && Object.hasOwn(schema, "parse") && typeof schema.parse === "function") {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check untyped schema methods before invoking them.
+  if (isZodLike(schema) && hasSchemaMethod(schema, "parse") && typeof schema.parse === "function") {
     try {
       return schema.parse(value)
     }
@@ -70,14 +72,26 @@ function isPromiseLike(value: unknown): value is Promise<unknown> {
 }
 
 function isStandardSchema(schema: unknown): schema is StandardSchemaV1 {
-  return typeof schema === "object"
-    && schema !== null
-    && Object.hasOwn(schema, "~standard")
+  return isZodLike(schema)
+    && (Object.hasOwn(schema, "~standard") || isZodSchema(schema))
     && typeof (schema as StandardSchemaV1)["~standard"]?.validate === "function"
 }
 
 function isZodLike(schema: unknown): schema is ZodLikeSchema {
   return typeof schema === "object" && schema !== null
+}
+
+function hasSchemaMethod(schema: ZodLikeSchema, method: "parse" | "safeParse"): boolean {
+  return Object.hasOwn(schema, method) || isZodSchema(schema)
+}
+
+function isZodSchema(schema: ZodLikeSchema): boolean {
+  // Zod 4 stores its schema identity on the instance and methods on its prototype.
+  if (!Object.hasOwn(schema, "_zod")) {
+    return false
+  }
+  const metadata = schema._zod
+  return metadata?.traits instanceof Set && metadata.traits.has("ZodType")
 }
 
 function formatIssues(issues: unknown): string {
