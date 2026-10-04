@@ -223,7 +223,18 @@ function readCloudflareEventEnv(event: CloudflareScheduledEventLike): Record<str
   return isRecord(runtimeCloudflare?.env) ? runtimeCloudflare.env : undefined
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function isStaticScheduleDefinition(value: unknown): value is ScheduleDefinition {
+  return isObjectRecord(value)
+    && Object.hasOwn(value, "cron")
+    && Object.hasOwn(value, "handler")
+    && typeof value.handler === "function"
+}
+
 function unwrapScheduleDefinition(loaded: LoadedScheduleModule): ScheduleDefinition | undefined {
-  const definition = "default" in loaded ? loaded.default : loaded
-  return definition && "cron" in definition ? definition : undefined
+  const candidate = isObjectRecord(loaded) && Object.hasOwn(loaded, "default") ? loaded.default : loaded
+  return isStaticScheduleDefinition(candidate) ? candidate : undefined
 }
