@@ -6,8 +6,7 @@ export function addConsoleDevframeHandler(nitro: { handlers?: Array<{ handler: s
   addConsoleRpcHandler(nitro, consoleRuntimeRoot)
 }
 
-function mountBase(base: unknown): string {
-  if (typeof base !== "string") return ""
+function mountBase(base: string | undefined): string {
   if (!base || base === "./") return ""
   let pathname = base
   if (/^https?:\/\//.test(pathname)) {
@@ -22,7 +21,7 @@ function mountBase(base: unknown): string {
   return pathname.replace(/\/+$/, "")
 }
 
-function mountPath(base: unknown, path: string): string {
+function mountPath(base: string | undefined, path: string): string {
   return `${mountBase(base)}${path}`
 }
 
@@ -34,6 +33,7 @@ export function addConsoleRpcHandler(
   base?: string,
 ): void {
   const kit = createNitroServerKit(nitro)
+  // SAFETY: The Console only adds Nitro handlers with string handler and route fields.
   const handlers = kit.config.handlers as NitroHandler[]
   const registrations = [
     { suffix: "/_vitehub/rpc/**", handler: join(consoleRuntimeRoot, "server/rpc.js") },
@@ -58,7 +58,9 @@ export function addConsoleRpcHandler(
         : `Cannot mount the ViteHub ${registration.suffix.includes("env") ? "Env" : registration.suffix.includes("channels") ? "Channel replay" : "Schedule run"} handler at "${route}" because that route is already registered.`
       throw viteHubErrorDiagnostics.VITE_HUB_R0040({ message })
     }
-    kit.addHandler({ handler: registration.handler, route, ...(registration.suffix === "/_vitehub/rpc/**" ? {} : { method: "post" }) })
+    const handler: NitroHandler = { handler: registration.handler, route }
+    if (registration.suffix !== "/_vitehub/rpc/**") handler.method = "post"
+    kit.addHandler(handler)
   }
 
   // SAFETY: The kit preserves the caller's Nitro handler array while adding the Console routes.

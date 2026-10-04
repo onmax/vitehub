@@ -134,8 +134,7 @@ const consoleAccessRoutes = [
   { method: "GET", route: "/api/_vitehub/console/**" },
 ] satisfies Array<{ method?: string; route: string }>
 
-function consoleMountBase(base: unknown): string {
-  if (typeof base !== "string") return ""
+function consoleMountBase(base: string | undefined): string {
   if (!base || base === "./") return ""
   let pathname = base
   if (/^https?:\/\//.test(pathname)) {
@@ -150,7 +149,7 @@ function consoleMountBase(base: unknown): string {
   return pathname.replace(/\/+$/, "")
 }
 
-function consoleMountPath(base: unknown, path: string): string {
+function consoleMountPath(base: string | undefined, path: string): string {
   return `${consoleMountBase(base)}${path}`
 }
 
