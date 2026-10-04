@@ -122,11 +122,13 @@ describe("Workspace Collections", () => {
       workspace: "collection-cursors",
     })
 
-    await expect(queryWorkspaceCollection({
-      path: "data/items.json",
-      query: { cursor: "not-a-cursor", limit: 1, sort: { field: "slug" } },
-      workspace: "collection-cursors",
-    })).rejects.toMatchObject({ code: "WORKSPACE_COLLECTION_CURSOR_INVALID", details: { reason: "malformed" } })
+    for (const cursor of ["not-a-cursor", "A", "AA=", "Zm9v==", "AA/AA"]) {
+      await expect(queryWorkspaceCollection({
+        path: "data/items.json",
+        query: { cursor, limit: 1, sort: { field: "slug" } },
+        workspace: "collection-cursors",
+      })).rejects.toMatchObject({ code: "WORKSPACE_COLLECTION_CURSOR_INVALID", details: { reason: "malformed" } })
+    }
     await expect(queryWorkspaceCollection({
       path: "data/items.json",
       query: { cursor: first.nextCursor!, limit: 1, search: "alpha", searchFields: ["title"], sort: { field: "slug" } },
