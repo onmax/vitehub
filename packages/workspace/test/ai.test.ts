@@ -71,6 +71,16 @@ describe("createWorkspaceTools", () => {
     expect(writeFile).not.toHaveBeenCalled()
   })
 
+  it("does not expose inherited mutation methods when sync is own", () => {
+    const writeFile = vi.fn()
+    const assets = Object.assign(Object.create({ writeFile }), createAssets({ "README.md": "# Docs\n" }), {
+      sync: async () => {},
+    })
+
+    expect(() => createWorkspaceTools(assets, { operations: { write: { writeFile: true } } })).toThrow(/require a mutable Workspace/)
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
   it.each([null, Object, function ForgedWorkspace() {}])("rejects inherited capabilities with constructor %s", async (constructor) => {
     const writeFile = vi.fn()
     const startSession = vi.fn()

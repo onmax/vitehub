@@ -215,6 +215,29 @@ function isWorkspace(input: Workspace | WorkspaceAssets): input is Workspace {
   return hasOwnMethod(input, "sync")
 }
 
+function hasWriteCapabilities(workspace: Workspace, enabled: ReturnType<typeof resolveWriteOperations>): boolean {
+  const required = new Set<keyof Workspace>()
+  if (enabled.writeFile || enabled.appendFile) {
+    required.add("writeFile")
+  }
+  if (enabled.appendFile) {
+    required.add("readFile")
+  }
+  if (enabled.deletePath || enabled.movePath) {
+    required.add("rm")
+  }
+  if (enabled.makeDir || enabled.copyPath || enabled.movePath) {
+    required.add("mkdir")
+  }
+  if (enabled.copyPath || enabled.movePath) {
+    required.add("stat")
+    required.add("exists")
+    required.add("readFile")
+    required.add("list")
+  }
+  return [...required].every(key => hasOwnMethod(workspace, key))
+}
+
 function getWorkspaceSessionStarter(input: Workspace | WorkspaceAssets): WorkspaceSessionStarter | undefined {
   return hasOwnMethod(input, "startSession")
     ? input as WorkspaceSessionStarter
@@ -606,7 +629,7 @@ export function createWorkspaceTools<Operations extends WorkspaceToolOperations 
     throw workspaceErrorDiagnostics.WORKSPACE_R0002({ message: "[vitehub] createWorkspaceTools requires at least one enabled workspace operation." })
   }
 
-  if (writeEnabled && !isWorkspace(input)) {
+  if (writeEnabled && (!isWorkspace(input) || !hasWriteCapabilities(input, resolved.write))) {
     throw workspaceErrorDiagnostics.WORKSPACE_R0003({ message: "[vitehub] Write operations require a mutable Workspace. A useWorkspace(name, { mode: \"write\" }).tools.write() call provides one." })
   }
 
