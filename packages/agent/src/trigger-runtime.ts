@@ -283,15 +283,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isResolvableObject<T, TContext extends AgentCallbackContext>(
   value: unknown,
 ): value is { resolve: (context: TContext) => T | Promise<T> } {
-  if (!isRecord(value)) return false
-  if (Object.hasOwn(value, "resolve")) return typeof value.resolve === "function"
-  let prototype = Object.getPrototypeOf(value)
-  while (prototype && prototype !== Object.prototype) {
-    const descriptor = Object.getOwnPropertyDescriptor(prototype, "resolve")
-    if (descriptor) return typeof value.resolve === "function"
-    prototype = Object.getPrototypeOf(prototype)
-  }
-  return false
+  return isRecord(value) && typeof value.resolve === "function"
 }
 
 async function resolveMaybe<T, TContext extends AgentCallbackContext>(
@@ -306,6 +298,20 @@ async function resolveMaybe<T, TContext extends AgentCallbackContext>(
     return await value.resolve(context)
   }
   return value as T
+}
+
+async function resolveWebhookSecret(
+  value: MaybeResolvable<string | false, AgentCallbackContext> | undefined,
+  context: AgentCallbackContext,
+): Promise<string | false | object | undefined> {
+  if (value === undefined) return undefined
+  if (typeof value === "function") {
+    return await value(context)
+  }
+  if (isRecord(value) && Object.hasOwn(value, "resolve") && typeof value.resolve === "function") {
+    return await value.resolve(context)
+  }
+  return value as string | false | object
 }
 
 async function sha256(value: string): Promise<Uint8Array> {
@@ -385,7 +391,7 @@ async function verifyRequiredWebhookHeaders<TRuntimeConfig extends AgentRuntimeC
   context: AgentCallbackContext<TRuntimeConfig>,
 ): Promise<AgentWebhookVerificationResult> {
   for (const registration of registrations) {
-    const secretToken = await resolveMaybe(registration.secretToken, context)
+    const secretToken = await resolveWebhookSecret(registration.secretToken, context)
     if (secretToken !== undefined && secretToken !== false && typeof secretToken !== "string") {
       throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" resolved secretToken to an invalid value.`)
     }
@@ -439,7 +445,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
   }
 
   for (const { headerValue, registration } of targeted) {
-    const secretToken = await resolveMaybe(registration.secretToken, verificationContext)
+    const secretToken = await resolveWebhookSecret(registration.secretToken, verificationContext)
     if (secretToken !== undefined && secretToken !== false && typeof secretToken !== "string") {
       throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" resolved secretToken to an invalid value.`)
     }
