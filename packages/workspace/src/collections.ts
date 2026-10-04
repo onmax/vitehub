@@ -183,7 +183,9 @@ function decodeCursor(cursor: string | undefined, expected: Omit<CollectionCurso
   try {
     if (!/^[A-Za-z0-9_-]*$/.test(cursor) || cursor.length % 4 === 1) throw new TypeError("Malformed base64url cursor")
     const normalized = cursor.replaceAll("-", "+").replaceAll("_", "/")
-    parsed = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")))
+    const decoded = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
+    if (btoa(decoded).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "") !== cursor) throw new TypeError("Non-canonical base64url cursor")
+    parsed = JSON.parse(decoded)
   }
   catch {
     throw workspaceCollectionCursorError("malformed")
