@@ -2724,7 +2724,7 @@ describe("agent message protocol", () => {
     }
     const wrappedJsonSchema = { jsonSchema: rawJsonSchema }
     const inheritedJsonSchema = Object.assign(Object.create({
-      "~standard": { validate: () => ({ value: {} }) },
+      "~standard": Object.create({ version: 1, validate: () => ({ value: {} }) }),
     }), rawJsonSchema)
     const jsonSchema = vi.fn(schema => ({ jsonSchema: schema }))
     loadAiSdk.mockResolvedValue({
