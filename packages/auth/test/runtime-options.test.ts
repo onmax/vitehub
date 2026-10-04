@@ -53,6 +53,16 @@ describe("Auth option resolution", () => {
     expect(env).not.toHaveBeenCalled()
   })
 
+  it("does not treat inherited trusted origins as declared options", () => {
+    const options = Object.create({ trustedOrigins: ["https://attacker.example.com"] }) as Record<string, unknown>
+    options.appName = "ViteHub"
+    const definition = defineAuth(options as never)
+    const resolved = resolveAuthOptions(definition, { request: new Request("https://request.example.com/api/auth") })
+
+    expect(resolved.requestRuntimeOptions.trustedOrigins).toEqual(["https://request.example.com"])
+    expect(resolved.providerOptions.trustedOrigins).toEqual(["https://request.example.com"])
+  })
+
   it("reads static metadata only when full or provider options are needed", () => {
     const appName = vi.fn(() => "ViteHub")
     const definition = defineAuth({ appName: "ViteHub" })
