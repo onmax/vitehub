@@ -1,11 +1,16 @@
 import type { BoxRuntime } from "../index.ts";
 
 const builtInBoxRuntime: symbol = Symbol.for("vitehub.box.internal-runtime");
+type RuntimeConstructor = { prototype?: unknown } & ((...args: never[]) => unknown);
+
+function isFunction(value: unknown): value is RuntimeConstructor {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
 
 function isOrdinaryObjectPrototype(value: object): boolean {
   if (Object.getPrototypeOf(value) !== null || !Object.hasOwn(value, "constructor")) return false;
   const constructor = (value as { constructor: unknown }).constructor;
-  return typeof constructor === "function"
+  return isFunction(constructor)
     && Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object);
 }
 
@@ -20,7 +25,7 @@ export function hasDeclaredBoxRuntimeMember(value: object, key: PropertyKey): bo
     if (isOrdinaryObjectPrototype(prototype)) return false;
     if (Object.hasOwn(prototype, key)) {
       const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value;
-      return typeof constructor === "function"
+      return isFunction(constructor)
         && constructor.prototype === prototype
         && /^class\b/.test(Function.prototype.toString.call(constructor));
     }
