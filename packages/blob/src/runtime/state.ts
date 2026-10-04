@@ -22,6 +22,7 @@ let pendingStorages = new Map<string, Promise<BlobStorage>>()
 function isCallable(value: unknown): value is Function {
   if (value === null || value === undefined) return false
   try {
+    // SAFETY: bind.call checks callability across realms and callable proxies.
     Function.prototype.bind.call(value as Function, undefined)
     return true
   }
