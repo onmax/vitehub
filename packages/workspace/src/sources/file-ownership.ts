@@ -31,8 +31,8 @@ async function beginWorkspaceFileCheckpoint(store: WorkspaceStore, path: string)
   if (!store.getMeta || !store.setMeta) return undefined
   const token = crypto.randomUUID()
   const current = await store.getMeta(checkpointMetaKey(path))
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
   // SAFETY: The preceding object check establishes the only invariant needed to inspect own metadata keys.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
   const currentRecord = current && typeof current === "object" ? current as Record<string, unknown> : undefined
   const previous = currentRecord
     ? Object.hasOwn(currentRecord, "committed") && currentRecord.committed === true && Object.hasOwn(currentRecord, "token") ? currentRecord.token
@@ -78,16 +78,16 @@ export async function recordWorkspaceFileOwner(store: WorkspaceStore, path: stri
 export async function readWorkspaceFileOwner(store: WorkspaceStore, path: string, retireInvalidRemoval = false): Promise<WorkspaceFileOwner | undefined> {
   const volatile = volatileOwners.get(workspaceStoreIdentity(store))?.get(fileOwnerMetaKey(path))
   const value = volatile !== undefined ? volatile : await store.getMeta?.(fileOwnerMetaKey(path))
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
   // SAFETY: The preceding object check establishes the record shape used only for own-key validation below.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
   const owner = value && typeof value === "object" ? value as Record<string, unknown> : undefined
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
   if (!owner || !Object.hasOwn(owner, "workspace") || typeof owner.workspace !== "string"
     || !Object.hasOwn(owner, "source") || typeof owner.source !== "string" || (Object.hasOwn(owner, "digest") && owner.digest !== undefined && typeof owner.digest !== "string")) return undefined
   if (Object.hasOwn(owner, "checkpoint") && owner.checkpoint !== activeCheckpoints.get(workspaceStoreIdentity(store))?.get(normalizeWorkspacePath(path))) {
     const checkpoint = await store.getMeta?.(checkpointMetaKey(path))
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
     // SAFETY: The object check and own-key guards establish the persistence record shape before values are read.
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
     const checkpointRecord = checkpoint as Record<string, unknown> | undefined
     if (!checkpointRecord || typeof checkpointRecord !== "object"
       || !(Object.hasOwn(checkpointRecord, "token") && checkpointRecord.token === owner.checkpoint && Object.hasOwn(checkpointRecord, "committed") && checkpointRecord.committed === true
@@ -108,8 +108,8 @@ export async function readWorkspaceFileOwner(store: WorkspaceStore, path: string
       return undefined
     }
   }
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Normalize the optional digest from untyped Store metadata to the owner contract.
   // SAFETY: The ownership guard above proves workspace and source are strings before returning the public contract.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Normalize the optional digest from untyped Store metadata to the owner contract.
   return { workspace: owner.workspace as string, source: owner.source as string, digest: Object.hasOwn(owner, "digest") && typeof owner.digest === "string" ? owner.digest : undefined }
 }
 
