@@ -99,12 +99,14 @@ describe("replayChannel()", () => {
         }),
       },
     })
-    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "done" }, runtime: false })
+    const run = vi.fn(() => "done")
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run }, runtime: false })
 
     await expect(replayChannel(agent, "mailbox", { force: true })).rejects.toMatchObject({
       code: "AGENT_R0936",
       message: '[vitehub] Channel "mailbox" history returned a repeated pagination cursor.',
     })
+    expect(run).toHaveBeenCalledTimes(1)
   })
 
   it("pages history through the Channel trigger and skips items it replayed before", async () => {
