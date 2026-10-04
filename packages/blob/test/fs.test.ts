@@ -48,6 +48,7 @@ describe("fs blob driver", () => {
     ["invalid alphabet", "!!!"],
     ["non-numeric payload", Buffer.from("foo").toString("base64url")],
     ["padded numeric payload", `${Buffer.from("0").toString("base64url")}=`],
+    ["noncanonical pad bits", "MB"],
   ])("rejects malformed list cursors (%s)", async (_, cursor) => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
     tempDirs.push(base)
