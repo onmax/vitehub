@@ -212,13 +212,26 @@ function tool<T extends Tool<any, any>>(definition: T): T {
 }
 
 function isWorkspace(input: Workspace | WorkspaceAssets): input is Workspace {
-  return "sync" in input
+  return hasDeclaredMethod(input, "sync")
 }
 
 function getWorkspaceSessionStarter(input: Workspace | WorkspaceAssets): WorkspaceSessionStarter | undefined {
-  return typeof (input as Partial<WorkspaceSessionStarter>).startSession === "function"
+  return hasDeclaredMethod(input, "startSession")
     ? input as WorkspaceSessionStarter
     : undefined
+}
+
+function hasDeclaredMethod(value: object, key: PropertyKey): boolean {
+  if (Object.hasOwn(value, key)) return typeof Reflect.get(value, key) === "function"
+  let prototype = Object.getPrototypeOf(value)
+  while (prototype && prototype !== Object.prototype) {
+    if (Object.hasOwn(prototype, key)) {
+      return Object.hasOwn(prototype, "constructor") && prototype.constructor !== Object
+        && typeof Reflect.get(value, key) === "function"
+    }
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return false
 }
 
 function createWorkspaceSessionShellProvider(starter: WorkspaceSessionStarter): ShellExecutionProvider {
@@ -415,7 +428,7 @@ async function materializeWorkspaceSourcesTool(
   input: Workspace | WorkspaceAssets,
   options: { path?: string, sources?: string[] },
 ): Promise<WorkspaceMaterializeSourcesResult> {
-  if ("materializeSources" in input && typeof input.materializeSources === "function") {
+  if (hasDeclaredMethod(input, "materializeSources")) {
     return await input.materializeSources(options)
   }
 
