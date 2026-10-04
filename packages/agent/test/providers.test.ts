@@ -7820,7 +7820,11 @@ describe("server helpers", () => {
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
     const adapter = createTestChatAdapter()
     const run = vi.fn(() => "unexpected")
-    const secretToken = Object.create({ resolve: () => false })
+    const resolve = vi.fn(() => false)
+    function ForgedResolver() {}
+    const prototype = { resolve, constructor: ForgedResolver }
+    ForgedResolver.prototype = prototype
+    const secretToken = Object.create(prototype)
     const agent = defineAgent({
       channels: {
         support: http({
@@ -7847,11 +7851,12 @@ describe("server helpers", () => {
     )
 
     expect(response.status).toBe(401)
+    expect(resolve).not.toHaveBeenCalled()
     expect(adapter.handleWebhook).not.toHaveBeenCalled()
     expect(run).not.toHaveBeenCalled()
   })
 
-  it("accepts class-based webhook secret resolvers", async () => {
+  it("rejects prototype-based webhook secret resolvers", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { http } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
@@ -7876,8 +7881,8 @@ describe("server helpers", () => {
       headers: { "x-test-secret": "secret-token" },
       method: "POST",
     }), "custom-support")
-    expect(response.status).toBe(200)
-    expect(adapter.handleWebhook).toHaveBeenCalledOnce()
+    expect(response.status).toBe(401)
+    expect(adapter.handleWebhook).not.toHaveBeenCalled()
   })
 
   it("fails closed when generated chat webhook secrets resolve empty", async () => {

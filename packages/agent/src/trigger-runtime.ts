@@ -312,18 +312,6 @@ async function resolveWebhookSecret(
     if (Object.hasOwn(value, "resolve") && typeof value.resolve === "function") {
       return await (value.resolve as (context: AgentCallbackContext) => string | false | object | Promise<string | false | object>)(context)
     }
-    let prototype = Object.getPrototypeOf(value)
-    while (prototype && prototype !== Object.prototype) {
-      const resolver = Object.getOwnPropertyDescriptor(prototype, "resolve")
-      if (resolver) {
-        const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value
-        if (typeof constructor === "function" && constructor.prototype === prototype && typeof value.resolve === "function") {
-          return await (value.resolve as (context: AgentCallbackContext) => string | false | object | Promise<string | false | object>)(context)
-        }
-        break
-      }
-      prototype = Object.getPrototypeOf(prototype)
-    }
   }
   return value as string | false | object
 }

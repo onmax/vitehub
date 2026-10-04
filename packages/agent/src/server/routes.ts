@@ -640,18 +640,6 @@ async function resolveWebhookSecret(
     if (Object.hasOwn(value, "resolve") && isRuntimeFunction(value.resolve)) {
       return await (value.resolve as (context: AgentRuntimeContext) => string | false | object | Promise<string | false | object>)(context)
     }
-    let prototype = Object.getPrototypeOf(value)
-    while (prototype && prototype !== Object.prototype) {
-      const resolver = Object.getOwnPropertyDescriptor(prototype, "resolve")
-      if (resolver) {
-        const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value
-        if (isRuntimeFunction(constructor) && constructor.prototype === prototype && isRuntimeFunction(value.resolve)) {
-          return await (value.resolve as (context: AgentRuntimeContext) => string | false | object | Promise<string | false | object>)(context)
-        }
-        break
-      }
-      prototype = Object.getPrototypeOf(prototype)
-    }
   }
   return value as string | false | object
 }
