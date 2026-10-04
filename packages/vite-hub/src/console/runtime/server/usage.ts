@@ -199,7 +199,7 @@ export function usageQueryWindow(options: UsageQuery): {
     } catch {
       throw Object.assign(
         viteHubErrorDiagnostics.VITE_HUB_R0115({ message: "Invalid usage cursor" }),
-        { statusCode: 400 },
+        { statusCode: 400, statusMessage: "Invalid usage cursor" },
       );
     }
   }

@@ -33,7 +33,7 @@ function badRequest(message: string): Error {
 }
 
 function isMultipartAction(value: string | undefined): value is MultipartAction {
-  return value !== undefined && value in multipartMethods
+  return value !== undefined && Object.hasOwn(multipartMethods, value)
 }
 
 // Browsers send the bare file name; drop any directory part so the client cannot pick a folder.

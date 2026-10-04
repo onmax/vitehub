@@ -10,12 +10,16 @@ import { loadCloudflarePlaywright as unconfiguredCloudflarePlaywright } from "..
 import type { BrowserClient } from "../src/types.ts"
 
 const runtimeConfig = vi.hoisted(() => ({ binding: "BROWSER", engine: "chromium", provider: "cloudflare" as string | undefined }))
+const browserRegistry = vi.hoisted(() => Object.create(null) as Record<string, unknown>)
 vi.mock("#vitehub/browser/runtime", () => ({ default: runtimeConfig, loadCloudflarePlaywright: undefined }))
+vi.mock("#vitehub/browser/registry", () => ({ default: browserRegistry }))
 
 const runtime = globalThis as typeof globalThis & { __env__?: Record<string, unknown> }
 
 afterEach(() => {
   delete runtime.__env__
+  for (const key of Object.keys(browserRegistry)) delete browserRegistry[key]
+  Object.setPrototypeOf(browserRegistry, null)
   runtimeConfig.provider = "cloudflare"
 })
 
@@ -38,6 +42,18 @@ describe("Browser Definitions", () => {
   it("returns an HTTP error response when a definition cannot run", async () => {
     const name: string = "missing"
     const response = await runBrowser(name)
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({ error: { code: "BROWSER_DEFINITION_NOT_FOUND" } })
+  })
+
+  it("does not treat inherited registry properties as Browser Definitions", async () => {
+    Object.setPrototypeOf(browserRegistry, {
+      inherited: { default: defineBrowser(() => "unexpected") },
+    })
+
+    const name: string = "inherited"
+    const response = await runBrowser(name)
+
     expect(response.status).toBe(500)
     await expect(response.json()).resolves.toMatchObject({ error: { code: "BROWSER_DEFINITION_NOT_FOUND" } })
   })

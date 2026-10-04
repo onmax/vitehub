@@ -13,7 +13,7 @@ export function normalizeAgentRoute(route: string): string {
 
 export function resolveAgentRoutePath(route: string, values: Record<string, string>): string {
   return normalizeAgentRoute(route).replace(/(^|\/):([^/]+)/g, (match, prefix: string, param: string) => {
-    if (!(param in values)) return match
+    if (!Object.hasOwn(values, param)) return match
     return `${prefix}${encodeURIComponent(values[param]!)}`
   })
 }
