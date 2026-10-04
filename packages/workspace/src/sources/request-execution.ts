@@ -47,12 +47,7 @@ export function createWorkspaceSourceRequestExecution(
 
   return {
     async executeSourceRequest(input) {
-      const targetMatches = sources.filter((source) => {
-        const descriptor = source.requestDescriptor
-        if (!descriptor || descriptor.method !== input.method) return false
-        return sameRequestTarget(descriptor.url, input.url)
-      })
-      const matches = targetMatches.filter(source => source.requestDescriptor && requestShapeMatches(source.requestDescriptor, input))
+      const matches = sources.filter(source => source.requestDescriptor && workspaceSourceRequestMatches(source.requestDescriptor, input))
 
       if (matches.length !== 1) {
         throw workspaceErrorDiagnostics.WORKSPACE_R0063({ message: matches.length > 1
@@ -87,6 +82,15 @@ function pathContains(container: string, path: string): boolean {
 
 function pathIntersects(left: string, right: string): boolean {
   return pathContains(left, right) || pathContains(right, left)
+}
+
+export function workspaceSourceRequestMatches(
+  descriptor: WorkspaceSourceRequestDescriptor,
+  input: WorkspaceSourceRequestExecutionInput,
+): boolean {
+  return descriptor.method === input.method
+    && sameRequestTarget(descriptor.url, input.url)
+    && requestShapeMatches(descriptor, input)
 }
 
 function sameRequestTarget(left: string, right: string): boolean {

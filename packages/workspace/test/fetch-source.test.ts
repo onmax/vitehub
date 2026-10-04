@@ -91,6 +91,28 @@ describe("fetch sources", () => {
     })).resolves.toMatchObject({ status: 200 })
   })
 
+  it.each([new Date("2026-01-01T00:00:00Z"), new URL("https://example.com/")])("preserves JSON serialization for a declared non-plain body %s", async (body) => {
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ status: "ok" }))
+    const execution = createWorkspaceSourceRequestExecution({
+      name: "fetch-serialized-body",
+      sources: { status: fetch({ body, method: "POST", url: "https://status.example.com/query" }) },
+    })!
+
+    await expect(execution.executeSourceRequest({
+      body: {},
+      method: "POST",
+      url: "https://status.example.com/query",
+    })).rejects.toThrow("does not match a declared Source target")
+    expect(request).not.toHaveBeenCalled()
+
+    await expect(execution.executeSourceRequest({
+      body: JSON.parse(JSON.stringify(body)),
+      method: "POST",
+      url: "https://status.example.com/query",
+    })).resolves.toMatchObject({ status: 200 })
+    expect(request).toHaveBeenCalledOnce()
+  })
+
   it("identifies explicit and resolved fetch Sources by provider", async () => {
     expect(fetch({ url: "https://status.example.com/health" })).toMatchObject({ name: "fetch" })
     expect(normalizeWorkspaceSources({ status: { url: "https://status.example.com/health" } })[0]?.source).toMatchObject({ name: "fetch" })
