@@ -91,7 +91,7 @@ async function loadStaticDefinitions(registry: ScheduleDefinitionRegistry | unde
   if (!registry) return []
   const definitions = await Promise.all(Object.entries(registry).map(async ([name, load]) => {
     const definition = unwrapDefinition(await load())
-    return definition && "cron" in definition ? { definition, name } : undefined
+    return definition && Object.hasOwn(definition, "cron") ? { definition, name } : undefined
   }))
   return definitions.filter((definition): definition is StaticScheduleDefinitionEntry => definition !== undefined)
 }
