@@ -883,13 +883,13 @@ function withDefaultToolInputSchemas<TTools extends Record<string, unknown> | un
   })) as TTools
 }
 
-function isStandardSchemaInput(value: object): boolean {
+function isStandardSchemaInput(value: unknown): boolean {
+  if (!hasRuntimeType(value, "object") || value === null) return false
   if (Object.hasOwn(value, "~standard")) return true
   if (!("~standard" in value)) return false
-  const marker = (value as { "~standard"?: unknown })["~standard"]
+  const marker = value["~standard"]
   if (!hasRuntimeType(marker, "object") || marker === null) return false
-  const standard = marker as { version?: unknown, validate?: unknown }
-  return standard.version === 1 && hasRuntimeType(standard.validate, "function")
+  return "version" in marker && marker.version === 1 && "validate" in marker && hasRuntimeType(marker.validate, "function")
 }
 
 function createAiSdkRuntimeContext(context: AgentAdapterRunContext) {
