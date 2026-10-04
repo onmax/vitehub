@@ -172,9 +172,12 @@ export function toAgentRunResult(value: unknown): AgentRunResult {
 function isUsageRecord(value: unknown): value is AgentUsageRecord {
   if (!isRecord(value)) return false
   for (const key of ["calls", "cost", "credentialSource", "latency", "model", "provider", "raw", "response", "run", "transport", "usage"]) {
+    const visited = new WeakSet<object>()
     let source: object | null = value
     let own = true
     while (source && source !== Object.prototype) {
+      if (visited.has(source)) return false
+      visited.add(source)
       let descriptor: PropertyDescriptor | undefined
       try {
         descriptor = Object.getOwnPropertyDescriptor(source, key)

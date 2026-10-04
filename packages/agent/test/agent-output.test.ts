@@ -28,6 +28,17 @@ describe("agent output helpers", () => {
     })
   })
 
+  it("does not loop on cyclic usage record prototypes", () => {
+    const target = {}
+    let usageRecord: object
+    usageRecord = new Proxy(target, { getPrototypeOf: (): object => usageRecord })
+
+    expect(toAgentRunResult({ usageRecord })).toMatchObject({
+      usage: undefined,
+      usageRecord: undefined,
+    })
+  })
+
   it("accepts usage metadata exposed through class getters", () => {
     class UsageRecord {
       get usage() {
