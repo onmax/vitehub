@@ -441,6 +441,21 @@ describe("blob config", () => {
     })).toThrow("`blob.stores.default` is required when using named Blob stores.")
   })
 
+  it("ignores named stores inherited from an untrusted prototype", () => {
+    const options = Object.create({
+      stores: {
+        default: { base: ".inherited", driver: "fs" },
+      },
+    })
+
+    expect(normalizeBlobOptions(options, { env: {}, hosting: "" })).toEqual({
+      store: {
+        base: ".vitehub/data/blob",
+        driver: "fs",
+      },
+    })
+  })
+
   it("rehydrates the Vercel token at runtime", () => {
     expect(resolveRuntimeVercelBlobStore({
       access: "public",
