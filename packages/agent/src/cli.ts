@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "./internal/runtime-type.ts"
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
@@ -20,6 +20,7 @@ import { runAgentChannelReplayCli } from "./internal/channel-replay-cli.ts"
 import { enrichAgentUsageCost, modelsDevPricing, type AgentUsagePricing } from "./internal/usage-pricing.ts"
 import { resolveAgentEvalOptions, writeAgentEvaliteConfig, type ResolvedAgentEvalOptions } from "./internal/evalite-config.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute, readAgentInvocationStream } from "./invocation-stream.ts"
+import type { AgentDevLoopDiscoveryResponse } from "./invocation-stream.ts"
 
 import type { AgentEvalOptions, AgentUsageRecord } from "./types.ts"
 import type { UIMessageLike } from "./chat-message-input.ts"
@@ -760,17 +761,9 @@ async function readDiscovery(
   context: AgentCliContext,
   fetchImpl: typeof fetch,
 ): Promise<AgentDevTarget | undefined> {
-  const server = await discoverViteHubDevServer({
+  const server = await discoverViteHubDevServer<Partial<AgentDevLoopDiscoveryResponse>>({
     endpoint: agentDevEndpoint,
     fetch: fetchImpl,
-    parseDiscovery(value: unknown) {
-      const response = isRecord(value) ? value : {}
-      return {
-        root: response.root,
-        workspaceDevTokenServerId: response.workspaceDevTokenServerId,
-        agents: Array.isArray(response.agents) ? response.agents.filter(isRecord) : [],
-      }
-    },
     isCompatibleRoot: isCompatibleAgentDevServerRoot,
     rootDir: context.rootDir,
     serverUrl: parsed.url,
@@ -780,9 +773,10 @@ async function readDiscovery(
   const { discovery, url } = server
   const tokenOptions = hasRuntimeType(discovery.workspaceDevTokenServerId, "string") ? { serverId: discovery.workspaceDevTokenServerId } : {}
   const root = hasRuntimeType(discovery.root, "string") ? discovery.root : context.rootDir
-  const agents = (discovery.agents || []).flatMap(agent => hasRuntimeType(agent.name, "string") ? [agent.name] : [])
+  const discoveredAgents = Array.isArray(discovery.agents) ? discovery.agents.filter(isRecord) : []
+  const agents = discoveredAgents.flatMap(agent => hasRuntimeType(agent.name, "string") ? [agent.name] : [])
   const agentTargets = new Map<string, string>()
-  for (const agent of discovery.agents || []) {
+  for (const agent of discoveredAgents) {
     if (!hasRuntimeType(agent.name, "string")) continue
     agentTargets.set(agent.name, agent.name)
     if (Array.isArray(agent.aliases)) {
@@ -1288,7 +1282,7 @@ export function createAgentCliContributor(options?: false | AgentCliContributorO
       description: "Inspect an application's durable Agent Invocation journal.",
       name: "invocations",
       run: async (args, context) => await runAgentInvocationsCli(args, context),
-      usage: "vitehub agent invocations <list|show|tail> [id] [--url <url>] [--json]",
+      usage: "vitehub agent invocations <list|show|tail|cancel> [id] [--url <url>] [--json]",
     },
   ]
   if (evalFiles.length) {

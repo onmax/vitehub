@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
 import type { AgentInput, AgentCallbackContext } from "../../index.ts";
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../../internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import { registerAgentProcessHostIntake, type AgentProcessHostContext, type AgentProcessHostInstance } from "../../agent-process-host.ts";
 import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
@@ -48,7 +48,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
-  const github = createGitHubHost({ credentials: credentials.credentials, identity });
+  const github = createGitHubHost({ credentials: credentials.credentials, identity, checkouts: { root: join(context.dataDir, "checkouts") } });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
   const host = await createProcessAgentHost({
     name: context.agentName,
