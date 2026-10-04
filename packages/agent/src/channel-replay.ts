@@ -265,7 +265,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   const result: ReplayChannelResult = { failed: 0, items: [], nextCursor: options.cursor ?? null, processed: 0, skipped: 0 }
   let cursor = options.cursor
   let remaining = options.limit ?? Number.POSITIVE_INFINITY
-  const seenCursors = new Set<string>()
+  const seenCursors = new Set<string>(cursor ? [cursor] : [])
 
   const replay = { agent, agentName, channel, dryRun: options.dryRun, force: options.force, invocations, runtime, triggerId }
 
