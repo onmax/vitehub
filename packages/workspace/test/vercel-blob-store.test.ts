@@ -45,6 +45,7 @@ const blobMock = vi.hoisted(() => {
           uploadedAt: value.uploadedAt,
           url: `https://blob.example/${pathname}`,
         })),
+      cursor: undefined as string | undefined,
       hasMore: false,
     })),
     put: vi.fn(async (pathname: string, body: Blob | Uint8Array | string) => {
@@ -89,6 +90,14 @@ describe("Vercel Blob workspace store", () => {
     const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
     await expect(store.list()).rejects.toThrow("pagination returned a repeated cursor")
     expect(blobMock.list).toHaveBeenCalledTimes(2)
+  })
+  it("stops when the provider marks a cursor as terminal", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    blobMock.list.mockResolvedValueOnce({ blobs: [], cursor: "terminal", hasMore: false })
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await expect(store.list()).resolves.toEqual([])
+    expect(blobMock.list).toHaveBeenCalledTimes(1)
   })
   it("detects equal-size content changes in snapshot diffs", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
