@@ -188,6 +188,8 @@ describe("Collections", () => {
     for (const cursor of ["A", "AA=", "Zm9v==", "AA\u002fAA"]) {
       await expect(collection.page({ cursor, query })).rejects.toBeInstanceOf(CollectionCursorError)
     }
+    const first = await collection.page({ query })
+    await expect(collection.page({ cursor: `${first.nextCursor}==`, query })).rejects.toBeInstanceOf(CollectionCursorError)
     const wrongShape = btoa(JSON.stringify(["wrong"])).replaceAll("=", "")
     await expect(
       collection.page({ cursor: wrongShape, query: await collection.parseQuery({}) }),
