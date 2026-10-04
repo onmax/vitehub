@@ -57,6 +57,7 @@ export function agentToolJsonSchema(schema: AgentToolSchema | undefined, directi
     // SAFETY: The alternate AgentToolSchema branch is a JSON Schema object.
     return normalized as Record<string, unknown>
   }
+  // SAFETY: The own Standard Schema marker is checked above; optional conversion metadata is checked below.
   const standard = (normalized as JsonStandardSchema)["~standard"]
   if (!Object.hasOwn(standard, "jsonSchema") || !standard.jsonSchema) return
   // SAFETY: Runtime feature detection checks the Standard JSON Schema method before calling it.
