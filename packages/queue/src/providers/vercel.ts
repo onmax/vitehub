@@ -11,6 +11,17 @@ function invalidVercelSendResponse(cause: unknown): never {
   })
 }
 
+function isRuntimeFunction(value: unknown): value is CallableFunction {
+  if (value === null || value === undefined || Object(value) !== value) return false
+  try {
+    Function.prototype.toString.call(value)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 function parseVercelMessageId(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) invalidVercelSendResponse(value)
 
@@ -55,7 +66,7 @@ async function loadVercelQueueClient(region: string | undefined): Promise<Vercel
   }
 
   const { region: resolvedRegion } = resolveVercelQueueRegion(region)
-  if (Object.hasOwn(module, "QueueClient") && typeof module.QueueClient === "function") {
+  if (Object.hasOwn(module, "QueueClient") && isRuntimeFunction(module.QueueClient)) {
     if (!resolvedRegion) {
       throw createQueueError("VERCEL_QUEUE_REGION_REQUIRED", {
         details: { provider: "vercel" },
@@ -65,7 +76,7 @@ async function loadVercelQueueClient(region: string | undefined): Promise<Vercel
     return new (module.QueueClient as new (options: { region: string }) => VercelQueueSDK)({ region: resolvedRegion })
   }
 
-  if (Object.hasOwn(module, "send") && Object.hasOwn(module, "handleCallback") && typeof module.send === "function" && typeof module.handleCallback === "function") {
+  if (Object.hasOwn(module, "send") && Object.hasOwn(module, "handleCallback") && isRuntimeFunction(module.send) && isRuntimeFunction(module.handleCallback)) {
     return {
       handleCallback: module.handleCallback as VercelQueueSDK["handleCallback"],
       send: module.send as VercelQueueSDK["send"],
