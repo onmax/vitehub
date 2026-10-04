@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import {
   clearActiveCloudflareEnv,
+  getActiveCloudflareBinding,
   getActiveCloudflareEnv,
   getCloudflareEnv,
   resolveWaitUntil,
@@ -12,6 +13,37 @@ import {
 afterEach(() => clearActiveCloudflareEnv())
 
 describe("Cloudflare environment context", () => {
+  it("clears the installed environment and its bindings", async () => {
+    setActiveCloudflareEnv({ BUCKET: "old-bucket" })
+
+    clearActiveCloudflareEnv()
+
+    expect(getActiveCloudflareEnv()).toBeUndefined()
+    expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+    await Promise.resolve()
+    expect(getCloudflareEnv({})).toBeUndefined()
+  })
+
+  it("clears only the current request context without disabling another request", async () => {
+    let release: () => void = () => {}
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    const otherRequest = runWithActiveCloudflareEnv({ BUCKET: "other-bucket" }, async () => {
+      await waiting
+      expect(getActiveCloudflareBinding("BUCKET")).toBe("other-bucket")
+    })
+
+    try {
+      runWithActiveCloudflareEnv({ BUCKET: "cleared-bucket" }, () => {
+        clearActiveCloudflareEnv()
+        expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+      })
+    }
+    finally {
+      release()
+      await otherRequest
+    }
+  })
+
   it("can read event bindings without inheriting the ambient environment", () => {
     const ambient = { name: "ambient" }
     const eventEnv = { name: "event" }
