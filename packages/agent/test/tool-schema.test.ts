@@ -50,3 +50,17 @@ it("ignores inherited schema discriminators", () => {
     type: "object",
   })
 })
+
+it("ignores inherited Standard JSON Schema converters", () => {
+  const inheritedJsonSchema = {
+    input: () => ({ type: "string" }),
+  }
+  const schema = Object.assign({
+    "~standard": Object.create({ jsonSchema: inheritedJsonSchema }),
+    properties: { message: { type: "string" } },
+    type: "object",
+  })
+
+  expect(agentToolJsonSchema(schema as never, "input")).toBeUndefined()
+  expect(inspectAgentTools({ send_message: { inputSchema: schema } })?.[0]?.inputSchema).toBeUndefined()
+})

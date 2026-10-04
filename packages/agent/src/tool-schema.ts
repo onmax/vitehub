@@ -37,9 +37,11 @@ export function agentToolJsonSchema(schema: AgentToolSchema | undefined, directi
     // SAFETY: The alternate AgentToolSchema branch is a JSON Schema object.
     return normalized as Record<string, unknown>
   }
+  const standard = (normalized as JsonStandardSchema)["~standard"]
+  if (!Object.hasOwn(standard, "jsonSchema") || !standard.jsonSchema) return
   // SAFETY: Runtime feature detection checks the Standard JSON Schema method before calling it.
-  const jsonSchema = (normalized as JsonStandardSchema)["~standard"].jsonSchema?.[direction]
-  return jsonSchema?.({ target: "draft-07" })
+  const jsonSchema = standard.jsonSchema[direction]
+  return typeof jsonSchema === "function" ? jsonSchema({ target: "draft-07" }) : undefined
 }
 
 export function withAgentToolJsonSchemas<TTools extends AgentToolSet>(tools: TTools): TTools {
