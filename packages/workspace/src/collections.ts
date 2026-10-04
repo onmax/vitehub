@@ -102,7 +102,9 @@ function valueAt(value: unknown, path: string): unknown {
       return current.map(item => visit(item, remaining)).filter(item => item !== undefined)
     }
     if (!isRecord(current)) return
-    return visit(current[remaining[0]!], remaining.slice(1))
+    const segment = remaining[0]!
+    if (!Object.hasOwn(current, segment)) return
+    return visit(current[segment], remaining.slice(1))
   }
   return visit(value, segments)
 }
@@ -115,11 +117,12 @@ function scalarValues(value: unknown): string[] {
 }
 
 function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | undefined): boolean {
+  if (expected === null || expected === undefined) return true
   const values = scalarValues(value).map(item => item.toLocaleLowerCase())
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Filter values are parsed from the public collection query contract.
   if (typeof expected === "object" && !Array.isArray(expected)) return expected.empty && values.length === 0
   const candidates = (Array.isArray(expected) ? expected : [expected])
-    .filter((item): item is string => item !== undefined)
+    .filter((item): item is string => item !== undefined && item !== null)
     .map(item => item.toLocaleLowerCase())
   if (!candidates.length) return true
   return candidates.some(candidate => values.includes(candidate))
@@ -153,12 +156,15 @@ async function readCollection<Name extends WorkspaceName>(options: WorkspaceColl
 
 function normalizedFilters(filters: WorkspaceCollectionQuery["filters"]): Record<string, string[]> {
   return Object.fromEntries(Object.entries(filters || {})
-    .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined)
+    .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined && entry[1] !== null)
     .sort(([left], [right]) => left.localeCompare(right))
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection filters cross a JSON boundary.
-    .map(([field, value]) => [field, typeof value === "object" && !Array.isArray(value)
+    .map(([field, value]) => [field, typeof value === "object" && value !== null && !Array.isArray(value)
       ? ["operator:empty"]
-      : (Array.isArray(value) ? value : [value]).map(item => `value:${item.toLocaleLowerCase()}`).sort()]))
+      : (Array.isArray(value) ? value : [value])
+        .filter((item): item is string => item !== undefined && item !== null)
+        .map(item => `value:${item.toLocaleLowerCase()}`).sort()])
+    .filter(([, values]) => values.length > 0))
 }
 
 async function queryDigest(query: WorkspaceCollectionQuery, limit: number): Promise<string> {
@@ -181,8 +187,11 @@ function decodeCursor(cursor: string | undefined, expected: Omit<CollectionCurso
   if (!cursor) return 0
   let parsed: unknown
   try {
+    if (!/^[A-Za-z0-9_-]*$/.test(cursor) || cursor.length % 4 === 1) throw new TypeError("Malformed base64url cursor")
     const normalized = cursor.replaceAll("-", "+").replaceAll("_", "/")
-    parsed = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")))
+    const decoded = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
+    if (btoa(decoded).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "") !== cursor) throw new TypeError("Non-canonical base64url cursor")
+    parsed = JSON.parse(decoded)
   }
   catch {
     throw workspaceCollectionCursorError("malformed")

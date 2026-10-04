@@ -11736,7 +11736,8 @@ describe("server helpers", () => {
     })
   })
 
-  it("releases failed title delivery claims for finish and later webhook retries", async () => {
+  // Two complete webhooks persist title claims and transcripts to SQLite.
+  it("releases failed title delivery claims for finish and later webhook retries", { timeout: 15_000 }, async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { title } = await import("../src/capabilities.ts")
     const { http } = await import("../src/channels.ts")
@@ -13093,7 +13094,8 @@ describe("server helpers", () => {
     }
 
     try {
-      vi.useFakeTimers()
+      // Keep lock-contention and SQLite retry delays running while advancing renewals.
+      vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] })
       await state.connect()
       const firstResponse = handler(await serialRequest(91_010, "A"), "telegram", {
         agentName: "support",
