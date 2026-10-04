@@ -293,8 +293,8 @@ function renderRegistryTypes(definitions: DiscoveredConnectionDefinition[]): str
 }
 
 function connectionMountBase(base: unknown): string {
-  if (typeof base !== "string" || !base.startsWith("/") || base.startsWith("//")) return ""
-  return base.replace(/\/+$/, "")
+  const parsed = v.safeParse(v.pipe(v.string(), v.regex(/^\/(?!\/)/)), base);
+  return parsed.success ? parsed.output.replace(/\/+$/, "") : "";
 }
 
 function connectionManagementRoute(base: unknown): string {
