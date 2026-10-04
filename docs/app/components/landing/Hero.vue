@@ -12,9 +12,9 @@ import AgentPlayground from "./AgentPlayground.vue"
         <p class="mb-6 font-mono text-sm text-muted">
           The server layer for Vite apps
         </p>
-        <h1 class="vh-hero-title max-w-[9ch] font-semibold text-highlighted text-balance">
+        <h2 class="vh-hero-title max-w-[9ch] font-semibold text-highlighted text-balance">
           Any agent, anywhere.
-        </h1>
+        </h2>
         <p class="mt-7 max-w-[44ch] text-lg/8 text-muted text-pretty sm:text-xl/8">
           Bring any model or coding provider, compose your own Capabilities around a persistent Workspace,
           and deploy the same Agent across supported hosts.

@@ -171,12 +171,14 @@ describe("landing page", () => {
 
     expect(reducedMotion).toContain("animation: none;");
     expect(primitiveMotion).toContain(".primitive-motion:not(.is-playing) .a {\n  animation-play-state: paused;");
-    expect(primitiveMotion).toContain("animation-iteration-count: 1;");
+    expect(primitiveMotion).toContain("animation-iteration-count: infinite;");
     const primitives = await readFile(
       new URL("../app/components/landing/Primitives.vue", import.meta.url),
       "utf8",
     );
-    expect(primitives).toContain("Replay scenes");
+    expect(primitives).not.toContain("Replay scenes");
+    expect(primitives).toContain(':play="visible"');
+    expect(primitives).toContain("useIntersectionObserver(");
     expect(installCommand).toContain(
       `:class="activeTab === 'package' ? 'w-[16.5rem]' : 'w-0'"`,
     );
@@ -186,6 +188,11 @@ describe("landing page", () => {
   it("wires landing-page metadata through Docus", async () => {
     const source = await readFile(new URL("../app/pages/index.vue", import.meta.url), "utf8");
 
+    expect(source).toContain("<LandingPrimitives />");
+    expect(source).toContain("<LandingHero />");
+    expect(source.indexOf("<LandingPrimitives />")).toBeLessThan(source.indexOf("<LandingHero />"));
+    expect(source).not.toContain("<LandingSharedApi />");
+    expect(source).not.toContain("<LandingNuxtHubMigration />");
     expect(source).toContain("useSeo({");
     expect(source).toContain('type: "website"');
     expect(source).toContain('defineOgImage("Landing"');
