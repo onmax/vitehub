@@ -631,17 +631,15 @@ async function resolveMaybe<T, TContext extends AgentRuntimeContext>(
 async function resolveWebhookSecret(
   value: unknown,
   context: AgentRuntimeContext,
-): Promise<string | false | object | undefined> {
+): Promise<unknown> {
   if (value === undefined) return undefined
   if (isRuntimeFunction(value)) {
-    return await (value as (context: AgentRuntimeContext) => string | false | object | Promise<string | false | object>)(context)
+    return await value(context)
   }
-  if (isRecord(value)) {
-    if (Object.hasOwn(value, "resolve") && isRuntimeFunction(value.resolve)) {
-      return await (value.resolve as (context: AgentRuntimeContext) => string | false | object | Promise<string | false | object>)(context)
-    }
+  if (isRecord(value) && Object.hasOwn(value, "resolve") && isRuntimeFunction(value.resolve)) {
+    return await value.resolve(context)
   }
-  return value as string | false | object
+  return value
 }
 
 function getAgentCapabilities(agent: unknown): AgentCapabilityDefinition[] {
