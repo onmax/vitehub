@@ -36,7 +36,7 @@ function resolveAction(action: CloudflareQueueBatchErrorAction | void, message: 
     return
   }
 
-  if (action && typeof action === "object" && !Array.isArray(action) && Object.hasOwn(action, "retry")) {
+  if (action && !Array.isArray(action) && Object.hasOwn(action, "retry")) {
     message.retry(action.retry)
     return
   }
