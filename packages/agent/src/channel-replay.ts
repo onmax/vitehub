@@ -265,7 +265,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   const result: ReplayChannelResult = { failed: 0, items: [], nextCursor: options.cursor ?? null, processed: 0, skipped: 0 }
   let cursor = options.cursor
   let remaining = options.limit ?? Number.POSITIVE_INFINITY
-  const seenCursors = new Map<string, readonly string[]>()
+  const seenCursors = new Set<string>()
 
   const replay = { agent, agentName, channel, dryRun: options.dryRun, force: options.force, invocations, runtime, triggerId }
 
@@ -288,11 +288,10 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
       }
       result.nextCursor = page.nextCursor
       const itemKeys = page.items.map(item => assertItemKey(history.key(item), channel, "history key()"))
-      const repeatedKeys = page.nextCursor && page.items.length ? seenCursors.get(page.nextCursor) : undefined
-      if (repeatedKeys && repeatedKeys.length === itemKeys.length && repeatedKeys.every((key, index) => key === itemKeys[index])) {
+      if (page.nextCursor && page.items.length && seenCursors.has(page.nextCursor)) {
         throw agentDiagnostics.AGENT_R0936({ message: `[vitehub] Channel "${channel}" history returned a repeated pagination cursor.` })
       }
-      if (page.nextCursor) seenCursors.set(page.nextCursor, itemKeys)
+      if (page.nextCursor) seenCursors.add(page.nextCursor)
       const pageItems = page.items.slice(0, Number.isFinite(remaining) ? remaining : undefined)
       for (const [index, item] of pageItems.entries()) {
         const replayed = await runChannelItem(replay, itemKeys[index]!, item)

@@ -83,8 +83,12 @@ function memoryInvocations() {
 
 describe("replayChannel()", () => {
   it("rejects a history collection that repeats a pagination cursor", async () => {
-    const history = defineCollection(async () => [emails[0]!, emails[0]!], {
-      cursor: email => email.id,
+    let page = 0
+    const history = defineCollection(async () => {
+      const email = emails[page++ === 0 ? 0 : 1]!
+      return [email, email]
+    }, {
+      cursor: () => "cycle",
       cursorSchema: v.string(),
       defaultLimit: 1,
       maxLimit: 1,
