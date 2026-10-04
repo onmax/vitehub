@@ -493,6 +493,9 @@ describe("blob runtime", () => {
     expect(head.url).toBe("https://assets.example/api/_vitehub/blob/notes/served.txt")
     expect(list.blobs[0]?.url).toBe("https://assets.example/api/_vitehub/blob/notes/served.txt")
     expect(otherStore.url).toBe("https://blob.example/notes/private.txt")
+
+    const reserved = expectBlobSuccess(await blob.store("assets").put("notes/query?draft#one.txt", "value"))
+    expect(reserved.url).toBe("https://assets.example/api/_vitehub/blob/notes/query%3Fdraft%23one.txt")
   })
 
   it.each([
@@ -575,6 +578,31 @@ describe("blob runtime", () => {
     setBlobRuntimeConfig(false)
     expect((await blob.list())[0]).toMatchObject({ cause: { code: "BLOB_R0023" } })
     expect((await blob.store("assets").list())[0]).toMatchObject({ cause: { code: "BLOB_R0023" } })
+  })
+
+  it("does not resolve inherited named stores at runtime", async () => {
+    const inheritedStores = Object.create({
+      inherited: {
+        access: "public",
+        driver: "vercel-blob",
+        token: "inherited-token",
+      },
+    }) as Record<string, { access: "public", driver: "vercel-blob", token: string }>
+    inheritedStores.default = {
+      access: "public",
+      driver: "vercel-blob",
+      token: "default-token",
+    }
+    setBlobRuntimeConfig({
+      store: inheritedStores.default,
+      stores: inheritedStores,
+    })
+
+    await expect(blob.store("inherited").get("notes/inherited.txt")).rejects.toMatchObject({
+      code: "BLOB_R0027",
+      message: "Unknown Blob store \"inherited\".",
+    })
+    expect(vercelBlobMock.get).not.toHaveBeenCalled()
   })
 
   it("uses the active Cloudflare binding", async () => {
@@ -717,6 +745,27 @@ describe("blob runtime", () => {
         pathname: "notes/hello.txt",
       }),
     ])
+  })
+
+  it.each([
+    ["", ["docs/"]],
+    ["doc", ["docs/"]],
+    ["docs", ["docs/"]],
+    ["docs/", ["docs/reports/"]],
+    ["docs/re", ["docs/reports/"]],
+  ])("returns exact folded files-sdk folder keys for prefix %j", async (prefix, folders) => {
+    filesSdkMock.list.mockResolvedValueOnce({ items: [{
+      etag: "etag",
+      key: "docs/reports/one.txt",
+      lastModified: "2026-01-01T00:00:00.000Z",
+      metadata: {},
+      size: 3,
+      type: "text/plain",
+    }] })
+    setBlobRuntimeConfig({ store: { bucket: "assets", driver: "s3" } })
+
+    const result = expectBlobSuccess(await blob.list({ folded: true, prefix }))
+    expect(result).toMatchObject({ blobs: [], folders, hasMore: false })
   })
 
   it("resumes folded files-sdk listings within and across provider pages", async () => {

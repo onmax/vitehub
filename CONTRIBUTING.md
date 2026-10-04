@@ -4,7 +4,7 @@ Use this guide to turn a requested behavior into a tested change. [AGENTS.md](AG
 
 ## Set up a checkout
 
-Use the Node version required by `package.json`. For the full verification gate, install the Deno version in `.tool-versions` with the [official Deno installation guide](https://docs.deno.com/runtime/getting_started/installation/). CI reads the same pin.
+Use the Node version required by `package.json`. For the full verification gate, install the Deno version in `.deno-version` with the [official Deno installation guide](https://docs.deno.com/runtime/getting_started/installation/). CI reads the same pin.
 
 From a clean checkout, let Corepack select pnpm from `package.json` and install the workspace dependencies. This also installs Vite+.
 
@@ -26,7 +26,7 @@ corepack pnpm exec vp run verify
 
 `verify` runs the preflight first and includes the native Deno package consumer test. A missing or different Deno version is a contributor setup error, not a ViteHub runtime failure. Package scripts own package-local test, build, and typecheck behavior.
 
-A global `vp` installation is not required. Use `corepack pnpm exec vp` after installation. Node and pnpm requirements come from `package.json`; the Deno pin comes from `.tool-versions`. The current preflight checks Deno. It does not validate credentials or every provider tool.
+A global `vp` installation is not required. Use `corepack pnpm exec vp` after installation. Node and pnpm requirements come from `package.json`; the Deno pin comes from `.deno-version`. The current preflight checks Deno. It does not validate credentials or every provider tool.
 
 ## Start with one user outcome
 
@@ -69,6 +69,8 @@ Replace `vite-hub` with a manifest package name, such as `@vite-hub/agent`, and 
 
 Root contracts do not include package tests. The full local gate does not replace provider runtime or browser checks. Read [CI](.github/workflows/ci.yml) for checks enabled on each event and the [live smoke workflow](.github/workflows/live-smoke.yml) for external-service requirements. Do not run live tasks without authorization.
 
+A push to `main` deploys the docs site to vitehub.dev after the `checks` and `docs` jobs pass. The `docs-deploy` job uses the Cloudflare token of the `Production` environment. `vp run --filter vitehub-docs deploy:cloudflare` remains the manual path.
+
 The [Console playground](playground/console/README.md) exercises the real UI with synthetic data. It cannot prove invocation execution, persistence, or provider behavior. For a Console runtime change, also exercise the real route and runtime with a local consumer.
 
 Report the observed user result, exact commands, failures, and unverified parts. Separate setup and infrastructure failures from product failures. Stop when the requested outcome and relevant checks pass; do not broaden testing without a new concern.
@@ -96,6 +98,12 @@ Familiar interfaces such as filesystems, tools, and shells are useful. Keep thei
 Keep changes small. Use existing code or a suitable library before building infrastructure. Prefer inferred types that make invalid states hard to represent. Avoid cast-only wrappers. Comments should explain use or a non-obvious constraint. Measure before and after when claiming a performance improvement.
 
 ViteHub is in active development. Breaking changes and removal of unused compatibility are welcome when they clarify the final contract. Use Better Auth as a composition reference and UnJS for host-independent behavior. Document public behavior in `docs/content/docs/` and the affected package README.
+
+### Documentation structure
+
+`docs/content/docs/` has one folder per product. Each Server Primitive folder is one docs section with its own sidebar and uses the same pages in the same order: `index.md` (the Overview, rendered as a landing page with a hero, page cards, and no sidebar), `get-started.md`, `configure.md`, `server-api.md`, `agent-capability.md` when the primitive has an Agent Capability, `hosts.md`, and `limits-and-errors.md`. Create a page only when the product has real content for it. Product-specific pages such as `env/bridge.md` come after the template pages. A product Overview is written with two content components, in this order. `::product-hero{tagline hosts}` holds one sentence of 20 words or fewer, the comma-separated hosts the primitive supports, and a `:::code-group` of two to four real examples; the first tab is the most meaningful one (a Definition plus the route that calls it, or a route that reads and writes). `::product-features` holds four to six `:::product-feature-item{title icon to}` entries: a claim of eight words or fewer and one sentence of 25 words or fewer; each card links to the page that explains it. No prose, headings, or code outside the components. Product landings render without the site header, announcement banner, or rules between sections; the layout appends the page index and a footer that lists every product. This shape follows measured docs landings (Cloudflare, Vercel, Supabase, Better Auth): one sentence per feature and the code in the hero. `.navigation.yml` declares the section `title`, `icon`, `order`, catalog `category`, and `related` section ids. Agent-only Capabilities live under `agents/capabilities/`. Start, Concepts, and AI resources live under `getting-started/`. When a page moves, add its old path to `docs/modules/vitehub-docs/redirects.ts` and update inbound links; `corepack pnpm exec vp run --filter vitehub-docs test:links` checks every internal link and anchor.
+
+
 
 ## Downstream patch loop
 
@@ -146,4 +154,4 @@ Repository administrators must enable **Settings → Actions → General → All
 
 Pull request work belongs in a dedicated worktree. Reuse an isolated task worktree, or create one from the refreshed target base. Inspect collisions and preserve other agents' work.
 
-Do not commit temporary plans, raw thread exports, or scratch files. Use `.agents/research/` only for durable, cited research that supports a project decision. Remove task-created temporary files and worktrees after their remote state is safe; never remove pre-existing work without authorization.
+Do not commit temporary plans, raw thread exports, or scratch files. Keep durable, cited research in the issue or pull request that supports a project decision. Remove task-created temporary files and worktrees after their remote state is safe; never remove pre-existing work without authorization.

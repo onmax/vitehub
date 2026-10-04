@@ -4,7 +4,7 @@ import { serializeResponse, toResponse } from "@vite-hub/runtime"
 import { assertRuntimeScheduleId, invalidScheduleValueDetails, createScheduleError } from "../errors.ts"
 import { isRuntimeScheduleDue } from "./due.ts"
 import { getRuntimeScheduleStore, getScheduleRunStore, loadScheduleDefinition } from "./state.ts"
-import { createLocalWaitUntil } from "./wait-until.ts"
+import { runWithScheduleWaitUntil } from "./wait-until.ts"
 
 import type { RuntimeScheduleRecord, RuntimeScheduleStore, RuntimeScheduleWake, ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRegistryDefinition, ScheduleRunAttemptRecord, ScheduleRunContext, ScheduleRunError, ScheduleRunRecord, ScheduleRunStore, ScheduleTargetName } from "../types.ts"
 
@@ -213,23 +213,15 @@ export async function executeSchedule(options: ExecuteScheduleOptions): Promise<
 
   const runStore = options.runStore ?? getScheduleRunStore()
   const attempt = await startAttempt(run, runStore)
-  const localWaitUntil = createLocalWaitUntil()
-  const waitUntil = options.waitUntil ?? localWaitUntil.waitUntil
   try {
-    const value = await options.definition.handler(toHandlerContext(run, attempt, options.input, waitUntil))
-    if (!options.waitUntil) await localWaitUntil.flush()
+    const value = await runWithScheduleWaitUntil(
+      waitUntil => options.definition.handler(toHandlerContext(run, attempt, options.input, waitUntil)),
+      options.waitUntil,
+    )
     const response = await serializeResponse(toResponse(value))
     return await completeRun(run, attempt, response, runStore)
   }
   catch (error) {
-    if (!options.waitUntil) {
-      try {
-        await localWaitUntil.flush()
-      }
-      catch {
-        // Preserve the handler error after all locally owned work settles.
-      }
-    }
     await failRun(run, attempt, error, runStore)
     throw error
   }
@@ -250,24 +242,17 @@ async function loadStaticScheduleDefinition(name: string, registry: ScheduleDefi
   let definition: ScheduleRegistryDefinition | undefined
   if (registry) {
     const entry = Object.hasOwn(registry, name) ? registry[name] : undefined
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
     const loaded = typeof entry === "function" ? await entry() : undefined
     definition = loaded && "handler" in loaded ? loaded : loaded?.default
   }
   else {
     definition = await loadScheduleDefinition(name)
   }
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Require an executable Static Schedule Definition from the loaded module.
   return definition && typeof definition.handler === "function" && "cron" in definition ? definition : undefined
 }
 
-/**
- * Runs a Static Schedule Definition now, outside its cron.
- * The definition must set `manual: true`. The run id uses the `manual` source, so it never matches a cron run.
- * Resolves with the finished run record, also when the handler fails.
- */
+/** Runs a manually dispatchable static Schedule Definition immediately. */
 export async function runSchedule(name: string, options: RunScheduleOptions = {}): Promise<ScheduleRunRecord> {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
   const definition = typeof name === "string" && name ? await loadStaticScheduleDefinition(name, options.registry) : undefined
   if (!definition) {
     throw createScheduleError("SCHEDULE_DEFINITION_NOT_FOUND")

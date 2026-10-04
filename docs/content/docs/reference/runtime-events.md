@@ -7,7 +7,7 @@ icon: i-lucide-activity
 ---
 
 Runtime events describe what happened across package boundaries.
-The Runtime Package owns Trace Events, Policy Decisions, Approval Requests, runtime capability handles, and wait-until behavior carried through [Runtime Context](/docs/concepts/runtime-context).
+The Runtime Package owns Trace Events, Policy Decisions, Approval Requests, runtime capability handles, and wait-until behavior carried through [Runtime Context](/docs/getting-started/concepts/runtime-context).
 
 ## Trace Event
 
@@ -48,6 +48,8 @@ Use the tagged `payload` field when an event needs structured detail. Payload vi
 | `private` | Records only the private visibility marker. This is also the fallback for malformed payload descriptors. |
 
 The payload contract is independent of `attributes`. Existing attribute content remains metadata-only by default and still requires the existing content policy to opt a trusted sink into inputs or outputs.
+
+Attribute projection reads own data properties without invoking getters. In metadata mode, this also applies to nested objects and array entries: content keys are recorded as omitted, and other accessors are skipped. Content mode keeps nested attribute values unchanged.
 
 ## Runtime lifecycle hooks
 

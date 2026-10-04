@@ -341,6 +341,26 @@ describe("ViteHub CLI", () => {
     expect(stderr.output()).toBe("")
   })
 
+  it("reserves the inspect namespace for built-in commands", async () => {
+    const stdout = stream()
+    const stderr = stream()
+    const run = vi.fn(() => 0)
+
+    const exitCode = await runViteHubCli({
+      args: ["inspect", "definitions"],
+      cwd: "/repo",
+      loadConfig: async () => ({
+        plugins: [{ vitehub: { cli: { namespaces: [{ features: [{ name: "definitions", run }], name: "inspect" }] } } }],
+        root: "/repo",
+      }),
+      stderr,
+      stdout,
+    })
+
+    expect(exitCode).toBe(0)
+    expect(run).not.toHaveBeenCalled()
+  })
+
   it("runs runtime namespaces without loading the project config", async () => {
     const stdout = stream()
     const stderr = stream()
@@ -352,9 +372,26 @@ describe("ViteHub CLI", () => {
     expect(run).toHaveBeenCalledWith(["--port", "1"], expect.objectContaining({ cwd: "/app", rootDir: "/app" }))
     expect(loadConfig).not.toHaveBeenCalled()
 
-    expect(await runViteHubCli({ args: ["--help"], cwd: "/app", loadConfig, runtimeNamespaces, stderr, stdout })).toBe(0)
-    expect(stdout.output()).toContain("  box          Runtime commands.")
+    expect(await runViteHubCli({ args: ["box", "--help"], cwd: "/app", loadConfig, runtimeNamespaces, stderr, stdout })).toBe(0)
+    expect(loadConfig).not.toHaveBeenCalled()
+    expect(stdout.output()).toContain("Usage: vitehub box")
     expect(stderr.output()).toBe("")
+  })
+
+  it.each([{ args: [] }, { args: ["--help"] }, { args: ["-h"] }])("loads project namespaces for root help with runtime commands ($args)", async ({ args }) => {
+    const stdout = stream()
+    const loadConfig = vi.fn(async () => ({
+      plugins: [{ vitehub: { cli: { namespaces: [{ description: "Blob commands.", features: [], name: "blob" }] } } }],
+      root: "/repo",
+    }))
+    const runtimeNamespaces = [{ description: "Runtime commands.", features: [], name: "box" }]
+
+    expect(await runViteHubCli({ args, cwd: "/app", loadConfig, runtimeNamespaces, stdout })).toBe(0)
+    expect(loadConfig).toHaveBeenCalledWith("/app", "serve")
+    expect(stdout.output()).toContain("  box          Runtime commands.")
+    expect(stdout.output()).toContain("  blob         Blob commands.")
+    expect(stdout.output()).toContain("  inspect")
+    expect(stdout.output()).toContain("  provision")
   })
 
   it("prints namespace help", async () => {
@@ -467,6 +504,39 @@ describe("ViteHub CLI", () => {
     expect(exitCode).toBe(0)
     expect(apply).not.toHaveBeenCalled()
     expect(stdout.output()).toContain("create\ttest-resource\tdemo")
+  })
+
+  it.each([
+    ["run", "--dry-run"],
+    ["status"],
+  ])("resolves contributors once per %s invocation and refreshes the next invocation", async (...args) => {
+    const rootDir = await createTempDir()
+    const apply = vi.fn(async () => ({}))
+    const contributor = vi.fn(async () => {
+      const revision = contributor.mock.calls.length
+      return {
+        namespaces: [],
+        provision: [{
+          id: "test:cloudflare",
+          provider: "cloudflare",
+          plan: async () => [{ kind: "test-resource", name: `revision-${revision}`, exists: false, apply }],
+        }],
+      }
+    })
+    const loadConfig = async () => ({ plugins: [{ vitehub: { cli: contributor } }], root: rootDir })
+    for (const revision of [1, 2]) {
+      const stdout = stream()
+      await expect(runViteHubCli({
+        args: ["provision", ...args, "--provider", "cloudflare", "--json"],
+        cwd: rootDir,
+        env: { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "test-token" },
+        loadConfig,
+        stdout,
+      })).resolves.toBe(0)
+      expect(stdout.output()).toContain(`revision-${revision}`)
+      expect(contributor).toHaveBeenCalledTimes(revision)
+    }
+    expect(apply).not.toHaveBeenCalled()
   })
 
   it("collects provision steps installed by Nuxt modules", async () => {

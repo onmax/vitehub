@@ -9,7 +9,7 @@
 
 `@vite-hub/workflow` discovers named long-running work and exposes one provider-neutral API for starting and inspecting runs.
 
-Use a Workflow when the application needs a run id, durable state, retries, cancellation, or resumable work. Use [Queue](https://vitehub.dev/docs/server-primitives/queue) when background delivery is enough and the application does not need to inspect a run.
+Use a Workflow when the application needs a run id, durable state, retries, cancellation, or resumable work. Use [Queue](https://vitehub.dev/docs/queue) when background delivery is enough and the application does not need to inspect a run.
 
 ## Install
 
@@ -151,6 +151,8 @@ The other runtime helpers are:
 
 Unsupported provider operations fail with `WORKFLOW_OPERATION_UNSUPPORTED`; ViteHub does not pretend that an inline run was cancelled or resumed.
 
+Inline run inspection uses weak references while execution is active. A reachable execution remains inspectable; an abandoned execution with no remaining owner can be garbage-collected and then reports `unknown`. Completed inline runs are retained for five minutes, up to 1,024 entries per runtime. Completed history does not evict active executions. If either `WeakRef` or `FinalizationRegistry` is unavailable, active inspection uses strong references capped at 1,024 entries. Starting another run evicts the oldest active inspection entry, even if execution is still reachable; it reports `unknown` and completion does not restore it. Use a durable provider when inspection must survive abandonment or a process restart.
+
 ## Make a Vercel workflow durable
 
 A plain Vercel definition executes inline and does not survive a function restart. For durable execution, keep the same context-shaped handler and register a native Workflow DevKit entry:
@@ -220,7 +222,7 @@ async function transcribe(recordingId: string) {
 
 ## Documentation
 
-- [Workflow guide](https://vitehub.dev/docs/server-primitives/workflows)
+- [Workflow guide](https://vitehub.dev/docs/workflows)
 - [Runtime and host support](https://vitehub.dev/docs/frameworks-hosts/support-matrix)
 - [OpenWorkflow](https://openworkflow.dev/docs/overview)
 - [Cloudflare Workflows](https://developers.cloudflare.com/workflows/)

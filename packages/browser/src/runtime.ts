@@ -1,3 +1,4 @@
+import { withBrowserTimeout } from "./internal/timeout.ts"
 import browserRegistry from "#vitehub/browser/registry"
 import runtimeConfig, { loadCloudflarePlaywright } from "#vitehub/browser/runtime"
 
@@ -40,44 +41,8 @@ import type {
 } from "./registry-types.ts"
 import { browserErrorDiagnostics } from "./error-diagnostics.ts"
 
-const CONTROLLER_ATTACH_TIMEOUT_MS = 30_000
-
 async function boundedCleanup(cleanup: Promise<void>, operation = "close the browser after setup failure"): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    await Promise.race([
-      cleanup,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(browserProviderError("cdp", operation))
-        }, CONTROLLER_ATTACH_TIMEOUT_MS)
-      }),
-    ])
-  }
-  finally {
-    if (timer) clearTimeout(timer)
-  }
-}
-
-async function attachController<TConnection>(
-  providerSession: BrowserSession<TConnection>,
-  controller: BrowserController<CDPClient, TConnection>,
-): Promise<BrowserControl<CDPClient>> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const attachment = providerSession.attach(controller)
-  try {
-    return await Promise.race([
-      attachment,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(browserProviderError("cdp", "attach the browser controller"))
-        }, CONTROLLER_ATTACH_TIMEOUT_MS)
-      }),
-    ])
-  }
-  finally {
-    if (timer) clearTimeout(timer)
-  }
+  await withBrowserTimeout(cleanup, () => browserProviderError("cdp", operation))
 }
 
 function closeErrors(errors: unknown[], message: string): void {
@@ -156,7 +121,7 @@ class BrowserDefinitionBrowserImpl implements BrowserDefinitionBrowser {
     const providerSession = await (this.options.client ?? resolveConfiguredClient()).open(options)
     let control: BrowserControl<CDPClient> | undefined
     try {
-      control = await attachController(providerSession, this.options.controller ?? cdp())
+      control = await withBrowserTimeout(providerSession.attach(this.options.controller ?? cdp()), () => browserProviderError("cdp", "attach the browser controller"))
       const { page } = await attachCDPPage(control.client)
       const session = new ManagedBrowserPageSession(providerSession, control, page)
       this.sessions.push(session)
@@ -223,7 +188,7 @@ function isBrowserDefinition(value: unknown): value is BrowserDefinition {
 }
 
 async function resolveBrowserDefinition(name: string): Promise<BrowserDefinition> {
-  const entry = browserRegistry[name]
+  const entry = Object.hasOwn(browserRegistry, name) ? browserRegistry[name] : undefined
   if (!entry) throw browserDefinitionNotFoundError(name)
   const loaded = typeof entry === "function" ? await entry() : entry
   const definition = "default" in loaded && loaded.default ? loaded.default : loaded

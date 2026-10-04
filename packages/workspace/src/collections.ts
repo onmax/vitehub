@@ -90,6 +90,7 @@ const defaultPageLimit = 50
 const defaultMaxLimit = 100
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection payloads are opaque values read from mounted Sources.
   return Boolean(value && typeof value === "object" && !Array.isArray(value))
 }
 
@@ -101,19 +102,23 @@ function valueAt(value: unknown, path: string): unknown {
       return current.map(item => visit(item, remaining)).filter(item => item !== undefined)
     }
     if (!isRecord(current)) return
-    return visit(current[remaining[0]!], remaining.slice(1))
+    const segment = remaining[0]!
+    if (!Object.hasOwn(current, segment)) return
+    return visit(current[segment], remaining.slice(1))
   }
   return visit(value, segments)
 }
 
 function scalarValues(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(scalarValues)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection values are untyped source data.
   if (value === null || value === undefined || typeof value === "object") return []
   return [String(value)]
 }
 
 function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | undefined): boolean {
   const values = scalarValues(value).map(item => item.toLocaleLowerCase())
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Filter values are parsed from the public collection query contract.
   if (typeof expected === "object" && !Array.isArray(expected)) return expected.empty && values.length === 0
   const candidates = (Array.isArray(expected) ? expected : [expected])
     .filter((item): item is string => item !== undefined)
@@ -122,8 +127,11 @@ function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | und
   return candidates.some(candidate => values.includes(candidate))
 }
 
+// doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- Collection callers provide the item shape through their published generic contract.
 function project<T>(item: unknown, select: string[] | undefined): T {
+  // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Collection callers provide the item shape through their published generic contract.
   if (!select?.length) return item as T
+  // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Object.fromEntries preserves the selected field values for the caller's published generic contract.
   return Object.fromEntries(select.map(field => [field, valueAt(item, field)])) as T
 }
 
@@ -149,6 +157,7 @@ function normalizedFilters(filters: WorkspaceCollectionQuery["filters"]): Record
   return Object.fromEntries(Object.entries(filters || {})
     .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined)
     .sort(([left], [right]) => left.localeCompare(right))
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection filters cross a JSON boundary.
     .map(([field, value]) => [field, typeof value === "object" && !Array.isArray(value)
       ? ["operator:empty"]
       : (Array.isArray(value) ? value : [value]).map(item => `value:${item.toLocaleLowerCase()}`).sort()]))
@@ -180,6 +189,7 @@ function decodeCursor(cursor: string | undefined, expected: Omit<CollectionCurso
   catch {
     throw workspaceCollectionCursorError("malformed")
   }
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Cursor payloads are untrusted JSON values.
   if (!isRecord(parsed) || !Number.isSafeInteger(parsed.offset) || Number(parsed.offset) < 0 || typeof parsed.digest !== "string" || typeof parsed.query !== "string") {
     throw workspaceCollectionCursorError("malformed")
   }
@@ -211,8 +221,11 @@ function filterItems(items: unknown[], query: WorkspaceCollectionQuery): unknown
     filtered = [...filtered].sort((left, right) => {
       const leftValue = valueAt(left, query.sort!.field)
       const rightValue = valueAt(right, query.sort!.field)
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Sorting narrows opaque collection values to scalar representations.
       const leftScalar = Array.isArray(leftValue) ? leftValue.flat(Infinity).find(value => value !== null && value !== undefined && typeof value !== "object") : leftValue
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Sorting narrows opaque collection values to scalar representations.
       const rightScalar = Array.isArray(rightValue) ? rightValue.flat(Infinity).find(value => value !== null && value !== undefined && typeof value !== "object") : rightValue
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Sorting narrows opaque collection values to scalar representations.
       if (typeof leftScalar === "number" && typeof rightScalar === "number") return (leftScalar - rightScalar) * direction
       return String(leftScalar ?? "").localeCompare(String(rightScalar ?? "")) * direction
     })

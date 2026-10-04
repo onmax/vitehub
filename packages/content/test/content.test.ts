@@ -105,6 +105,23 @@ describe("contentSource", () => {
     await content.dispose()
   })
 
+  it("preserves plugin methods whose names are inherited by the runtime object", () => {
+    const plugin: ContentPlugin<{ constructor: () => string }> = {
+      name: "prototype-key",
+      setup: () => ({ constructor: () => "plugin-constructor" }),
+    }
+    const content = defineContent({
+      plugins: [plugin],
+      source: {
+        keys: () => [],
+        getItem: () => "",
+        getItemRaw: () => "",
+      },
+    })
+
+    expect((content as unknown as { constructor: () => string }).constructor()).toBe("plugin-constructor")
+  })
+
   it.each(["definition", "name", "factory"] as const)("uses a fresh reader on refresh with a %s", async (input) => {
     let revision = 1
     const prepared: string[] = []
@@ -139,6 +156,28 @@ describe("contentSource", () => {
     expect(JSON.stringify(refreshed?.nodes)).toContain("Revision 2")
     expect(prepared).toContain("1")
     expect(prepared.at(-1)).toBe("2")
+  })
+
+  it("keeps separate Content instances on their own adapted Source loads", async () => {
+    let revision = 0
+    const source = contentSource(() => ({
+      async items() {
+        return [{ content: `---\ntitle: Revision ${++revision}\n---\n# Content`, key: "index.md" }]
+      },
+    }), { prefix: "/docs" })
+    const first = defineContent({ source })
+    const second = defineContent({ source })
+
+    await first.init()
+    await second.init()
+    await expect(first.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 1" } })])
+    await expect(second.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 2" } })])
+
+    await first.cache.refresh("default")
+    await expect(first.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 3" } })])
+    await expect(second.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 2" } })])
+    expect(revision).toBe(3)
+    await Promise.all([first.dispose(), second.dispose()])
   })
 
   it("keeps each adapted source on one revision while async init parsers read", async () => {

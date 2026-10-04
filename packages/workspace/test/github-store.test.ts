@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { checkGlobCwd, globCwdPaths } from "./glob-cwd-checks.ts";
 import { runInNewContext } from "node:vm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearActiveCloudflareEnv, setActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env";
@@ -180,6 +181,13 @@ afterEach(() => {
 });
 
 describe("GitHub workspace store", () => {
+  it("matches glob patterns relative to cwd", async () => {
+    for (const path of globCwdPaths) seedRemote(`.vitehub/workspaces/docs/${path}`, path);
+    const { createGitHubWorkspaceStore } = await import("../src/providers/github/store.ts");
+    const store = createGitHubWorkspaceStore({ provider: "github", repository: "onmax/repo", token: "token" }, "docs");
+    await checkGlobCwd(store);
+  });
+
   it("materializes a pinned full revision with one archive request and reuses it while unchanged", async () => {
     for (let index = 0; index < 856; index++) {
       seedRemote(`.vitehub/workspaces/docs/files/${index}.txt`, `${index}\n`);
@@ -651,6 +659,24 @@ describe("GitHub workspace store", () => {
         ?.body,
     ).toEqual({ force: false, sha: "commit-sha-2" });
     expect(requests.some(request => request.path === "/repos/onmax/repo/git/refs" && request.method === "POST")).toBe(false);
+  });
+
+  it("encodes branch ref segments before constructing GitHub API paths", async () => {
+    const { createGitHubWorkspaceStore } = await import("../src/providers/github/store.ts");
+    const store = createGitHubWorkspaceStore(
+      {
+        branch: "feature?audio#draft",
+        provider: "github",
+        repository: "onmax/repo",
+        token: "token",
+      },
+      "docs",
+    );
+
+    await expect(store.list()).resolves.toEqual([]);
+    expect(requests[0]?.path).toBe(
+      "/repos/onmax/repo/git/ref/heads/feature%3Faudio%23draft",
+    );
   });
 
   it("does not treat non-404 branch failures as missing", async () => {

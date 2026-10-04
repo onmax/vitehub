@@ -21,7 +21,7 @@ Use `skipLibCheck: true` in app TypeScript configs while ViteHub depends on runt
 
 The local Store persists file metadata inside `.vitehub` under the Workspace root. If file removal stops before metadata cleanup completes, reads reject with `Interrupted Workspace removal` so a restored file cannot reuse deleted ownership. Retry removal of the reported path with `force: true` and, for directories, `recursive: true` before restoring files.
 
-Lock markers are not reclaimed based on age because a slow operation or failed heartbeat may still own them. If a process crashes and operations report `Timed out waiting to read Workspace` or `Timed out waiting to write Workspace`, stop every process using that Workspace. Call `recoverLocalWorkspaceLocks({ root, offline: true })` from `@vite-hub/workspace/runtime` with the Local Store's root, then restart the processes after recovery succeeds. Prevent changes to the Store and its ancestor directories throughout recovery. The `offline: true` flag confirms exclusive offline access; it does not stop other processes. See [Local Store recovery](../../docs/content/docs/server-primitives/workspace.md#recover-a-local-store-after-a-crash) for the procedure.
+Lock markers are not reclaimed based on age because a slow operation or failed heartbeat may still own them. If a process crashes and operations report `Timed out waiting to read Workspace` or `Timed out waiting to write Workspace`, stop every process using that Workspace. Call `recoverLocalWorkspaceLocks({ root, offline: true })` from `@vite-hub/workspace/runtime` with the Local Store's root, then restart the processes after recovery succeeds. Prevent changes to the Store and its ancestor directories throughout recovery. The `offline: true` flag confirms exclusive offline access; it does not stop other processes. See [Local Store recovery](../../docs/content/docs/workspace/limits-and-errors.md#recover-a-local-store-after-a-crash) for the procedure.
 
 Set `locks: "process"` on a local Store when one process owns its root, for example a disposable checkout that one worker uses. The Store then keeps the same per-path read and write locks in memory. It creates no `.vitehub/locks` directory, does not poll lock markers, and lists entries in parallel. Keep the default `locks: "filesystem"` when more than one process can access the root.
 
@@ -80,6 +80,8 @@ export default defineEventHandler(async () => {
   }
 })
 ```
+
+`workspace.fs.glob("*.md", { cwd: "guides" })` matches Markdown files directly inside `guides`. It returns Workspace-relative paths such as `guides/start.md`. Pattern arrays and recursive patterns use the same directory.
 
 `useWorkspace(name)` returns read access. For read-only inspection of an existing Workspace, use `useWorkspace("docs", { refresh: false })` to reuse current persisted snapshots of Sources with `materialize: "startup"`. Snapshots are reused when they are ready and match the current Source configuration, even if upstream content has changed. Missing snapshots or snapshots that no longer match the configuration still materialize. Omitting `refresh`, or setting it to `true`, keeps normal startup Source refresh behavior. Custom Stores that omit `getMeta` or `setMeta` retain ownership and Source snapshots only for the lifetime of the Store instance.
 

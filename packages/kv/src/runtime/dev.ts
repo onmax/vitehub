@@ -2,17 +2,39 @@
 
 import * as v from "valibot"
 
-import { kv as kvConfig } from "#vitehub/kv/config"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 // The package import keeps the Nitro module graph on the storage that `hubKv()` selects, for example the generated
 // Cloudflare KV runtime. A relative import would bypass that selection.
 import { kv } from "@vite-hub/kv"
 
+import { inspectKVValue, kvValueType } from "./inspect-value.ts"
+
 import { isKVDevOperation, kvDevDefaultListLimit, kvDevHeader, kvDevHeaderValue, kvDevMaximumListLimit } from "../dev.ts"
 
 import type { KVDevRequestBody } from "../dev.ts"
 import type { KVDriver, KVResult, KVStorage, ResolvedKVModuleOptions } from "../types.ts"
+
+function isMissingKVConfig(error: unknown): boolean {
+  const code = error instanceof Error && "code" in error ? error.code : undefined
+  const message = error instanceof Error ? error.message : ""
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") {
+    return /^Cannot find (?:package|module) ["']#vitehub\/kv\/config["']/.test(message)
+  }
+  if (code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") {
+    return /^Package import specifier ["']#vitehub\/kv\/config["'] is not defined/.test(message)
+  }
+  return false
+}
+
+let kvConfig: false | ResolvedKVModuleOptions = false
+try {
+  const config = await import("#vitehub/kv/config")
+  kvConfig = config.kv
+}
+catch (error) {
+  if (!isMissingKVConfig(error)) throw error
+}
 
 /** Store names and drivers that the KV configuration of this runtime defines. `default` is first. */
 export interface KVDevStore {
@@ -112,14 +134,6 @@ function unwrap<TResult>(result: KVResult<TResult>): TResult {
   throw new KVDevRequestError(`${error.message}${causeMessage}`, 502, errorCode(cause) ?? error.code)
 }
 
-function valueType(value: unknown): string {
-  if (value === null) return "null"
-  if (Array.isArray(value)) return "array"
-  if (value instanceof Uint8Array) return "bytes"
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This reports the stored value representation; it does not validate an input contract.
-  return typeof value
-}
-
 function ttlNotice(driver: KVDriver, ttl: number): string | undefined {
   if (driver === "fs-lite") return "The fs-lite driver ignores TTL. The value does not expire."
   if (driver === "upstash" && Math.ceil(ttl) !== ttl) return `Upstash rounds the TTL up to ${Math.ceil(ttl)} seconds.`
@@ -195,42 +209,6 @@ function requireKey(body: KVDevRequestBody): string {
   return body.key
 }
 
-function encodeBase64(bytes: Uint8Array): string {
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
-}
-
-/** JSON inspection accepts JSON values and represents bigint values as decimal strings. */
-function inspectValue(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (v.is(v.bigint(), value)) return value.toString()
-  if (v.is(v.union([v.null(), v.string(), v.boolean(), v.pipe(v.number(), v.finite())]), value) && !Object.is(value, -0)) return value
-  if (!v.is(v.custom<object>(value => value !== null && Object(value) === value), value) || seen.has(value)) {
-    throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
-  }
-  seen.add(value)
-  try {
-    const ownKeys = Reflect.ownKeys(value)
-    const dataKeys = Array.isArray(value) ? ownKeys.filter(key => key !== "length") : ownKeys
-    const descriptors = dataKeys.map(key => Object.getOwnPropertyDescriptor(value, key))
-    if (descriptors.some(descriptor => !descriptor?.enumerable || !("value" in descriptor))) {
-      throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
-    }
-    if (Array.isArray(value)) {
-      if (dataKeys.length !== value.length || dataKeys.some(key => !v.is(v.string(), key) || String(Number(key)) !== key || !Number.isInteger(Number(key)) || Number(key) < 0 || Number(key) >= value.length)) {
-        throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
-      }
-      return Array.from({ length: value.length }, (_, index) => inspectValue(Object.getOwnPropertyDescriptor(value, String(index))?.value, seen))
-    }
-    const prototype: unknown = Object.getPrototypeOf(value)
-    if (prototype !== Object.prototype && prototype !== null || Object.getOwnPropertySymbols(value).length) {
-      throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
-    }
-    return Object.fromEntries(dataKeys.map(key => [key, inspectValue(Object.getOwnPropertyDescriptor(value, key)?.value, seen)]))
-  }
-  finally { seen.delete(value) }
-}
-
 async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[]): Promise<unknown> {
   const selected = selectStore(stores, body.store)
   switch (body.operation) {
@@ -257,8 +235,9 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
       const found = value !== null || unwrap(await selected.storage.has(key))
       const result: KVDevGetResult = { found, key, store: selected.name }
       if (!found) return result
-      if (value instanceof Uint8Array) return { ...result, encoding: "base64", type: "bytes", value: encodeBase64(value) }
-      return { ...result, type: valueType(value), value: inspectValue(value) }
+      const inspected = inspectKVValue(value)
+      if (!inspected) throw new KVDevRequestError("The stored value cannot be represented by the KV inspection protocol.", 422, "KV_VALUE_UNSUPPORTED")
+      return { ...result, ...inspected }
     }
     case "has": {
       const key = requireKey(body)
@@ -277,7 +256,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
         created: !existed,
         key,
         store: selected.name,
-        type: valueType(body.value),
+        type: kvValueType(body.value),
       }
       if (notice) result.notice = notice
       if (ttl) result.ttl = ttl

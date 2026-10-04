@@ -1,14 +1,40 @@
-import { createHash } from "node:crypto"
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { createHash, randomUUID } from "node:crypto"
+import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
+import { object, optional, parse, record, string } from "valibot"
 
-import type { BlobDriverAdapter, BlobListOptions, BlobListResult, BlobObject, BlobPutBody, BlobPutOptions, ResolvedFsBlobStoreConfig } from "../types.ts"
+import type { BlobDriverAdapter, BlobDriverMultipartUpload, BlobListOptions, BlobListResult, BlobMultipartOptions, BlobObject, BlobPutBody, BlobPutOptions, ResolvedFsBlobStoreConfig } from "../types.ts"
 import { blobErrorDiagnostics } from "../error-diagnostics.ts"
+
+interface FsMultipartState {
+  contentType?: string
+  customMetadata?: Record<string, string>
+  pathname: string
+}
+
+const uploadIdPattern = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/
+
+// Parts wait under the reserved `.vitehub` directory, which list() and user pathnames never reach.
+function resolveMultipartDir(root: string, uploadId: string) {
+  if (!uploadIdPattern.test(uploadId)) {
+    throw blobErrorDiagnostics.BLOB_R0032({ message: `Unknown multipart upload: ${uploadId}` })
+  }
+  return resolve(root, ".vitehub", "multipart", uploadId)
+}
+
+function partEtag(bytes: Uint8Array) {
+  return `"${createHash("sha1").update(bytes).digest("hex")}"`
+}
 
 interface FsBlobMetadata {
   contentType?: string
   customMetadata?: Record<string, string>
 }
+
+const fsBlobMetadataSchema = object({
+  contentType: optional(string()),
+  customMetadata: optional(record(string(), string())),
+})
 
 interface FsBlobEntry {
   meta: FsBlobMetadata
@@ -52,8 +78,32 @@ function resolveBlobPath(root: string, pathname: string) {
   return path
 }
 
+async function assertNoSymlinkPath(root: string, path: string) {
+  let current = root
+  const relativePath = relative(root, path)
+  for (const component of ["", ...relativePath.split(sep).filter(Boolean)]) {
+    current = resolve(current, component)
+    try {
+      const stats = await lstat(current)
+      if (stats.isSymbolicLink()) {
+        throw blobErrorDiagnostics.BLOB_R0005({ message: `Blob pathname crosses a symbolic link: ${path}` })
+      }
+      // A multiply-linked regular file may have another name outside root. Reject it
+      // before writes so replacing a blob cannot mutate an external inode.
+      if (stats.isFile() && stats.nlink > 1) {
+        throw blobErrorDiagnostics.BLOB_R0005({ message: `Blob pathname crosses a hard link: ${path}` })
+      }
+    }
+    catch (error) {
+      if (isNotFound(error)) return
+      throw error
+    }
+  }
+}
+
 function resolveMetaPath(root: string, pathname: string) {
-  return resolve(root, ".vitehub", "blob-meta", `${encodeMetaKey(pathname)}.json`)
+  const normalized = relative(root, resolveBlobPath(root, pathname)).split(sep).join("/")
+  return resolve(root, ".vitehub", "blob-meta", `${encodeMetaKey(normalized)}.json`)
 }
 
 function isNotFound(error: unknown): boolean {
@@ -70,7 +120,10 @@ async function bodyToBytes(body: BlobPutBody) {
 
 async function readMetadata(root: string, pathname: string): Promise<FsBlobMetadata> {
   try {
-    return JSON.parse(await readFile(resolveMetaPath(root, pathname), "utf8")) as FsBlobMetadata
+    const path = resolveMetaPath(root, pathname)
+    await assertNoSymlinkPath(root, path)
+    const metadata: unknown = JSON.parse(await readFile(path, "utf8"))
+    return parse(fsBlobMetadataSchema, metadata)
   }
   catch (error) {
     if (isNotFound(error)) return {}
@@ -80,12 +133,15 @@ async function readMetadata(root: string, pathname: string): Promise<FsBlobMetad
 
 async function writeMetadata(root: string, pathname: string, meta: FsBlobMetadata) {
   const path = resolveMetaPath(root, pathname)
+  await assertNoSymlinkPath(root, path)
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, JSON.stringify(meta), "utf8")
 }
 
 async function removeMetadata(root: string, pathname: string) {
-  await rm(resolveMetaPath(root, pathname), { force: true })
+  const path = resolveMetaPath(root, pathname)
+  await assertNoSymlinkPath(root, path)
+  await rm(path, { force: true })
 }
 
 function toBlobObject(entry: FsBlobEntry): BlobObject {
@@ -106,7 +162,9 @@ function toBlobObject(entry: FsBlobEntry): BlobObject {
 
 async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | null> {
   try {
-    const stats = await stat(resolveBlobPath(root, pathname))
+    const path = resolveBlobPath(root, pathname)
+    await assertNoSymlinkPath(root, path)
+    const stats = await stat(path)
     if (!stats.isFile()) return null
     return {
       meta: await readMetadata(root, pathname),
@@ -122,6 +180,7 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
 }
 
 async function walkFiles(root: string, dir = root): Promise<string[]> {
+  await assertNoSymlinkPath(root, dir)
   const entries = await readdir(dir, { withFileTypes: true })
   const files = await Promise.all(entries.map(async (entry) => {
     const path = resolve(dir, entry.name)
@@ -150,10 +209,10 @@ function foldedList(entries: FsBlobEntry[], options: BlobListOptions): BlobListR
 
   for (const entry of entries.slice(start)) {
     consumed += 1
-    const remainder = entry.path.slice(prefix.length).replace(/^\/+/, "")
+    const remainder = entry.path.slice(prefix.length)
     const firstSlash = remainder.indexOf("/")
     if (firstSlash !== -1) {
-      folders.add(`${prefix.replace(/\/?$/, "/")}${remainder.slice(0, firstSlash + 1)}`)
+      folders.add(entry.path.slice(0, prefix.length + firstSlash + 1))
       continue
     }
 
@@ -172,12 +231,91 @@ function foldedList(entries: FsBlobEntry[], options: BlobListOptions): BlobListR
 export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdapter<ResolvedFsBlobStoreConfig> {
   const root = resolveRoot(options)
 
-  return {
+  function multipartUpload(uploadId: string, state: FsMultipartState): BlobDriverMultipartUpload {
+    const dir = resolveMultipartDir(root, uploadId)
+    return {
+      pathname: state.pathname,
+      uploadId,
+      async abort() {
+        await assertNoSymlinkPath(root, dir)
+        await rm(dir, { force: true, recursive: true })
+      },
+      async complete(parts) {
+        await assertNoSymlinkPath(root, dir)
+        const ordered = [...parts].sort((left, right) => left.partNumber - right.partNumber)
+        const chunks = await Promise.all(ordered.map(async (part) => {
+          const partPath = resolve(dir, String(part.partNumber))
+          await assertNoSymlinkPath(root, partPath)
+          const bytes = await readFile(partPath).catch((error: unknown) => {
+            if (isNotFound(error)) throw blobErrorDiagnostics.BLOB_R0032({ message: `Multipart upload ${uploadId} has no part ${part.partNumber}.` })
+            throw error
+          })
+          if (partEtag(bytes) !== part.etag) {
+            throw blobErrorDiagnostics.BLOB_R0032({ message: `Part ${part.partNumber} of multipart upload ${uploadId} does not match its etag.` })
+          }
+          return bytes
+        }))
+        const object = await driver.put(state.pathname, new Blob(chunks), {
+          contentType: state.contentType,
+          customMetadata: state.customMetadata,
+        })
+        await rm(dir, { force: true, recursive: true })
+        return object
+      },
+      async uploadPart(partNumber, body) {
+        const bytes = await bodyToBytes(body)
+        const partPath = resolve(dir, String(partNumber))
+        await assertNoSymlinkPath(root, dir)
+        await assertNoSymlinkPath(root, partPath)
+        await writeFile(partPath, bytes)
+        return { etag: partEtag(bytes), partNumber }
+      },
+    }
+  }
+
+  const driver: BlobDriverAdapter<ResolvedFsBlobStoreConfig> = {
     name: "fs",
     options,
+    async createMultipartUpload(pathname: string, multipartOptions: BlobMultipartOptions) {
+      resolveBlobPath(root, pathname)
+      const uploadId = randomUUID()
+      const state: FsMultipartState = {
+        contentType: multipartOptions.contentType,
+        customMetadata: multipartOptions.customMetadata,
+        pathname,
+      }
+      const dir = resolveMultipartDir(root, uploadId)
+      await assertNoSymlinkPath(root, dir)
+      await mkdir(dir, { recursive: true })
+      const statePath = resolve(dir, "state.json")
+      await assertNoSymlinkPath(root, statePath)
+      await writeFile(statePath, JSON.stringify(state), "utf8")
+      return multipartUpload(uploadId, state)
+    },
+    async resumeMultipartUpload(pathname: string, uploadId: string) {
+      const dir = resolveMultipartDir(root, uploadId)
+      await assertNoSymlinkPath(root, dir)
+      const statePath = resolve(dir, "state.json")
+      await assertNoSymlinkPath(root, statePath)
+      let state: FsMultipartState
+      try {
+        // doctor-disable-next-line typescript/boundaries/no-unvalidated-deserialization,typescript/strict/require-safety-comment-for-type-assertion -- The state file is written by this driver and its pathname and upload ID are checked below.
+        state = JSON.parse(await readFile(statePath, "utf8")) as FsMultipartState
+      }
+      catch (error) {
+        if (isNotFound(error)) throw blobErrorDiagnostics.BLOB_R0032({ message: `Unknown multipart upload: ${uploadId}` })
+        throw error
+      }
+      if (state.pathname !== pathname) {
+        throw blobErrorDiagnostics.BLOB_R0032({ message: `Multipart upload ${uploadId} belongs to another pathname.` })
+      }
+      return multipartUpload(uploadId, state)
+    },
     async delete(pathnames) {
       await Promise.all((Array.isArray(pathnames) ? pathnames : [pathnames]).map(async pathname => {
-        await rm(resolveBlobPath(root, pathname), { force: true })
+        const path = resolveBlobPath(root, pathname)
+        await assertNoSymlinkPath(root, path)
+        await rm(path, { force: true })
         await removeMetadata(root, pathname)
       }))
     },
@@ -189,7 +327,9 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
     },
     async getArrayBuffer(pathname) {
       try {
-        const bytes = await readFile(resolveBlobPath(root, pathname))
+        const path = resolveBlobPath(root, pathname)
+        await assertNoSymlinkPath(root, path)
+        const bytes = await readFile(path)
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
       }
       catch (error) {
@@ -230,7 +370,11 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
     },
     async put(pathname: string, body: BlobPutBody, putOptions: BlobPutOptions = {}) {
       const path = resolveBlobPath(root, pathname)
+      await assertNoSymlinkPath(root, path)
+      await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       const bytes = await bodyToBytes(body)
+      await assertNoSymlinkPath(root, path)
+      await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, bytes)
       await writeMetadata(root, pathname, {
@@ -241,4 +385,5 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       return toBlobObject(entry!)
     },
   }
+  return driver
 }

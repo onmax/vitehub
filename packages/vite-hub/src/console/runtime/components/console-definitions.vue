@@ -61,13 +61,13 @@ const entries = computed<ConsoleSectionEntry[]>(() =>
 const selectedDefinition = computed(() =>
   definitions.value.find((definition) => definition.name === selectedName.value),
 );
+const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
 const canRunSelected = computed(() =>
-  Boolean(props.scheduleRunBase && selectedDefinition.value?.runnable),
+  Boolean(props.scheduleRunBase && (selectedDefinition.value?.runnable || selectedRecord.value?.runnable)),
 );
 const selectedRun = computed(() =>
   selectedName.value ? scheduleRuns.value[selectedName.value] : undefined,
 );
-const selectedRecord = computed(() => records.value.find((row) => row.id === selectedName.value));
 const selectedEntry = computed(() => entries.value.find((entry) => entry.id === selectedName.value));
 
 function errorMessage(value: unknown): string | undefined {
@@ -79,12 +79,14 @@ function errorMessage(value: unknown): string | undefined {
 }
 
 async function runSelectedSchedule(): Promise<void> {
-  const name = selectedName.value;
+  const name = selectedRecord.value?.cells.schedule || selectedName.value;
   if (!name || !props.scheduleRunBase || !canRunSelected.value || runningSchedule.value) return;
-  runningSchedule.value = name;
+  const selection = selectedName.value;
+  if (!selection) return;
+  runningSchedule.value = selection;
   try {
     const run = await runConsoleScheduleDefinition(props.scheduleRunBase, name);
-    scheduleRuns.value = { ...scheduleRuns.value, [name]: run };
+    scheduleRuns.value = { ...scheduleRuns.value, [selection]: run };
   } finally {
     runningSchedule.value = undefined;
   }
@@ -196,6 +198,7 @@ onBeforeUnmount(() => request?.abort());
   <ConsoleFrame>
     <UDashboardSidebar
       id="console-navigation"
+      class="vitehub-console__nav"
       v-model:open="sidebarOpen"
       :default-size="16"
       :collapsed-size="4"
@@ -205,7 +208,7 @@ onBeforeUnmount(() => request?.abort());
         title: itemsTitle,
         description: sectionDetails.description,
       }"
-      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'h-11 shrink-0 border-t border-default px-2 py-1.5' }"
+      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'shrink-0 border-t border-default px-2 py-1.5' }"
       resizable
     >
       <template #header="{ collapsed }">
@@ -213,12 +216,12 @@ onBeforeUnmount(() => request?.abort());
       </template>
 
       <template #default="{ collapsed }">
-        <div class="flex shrink-0 items-center gap-1 px-[0.875rem] pb-2 pt-1">
+        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
           <UDashboardSearchButton
             :collapsed="collapsed"
             block
-            class="vitehub-console__search min-w-0 flex-1 rounded-md border border-default bg-transparent px-2 ring-0 hover:bg-elevated/60"
-            label="Search console"
+            class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
+            label="Search"
           />
         </div>
         <div v-if="!collapsed && errorMessage(error)" class="px-3">
@@ -474,6 +477,15 @@ onBeforeUnmount(() => request?.abort());
               </dl>
             </section>
             <UAlert
+              v-if="selectedRun"
+              :color="selectedRun.status === 'succeeded' ? 'success' : selectedRun.status === 'failed' || selectedRun.status === 'unavailable' ? 'error' : 'neutral'"
+              :icon="selectedRun.status === 'succeeded' ? 'i-ph-check-circle-light' : 'i-ph-warning-circle-light'"
+              :title="selectedRun.status === 'unavailable' ? 'Could not run this Schedule' : `Run ${selectedRun.status}`"
+              :description="consoleScheduleRunDescription(selectedRun)"
+              variant="subtle"
+            />
+            <UAlert
+              v-else
               color="neutral"
               icon="i-ph-info-light"
               title="Read-only records"

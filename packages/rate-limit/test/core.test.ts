@@ -13,7 +13,34 @@ const strictCapabilities = {
 } satisfies RateLimitDriverCapabilities
 
 describe("Rate Limit core", () => {
-  it.each([[], [undefined, { used: 1 }], [null, { used: 1 }, "extra"], [new Error("offline"), { used: 1 }]].map(outcome => ({ outcome })))("rejects malformed custom peek outcomes: %j", async ({ outcome }) => {
+  it.each(["allow", "deny"] as const)("rejects malformed consume tuples before applying failure %s", async (failure) => {
+    const invalid = [
+      ["malformed-error", undefined],
+      [],
+      [undefined, { allowed: true }],
+      [false, { allowed: true }],
+      [null, { allowed: true }, "extra"],
+      [new Error("offline"), { allowed: true }],
+      [new Error("offline")],
+      [{ name: "Error", message: "spoofed", [Symbol.toStringTag]: "Error" }, undefined],
+    ]
+    for (const outcome of invalid) {
+      const driver = memoryRateLimitDriver()
+      Object.assign(driver, { consume: () => outcome })
+      const limiter = createRateLimiter({ driver, failure, limit: 1, window: "1m" })
+      await expect(limiter.consume({ key: "user" })).rejects.toThrow("must return [null, value] or [Error, undefined]")
+    }
+  })
+
+  it("accepts consume errors from another JavaScript realm", async () => {
+    const cause: unknown = runInNewContext("new Error('cross-realm offline')")
+    const driver = memoryRateLimitDriver()
+    Object.assign(driver, { consume: () => [cause, undefined] })
+    const limiter = createRateLimiter({ driver, failure: "allow", limit: 1, window: "1m" })
+    await expect(limiter.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, cause, reason: "unavailable" })
+  })
+
+  it.each([[], [new Error("offline")], [undefined, { used: 1 }], [null, { used: 1 }, "extra"], [new Error("offline"), { used: 1 }]].map(outcome => ({ outcome })))("rejects malformed custom peek outcomes: %j", async ({ outcome }) => {
     const driver = memoryRateLimitDriver()
     Object.assign(driver, { peek: () => outcome })
     const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })
@@ -134,6 +161,40 @@ describe("Rate Limit core", () => {
     await expect(first.consume({ key: "user" })).resolves.toMatchObject({ allowed: true })
     await expect(first.consume({ key: "user" })).resolves.toMatchObject({ allowed: false })
     await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: true })
+  })
+
+  it("isolates consumption when names and keys contain null characters", async () => {
+    const driver = memoryRateLimitDriver({ now: () => 1 })
+    const first = createRateLimiter({ driver, limit: 1, name: "tenant", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "tenant\0admin", window: "1m" })
+
+    await expect(first.consume({ key: "admin\0user" })).resolves.toMatchObject({ allowed: true, used: 1 })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, used: 1 })
+    await expect(first.consume({ key: "admin\0user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    expect(driver.size()).toBe(2)
+  })
+
+  it("isolates peek results when names and keys contain null characters", async () => {
+    const driver = memoryRateLimitDriver({ now: () => 1 })
+    const first = createRateLimiter({ driver, limit: 1, name: "tenant", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "tenant\0admin", window: "1m" })
+
+    await first.consume({ key: "admin\0user" })
+    await expect(first.peek({ key: "admin\0user" })).resolves.toMatchObject({ status: "known", used: 1 })
+    await expect(second.peek({ key: "user" })).resolves.toMatchObject({ status: "known", used: 0 })
+  })
+
+  it("isolates resets when names and keys contain null characters", async () => {
+    const driver = memoryRateLimitDriver({ now: () => 1 })
+    const first = createRateLimiter({ driver, limit: 1, name: "tenant", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "tenant\0admin", window: "1m" })
+
+    await second.consume({ key: "user" })
+    await expect(first.reset({ key: "admin\0user" })).resolves.toEqual({ status: "reset" })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    await second.reset({ key: "user" })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, used: 1 })
   })
 
   it("fails closed at capacity without evicting live counters", async () => {

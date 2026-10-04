@@ -5,7 +5,7 @@ import { bindAgentInvocations, defineAgentInvocations } from "../src/invocations
 import { createD1AgentInvocationStore, d1AgentInvocationSchema } from "../src/invocations/d1.ts"
 
 import type { AgentInvocationD1Database, D1AgentInvocationStoreOptions } from "../src/invocations/d1.ts"
-import type { AgentInvocationStoreCreateInput } from "../src/invocations.ts"
+import type { AgentInvocationListOptions, AgentInvocationStoreCreateInput } from "../src/invocations.ts"
 
 const timestamp = new Date().toISOString()
 const invocation = (id: string, input: Partial<AgentInvocationStoreCreateInput> = {}): AgentInvocationStoreCreateInput => ({
@@ -48,7 +48,30 @@ describe("D1 Agent Invocation store", () => {
   })
   afterAll(async () => { await miniflare?.dispose() })
 
-  it("requires an explicit migration when migrate is false and resolves the request binding once per operation", async () => {
+  it("preserves and clears pending dispatch verification", async () => {
+    const journal = store()
+    await journal.create(invocation("pending-dispatch", { cancelWarningOwnerId: "original-owner", cancelWarningPending: true }))
+    await journal.update("pending-dispatch", { cancelRequestedAt: timestamp, timestamp })
+    expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelRequestedAt: timestamp, cancelWarningOwnerId: "original-owner", cancelWarningPending: true })
+    expect(await journal.claim("pending-dispatch", "owner", 30_000)).toBe(true)
+    await journal.update("pending-dispatch", { cancelWarningOwnerId: "replacement-owner", cancelWarningPending: true, timestamp }, "owner")
+    expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelWarningOwnerId: "replacement-owner", cancelWarningPending: true })
+    await journal.update("pending-dispatch", { cancelNotEnforcedBy: "run", cancelWarningPending: false, status: "running", timestamp }, "owner")
+    expect(await journal.getSummary("pending-dispatch")).toMatchObject({ cancelNotEnforcedBy: "run", status: "running" })
+    expect(await journal.getSummary("pending-dispatch")).not.toHaveProperty("cancelWarningPending")
+    expect(await journal.getSummary("pending-dispatch")).not.toHaveProperty("cancelWarningOwnerId")
+  })
+
+  it("preserves direct D1 list diagnostic codes", async () => {
+    const journal = store()
+    await expect(journal.list({ limit: 0 })).rejects.toMatchObject({ code: "AGENT_R0919" })
+    await expect(journal.list({ cursor: "01" })).rejects.toMatchObject({ code: "AGENT_R0920" })
+    await expect(journal.list({ search: "x".repeat(257) })).rejects.toMatchObject({ code: "AGENT_R0921" })
+    // SAFETY: D1 previously had no diagnostic for a non-string search; use the shared code.
+    await expect(journal.list({ search: 1 } as unknown as AgentInvocationListOptions)).rejects.toMatchObject({ code: "AGENT_R0619" })
+  })
+
+  it("requires an explicit migration and resolves the request binding once per operation", async () => {
     const resolve = vi.fn(() => database)
     const journal = store({ database: resolve, migrate: false, tablePrefix: "unmigrated_" })
     expect(resolve).not.toHaveBeenCalled()

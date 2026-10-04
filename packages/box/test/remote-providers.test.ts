@@ -30,6 +30,32 @@ describe("remote Box providers", () => {
     expect(cleanup).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["cloudflare", "vercel"] as const)("uses the shared command listing through the %s Box interface", async provider => {
+    const output = "f\t7\t/workspace/with\ttab\0d\t0\t/workspace/nested\0";
+    const stub = cloudflareStub(async command => ({
+      exitCode: 0, stderr: "", stdout: command.startsWith("find ") ? output : "", success: true,
+    }));
+    const instance = vercelInstance();
+    instance.runCommand = async options => ({
+      async kill() {},
+      async stderr() { return ""; },
+      async stdout() { return options.args?.[1]?.startsWith("find ") ? output : ""; },
+      async wait() { return { exitCode: 0 }; },
+    });
+    const runtime = provider === "cloudflare"
+      ? createCloudflareRuntime({ getSandbox: () => stub, namespace: namespace(stub) })
+      : createVercelRuntime({ create: async () => instance });
+    const session = await (await resolveBox({ runtime }, {})).open();
+    try {
+      await expect(session.files.list("/workspace")).resolves.toEqual([
+        { path: "/workspace/nested", size: undefined, type: "directory" },
+        { path: "/workspace/with\ttab", size: 7, type: "file" },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
   it("resolves a selected Cloudflare runtime through the public Box root", async () => {
     const stub = cloudflareStub(async () => ({ exitCode: 0, stderr: "", stdout: "", success: true }));
     const box = await resolveBox({
@@ -265,6 +291,18 @@ describe("remote Box providers", () => {
       network,
       processes: "arbitrary",
     });
+  });
+
+  it("does not infer unrestricted network access from an inherited wildcard", async () => {
+    const allow = Object.create({ "*": [] }) as Record<string, readonly unknown[]>;
+    const box = await resolveBox({
+      runtime: createVercelRuntime({
+        create: async () => vercelInstance(),
+        networkPolicy: { allow },
+      }),
+    }, {});
+
+    expect(box.plan.executionAuthority.network).toBe("unknown");
   });
 
   it("keeps Cloudflare network authority explicit when the namespace policy is opaque", async () => {

@@ -13,6 +13,7 @@ import { getAgentChannelSyncDefinition } from "../src/internal/channel-sync.ts"
 import { createAgentEvaliteConfigPath, writeAgentEvaliteConfig } from "../src/internal/evalite-config.ts"
 import { createTelegramChannelSyncProvider } from "../src/internal/telegram-channel-sync.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue } from "../src/invocation-stream.ts"
+import { agentInvocationsDevTokenServerHeader } from "../src/invocations-dev.ts"
 import { verifyAgentWebhookRequest } from "../src/trigger-runtime.ts"
 import { telegram } from "../src/channels.ts"
 
@@ -1431,6 +1432,79 @@ describe("agent CLI", () => {
     expect(fetchAgentInfo).toHaveBeenCalledWith("http://localhost:5173/__vitehub/agent/invocation-stream?inspect=1&agent=support", expect.anything())
   })
 
+  it.each([undefined, "http://localhost:5173/custom/api/invocations?status=running#details"])("cancels through the registered dev route with invocation URL %s", async (url) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-cli-"))
+    const serverId = `${process.pid + 1}:5173`
+    const token = await refreshWorkspaceDevToken(rootDir, { serverId })
+    try {
+      const fetchInvocations = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => Response.json(init?.method === "POST"
+        ? { id: "invocation-1", outcome: "requested" }
+        : { root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }))
+      const stderr = stream()
+      const exitCode = await runAgentInvocationsCli([
+        "cancel", "invocation-1", ...(url ? ["--url", url] : []),
+      ], { env: {}, rootDir, stderr, stdout: stream() }, { fetch: fetchInvocations })
+
+      expect(exitCode, stderr.output()).toBe(0)
+      expect(String(fetchInvocations.mock.calls[0]?.[0])).toBe("http://localhost:5173/__vitehub/agent/invocations/dev")
+      expect(fetchInvocations).toHaveBeenCalledWith("http://localhost:5173/__vitehub/agent/invocations/dev", expect.objectContaining({
+        body: JSON.stringify({ id: "invocation-1", operation: "cancel" }),
+        headers: expect.objectContaining({ [workspaceDevTokenHeader]: token, [agentInvocationsDevTokenServerHeader]: serverId }),
+        method: "POST",
+      }))
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each([{}, { root: process.cwd(), runtime: "nitro", workspaceDevTokenServerId: 42 }, { root: "/another-project", runtime: "nitro", workspaceDevTokenServerId: "other-server" }])("rejects invalid cancellation discovery %j before sending a write", async (discovery) => {
+    const fetchInvocations = vi.fn(async () => Response.json(discovery))
+    const stderr = stream()
+    expect(await runAgentInvocationsCli(["cancel", "invocation-1"], {
+      env: {}, rootDir: process.cwd(), stderr, stdout: stream(),
+    }, { fetch: fetchInvocations })).toBe(1)
+    expect(fetchInvocations).toHaveBeenCalledTimes(1)
+    expect(stderr.output()).toMatch(/invalid response|token server ID|root mismatch/)
+  })
+
+  it.each(["requested", "terminal", "not-found", "unavailable", "invalid"])("reports cancellation outcome %s in human and JSON output", async (outcome) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-cancel-outcome-"))
+    const serverId = `${process.pid + 1}:5173`
+    await refreshWorkspaceDevToken(rootDir, { serverId })
+    try {
+      for (const json of [false, true]) {
+        const stdout = stream()
+        const stderr = stream()
+        const result = { id: "invocation-1", outcome, ...(outcome === "terminal" ? { status: "cancelled" } : {}) }
+        const exitCode = await runAgentInvocationsCli([
+          "cancel", "invocation-1", ...(json ? ["--json"] : []),
+        ], { env: {}, rootDir, stderr, stdout }, { fetch: async (_url, init) => Response.json(init?.method === "POST"
+          ? result
+          : { root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }) })
+
+        expect(exitCode).toBe(outcome === "requested" || outcome === "terminal" ? 0 : 1)
+        if (outcome === "invalid") {
+          expect(stdout.output()).toBe("")
+          expect(stderr.output()).toContain("invalid response")
+        }
+        else if (json) {
+          expect(JSON.parse(stdout.output())).toEqual(result)
+          expect(stderr.output()).toBe("")
+        }
+        else if (outcome === "requested") expect(stdout.output()).toContain("cancel requested")
+        else if (outcome === "terminal") expect(stdout.output()).toContain("already cancelled")
+        else {
+          expect(stdout.output()).toContain(outcome === "not-found" ? "not found" : "cancel request was not recorded")
+          expect(stderr.output()).toBe("")
+        }
+      }
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
   it("lists durable Agent Invocations as JSON", async () => {
     const stdout = stream()
     const fetchInvocations = vi.fn(async () => Response.json({
@@ -1459,6 +1533,144 @@ describe("agent CLI", () => {
       "http://localhost:5173/api/invocations?status=failed&limit=10",
       expect.objectContaining({ headers: { accept: "application/json" } }),
     )
+  })
+
+  it("redacts URL credentials and query strings in invalid Invocation CLI arguments", async () => {
+    const stderr = stream()
+    const exitCode = await runAgentInvocationsCli([
+      "list", "--urll=https://user:secret@example.test/?token=private#fragment",
+    ], { env: {}, stderr, stdout: stream() })
+
+    expect(exitCode).toBe(1)
+    expect(stderr.output()).toContain("Unknown option: --urll=https://example.test/.")
+    expect(stderr.output()).not.toContain("secret")
+    expect(stderr.output()).not.toContain("private")
+    expect(stderr.output()).not.toContain("fragment")
+  })
+
+  it("cancels an Invocation through the Agent Invocations dev endpoint in the Nitro runtime", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
+    const serverId = "cancel-cli-server"
+    await refreshWorkspaceDevToken(rootDir, { serverId })
+    try {
+      const results = [
+        { delivery: "local", id: "invocation-1", notEnforcedBy: "run", outcome: "requested", status: "running" },
+        { id: "invocation-1", outcome: "terminal", status: "cancelled" },
+        { id: "invocation-1", outcome: "terminal", status: "completed" },
+        { delivery: "journal", id: "invocation-1", outcome: "requested", status: "running" },
+      ]
+      const fetchCancel = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => init?.method === "POST"
+        ? Response.json(results.shift())
+        : Response.json({ root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }))
+      const run = async (args: string[]) => {
+        const stdout = stream()
+        const stderr = stream()
+        // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+        const exitCode = await runAgentInvocationsCli(args, { env: {}, rootDir, stderr, stdout }, { fetch: fetchCancel as never })
+        return { exitCode, stderr: stderr.output(), stdout: stdout.output() }
+      }
+
+      expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 0, stderr: "", stdout: "invocation-1 cancel requested, not enforced by run\n" })
+      expect(fetchCancel.mock.calls[0]?.[0]).toBe("http://localhost:5173/__vitehub/agent/invocations/dev")
+      const post = fetchCancel.mock.calls[1]
+      expect(post?.[0]).toBe("http://localhost:5173/__vitehub/agent/invocations/dev")
+      expect(post?.[1]?.headers).toMatchObject({ "content-type": "application/json", "x-vitehub-agent-invocations-dev": "1" })
+      expect(JSON.parse(String(post?.[1]?.body))).toEqual({ id: "invocation-1", operation: "cancel" })
+
+      const json = await run(["cancel", "invocation-1", "--json", "--url", "http://127.0.0.1:5174"])
+      expect(json.exitCode).toBe(0)
+      expect(JSON.parse(json.stdout)).toEqual({ id: "invocation-1", outcome: "terminal", status: "cancelled" })
+      expect(fetchCancel.mock.calls[3]?.[0]).toBe("http://127.0.0.1:5174/__vitehub/agent/invocations/dev")
+
+      expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 1, stderr: "", stdout: "invocation-1 already completed\n" })
+      expect(await run(["cancel", "invocation-1"])).toEqual({ exitCode: 0, stderr: "", stdout: "invocation-1 cancel request recorded; execution stop is unconfirmed\n" })
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["completed", "failed", "cancelled"] as const)("reports the unenforced stale local abort when the journal is %s", async status => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-terminal-cancel-warning-"))
+    const serverId = "cancel-cli-server"
+    await refreshWorkspaceDevToken(rootDir, { serverId })
+    const result = { delivery: "local", id: "invocation-1", notEnforcedBy: "run", outcome: "terminal", status }
+    const fetchCancel = vi.fn<typeof fetch>(async (_url, init) => init?.method === "POST" ? Response.json(result) : Response.json({ root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }))
+    try {
+      for (const json of [false, true]) {
+        const stdout = stream()
+        const stderr = stream()
+        const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1", ...(json ? ["--json"] : [])], { env: {}, rootDir, stderr, stdout }, { fetch: fetchCancel })
+        expect(exitCode).toBe(1)
+        expect(stderr.output()).toBe("")
+        if (json) expect(JSON.parse(stdout.output())).toEqual(result)
+        else expect(stdout.output()).toBe(`invocation-1 journal is ${status}; local abort requested, not enforced by run\n`)
+      }
+    }
+    finally { await rm(rootDir, { force: true, recursive: true }) }
+  })
+
+  it("times out stalled Invocation cancellation discovery before posting", async () => {
+    const stderr = stream()
+    let signal: AbortSignal | null | undefined
+    const stalledFetch = vi.fn<typeof fetch>(async (_input, init) => {
+      signal = init?.signal
+      if (!signal) throw new Error("Discovery has no timeout signal")
+      const discoverySignal = signal
+      discoverySignal.throwIfAborted()
+      return await new Promise<Response>((_resolve, reject) => {
+        discoverySignal.addEventListener("abort", () => reject(discoverySignal.reason), { once: true })
+      })
+    })
+    expect(await runAgentInvocationsCli(["cancel", "invocation-1", "--timeout", "10"], {
+      env: {}, stderr, stdout: stream(),
+    }, { fetch: stalledFetch })).toBe(1)
+    expect(signal?.aborted).toBe(true)
+    expect(stalledFetch).toHaveBeenCalledTimes(1)
+    expect(stderr.output()).not.toBe("")
+  })
+
+  it("reports a rejected Invocation cancel request", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
+    const serverId = "cancel-cli-server"
+    await refreshWorkspaceDevToken(rootDir, { serverId })
+    try {
+      const stderr = stream()
+      const fetchCancel = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => init?.method === "POST"
+        ? Response.json({ error: { message: "No Agent invocation journal is configured." } }, { status: 404 })
+        : Response.json({ root: rootDir, runtime: "nitro", workspaceDevTokenServerId: serverId }))
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1"], { env: {}, rootDir, stderr, stdout: stream() }, { fetch: fetchCancel as never })
+      expect(exitCode).toBe(1)
+      expect(stderr.output()).toBe("No Agent invocation journal is configured.\n")
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
+  it("does not post a cancel after malformed discovery", async () => {
+    const stderr = stream()
+    const fetchCancel = vi.fn(async () => Response.json({ root: process.cwd(), runtime: "nitro", message: { invalid: true } }))
+    const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1"], { env: {}, rootDir: process.cwd(), stderr, stdout: stream() }, { fetch: fetchCancel })
+    expect(exitCode).toBe(1)
+    expect(fetchCancel).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not send a cancel when the Development Server has no Nitro runtime", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-invocation-cancel-"))
+    try {
+      const stderr = stream()
+      const fetchCancel = vi.fn(async () => Response.json({ message: "Nuxt and plain Vite are not supported.", root: rootDir, runtime: "unavailable" }))
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      const exitCode = await runAgentInvocationsCli(["cancel", "invocation-1", "--json"], { env: {}, rootDir, stderr, stdout: stream() }, { fetch: fetchCancel as never })
+      expect(exitCode).toBe(1)
+      expect(stderr.output()).toBe("Nuxt and plain Vite are not supported.\n")
+      expect(fetchCancel).toHaveBeenCalledTimes(1)
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
   })
 
   it("shows a wrapped invocation detail record", async () => {
@@ -1725,6 +1937,24 @@ describe("agent CLI", () => {
         role: "user",
       }],
     })
+  })
+
+  it("ignores malformed Agent discovery entries", async () => {
+    const stderr = stream()
+    const fetchAgentStream = vi.fn(async () => Response.json({ agents: [null], root: "/repo" }))
+
+    const exitCode = await runAgentDevCli(["-p", "hello agent"], {
+      cwd: "/repo",
+      env: {},
+      rootDir: "/repo",
+      spawn: vi.fn(),
+      stderr,
+      stdout: stream(),
+    }, { fetch: fetchAgentStream as never })
+
+    expect(exitCode).toBe(1)
+    expect(stderr.output()).toBe("No Agents discovered.\n")
+    expect(fetchAgentStream).toHaveBeenCalledTimes(1)
   })
 
   it("keeps --prompt input literal when it starts with !", async () => {

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
 import type { AgentInput, AgentCallbackContext } from "../../index.ts";
@@ -47,7 +48,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
-  const github = createGitHubHost({ credentials: credentials.credentials, identity });
+  const github = createGitHubHost({ credentials: credentials.credentials, identity, checkouts: { root: join(context.dataDir, "checkouts") } });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
   const host = await createProcessAgentHost({
     name: context.agentName,

@@ -125,6 +125,22 @@ describe("Console Schedule runs", () => {
     })
   })
 
+  it("marks only installed manual definitions as runnable in the contributed record table", async () => {
+    installSchedules()
+    const records = ["definition:sync", "definition:nightly", "runtime:sync"].map(id => ({
+      cells: { kind: id.startsWith("definition:") ? "Definition" : "Runtime", schedule: id.split(":")[1]! },
+      fields: [],
+      id,
+    }))
+    installConsoleDefinitions("/schedule-run", { schedules: { kind: "record-table", records } })
+
+    expect(await definitionsHandler({ method: "GET", req: { method: "GET", url: "http://localhost/api/_vitehub/console/definitions?section=schedules" } })).toEqual({
+      kind: "record-table",
+      records: [{ ...records[0], runnable: true }, records[1], records[2]],
+      section: "schedules",
+    })
+  })
+
   it("runs a Schedule through the Console RPC operation", async () => {
     let calls = 0
     installSchedules(() => { calls++ })
@@ -223,7 +239,49 @@ describe("Console Schedule runs", () => {
     expect((await handleConsoleScheduleRunRequest(request)).status).toBe(413)
     expect(reads).toBe(1)
     expect(cancelled).toBe(true)
+    expect(body.locked).toBe(false)
     expect((await handleConsoleScheduleRunRequest(runRequest({ name: "sync" }, { "content-length": "16385" }))).status).toBe(413)
+  })
+
+  it("keeps the Schedule size error when stream cancellation fails", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.enqueue(new Uint8Array(17 * 1_024)) },
+      cancel() { throw new Error("cleanup failed") },
+    }, { highWaterMark: 0 })
+    const request = new Request("https://app.example/_vitehub/schedules/run", {
+      body,
+      headers: { "content-type": "application/json" },
+      method: "POST",
+      duplex: "half",
+    } as RequestInit)
+
+    const response = await handleConsoleScheduleRunRequest(request)
+
+    expect(response.status).toBe(413)
+    await expect(response.json()).resolves.toEqual({ message: "Schedule run request body is too large." })
+    expect(body.locked).toBe(false)
+  })
+
+  it("accepts an exact-limit streamed Schedule body and releases the reader", async () => {
+    installSchedules()
+    const payload = JSON.stringify({ name: "sync", label: "café 🌍" })
+    const encoded = new TextEncoder().encode(payload)
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const byte of encoded) controller.enqueue(new Uint8Array([byte]))
+        controller.enqueue(new TextEncoder().encode(" ".repeat(16 * 1_024 - encoded.byteLength)))
+        controller.close()
+      },
+    })
+    const request = new Request("https://app.example/_vitehub/schedules/run", {
+      body,
+      headers: { "content-type": "application/json" },
+      method: "POST",
+      duplex: "half",
+    } as RequestInit)
+
+    expect((await handleConsoleScheduleRunRequest(request)).status).toBe(200)
+    expect(body.locked).toBe(false)
   })
 
   it("returns 404 when Console invocation did not install Schedule runs", async () => {

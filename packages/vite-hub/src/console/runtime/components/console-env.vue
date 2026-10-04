@@ -10,6 +10,7 @@ import { rememberConsoleSection } from "../sections";
 import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
 import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
+import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import ConsoleEnvDetails from "./console-env-details.vue";
 
@@ -154,6 +155,7 @@ onBeforeUnmount(() => request?.abort());
   <ConsoleFrame>
     <UDashboardSidebar
       id="console-navigation"
+      class="vitehub-console__nav"
       v-model:open="sidebarOpen"
       :default-size="16"
       :min-size="13"
@@ -161,7 +163,7 @@ onBeforeUnmount(() => request?.abort());
       :menu="{ title: 'Env', description: 'Server environment.' }"
       :ui="{
         body: 'gap-0 overflow-hidden p-0',
-        footer: 'h-11 shrink-0 border-t border-default px-2 py-1.5',
+        footer: 'shrink-0 border-t border-default px-2 py-1.5',
       }"
       resizable
     >
@@ -169,21 +171,19 @@ onBeforeUnmount(() => request?.abort());
         ><ConsoleBrand :collapsed="collapsed" :sections-base="sectionsBase"
       /></template>
       <template #default="{ collapsed }">
-        <div class="flex shrink-0 items-center gap-1 px-[0.875rem] pb-2 pt-1">
+        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
           <UDashboardSearchButton
             :collapsed="collapsed"
             block
-            class="vitehub-console__search min-w-0 flex-1 rounded-md border border-default bg-transparent px-2 ring-0 hover:bg-elevated/60"
-            label="Search console"
+            class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
+            label="Search"
           />
         </div>
+        <ConsoleSectionNav active="env" :collapsed="collapsed" :sections-base="sectionsBase" @navigate="sidebarOpen = false" />
       </template>
-      <template #footer="{ collapsed }"
-        ><ConsolePrimitiveSwitcher
-          active="env"
-          :collapsed="collapsed"
-          :sections-base="sectionsBase"
-      /></template>
+      <template #footer>
+        <ConsolePrimitiveSwitcher auth-only :sections-base="sectionsBase" />
+      </template>
     </UDashboardSidebar>
     <ConsoleSearch
       :agents-base="agentsBase"

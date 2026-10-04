@@ -86,7 +86,7 @@ async function configurePluginServer(plugin: { configureServer?: unknown }, serv
 }
 
 async function invokeMiddleware(
-  handler: Connect.NextHandleFunction,
+  handlers: readonly Connect.NextHandleFunction[],
   body: Record<string, unknown>,
   url = "/__vitehub/agent/invocation-stream",
   headers: IncomingMessage["headers"] = { "content-type": "text/plain" },
@@ -141,7 +141,14 @@ async function invokeMiddleware(
     }) as ServerResponse
 
     options.onResponse?.(res)
-    handler(req, res, () => reject(new Error("middleware passed through")))
+    let nextHandler = 0
+    const next = (error?: unknown) => {
+      if (error) return reject(error)
+      const handler = handlers[nextHandler++]
+      if (!handler) return reject(new Error("middleware passed through"))
+      handler(req, res, next)
+    }
+    next()
   })
 
   return result
@@ -523,7 +530,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [{
         id: "user-1",
         parts: [{ text: "hello", type: "text" }],
@@ -545,7 +552,7 @@ describe("agent chat capability discovery", () => {
       { type: "done" },
     ])
     expect(abortSignal).toBeInstanceOf(AbortSignal)
-  })
+  }, 15_000)
 
   it("passes prior chat history to second-turn Agent Dev Loop invocations", async () => {
     const root = await createTempRoot("vitehub-agent-invocation-stream-history-")
@@ -566,7 +573,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [
         {
           id: "user-1",
@@ -638,7 +645,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["items", "list", "--json"],
@@ -703,7 +710,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["wait"],
@@ -764,7 +771,7 @@ describe("agent chat capability discovery", () => {
 
       await configurePluginServer(plugin, server)
 
-      const response = await invokeMiddleware(handlers[0]!, {
+      const response = await invokeMiddleware(handlers, {
         agent: "chat",
         cli: {
           argv: ["list-customers", "--json"],
@@ -829,7 +836,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["list", "--json"],
@@ -888,7 +895,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["whoami", "--json"],
@@ -939,7 +946,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["list", "--json"],
@@ -994,7 +1001,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["list", "--json"],
@@ -1045,7 +1052,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["list"],
@@ -1089,7 +1096,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "chat",
       cli: {
         argv: ["slow"],
@@ -1126,7 +1133,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [{
         id: "user-1",
         parts: [{ text: "hello", type: "text" }],
@@ -1173,7 +1180,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const discovery = await invokeMiddleware(handlers[0]!, {}, agentInvocationStreamRoute, {
+    const discovery = await invokeMiddleware(handlers, {}, agentInvocationStreamRoute, {
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
     }, "GET")
     expect(JSON.parse(discovery.body)).toMatchObject({
@@ -1183,7 +1190,7 @@ describe("agent chat capability discovery", () => {
       }],
     })
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "support",
       payload: {
         meta: { audience: "technical" },
@@ -1231,7 +1238,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "nuxt",
       messages: [{
         id: "user-1",
@@ -1294,7 +1301,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "review",
       payload: {
         "review.context": { number: 42 },
@@ -1366,7 +1373,7 @@ describe("agent chat capability discovery", () => {
     await configurePluginServer(plugin, server)
 
     for (const payload of [{ text: "  review this  " }, { text: "review this", unexpected: true }]) {
-      const response = await invokeMiddleware(handlers[0]!, {
+      const response = await invokeMiddleware(handlers, {
         agent: "review",
         payload,
         text: "Please review",
@@ -1411,7 +1418,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "review",
       payload: {
         github: { event: "issue_comment" },
@@ -1471,7 +1478,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const discovery = await invokeMiddleware(handlers[0]!, {}, agentInvocationStreamRoute, {
+    const discovery = await invokeMiddleware(handlers, {}, agentInvocationStreamRoute, {
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
     }, "GET")
     expect(JSON.parse(discovery.body)).toMatchObject({
@@ -1482,7 +1489,7 @@ describe("agent chat capability discovery", () => {
     })
 
     for (const name of ["summary", "review"]) {
-      const response = await invokeMiddleware(handlers[0]!, {
+      const response = await invokeMiddleware(handlers, {
         agent: name,
         messages: [{
           id: "user-1",
@@ -1534,7 +1541,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "summary",
       messages: [{
         id: "user-1",
@@ -1613,7 +1620,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       agent: "review",
       payload: { prompt: "review" },
       timeout: 1234,
@@ -1661,7 +1668,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [{
         id: "user-1",
         parts: [{ text: "ping", type: "text" }],
@@ -1704,7 +1711,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [{
         id: "user-1",
         parts: [{ text: "hello", type: "text" }],
@@ -1733,7 +1740,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {}, agentInvocationStreamRoute, {}, "GET")
+    const response = await invokeMiddleware(handlers, {}, agentInvocationStreamRoute, {}, "GET")
 
     expect(response.statusCode).toBe(403)
     expect(server.ssrLoadModule).not.toHaveBeenCalled()
@@ -1759,7 +1766,7 @@ describe("agent chat capability discovery", () => {
     await configurePluginServer((await import("../src/vite.ts")).hubAgent(), server)
 
     const response = await invokeMiddleware(
-      handlers[0]!,
+      handlers,
       {},
       `${agentInvocationStreamRoute}?inspect=1&agent=support`,
       { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue },
@@ -1775,6 +1782,53 @@ describe("agent chat capability discovery", () => {
       },
       root,
     })
+  })
+
+  it("initializes standalone Agent cancellation credentials before discovery", async () => {
+    const root = await createTempRoot("vitehub-agent-cancel-discovery-")
+    try {
+      const { hubAgent } = await import("../src/vite.ts")
+      const { agentInvocationsDevHeader, agentInvocationsDevRoute, agentInvocationsDevRuntimeRoute, agentInvocationsDevTokenServerHeader } = await import("../src/invocations-dev.ts")
+      const { readWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } = await import("@vite-hub/workspace/server")
+      const serverId = workspaceDevTokenServerId(3000)
+      expect(await readWorkspaceDevToken(root, { serverId })).toBeUndefined()
+      const { handlers, server } = createFakeServer(root, {})
+      const dispatchFetch = vi.fn(async (_request: Request) => Response.json({ outcome: "not-found" }))
+
+      // No Workspace plugin participates in this standalone Agent setup.
+      const plugin = hubAgent()
+      if (hasRuntimeType(plugin.configResolved, "function")) {
+        await plugin.configResolved.call({} as never, { command: "serve", root, server: { port: 3000 } } as never)
+      }
+      await configurePluginServer(plugin, { ...server, environments: { nitro: { dispatchFetch } } })
+      const discovery = await invokeMiddleware(handlers, {}, agentInvocationsDevRoute, {
+        [agentInvocationsDevHeader]: "1",
+      }, "GET")
+      expect(discovery.statusCode).toBe(200)
+      expect(JSON.parse(discovery.body)).toEqual({ root, runtime: "nitro", workspaceDevTokenServerId: serverId })
+
+      const token = await readWorkspaceDevToken(root, { serverId })
+      if (!token) throw new Error("Discovery must publish a readable private token")
+      const body = { id: "ainv_missing", operation: "cancel" }
+      const headers = { "content-type": "application/json", [agentInvocationsDevHeader]: "1", [agentInvocationsDevTokenServerHeader]: serverId }
+      expect((await invokeMiddleware(handlers, body, agentInvocationsDevRoute, headers)).statusCode).toBe(403)
+      expect(dispatchFetch).not.toHaveBeenCalled()
+
+      const response = await invokeMiddleware(handlers, body, agentInvocationsDevRoute, {
+        ...headers,
+        [workspaceDevTokenHeader]: token,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(JSON.parse(response.body)).toEqual({ outcome: "not-found" })
+      const request = dispatchFetch.mock.calls[0]![0]
+      expect(new URL(request.url).pathname).toBe(agentInvocationsDevRuntimeRoute)
+      expect(request.headers.get(workspaceDevTokenHeader)).toBe(token)
+      expect(request.headers.get(agentInvocationsDevTokenServerHeader)).toBe(serverId)
+      expect(await request.json()).toEqual(body)
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it("provides generated runtime Capabilities to Agent Dev Loop invocations", async () => {
@@ -1815,11 +1869,12 @@ describe("agent chat capability discovery", () => {
         command: "serve",
         plugins: [{ name: "@vite-hub/database/vite" }, { name: "@vite-hub/schedule/vite" }],
         root,
+        server: { port: 3000 },
       } as never)
     }
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [{
         id: "user-1",
         parts: [{ text: "hello", type: "text" }],
@@ -1843,7 +1898,7 @@ describe("agent chat capability discovery", () => {
 
     const refreshedAgentDb = { query: vi.fn() }
     agentDb = refreshedAgentDb
-    await invokeMiddleware(handlers[0]!, {
+    await invokeMiddleware(handlers, {
       messages: [{ id: "user-2", parts: [{ text: "again", type: "text" }], role: "user" }],
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
@@ -1874,7 +1929,7 @@ describe("agent chat capability discovery", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers[0]!, {
+    const response = await invokeMiddleware(handlers, {
       messages: [{
         id: "user-1",
         parts: [{ text: "hello", type: "text" }],

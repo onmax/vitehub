@@ -3,9 +3,11 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
+import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
-import type { AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
+import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";
+import type { AgentCapabilitiesResolver, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -27,7 +29,7 @@ import {
 import type { Claim, PullRequestInboxStorage, ReadGraphql, Snapshot } from "../../server/github-inbox.ts";
 import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
-import { getAgentLayerOptions } from "../../agent-layers.ts";
+import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence } from "./merge.ts";
@@ -635,16 +637,72 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 | (ClaudeCodeDriverOptions<BabysitterPassResult> & { kind: "claude-code" });
               const activityEnabled = !!verifiedHostIdentity;
               const workerName = "babysitter-worker";
+              const baseSettings = getAgentLayerOptions(baseAgent);
+              if (!baseSettings) throw new Error("Babysitter base Agent settings are unavailable.");
+              // Build the worker from the base settings while replacing only
+              // its GitHub Channel. Extending the base Agent would preserve
+              // the host identity, but dropping the whole map loses other
+              // channel-scoped capabilities needed by repair passes.
+              const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              const baseChannels = isRuntimeRecord(_baseChannels) ? _baseChannels : {};
+              const workerBaseChannels = Object.fromEntries(Object.entries(baseChannels).map(([name, channel]) => {
+                if (!isRuntimeRecord(channel) || channel.kind !== "github") return [name, channel];
+                const sanitized = { ...channel };
+                // A GitHub channel under any key can otherwise reintroduce host credentials.
+                Reflect.deleteProperty(sanitized, Symbol.for("vitehub.githubChannelIdentity"));
+                return [name, sanitized];
+              }));
+              const baseCapabilities = workerSettings.capabilities;
+              const repair = repairCapability(operations, merge.mode === "auto");
+              // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
+              const workerCapabilities = typeof baseCapabilities === "function"
+                ? async (context: Parameters<AgentCapabilitiesResolver>[0]) => [
+                  ...(await resolveAgentCapabilityDefinitions(baseCapabilities, context)).filter(capability => capability.id !== "babysitter.github"),
+                  repair,
+                ]
+                : [
+                  ...(Array.isArray(baseCapabilities) ? baseCapabilities : []).filter(capability => capability.id !== "babysitter.github"),
+                  repair,
+                ];
+              copyDefinitionDecorations(asMetadataTarget(baseAgent), asMetadataTarget(workerSettings));
+              const workerChannel = { ...github.channel({
+                activity: activityEnabled,
+                pullRequest: { filter: presetOptions.filter, workspace: false },
+              }) };
+              // Preserve host-owned activity and delivery closures without
+              // exposing their identity to provider credential resolution.
+              Reflect.deleteProperty(workerChannel, Symbol.for("vitehub.githubChannelIdentity"));
+              // Keep the base Agent's configured Workspace sources, loaders, and
+              // instruction bindings while replacing the checkout-owned fields.
+              const configuredWorkspace = workerSettings.workspace;
+              let baseWorkspace: Record<string, unknown> = {};
+              if (hasRuntimeType(configuredWorkspace, "string")) {
+                baseWorkspace = { ...await resolveRegisteredWorkspaceDefinition(configuredWorkspace) };
+              }
+              else if (isRuntimeRecord(configuredWorkspace)) {
+                const workspaceName = hasRuntimeType(configuredWorkspace.name, "string") ? configuredWorkspace.name : undefined;
+                const registeredWorkspace = workspaceName
+                  ? await resolveRegisteredWorkspaceDefinition(workspaceName)
+                  : undefined;
+                baseWorkspace = {
+                  ...(registeredWorkspace ?? {}),
+                  ...configuredWorkspace,
+                };
+              }
+              // Named Workspace references cannot be combined with owned fields.
+              // The checkout below replaces the reference with its prepared workspace.
+              Reflect.deleteProperty(baseWorkspace, "name");
               const agent = defineAgent({
-                extends: baseAgent,
+                ...workerSettings,
                 name: workerName,
+                // GitHub authority stays in the broker operations above;
+                // attaching the host here would expose its token to the driver.
                 channels: {
-                  github: github.channel({
-                    activity: activityEnabled,
-                    pullRequest: { filter: presetOptions.filter },
-                  }),
+                  ...workerBaseChannels,
+                  github: workerChannel,
                 },
-                capabilities: [repairCapability(operations, merge.mode === "auto")],
+                // SAFETY: workerCapabilities preserves validated base capability definitions and appends the broker capability.
+                capabilities: workerCapabilities as never,
                 driver: {
                   ...workerDriver,
                   permissions: "allow-edits",
@@ -669,9 +727,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   },
                 },
                 workspace: {
+                  ...baseWorkspace,
                   commit: false,
-                  mode: "write",
-                  store: { provider: "local", root: checkout },
+                  mode: "write" as const,
+                  store: { provider: "local" as const, root: checkout },
                 },
               });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;

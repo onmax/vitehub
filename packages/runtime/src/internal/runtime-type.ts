@@ -1,4 +1,6 @@
 import { runtimeErrorDiagnostics } from "../error-diagnostics.ts"
+
+export { runtimeErrorDiagnostics }
 type RuntimeTypeMap = {
   bigint: bigint
   boolean: boolean

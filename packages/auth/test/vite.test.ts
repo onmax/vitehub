@@ -251,6 +251,10 @@ describe("hubAuth", () => {
         ],
       },
     })
+
+    await resolvePluginConfig(plugin, root)
+    const middleware = await readFile(join(root, ".vitehub", "auth", "access-middleware.ts"), "utf8")
+    expect(middleware).toContain('export default createAuthAccessHandler([{"route":"/app"},{"route":"/app/**"},{"route":"/api/app","authorize":true,"method":"POST"}])')
   })
 
   it("uses custom Auth base paths for generated Nitro routes", async () => {
@@ -293,9 +297,12 @@ describe("hubAuth", () => {
 
     await expect(readFile(join(root, ".vitehub", "auth", "route.ts"), "utf8")).resolves.toContain("export { default } from \"#vitehub/auth/server\"")
     const accessMiddleware = await readFile(join(root, ".vitehub", "auth", "access-middleware.ts"), "utf8")
-    expect(accessMiddleware).toContain("import { requireAuthAccessRoutes } from \"#vitehub/auth/server\"")
-    expect(accessMiddleware).toContain("routes.flatMap")
-    expect(accessMiddleware).toContain("requireAuthAccessRoutes(event, routeIndexes, undefined, requiredAuthorizeRouteIndexes)")
+    expect(accessMiddleware).toBe([
+      'import { createAuthAccessHandler } from "#vitehub/auth/server"',
+      "",
+      "export default createAuthAccessHandler([])",
+      "",
+    ].join("\n"))
   })
 
   it("shares dev route sessions with the authenticated Agent helper in SSR modules", async () => {

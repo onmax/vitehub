@@ -134,6 +134,11 @@ secret detection. Arbitrary names such as `token` or `authorization` are not
 automatically redacted, and `error.message` is retained. `{ content: "content" }`
 retains all supplied attributes.
 
+Attribute projection reads own data properties. It does not invoke attribute
+getters. In `metadata` mode this also applies to nested objects and array entries;
+accessor-backed content keys are recorded as omitted, and other accessors are
+skipped. In `content` mode nested attribute values remain unchanged.
+
 Own trace access, retention, size limits, redaction, and durable export in the
 host. `entries()` returns the current in-memory entries; it does not persist or
 stream them by itself.
@@ -181,11 +186,11 @@ Do not import from `src`, `dist`, or ViteHub's `_internal` paths.
 
 ## Go deeper
 
-- [Runtime Context](https://vitehub.dev/docs/concepts/runtime-context)
-- [Runtime policy, approvals, and traces](https://vitehub.dev/docs/concepts/runtime-policy-approvals-and-traces)
+- [Runtime Context](https://vitehub.dev/docs/getting-started/concepts/runtime-context)
+- [Runtime policy, approvals, and traces](https://vitehub.dev/docs/getting-started/concepts/runtime-policy-approvals-and-traces)
 - [Runtime events](https://vitehub.dev/docs/reference/runtime-events)
 - [Stable import paths](https://vitehub.dev/docs/reference/import-paths)
-- [Node Runtime diagnostics](https://vitehub.dev/docs/capabilities/diagnostics)
+- [Node Runtime diagnostics](https://vitehub.dev/docs/agents/capabilities/diagnostics)
 - [Report a Runtime issue](https://github.com/vite-hub/vitehub/issues/new)
 
 ### Work checkpoints

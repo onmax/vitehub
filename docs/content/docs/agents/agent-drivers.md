@@ -95,7 +95,7 @@ export default defineAgent({
 })
 ```
 
-`credentials` accepts the contents of Codex `auth.json`, a sealed Server Env value, or an invocation-time resolver. This lets a Kubernetes secret or an [Env provider](/docs/server-primitives/env#read-external-env-storage) supply auth without startup file plumbing. ViteHub resolves it for each invocation, validates the JSON object, and projects it as a `0600` file inside a `0700` Codex Home. Provisioned credentials require a POSIX host; ViteHub rejects them on Windows because these file modes cannot guarantee owner-only access there. The value never enters the provider environment or inspection output.
+`credentials` accepts the contents of Codex `auth.json`, a sealed Server Env value, or an invocation-time resolver. This lets a Kubernetes secret or an [Env provider](/docs/env/server-api#read-external-env-storage) supply auth without startup file plumbing. ViteHub resolves it for each invocation, validates the JSON object, and projects it as a `0600` file inside a `0700` Codex Home. Provisioned credentials require a POSIX host; ViteHub rejects them on Windows because these file modes cannot guarantee owner-only access there. The value never enters the provider environment or inspection output.
 
 A named `credentialProfile` shares one writable Home between Drivers in the process and stores it at `.vitehub/data/codex/<credentialProfile>`. ViteHub serializes Codex runtime access to the profile, so one Codex process owns that Home at a time. Codex can refresh `auth.json` there. ViteHub fingerprints the last external seed, preserves Codex's refreshed file while that seed is unchanged, and replaces the file on the next invocation when the resolver returns a rotated value.
 
@@ -160,6 +160,26 @@ export default defineAgent({
 
 The directory is the working copy. ViteHub still materializes Workspace Sources, but it does not start a Workspace session. It does not copy Workspace files into the directory, create a Git baseline, compute a diff, write changes back, or remove the directory. Generated instruction and Skill files are restored after the provider stops. When the directory is a Git repository root, Git ignores the generated files while the provider runs, so provider commits do not include them. Title and progress summary runs ignore `cwd` and use a temporary directory. The application owns the directory's contents, cleanup, and isolation between concurrent invocations. Agent inspection reports whether `cwd` is static or dynamic without resolving it.
 
+### Provision the project toolchain
+
+Set `toolchain` when the provider works on a JavaScript project that pins its own Node.js and package manager. It uses the same declaration as [`box.toolchain`](/docs/agents/boxes#provision-nodejs-and-the-package-manager):
+
+```ts [server/agents/review/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    kind: 'codex',
+    permissions: 'allow-all',
+    toolchain: 'project',
+  },
+})
+```
+
+After ViteHub prepares the pull request checkout, the Workspace, or `cwd`, it reads the pins from that directory, provisions them on this host under `$XDG_CACHE_HOME/vitehub/toolchains`, and checks `node -v` and the package manager version. The toolchain `bin` directories come before the host `PATH` for the provider process, every command it starts, and Workspace commands. With a pull request mounted below the Workspace root, ViteHub reads the pins from that mount. A launcher from `launch` receives the same `PATH` in its environment, so it must run on this host. Provider CLIs that start through `#!/usr/bin/env node`, such as the npm Codex package, also run on the project's Node.js. Title and progress summary runs do not provision a toolchain.
+
+`status()` does not report `node`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, or `yarnpkg` as missing when `toolchain` is set, because the toolchain exists only after an invocation prepares its checkout. With `box`, declare `box.toolchain` instead; the Agent rejects `driver.toolchain` with `AGENT_R0972`.
+
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
 | Option | Purpose |
@@ -179,6 +199,7 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
 | `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
 | `sessionStorePath` | Optional SQLite file for provider session cursors. Enables thread continuation after a process restart on the same persistent host volume. |
+| `toolchain` | `"project"` or `{ node, packageManager, fallbackNode }`. Provisions project-pinned Node.js and package manager for the provider and its commands. See [Provision the project toolchain](#provision-the-project-toolchain). |
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
 
@@ -240,6 +261,8 @@ export default defineAgent({
 ```
 
 The callback receives prepared input, messages, tools, Workspace access, invocation context, and the resolved Actor as both `actor` and `invoker`. A custom run callback may call a model internally, but ViteHub treats that execution and usage as application-owned behavior.
+
+ViteHub cannot stop a custom run callback. When a user cancels the Invocation, `input.abortSignal` aborts, and the cancel result reports `notEnforcedBy: 'run'`. Pass the signal to your own I/O, or throw `input.abortSignal.reason`, to stop early. Model-backed and provider-backed Drivers stop on cancel. See [Cancel an invocation](/docs/agents/invocations#cancel-an-invocation).
 
 Read [Instructions](/docs/agents/instructions) for model-facing behavior and [Workspace context](/docs/agents/workspace-context) for files and writeback.
 
@@ -327,7 +350,7 @@ export default defineAgent({
 
 State, instructions, and criteria accept JSON values. Root numbers and booleans become text for the `advocaat` Entry contract. Numbers and booleans inside objects or arrays stay native. Score legends retain the original level descriptions.
 
-`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/capabilities/llm-gate) or [`llmRoute()`](/docs/capabilities/llm-route) without a `model`, the decision also uses Jev.
+`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/agents/capabilities/llm-gate) or [`llmRoute()`](/docs/agents/capabilities/llm-route) without a `model`, the decision also uses Jev.
 
 ### Provider exit evidence
 

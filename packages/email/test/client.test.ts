@@ -58,13 +58,15 @@ describe("createEmail", () => {
   })
 
   it("resolves a lazy driver for each send", async () => {
-    const factory = vi.fn(() => fixtureDriver())
+    const initialize = vi.fn()
+    const factory = vi.fn(() => ({ ...fixtureDriver(), initialize }))
     const client = createEmail({ driver: factory })
 
     await client.send(message)
     await client.send(message)
 
     expect(factory).toHaveBeenCalledTimes(2)
+    expect(initialize).toHaveBeenCalledTimes(2)
   })
 
   it("keeps an eager driver's lifecycle across sends", async () => {

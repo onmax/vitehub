@@ -3,14 +3,19 @@ import { resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { resolveViteHubProjectRoot } from "@vite-hub/internal/build/vite"
 import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
-import type { AgentInvocationListResult, AgentInvocationRecord, AgentInvocationStore } from "../invocations.ts"
+import { discoverViteHubDevServer, fetchViteHubDevEndpoint, readViteHubDevTargetOption, resolveViteHubDevServerUrl } from "@vite-hub/internal/cli"
+import { agentInvocationsDevGuard, agentInvocationsDevRoute, agentInvocationsDevRuntimeUnavailableMessage, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
+import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
+import { isCompatibleAgentDevServerRoot } from "./agent-info-cli.ts"
+import type { AgentInvocationCancelResult, AgentInvocationListResult, AgentInvocationRecord, AgentInvocationStore } from "../invocations.ts"
+import type { AgentInvocationsDevRequestBody } from "../invocations-dev.ts"
 import type { AgentInvocationDetailResult } from "../invocations-vue.ts"
 import type { RuntimeDiagnosticError } from "@vite-hub/runtime"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
 interface AgentInvocationsCliContext {
   env: NodeJS.ProcessEnv
-  /** Resolves the default Console journal. Defaults to the current directory. */
+  /** Project root that the Compatible Vite Development Server must serve. Defaults to the current directory. */
   rootDir?: string
   stderr: { write: (chunk: string | Uint8Array) => unknown }
   stdout: { write: (chunk: string | Uint8Array) => unknown }
@@ -31,7 +36,7 @@ function isAction(value: string): value is Action {
 }
 
 interface ParsedArgs {
-  action?: Action
+  action?: Action | "cancel"
   database?: string
   dryRun: boolean
   help: boolean
@@ -42,7 +47,35 @@ interface ParsedArgs {
   olderThanMs?: number
   status?: string
   tablePrefix?: string
+  timeout?: number
   url: string
+  urlSet: boolean
+}
+
+const cancelEndpoint = { ...agentInvocationsDevGuard, route: agentInvocationsDevRoute }
+
+interface AgentInvocationsDevDiscovery {
+  message?: unknown
+  root?: unknown
+  runtime?: unknown
+  workspaceDevTokenServerId?: unknown
+}
+
+function parseCancelDiscovery(value: unknown): AgentInvocationsDevDiscovery {
+  if (!isRuntimeRecord(value) || !hasRuntimeType(value.root, "string") || !hasRuntimeType(value.runtime, "string")
+    || (value.message !== undefined && !hasRuntimeType(value.message, "string"))) {
+    throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancellation discovery returned an invalid response." })
+  }
+  const discovery: AgentInvocationsDevDiscovery = { root: value.root, runtime: value.runtime }
+  if (value.message !== undefined) discovery.message = value.message
+  if (value.workspaceDevTokenServerId !== undefined) discovery.workspaceDevTokenServerId = value.workspaceDevTokenServerId
+  return discovery
+}
+
+const devTargetErrors = {
+  invalidInlineTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
+  invalidTimeout: (message: string) => agentDiagnostics.AGENT_R0503({ message }),
+  missingValue: (message: string) => agentDiagnostics.AGENT_R0502({ message }),
 }
 
 const defaultPruneAgeMs = 30 * 24 * 60 * 60 * 1000
@@ -50,22 +83,25 @@ const durationUnits: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 
 
 function usage(context: AgentInvocationsCliContext): void {
   context.stdout.write([
-    "Usage: vitehub agent invocations <list|show|tail|delete|prune> [id] [options]",
+    "Usage: vitehub agent invocations <list|show|tail|cancel|delete|prune> [id] [options]",
     "",
-    "list, show, and tail inspect an application's Agent Invocation journal over HTTP.",
+    "list, show, tail, and cancel inspect or control an application's Agent Invocation journal.",
     "delete and prune remove completed, failed, and cancelled records from a SQLite or libSQL journal.",
+    "cancel asks a running Vite + Nitro Development Server to cancel a pending or running Invocation.",
     "",
     "Options:",
-    "  --url <url>              Invocation endpoint. Defaults to http://localhost:5173/api/invocations.",
-    "  --status <status>        Filter list results by status.",
-    "  --limit <count>          Limit list results.",
-    "  --interval <ms>          Tail polling interval. Defaults to 1000.",
-    "  --database <url>         Journal database for delete and prune. Defaults to the Console journal.",
-    "  --table-prefix <prefix>  Journal table prefix. Defaults to vitehub_agent_.",
-    "  --older-than <duration>  Prune records last updated before this age, such as 12h or 7d. Defaults to 30d.",
-    "  --dry-run                List the records that prune would delete.",
-    "  --json                   Print JSON or JSON Lines.",
-    "  -h, --help               Show this help.",
+    "  --url <url>       Invocation endpoint. Defaults to http://localhost:5173/api/invocations.",
+    "                    For cancel, the Vite Development Server URL. Defaults to VITEHUB_DEV_SERVER_URL or http://localhost:5173.",
+    "  --timeout <ms>            Request timeout. Defaults to 30000.",
+    "  --status <status>         Filter list results by status.",
+    "  --limit <count>           Limit list results.",
+    "  --interval <ms>           Tail polling interval. Defaults to 1000.",
+    "  --database <url>          Journal database for delete and prune. Defaults to the Console journal.",
+    "  --table-prefix <prefix>   Journal table prefix. Defaults to vitehub_agent_.",
+    "  --older-than <duration>   Prune records last updated before this age, such as 12h or 7d. Defaults to 30d.",
+    "  --dry-run                 List the records that prune would delete.",
+    "  --json                    Print JSON or JSON Lines.",
+    "  -h, --help                Show this help.",
     "",
   ].join("\n"))
 }
@@ -114,32 +150,27 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     interval: 1_000,
     json: false,
     url: env.VITEHUB_AGENT_INVOCATIONS_URL || "http://localhost:5173/api/invocations",
+    urlSet: false,
   }
+  const target: { timeout?: number, url: string } = { url: parsed.url }
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index]!
-    if (argument === "-h" || argument === "--help") parsed.help = true
+    const used = readViteHubDevTargetOption(args, index, target, devTargetErrors)
+    if (used !== undefined) {
+      index += used
+      if (argument === "--url" || argument === "--server" || argument.startsWith("--url=")) parsed.urlSet = true
+      parsed.url = target.url
+      if (target.timeout !== undefined) parsed.timeout = target.timeout
+    }
+    else if (argument === "-h" || argument === "--help") parsed.help = true
     else if (argument === "--json") parsed.json = true
     else if (argument === "--dry-run") parsed.dryRun = true
-    else if (argument === "--database") {
-      parsed.database = optionValue(args, index, argument)
-      index += 1
-    }
-    else if (argument.startsWith("--database=")) parsed.database = argument.slice(11)
-    else if (argument === "--table-prefix") {
-      parsed.tablePrefix = optionValue(args, index, argument)
-      index += 1
-    }
-    else if (argument.startsWith("--table-prefix=")) parsed.tablePrefix = argument.slice(15)
-    else if (argument === "--older-than") {
-      parsed.olderThanMs = duration(optionValue(args, index, argument), argument)
-      index += 1
-    }
-    else if (argument.startsWith("--older-than=")) parsed.olderThanMs = duration(argument.slice(13), "--older-than")
-    else if (argument === "--url") {
-      parsed.url = optionValue(args, index, argument)
-      index += 1
-    }
-    else if (argument.startsWith("--url=")) parsed.url = argument.slice(6)
+    else if (argument === "--database") { parsed.database = optionValue(args, index, argument); index += 1 }
+    else if (argument.startsWith("--database=")) parsed.database = argument.slice("--database=".length)
+    else if (argument === "--table-prefix") { parsed.tablePrefix = optionValue(args, index, argument); index += 1 }
+    else if (argument.startsWith("--table-prefix=")) parsed.tablePrefix = argument.slice("--table-prefix=".length)
+    else if (argument === "--older-than") { parsed.olderThanMs = duration(optionValue(args, index, argument), argument); index += 1 }
+    else if (argument.startsWith("--older-than=")) parsed.olderThanMs = duration(argument.slice("--older-than=".length), "--older-than")
     else if (argument === "--status") {
       parsed.status = optionValue(args, index, argument)
       index += 1
@@ -156,13 +187,15 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
     }
     else if (argument.startsWith("--interval=")) parsed.interval = positiveInteger(argument.slice(11), "--interval")
     else if (argument.startsWith("-")) throw agentDiagnostics.AGENT_R0504({ message: `Unknown option: ${redactCliArgument(argument)}.` })
-    else if (!parsed.action && isAction(argument)) parsed.action = argument
-    else if (!parsed.id && parsed.action !== "list" && parsed.action !== "prune") parsed.id = argument
+    else if (!parsed.action && (argument === "cancel" || isAction(argument))) parsed.action = argument
+    else if (!parsed.id && parsed.action && parsed.action !== "list" && parsed.action !== "prune") parsed.id = argument
     else throw agentDiagnostics.AGENT_R0505({ message: `Unexpected argument: ${redactCliArgument(argument)}.` })
   }
-  if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, tail, delete, or prune." })
+  if (!parsed.help && !parsed.action) throw agentDiagnostics.AGENT_R0506({ message: "Choose list, show, tail, cancel, delete, or prune." })
   if (!parsed.help && parsed.action !== "list" && parsed.action !== "prune" && !parsed.id) throw agentDiagnostics.AGENT_R0507({ message: `${parsed.action} requires an invocation id.` })
   if (!parsed.help && parsed.dryRun && parsed.action !== "prune") throw agentDiagnostics.AGENT_R0505({ message: "--dry-run is only supported for prune." })
+  // cancel targets the Vite Development Server, not the application inspection route.
+  if (parsed.action === "cancel" && !parsed.urlSet) parsed.url = resolveViteHubDevServerUrl(env)
   return parsed
 }
 
@@ -213,6 +246,88 @@ async function request<T>(url: URL, fetchImpl: typeof fetch, timeout: number, pa
   if (!response.ok) throw agentDiagnostics.AGENT_R0511({ message: (await response.text()).trim() || `Invocation inspection failed with status ${response.status}.` })
   const value: unknown = await response.json()
   return parseResponse(value)
+}
+
+const cancelOutcomes = new Set<unknown>(["not-found", "requested", "terminal", "unavailable"])
+
+function parseCancelResult(value: unknown): AgentInvocationCancelResult {
+  if (
+    !isRuntimeRecord(value)
+    || !hasRuntimeType(value.id, "string")
+    || !cancelOutcomes.has(value.outcome)
+    || (value.status !== undefined && !hasRuntimeType(value.status, "string"))
+    || (value.notEnforcedBy !== undefined && !hasRuntimeType(value.notEnforcedBy, "string"))
+    || (value.delivery !== undefined && value.delivery !== "journal" && value.delivery !== "local")
+  ) {
+    throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancel returned an invalid response." })
+  }
+  // SAFETY: The parser validates every cancel result field consumed by the CLI.
+  return asUnknownBoundary(value) as AgentInvocationCancelResult
+}
+
+async function requestCancel(parsed: ParsedArgs, id: string, context: AgentInvocationsCliContext, fetchImpl: typeof fetch, timeout: number): Promise<AgentInvocationCancelResult | undefined> {
+  const rootDir = context.rootDir ?? process.cwd()
+  const discoveryOptions = {
+    parseDiscovery: parseCancelDiscovery,
+    endpoint: cancelEndpoint,
+    fetch: (input: string | URL | Request, init?: RequestInit) => fetchImpl(input, { ...init, signal: AbortSignal.timeout(timeout) }),
+    isCompatibleRoot: isCompatibleAgentDevServerRoot,
+    rootDir,
+    serverUrl: parsed.url,
+    stderr: context.stderr,
+  }
+  const server = await discoverViteHubDevServer<AgentInvocationsDevDiscovery>(discoveryOptions)
+  if (!server) return
+  const { url } = server
+  const discovery = parseCancelDiscovery(server.discovery)
+  // Nuxt and plain Vite do not run Nitro in the Vite process, so the cancel cannot reach the application runtime.
+  if (discovery.runtime !== "nitro") {
+    context.stderr.write(`${hasRuntimeType(discovery.message, "string") ? discovery.message : agentInvocationsDevRuntimeUnavailableMessage}\n`)
+    return
+  }
+  const body: AgentInvocationsDevRequestBody = { id, operation: "cancel" }
+  if (!hasRuntimeType(discovery.workspaceDevTokenServerId, "string")) {
+    throw agentDiagnostics.AGENT_R0971({ message: "Invocation cancellation discovery did not publish a token server ID." })
+  }
+  const token = await readWorkspaceDevToken(hasRuntimeType(discovery.root, "string") ? discovery.root : rootDir, { serverId: discovery.workspaceDevTokenServerId })
+  if (!token) throw agentDiagnostics.AGENT_R0972({ message: "No private Agent Dev token found. Start the Compatible Vite Development Server first." })
+  const response = await fetchViteHubDevEndpoint(fetchImpl, url, cancelEndpoint, {
+    body: JSON.stringify(body),
+    headers: { "accept": "application/json", "content-type": "application/json", [workspaceDevTokenHeader]: token, [agentInvocationsDevTokenServerHeader]: discovery.workspaceDevTokenServerId },
+    method: "POST",
+    signal: AbortSignal.timeout(timeout),
+  })
+  if (!response.ok) throw agentDiagnostics.AGENT_R0972({ message: await cancelFailureMessage(response) })
+  return parseCancelResult(await response.json())
+}
+
+async function cancelFailureMessage(response: Response): Promise<string> {
+  const text = (await response.text()).trim()
+  try {
+    const value: unknown = JSON.parse(text)
+    const message: unknown = isRuntimeRecord(value) && isRuntimeRecord(value.error) ? value.error.message : undefined
+    if (hasRuntimeType(message, "string") && message) return message
+  }
+  catch {
+    // Plain text responses carry the message as the body.
+  }
+  return text || `Invocation cancel failed with status ${response.status}.`
+}
+
+function cancelMessage(result: AgentInvocationCancelResult): string {
+  if (result.outcome === "not-found") return `${result.id} not found`
+  if (result.outcome === "terminal") return result.notEnforcedBy
+    ? `${result.id} journal is ${result.status ?? "terminal"}; local abort requested, not enforced by ${result.notEnforcedBy}`
+    : `${result.id} already ${result.status ?? "finished"}`
+  if (result.outcome === "unavailable") return `${result.id} cancel request was not recorded`
+  if (result.notEnforcedBy) return `${result.id} cancel requested, not enforced by ${result.notEnforcedBy}`
+  if (result.delivery === "journal") return `${result.id} cancel request recorded; execution stop is unconfirmed`
+  return `${result.id} cancel requested`
+}
+
+function cancelExitCode(result: AgentInvocationCancelResult): number {
+  if (result.outcome === "requested") return 0
+  return result.outcome === "terminal" && result.status === "cancelled" && !result.notEnforcedBy ? 0 : 1
 }
 
 function formatError(error: RuntimeDiagnosticError, indent = ""): string {
@@ -392,8 +507,14 @@ export async function runAgentInvocationsCli(
     return 0
   }
   const fetchImpl = options.fetch || globalThis.fetch
-  const timeout = options.timeout ?? 30_000
+  const timeout = parsed.timeout ?? options.timeout ?? 30_000
   try {
+    if (parsed.action === "cancel") {
+      const result = await requestCancel(parsed, parsed.id!, context, fetchImpl, timeout)
+      if (!result) return 1
+      context.stdout.write(parsed.json ? `${JSON.stringify(result, null, 2)}\n` : `${cancelMessage(result)}\n`)
+      return cancelExitCode(result)
+    }
     if (parsed.action === "delete") return await deleteInvocation(parsed, context, parsed.id!)
     if (parsed.action === "prune") return await pruneInvocations(parsed, context)
     if (parsed.action === "list") {
