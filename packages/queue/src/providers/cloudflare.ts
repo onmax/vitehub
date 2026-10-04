@@ -9,18 +9,42 @@ import type { CloudflareQueueBatchErrorAction, CloudflareQueueBatchHandlerOption
 function isCloudflareQueueBinding(binding: unknown): binding is CloudflareQueueBinding {
   if (binding === null || typeof binding !== "object" || Array.isArray(binding)) return false
 
-  const hasCallableMethod = (name: "send" | "sendBatch") =>
-    Object.hasOwn(binding, name) && typeof (binding as Record<string, unknown>)[name] === "function"
+  const hasCallableMethod = (name: "send" | "sendBatch") => {
+    let owner: object | null = binding
+    while (owner && owner !== Object.prototype) {
+      let descriptor: PropertyDescriptor | undefined
+      try {
+        descriptor = Object.getOwnPropertyDescriptor(owner, name)
+      }
+      catch {
+        return false
+      }
+      if (descriptor) {
+        if (owner !== binding) {
+          const constructor = Object.getOwnPropertyDescriptor(owner, "constructor")
+          if (!constructor || !("value" in constructor) || typeof constructor.value !== "function" || constructor.value.prototype !== owner) {
+            return false
+          }
+        }
+        if ("value" in descriptor) return typeof descriptor.value === "function"
+        try {
+          return typeof Reflect.get(binding, name) === "function"
+        }
+        catch {
+          return false
+        }
+      }
+      try {
+        owner = Object.getPrototypeOf(owner)
+      }
+      catch {
+        return false
+      }
+    }
+    return false
+  }
 
-  const prototype = Object.getPrototypeOf(binding)
-  const isClassInstance = prototype !== null
-    && Object.hasOwn(prototype, "constructor")
-    && typeof prototype.constructor === "function"
-    && prototype.constructor !== Object
-
-  return (isClassInstance || (hasCallableMethod("send") && hasCallableMethod("sendBatch")))
-    && typeof (binding as CloudflareQueueBinding).send === "function"
-    && typeof (binding as CloudflareQueueBinding).sendBatch === "function"
+  return hasCallableMethod("send") && hasCallableMethod("sendBatch")
 }
 
 function toSendOptions(options: QueueEnqueueOptions = {}) {
