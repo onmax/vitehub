@@ -4,13 +4,24 @@ import { createServer } from "node:http"
 import { devNull, tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
+import { gzipSync } from "node:zlib"
 
 import { describe, expect, it } from "vitest"
 
+import { parseGitHubArchive } from "../../src/sources/github/archive.ts"
 import { getGitSparsePatterns, loadGitArchiveFiles } from "../../src/sources/github/git.ts"
 import { createTarGz } from "./fixtures/github.ts"
 
 describe("@vite-hub/source GitHub git materialization", () => {
+  it("rejects archive entries with negative sizes", () => {
+    const header = Buffer.alloc(1024)
+    header.write("archive-main/bad.txt", 0)
+    header.write("-1000", 124)
+    header[156] = 48
+
+    expect(() => parseGitHubArchive(gzipSync(header))).toThrow("Invalid GitHub archive entry size")
+  })
+
   it("archives simple sparse source paths without putting auth in git arguments", async () => {
     const calls: Array<{
       args: string[]
