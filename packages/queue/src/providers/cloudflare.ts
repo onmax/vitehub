@@ -7,7 +7,13 @@ import { toResponse } from "@vite-hub/runtime"
 import type { CloudflareQueueBatchErrorAction, CloudflareQueueBatchHandlerOptions, CloudflareQueueBinding, CloudflareQueueClient, CloudflareQueueMessage, CloudflareQueueMessageBatch, CloudflareQueueProviderOptions, QueueEnqueueOptions } from "../types.ts"
 
 function isCloudflareQueueBinding(binding: unknown): binding is CloudflareQueueBinding {
-  return Boolean(binding) && typeof binding === "object" && typeof (binding as CloudflareQueueBinding).send === "function" && typeof (binding as CloudflareQueueBinding).sendBatch === "function"
+  return binding !== null
+    && typeof binding === "object"
+    && !Array.isArray(binding)
+    && Object.hasOwn(binding, "send")
+    && Object.hasOwn(binding, "sendBatch")
+    && typeof (binding as CloudflareQueueBinding).send === "function"
+    && typeof (binding as CloudflareQueueBinding).sendBatch === "function"
 }
 
 function toSendOptions(options: QueueEnqueueOptions = {}) {
