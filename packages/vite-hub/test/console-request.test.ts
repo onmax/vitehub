@@ -49,6 +49,14 @@ describe("Console requests", () => {
     })
   })
 
+  it("reports malformed invocation URL ids as client errors", async () => {
+    await expect(requestConsole("/api/_vitehub/console/invocations/%E0%A4%A"))
+      .rejects.toMatchObject({ name: "ConsoleRequestError", status: 400, message: "Malformed invocation id." })
+    await expect(requestConsole("/api/_vitehub/console/invocations/%E0%A4%A/workspace"))
+      .rejects.toMatchObject({ name: "ConsoleRequestError", status: 400, message: "Malformed invocation id." })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it("sends one stateless POST to the app-relative call endpoint", async () => {
     mocks.call.mockResolvedValue({ ok: true, value: { sections: ["kv"] } })
     const signal = new AbortController().signal

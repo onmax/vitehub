@@ -25,6 +25,15 @@ function consoleRpcCallURL(path: string): string {
   return `${appBase}${consoleRpcCallPath}`
 }
 
+function decodeInvocationId(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  }
+  catch {
+    throw new ConsoleRequestError(400, "Malformed invocation id.")
+  }
+}
+
 function consoleRpcCall(path: string): { agent?: string; id?: string; method: ConsoleRpcMethod } {
   const url = new URL(path, "http://vitehub.local")
   const marker = url.pathname.indexOf(consoleApiMarker)
@@ -37,10 +46,10 @@ function consoleRpcCall(path: string): { agent?: string; id?: string; method: Co
     }
   }
   const workspaceMatch = /^invocations\/([^/]+)\/workspace$/.exec(operation)
-  if (workspaceMatch) return { id: decodeURIComponent(workspaceMatch[1]!), method: consoleRpcMethods.invocationWorkspace }
+  if (workspaceMatch) return { id: decodeInvocationId(workspaceMatch[1]!), method: consoleRpcMethods.invocationWorkspace }
   if (operation.startsWith("invocations/")) {
     return {
-      id: decodeURIComponent(operation.slice("invocations/".length)),
+      id: decodeInvocationId(operation.slice("invocations/".length)),
       method: consoleRpcMethods.invocation,
     }
   }
