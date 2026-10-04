@@ -16,8 +16,12 @@ const loadingRegistryEntries = new Map<string, {
 }>()
 const loadingRegistryStorage = new AsyncLocalStorage<Set<string>>()
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Object(value) === value && !Array.isArray(value)
+}
+
 function isScheduleDefinition(value: unknown): value is ScheduleRegistryDefinition {
-  return Object(value) === value
+  return isObjectRecord(value)
     && Object.hasOwn(value, "handler")
     && Reflect.get(value, "handler") instanceof Function
 }
@@ -88,7 +92,7 @@ export async function loadScheduleDefinition(name: string): Promise<ScheduleRegi
     if (isScheduleDefinition(loaded)) {
       return loaded
     }
-    if (Object(loaded) === loaded && Object.hasOwn(loaded, "default")) {
+    if (isObjectRecord(loaded) && Object.hasOwn(loaded, "default")) {
       const definition = Reflect.get(loaded, "default")
       if (isScheduleDefinition(definition)) return definition
     }
