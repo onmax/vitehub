@@ -105,6 +105,23 @@ describe("contentSource", () => {
     await content.dispose()
   })
 
+  it("preserves plugin methods whose names are inherited by the runtime object", () => {
+    const plugin: ContentPlugin<{ constructor: () => string }> = {
+      name: "prototype-key",
+      setup: () => ({ constructor: () => "plugin-constructor" }),
+    }
+    const content = defineContent({
+      plugins: [plugin],
+      source: {
+        keys: () => [],
+        getItem: () => "",
+        getItemRaw: () => "",
+      },
+    })
+
+    expect((content as unknown as { constructor: () => string }).constructor()).toBe("plugin-constructor")
+  })
+
   it.each(["definition", "name", "factory"] as const)("uses a fresh reader on refresh with a %s", async (input) => {
     let revision = 1
     const prepared: string[] = []

@@ -21,6 +21,50 @@ describe("Cloudflare environment context", () => {
     expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
   })
 
+  it("clears the installed environment and its bindings", async () => {
+    setActiveCloudflareEnv({ BUCKET: "old-bucket" })
+
+    clearActiveCloudflareEnv()
+
+    expect(getActiveCloudflareEnv()).toBeUndefined()
+    expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+    await Promise.resolve()
+    expect(getCloudflareEnv({})).toBeUndefined()
+  })
+
+  it("clears only the current request context without disabling another request", async () => {
+    let release: () => void = () => {}
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    const otherRequest = runWithActiveCloudflareEnv({ BUCKET: "other-bucket" }, async () => {
+      await waiting
+      expect(getActiveCloudflareBinding("BUCKET")).toBe("other-bucket")
+    })
+
+    try {
+      runWithActiveCloudflareEnv({ BUCKET: "cleared-bucket" }, () => {
+        clearActiveCloudflareEnv()
+        expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+      })
+    }
+    finally {
+      release()
+      await otherRequest
+    }
+  })
+
+  it("does not retain a handler environment after nested cleanup", async () => {
+    const outer = { BUCKET: "outer-bucket" }
+    const handler = { BUCKET: "handler-bucket" }
+    setActiveCloudflareEnv(outer)
+
+    await runWithActiveCloudflareEnv(handler, async () => {
+      clearActiveCloudflareEnv()
+      expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+    })
+
+    expect(getActiveCloudflareBinding("BUCKET")).toBe("outer-bucket")
+  })
+
   it("can read event bindings without inheriting the ambient environment", () => {
     const ambient = { name: "ambient" }
     const eventEnv = { name: "event" }
