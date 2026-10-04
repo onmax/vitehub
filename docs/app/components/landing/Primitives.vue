@@ -1,5 +1,14 @@
 <script setup lang="ts">
+import { useIntersectionObserver } from "@vueuse/core";
 import { landingPrimitives } from "./content";
+
+const grid = useTemplateRef<HTMLElement>("grid");
+const visible = ref(false);
+
+// Loops run only while the grid is on screen.
+useIntersectionObserver(grid, ([entry]) => {
+  visible.value = entry?.isIntersecting ?? false;
+});
 
 // Spread start points across the loop so neighboring tiles do not move together.
 function offset(index: number) {
@@ -15,11 +24,11 @@ function offset(index: number) {
       >
         <div>
           <p class="mb-5 font-mono text-xs uppercase tracking-[0.14em] text-dimmed">Server primitives</p>
-          <h2
+          <h1
             class="max-w-[16ch] text-3xl/9 font-semibold tracking-[-0.03em] text-highlighted text-balance sm:text-4xl/10"
           >
             One server API, Agents included.
-          </h2>
+          </h1>
         </div>
         <div class="max-w-[40ch] lg:justify-self-end">
           <p class="text-base/7 text-muted">
@@ -41,6 +50,7 @@ function offset(index: number) {
       </div>
 
       <ul
+        ref="grid"
         class="mt-12 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-4 lg:mt-16 lg:grid-cols-5"
         role="list"
       >
@@ -56,14 +66,14 @@ function offset(index: number) {
             class="primitive-tile group flex h-full min-h-36 flex-col gap-4 p-5 focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary sm:min-h-40 sm:p-6"
           >
             <div
-              class="h-10 w-full text-muted transition-colors duration-200 group-hover:text-highlighted"
+              class="primitive-illustration h-10 w-full text-muted transition-colors duration-200 group-hover:text-highlighted"
             >
-              <LandingPrimitiveMotion :name="primitive.id" :play="true" :offset="offset(index)" />
+              <LandingPrimitiveMotion :name="primitive.id" :play="visible" :offset="offset(index)" />
             </div>
             <div>
-              <h3 class="text-sm font-medium text-highlighted">
+              <h2 class="text-sm font-medium text-highlighted">
                 {{ primitive.name }}
-              </h3>
+              </h2>
               <p class="mt-0.5 text-xs text-muted">
                 {{ primitive.description }}
               </p>
@@ -80,18 +90,28 @@ function offset(index: number) {
 .primitive-tile {
   --tile-bg: var(--ui-bg);
   background: var(--tile-bg);
+  transition: background-color 200ms ease;
+}
+
+.primitive-illustration {
   opacity: 0.72;
-  transition: opacity 200ms ease, background-color 200ms ease;
+  transition: opacity 200ms ease, color 200ms ease;
 }
 
 .primitive-tile:focus-visible {
   --tile-bg: color-mix(in srgb, var(--ui-bg-muted) 35%, var(--ui-bg));
+}
+
+.primitive-tile:focus-visible .primitive-illustration {
   opacity: 1;
 }
 
 @media (hover: hover) and (pointer: fine) {
   .primitive-tile:hover {
     --tile-bg: color-mix(in srgb, var(--ui-bg-muted) 35%, var(--ui-bg));
+  }
+
+  .primitive-tile:hover .primitive-illustration {
     opacity: 1;
   }
 
@@ -101,7 +121,8 @@ function offset(index: number) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .primitive-tile {
+  .primitive-tile,
+  .primitive-illustration {
     transition: none;
   }
 }

@@ -177,7 +177,8 @@ describe("landing page", () => {
       "utf8",
     );
     expect(primitives).not.toContain("Replay scenes");
-    expect(primitives).toContain(':play="true"');
+    expect(primitives).toContain(':play="visible"');
+    expect(primitives).toContain("useIntersectionObserver(");
     expect(installCommand).toContain(
       `:class="activeTab === 'package' ? 'w-[16.5rem]' : 'w-0'"`,
     );
@@ -187,6 +188,8 @@ describe("landing page", () => {
   it("wires landing-page metadata through Docus", async () => {
     const source = await readFile(new URL("../app/pages/index.vue", import.meta.url), "utf8");
 
+    expect(source).toContain("<LandingPrimitives />");
+    expect(source).toContain("<LandingHero />");
     expect(source.indexOf("<LandingPrimitives />")).toBeLessThan(source.indexOf("<LandingHero />"));
     expect(source).not.toContain("<LandingSharedApi />");
     expect(source).not.toContain("<LandingNuxtHubMigration />");
