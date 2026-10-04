@@ -1,4 +1,5 @@
 import discoveredRegistry from "#vitehub/channels/registry"
+import { isPlainObject } from "@vite-hub/internal/object"
 
 import { createChannel, toChannelSendError } from "../client.ts"
 
@@ -24,11 +25,9 @@ function getRegistry(): ChannelDefinitionRegistry {
 }
 
 function isChannelDefinition(value: unknown): value is ChannelDefinition {
-  return value !== null
-    && typeof value === "object"
-    && !Array.isArray(value)
+  return isPlainObject(value)
     && Object.hasOwn(value, "connectors")
-    && Boolean((value as ChannelDefinition).connectors)
+    && Boolean(value.connectors)
 }
 
 async function loadChannelDefinition(name: string): Promise<ChannelDefinition | undefined> {
@@ -37,7 +36,7 @@ async function loadChannelDefinition(name: string): Promise<ChannelDefinition | 
   if (!entry) return undefined
   const loaded = await entry()
   if (isChannelDefinition(loaded)) return loaded
-  if (loaded && typeof loaded === "object" && !Array.isArray(loaded) && Object.hasOwn(loaded, "default") && isChannelDefinition(loaded.default)) return loaded.default
+  if (isPlainObject(loaded) && Object.hasOwn(loaded, "default") && isChannelDefinition(loaded.default)) return loaded.default
   return undefined
 }
 
