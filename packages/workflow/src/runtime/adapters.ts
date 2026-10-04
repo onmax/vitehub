@@ -90,8 +90,16 @@ const cloudflareStatusMap: Record<string, WorkflowRunStatus> = {
 
 function normalizeCloudflareStatus(status: unknown): WorkflowRunStatus {
   // SAFETY: Workflow provider normalization establishes the asserted run contract.
-  const value = hasRuntimeType(status, "object") && status ? (status as { status?: unknown }).status : status
+  const value = hasRuntimeType(status, "object") && status && Object.hasOwn(status, "status")
+    ? (status as { status?: unknown }).status
+    : status
   return cloudflareStatusMap[String(value || "").toLowerCase()] || "unknown"
+}
+
+function ownSerializedOutput(metadata: unknown) {
+  if (!hasRuntimeType(metadata, "object") || metadata === null || !Object.hasOwn(metadata, "output")) return undefined
+  const output = (metadata as { output?: unknown }).output
+  return isSerializedResponse(output) ? output : undefined
 }
 
 function hasUnknownWorkflowAcknowledgement(error: unknown): boolean {
@@ -111,13 +119,12 @@ function createCloudflareAdapter(config: ResolvedWorkflowOptions): WorkflowRunti
       if (binding) {
         const instance = await runWorkflowProviderOperation("cloudflare", "get", () => binding.get(id))
         const metadata = await runWorkflowProviderOperation("cloudflare", "status", () => instance.status())
+        const output = ownSerializedOutput(metadata)
         return {
           id,
           metadata,
           provider: "cloudflare",
-          result: metadata && hasRuntimeType(metadata, "object") && "output" in metadata && isSerializedResponse(metadata.output)
-            ? deserializeResponse(metadata.output)
-            : undefined,
+          result: output ? deserializeResponse(output) : undefined,
           status: normalizeCloudflareStatus(metadata),
         }
       }
