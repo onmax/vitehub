@@ -889,8 +889,9 @@ function isStandardSchemaInput(value: unknown): boolean {
   if (!("~standard" in value)) return false
   const marker = value["~standard"]
   if (!hasRuntimeType(marker, "object") || marker === null) return false
-  return Object.hasOwn(marker, "version") && marker.version === 1
-    && Object.hasOwn(marker, "validate") && hasRuntimeType(marker.validate, "function")
+  const version = Object.getOwnPropertyDescriptor(marker, "version")?.value
+  const validate = Object.getOwnPropertyDescriptor(marker, "validate")?.value
+  return version === 1 && hasRuntimeType(validate, "function")
 }
 
 function createAiSdkRuntimeContext(context: AgentAdapterRunContext) {
