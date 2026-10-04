@@ -494,7 +494,12 @@ describe("framework package contract", () => {
     expect(sessionInspector).toContain("workspace.pullRequest !== undefined");
     expect(sessionInspector).toContain("hasPullRequest && (pullRequest === undefined");
     expect(sessionInspector).toContain('openViews.value.includes("workspace")');
-    expect(sessionInspector).toContain("list: 'w-max min-w-0 gap-1 bg-transparent p-0'");
+    expect(sessionInspector).toContain('<TabsList data-slot="list">');
+    expect(sessionInspector).toContain('import { TabsList, TabsRoot, TabsTrigger } from "reka-ui";');
+    expect(sessionInspector).toMatch(
+      /<TabsTrigger[\s\S]*?<\/TabsTrigger>[\s\S]*?class="session-inspector__tab-close"/,
+    );
+    expect(sessionInspector).not.toContain('<template #leading="{ item }">');
     expect(sessionInspector).not.toContain("scrollIntoView");
     expect(sessionInspector).toContain("scroller.scrollLeft");
     expect(consoleSessionCss).toMatch(
@@ -504,7 +509,7 @@ describe("framework package contract", () => {
       /\.session-inspector__tabs \{[\s\S]*?flex: 0 1 auto;[\s\S]*?max-width: calc\(100% - 2rem\);[\s\S]*?width: max-content;/,
     );
     expect(consoleSessionCss).toMatch(
-      /\.session-inspector__tabs \[data-slot="list"\] \{[\s\S]*?min-width: 0;[\s\S]*?width: max-content;/,
+      /\.session-inspector__tabs \[data-slot="list"\] \{[^}]*?display: flex;[^}]*?min-width: 0;[^}]*?width: max-content;/,
     );
     const sessionTrace = readFileSync(
       `${packageRoot}/dist/console/runtime/components/console-session-trace.vue`,
