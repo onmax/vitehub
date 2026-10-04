@@ -399,7 +399,7 @@ function createResourceItem<TKey extends string>(
 }
 
 export function mcpResources<const TKey extends string = string>(options: McpResourcesSourceOptions<TKey>): FileSource<TKey> {
-  if (!options || typeof options !== "object" || !options.server) {
+  if (!options || typeof options !== "object" || !hasDeclaredProperty(options, "server") || !options.server) {
     throw sourceErrorDiagnostics.SOURCE_R0022({ message: "[vitehub] mcpResources({ server }) requires an MCP server." })
   }
 

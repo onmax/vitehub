@@ -223,6 +223,9 @@ describe("mcpResources", () => {
     const inheritedConfig = Object.create({ transport: { url: "not-a-url" } })
     const configSource = mcpResources({ server: inheritedConfig })
     await expect(configSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/must resolve to an MCP client or MCP client config/i)
+
+    const inheritedOptions = Object.create({ server: createClient() })
+    expect(() => mcpResources(inheritedOptions)).toThrow(/requires an MCP server/i)
   })
 
   it("ignores inherited MCP content discriminators", async () => {
