@@ -182,9 +182,16 @@ export function createConnectionsHandler(
           403,
         );
       if (request.method === "GET" && path.startsWith(`${route}/connect/`)) {
+        let connectionName: string
+        try {
+          connectionName = decodeURIComponent(path.slice(`${route}/connect/`.length))
+        }
+        catch {
+          return page("Connection failed", "The Connection name is invalid.", 400)
+        }
         const connection = v.safeParse(
           name,
-          decodeURIComponent(path.slice(`${route}/connect/`.length)),
+          connectionName,
         );
         if (!connection.success)
           return page("Connection failed", "The Connection name is invalid.", 400);

@@ -1,5 +1,5 @@
 /** Sections that the Console UI in `vite-hub` renders with its own components. Owner packages contribute the others. */
-export const consoleBuiltinSectionIds = ["env", "agents", "usage", "blob", "databases", "kv"] as const
+export const consoleBuiltinSectionIds = ["env", "connections", "agents", "usage", "blob", "databases", "kv"] as const
 
 export type ConsoleBuiltinSectionId = (typeof consoleBuiltinSectionIds)[number]
 
@@ -16,6 +16,12 @@ export interface ConsoleSectionDetails {
 /** Details of built-in sections. Contributed sections get their details from the navigation response. */
 export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, ConsoleSectionDetails>> = {
   env: { description: "Inspect Server Env declarations and their providers.", icon: "i-ph-key-light", label: "Env", routeName: "vitehub-console-env" },
+  connections: {
+    description: "Inspect and manage app-owned OAuth Connections.",
+    icon: "i-ph-plugs-connected-light",
+    label: "Connections",
+    routeName: "vitehub-console-connections",
+  },
   agents: {
     description: "Inspect Agent sessions and invocation details.",
     icon: "i-ph-robot-light",
@@ -35,7 +41,7 @@ export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, Con
     routeName: "vitehub-console-blob",
   },
   databases: {
-    description: "Inspect Database schemas, relationships, and live table rows.",
+    description: "Inspect discovered Database Definitions and static schema metadata.",
     icon: "i-lucide-database",
     label: "Databases",
     routeName: "vitehub-console-databases",
@@ -64,6 +70,16 @@ export function isConsoleSectionId(value: unknown): value is ConsoleSectionId {
 
 export function isConsoleBuiltinSectionId(value: unknown): value is ConsoleBuiltinSectionId {
   return consoleBuiltinSectionIds.some(section => section === value)
+}
+
+/** Connections management is mounted for development Consoles and explicit production management. */
+export function isConsoleConnectionsEnabled(options: { connections?: unknown }, development = false): boolean {
+  const connections = options.connections
+  if (!connections) return false
+  if (development) return true
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Options cross the host boundary as unknown values.
+  if (typeof connections !== "object" || connections === null) return false
+  return "management" in connections && Boolean(connections.management)
 }
 
 /** Route name of a contributed section. The Console serves it at `/_vitehub/<id>`. */

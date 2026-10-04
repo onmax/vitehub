@@ -170,6 +170,10 @@ export function joinGitPath(...parts: string[]): string {
   return parts.join("/").replaceAll("\\", "/").split("/").filter(Boolean).join("/");
 }
 
+function encodeGitHubRef(ref: string): string {
+  return ref.split("/").map(encodeURIComponent).join("/");
+}
+
 export function resolveGitHubWorkspaceRoot(root: string, workspaceName: string): string {
   return normalizeSafeWorkspacePath(joinGitPath(root.replaceAll("<workspace>", workspaceName)), {
     allowEmpty: true,
@@ -403,7 +407,7 @@ export async function readGitHubBranchState(input: {
     ref = await requestGitHubJson(
       input.repository,
       input.token,
-      `/repos/${owner}/${repo}/git/ref/heads/${input.branch}`,
+      `/repos/${owner}/${repo}/git/ref/heads/${encodeGitHubRef(input.branch)}`,
     );
   }
   catch (error) {
@@ -416,7 +420,7 @@ export async function readGitHubBranchState(input: {
     ref = await requestGitHubJson(
       input.repository,
       input.token,
-      `/repos/${owner}/${repo}/git/ref/heads/${repository.default_branch}`,
+      `/repos/${owner}/${repo}/git/ref/heads/${encodeGitHubRef(repository.default_branch)}`,
     );
     branchExists = false;
   }
@@ -528,7 +532,7 @@ export async function commitGitHubChanges(input: {
     await requestGitHubJson(
       input.repository,
       input.token,
-      `/repos/${owner}/${repo}/git/refs/heads/${input.branch}`,
+      `/repos/${owner}/${repo}/git/refs/heads/${encodeGitHubRef(input.branch)}`,
       {
         body: JSON.stringify({ force: false, sha: commit.sha }),
         method: "PATCH",

@@ -1,5 +1,4 @@
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
 import type { AgentInspectionValue, AgentToolInspection } from "./types.ts"
 import type { AgentToolSchema } from "./types.ts"
