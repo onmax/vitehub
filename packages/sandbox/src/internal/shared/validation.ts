@@ -9,7 +9,7 @@ export interface ValidationIssue {
 
 export type StandardSchemaValidationResult<TOutput = unknown> = {
   value: TOutput
-  issues?: readonly ValidationIssue[]
+  issues?: undefined
 } | {
   value?: never
   issues: readonly ValidationIssue[]
