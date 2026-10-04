@@ -283,7 +283,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isResolvableObject<T, TContext extends AgentCallbackContext>(
   value: unknown,
 ): value is { resolve: (context: TContext) => T | Promise<T> } {
-  return isRecord(value) && Object.hasOwn(value, "resolve") && typeof value.resolve === "function"
+  if (!isRecord(value)) return false
+  if (Object.hasOwn(value, "resolve")) return typeof value.resolve === "function"
+  let prototype = Object.getPrototypeOf(value)
+  while (prototype && prototype !== Object.prototype) {
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "resolve")
+    if (descriptor) return typeof value.resolve === "function"
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return false
 }
 
 async function resolveMaybe<T, TContext extends AgentCallbackContext>(

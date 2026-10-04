@@ -3278,6 +3278,7 @@ describe("agent message protocol", () => {
           },
         }),
       },
+      driver: { run: context => context.prompt },
     })
 
     await expect(resolveAgentTriggerInvocation(agent, {
@@ -3287,6 +3288,37 @@ describe("agent message protocol", () => {
       waitUntil: vi.fn(),
     }, "portal.webhook", {})).rejects.toMatchObject({ statusCode: 401 })
     expect(resolve).not.toHaveBeenCalled()
+  })
+
+  it("supports class-based webhook secret resolvers", async () => {
+    const { defineAgent, resolveAgentTriggerInvocation } = await import("../src/index.ts")
+    const { defineChannel, defineChannelTrigger } = await import("../src/channels.ts")
+    class SecretResolver {
+      resolve() {
+        return "secret"
+      }
+    }
+    const agent = defineAgent({
+      channels: {
+        portal: defineChannel("portal", {
+          messages: false,
+          triggers: {
+            webhook: defineChannelTrigger({
+              invoke: () => ({ input: { prompt: "accepted" } }),
+              webhooks: [{ provider: "portal", secretHeader: "x-webhook-secret", secretToken: new SecretResolver() as never }],
+            }),
+          },
+        }),
+      },
+      driver: { run: context => context.prompt },
+    })
+
+    await expect(resolveAgentTriggerInvocation(agent, {
+      memo: vi.fn(),
+      request: new Request("https://example.test/webhook", { headers: { "x-webhook-secret": "secret" }, method: "POST" }),
+      runtime: "unknown",
+      waitUntil: vi.fn(),
+    }, "portal.webhook", {})).resolves.toMatchObject({ input: { prompt: "accepted" } })
   })
 
   it.each([false, true])("propagates webhook validator exceptions (async: %s)", async (asyncValidation) => {

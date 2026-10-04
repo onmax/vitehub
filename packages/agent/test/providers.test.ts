@@ -7851,6 +7851,35 @@ describe("server helpers", () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it("accepts class-based webhook secret resolvers", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { http } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    class SecretResolver {
+      resolve() {
+        return "secret-token"
+      }
+    }
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        support: http({
+          adapter: () => adapter as never,
+          webhooks: { id: "custom-support", secretHeader: "x-test-secret", secretToken: new SecretResolver() as never },
+        }),
+      },
+      driver: { run: vi.fn() },
+    })
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = await handler(new Request("https://example.com/api/_vitehub/agents/support/webhooks/custom-support", {
+      body: "{}",
+      headers: { "x-test-secret": "secret-token" },
+      method: "POST",
+    }), "custom-support")
+    expect(response.status).toBe(200)
+    expect(adapter.handleWebhook).toHaveBeenCalledOnce()
+  })
+
   it("fails closed when generated chat webhook secrets resolve empty", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { http } = await import("../src/channels.ts")
