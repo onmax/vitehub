@@ -41,8 +41,24 @@ import { agentDiagnostics } from "./agent-diagnostics.ts"
 
 function isTriggerInputSchema<TInput>(input: string | StandardSchemaV1<unknown, TInput> | undefined): input is StandardSchemaV1<unknown, TInput> {
   if (!isRuntimeRecord(input) && !hasRuntimeType(input, "function")) return false
-  if (!Object.hasOwn(input, "~standard")) return false
-  // SAFETY: The runtime checks above establish an object or function with an own marker; its value remains unknown until validated below.
+  if (!Object.hasOwn(input, "~standard")) {
+    let prototype = Object.getPrototypeOf(input)
+    let classGetterFound = false
+    while (prototype !== null && prototype !== Object.prototype) {
+      const marker = Object.getOwnPropertyDescriptor(prototype, "~standard")
+      if (marker) {
+        const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value
+        classGetterFound = typeof marker.get === "function"
+          && hasRuntimeType(constructor, "function")
+          && constructor !== Object
+          && constructor.prototype === prototype
+        break
+      }
+      prototype = Object.getPrototypeOf(prototype)
+    }
+    if (!classGetterFound) return false
+  }
+  // SAFETY: The runtime checks above establish an object or function with a validated marker location; its value remains unknown until validated below.
   const standard = (input as Record<PropertyKey, unknown>)["~standard"]
   return isRuntimeRecord(standard) && hasRuntimeType(standard.validate, "function")
 }
