@@ -23,6 +23,24 @@ afterEach(() => {
 })
 
 describe("@vite-hub/source GitHub source", () => {
+  it("rejects parent traversal before requesting a GitHub file", async () => {
+    const fetch = vi.fn(async () => jsonResponse({
+      content: Buffer.from("secret").toString("base64"),
+      encoding: "base64",
+      path: "secret.md",
+      sha: "secret-sha",
+      type: "file",
+    }))
+    vi.stubGlobal("fetch", fetch)
+    const docs = github({ ref: "main", repo: "acme/app", root: "docs" })
+
+    await expect(docs.getItem("../secret.md", {
+      abortSignal: new AbortController().signal,
+      rootDir: process.cwd(),
+    })).rejects.toThrow("could not find")
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it("keeps credentials out of GitHub cache keys", () => {
     const key = createGitHubCacheKey({
       authScope: githubAuthenticationScope("github-secret"),

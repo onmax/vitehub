@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer"
 import { gunzipSync } from "node:zlib"
 
-import { normalizeSourcePath } from "../../core/path.ts"
+import { normalizeSafeSourcePath } from "../../core/path.ts"
 
 import type { GitHubArchiveFile } from "./types.ts"
 
@@ -74,5 +74,10 @@ function readPaxPath(content: Uint8Array) {
 function stripArchiveRoot(path: string) {
   const slash = path.indexOf("/")
   if (slash === -1) return
-  return normalizeSourcePath(path.slice(slash + 1))
+  try {
+    return normalizeSafeSourcePath(path.slice(slash + 1))
+  }
+  catch {
+    return
+  }
 }
