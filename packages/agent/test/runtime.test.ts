@@ -3261,6 +3261,36 @@ describe("agent message protocol", () => {
     expect(validation).not.toHaveBeenCalled()
   })
 
+  it("does not treat an inherited Standard Schema marker as trigger validation", async () => {
+    const { defineAgent, runAgentTrigger } = await import("../src/index.ts")
+    const { defineChannel, defineChannelTrigger } = await import("../src/channels.ts")
+    const validate = vi.fn(() => ({ value: { payload: "forged" } }))
+    const inheritedSchema = Object.create({ "~standard": { validate } })
+    const received: unknown[] = []
+    const agent = defineAgent({
+      channels: {
+        portal: defineChannel("portal", {
+          messages: false,
+          triggers: {
+            webhook: defineChannelTrigger({
+              // SAFETY: This fixture models an untrusted schema-like object with an inherited marker.
+              input: inheritedSchema as never,
+              invoke: (_context, input) => {
+                received.push(input)
+                return { input: { prompt: "accepted" } }
+              },
+            }),
+          },
+        }),
+      },
+      driver: { run: context => context.prompt },
+    })
+
+    await expect(runAgentTrigger(agent, { memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }, "portal.webhook", { payload: "raw" })).resolves.toBe("accepted")
+    expect(received).toEqual([{ payload: "raw" }])
+    expect(validate).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])("propagates webhook validator exceptions (async: %s)", async (asyncValidation) => {
     const { defineAgent, resolveAgentTriggerInvocation } = await import("../src/index.ts")
     const { defineChannel, defineChannelTrigger } = await import("../src/channels.ts")
