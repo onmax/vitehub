@@ -38,7 +38,8 @@ export function getActiveCloudflareEnv(): CloudflareWorkerEnv | undefined {
 }
 
 export function getActiveCloudflareBinding<T>(name: string): T | undefined {
-  return getActiveCloudflareEnv()?.[name] as T | undefined
+  const env = getActiveCloudflareEnv()
+  return env && Object.hasOwn(env, name) ? env[name] as T : undefined
 }
 
 interface CloudflareEnvCarrier {
