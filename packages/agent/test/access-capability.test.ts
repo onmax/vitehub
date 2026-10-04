@@ -1,4 +1,4 @@
-import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { asUnknownBoundary, hasRuntimeType } from "../src/internal/runtime-type.ts"
 import { describe, expect, it, onTestFinished, vi } from "vitest"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"

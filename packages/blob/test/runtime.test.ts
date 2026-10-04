@@ -493,6 +493,9 @@ describe("blob runtime", () => {
     expect(head.url).toBe("https://assets.example/api/_vitehub/blob/notes/served.txt")
     expect(list.blobs[0]?.url).toBe("https://assets.example/api/_vitehub/blob/notes/served.txt")
     expect(otherStore.url).toBe("https://blob.example/notes/private.txt")
+
+    const reserved = expectBlobSuccess(await blob.store("assets").put("notes/query?draft#one.txt", "value"))
+    expect(reserved.url).toBe("https://assets.example/api/_vitehub/blob/notes/query%3Fdraft%23one.txt")
   })
 
   it.each([

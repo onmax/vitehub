@@ -1,7 +1,7 @@
 ---
 title: Capability Inspector
 description: "Show what each Capability recorded for one Invocation, including MCP servers, tool contracts, and custom read-only views."
-navigation.order: 33
+navigation.order: 34
 navigation.group: Agent work
 icon: i-ph-plugs-connected-light
 ---
@@ -88,4 +88,4 @@ Tools match a Capability through their `capabilityId`.
 
 - [Tool list](/docs/ui/tool-list) renders the tool contracts inside each Capability.
 - [Invocation inspector](/docs/ui/invocation-inspector) shows the rest of the configuration.
-- [Capabilities](/docs/capabilities) explains how Agents receive operations.
+- [Capabilities](/docs/agents/capabilities) explains how Agents receive operations.

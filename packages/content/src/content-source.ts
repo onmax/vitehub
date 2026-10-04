@@ -255,4 +255,3 @@ export function createContentInstance(name: string, input: ContentSourceInput, o
   instance.get = ((key: string, opts?: ContentGetOptions) => loads.run(factory.create(), () => get(key, opts))) as typeof instance.get
   return instance
 }
-

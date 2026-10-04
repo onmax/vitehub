@@ -47,7 +47,7 @@ Custom H3 and Nuxt routes can import `getRuntimeContext` from
 `vite-hub/runtime/h3`. Call it once per invocation to normalize event bindings,
 host `waitUntil`, and memo storage. Without a real host lifetime API, await the
 returned `flushWaitUntil()` before responding. See the
-[Runtime Context guide](https://vitehub.dev/docs/concepts/runtime-context).
+[Runtime Context guide](https://vitehub.dev/docs/getting-started/concepts/runtime-context).
 
 The public presets are `cloudflare`, `netlify`, `vercel`, `deno`, and `node`. Each resolves once to a host, runtime, Nitro output, packaging policy, and service adapters; do not also set `nitro.preset`, `NITRO_PRESET`, `SERVER_PRESET`, or `VITEHUB_HOSTING`.
 
@@ -76,6 +76,8 @@ vitehub({
 ```
 
 See [Runtime and host support](https://vitehub.dev/docs/frameworks-hosts/support-matrix) for the providers, limitations, and proof available on each host.
+
+Discovered Database Definitions do not enable Database. Without `database`, importing `vite-hub/database/drizzle` or `@vite-hub/database/drizzle` fails the build, and `vitehub db` reports that Database is disabled. A directly composed `hubDb()` still provides Database.
 
 If an enabled capability is not supported by the preset, the build fails. You can instead configure an explicit Blob driver through `blob` or compose an owner package directly when the application provides its own portable implementation.
 
