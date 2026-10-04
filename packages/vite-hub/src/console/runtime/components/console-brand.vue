@@ -26,14 +26,13 @@ onBeforeUnmount(() => unsubscribeNavigation?.())
 </script>
 
 <template>
-  <div class="flex h-10 w-full min-w-0 items-center gap-2 px-[0.875rem]">
+  <RouterLink
+    class="vitehub-console__brand flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-sm font-medium text-highlighted hover:bg-elevated/60"
+    :class="collapsed ? 'justify-center' : ''"
+    :to="{ name: resolveConsoleRouteName(route.name, 'vitehub-console') }"
+    :aria-label="projectName ? `${projectName} overview` : 'ViteHub overview'"
+  >
     <ConsoleMark class="size-4 shrink-0" />
-    <RouterLink
-      v-if="!collapsed"
-      class="truncate text-xs font-medium text-muted"
-      :to="{ name: resolveConsoleRouteName(route.name, 'vitehub-console') }"
-    >
-      {{ projectName ? `ViteHub ${projectName}` : "ViteHub" }}
-    </RouterLink>
-  </div>
+    <span v-if="!collapsed" class="min-w-0 truncate">{{ projectName || "ViteHub" }}</span>
+  </RouterLink>
 </template>

@@ -406,6 +406,7 @@ export function createDriver(options: NetlifyBlobsStoreConfig): BlobDriverAdapte
       let hasMore = false
       let nextCursor: FoldedCursor | undefined
       let providerCursor = cursor.providerCursor
+      const seenProviderCursors = new Set<string>(providerCursor ? [providerCursor] : [])
       let startIndex = cursor.index
       let directoriesConsumed = cursor.directoriesConsumed
       while (true) {
@@ -434,6 +435,10 @@ export function createDriver(options: NetlifyBlobsStoreConfig): BlobDriverAdapte
         }
         if (hasMore) break
         if (!page.next_cursor) break
+        if (seenProviderCursors.has(page.next_cursor)) {
+          throw blobErrorDiagnostics.BLOB_R0017({ message: "Netlify Blobs listing returned a repeated pagination cursor." })
+        }
+        seenProviderCursors.add(page.next_cursor)
         providerCursor = page.next_cursor
         startIndex = 0
         directoriesConsumed = false
