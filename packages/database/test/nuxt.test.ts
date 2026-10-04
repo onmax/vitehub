@@ -212,6 +212,7 @@ describe("Database Nuxt integration", () => {
       expect(cloudflareBridgeState.activeEnv?.DB).toBe("native-binding")
       expect(Object.hasOwn(cloudflareBridgeState.activeEnv!, "DB")).toBe(true)
       expect(Object.hasOwn(cloudflareBridgeState.activeEnv!, "INHERITED")).toBe(false)
+      expect(cloudflareBridgeState.activeEnv?.INHERITED).toBeUndefined()
       expect(cloudflareBridgeState.activeEnv).not.toHaveProperty("EVENT")
       expect(cloudflareBridgeState.activeEnv).not.toHaveProperty("REQUEST")
     }

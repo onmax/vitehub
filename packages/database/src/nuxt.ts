@@ -393,7 +393,7 @@ async function installNitroCloudflareEnvBridge(config: Record<string, unknown>, 
     "  for (const property of Reflect.ownKeys(nativeEnv)) {",
     "    if (!Object.hasOwn(mergedEnv, property)) Object.defineProperty(mergedEnv, property, { configurable: true, get: () => Reflect.get(nativeEnv as object, property) })",
     "  }",
-    "  setActiveCloudflareEnv(new Proxy(mergedEnv, { get: (target, property, receiver) => Reflect.has(target, property) ? Reflect.get(target, property, receiver) : Reflect.get(nativeEnv as object, property) }))",
+    "  setActiveCloudflareEnv(new Proxy(mergedEnv, { get: (target, property, receiver) => Reflect.has(target, property) ? Reflect.get(target, property, receiver) : undefined }))",
     "}",
     "",
   ].join("\n"))
