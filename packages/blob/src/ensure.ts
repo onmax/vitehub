@@ -12,6 +12,7 @@ function fileSizeToBytes(input: string) {
   }
 
   const sizeValue = Number.parseFloat(match[1]!)
+  // SAFETY: The regex matches only FILESIZE_UNITS, which are valid SizeUnit values after uppercasing.
   const sizeUnit = match[2]!.toUpperCase() as SizeUnit
   if (!FILESIZE_UNITS.includes(sizeUnit)) {
     throw createError({ statusCode: 400, message: `Invalid file size unit: ${sizeUnit}` })
