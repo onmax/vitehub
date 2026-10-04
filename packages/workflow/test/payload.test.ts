@@ -24,6 +24,14 @@ describe("workflow payload validation", () => {
     await expect(validatePayload("hello", Object.create(inherited))).rejects.toMatchObject({ code: "WORKFLOW_R0022" })
   })
 
+  it("rejects forged non-class parser prototypes", async () => {
+    const prototype = {
+      constructor: function FakeSchema() {},
+      parse: () => "inherited",
+    }
+    await expect(validatePayload("hello", Object.create(prototype))).rejects.toMatchObject({ code: "WORKFLOW_R0022" })
+  })
+
   it("accepts class-backed parser schemas", async () => {
     class ParserSchema {
       parse(value: unknown) {

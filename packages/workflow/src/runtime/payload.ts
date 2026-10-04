@@ -42,12 +42,15 @@ export async function validatePayload<T>(payload: unknown, schema: PayloadValida
 
 function hasSchemaMethod(value: object, key: "parse" | "safeParse"): boolean {
   if (Object.hasOwn(value, key)) return true
-  const prototype = Object.getPrototypeOf(value)
-  return prototype !== null
-    && prototype !== Object.prototype
-    && Object.hasOwn(prototype, "constructor")
-    && prototype.constructor !== Object
-    && Object.hasOwn(prototype, key)
+  let prototype = Object.getPrototypeOf(value)
+  while (prototype !== null && prototype !== Object.prototype) {
+    if (Object.hasOwn(prototype, key)) {
+      const constructor = Object.hasOwn(prototype, "constructor") ? prototype.constructor : undefined
+      return typeof constructor === "function" && constructor.prototype === prototype
+    }
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return false
 }
 
 export async function readValidatedPayload<T>(request: Request, schema: PayloadValidator<T>): Promise<T> {
