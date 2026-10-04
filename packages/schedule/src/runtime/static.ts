@@ -222,14 +222,14 @@ function readCloudflareEventEnv(event: CloudflareScheduledEventLike): Record<str
 }
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return Object(value) === value && !Array.isArray(value)
 }
 
 function isStaticScheduleDefinition(value: unknown): value is ScheduleDefinition {
   return isObjectRecord(value)
     && Object.hasOwn(value, "cron")
     && Object.hasOwn(value, "handler")
-    && typeof value.handler === "function"
+    && value.handler instanceof Function
 }
 
 export function unwrapScheduleDefinition(loaded: unknown): ScheduleDefinition | undefined {

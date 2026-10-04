@@ -74,11 +74,11 @@ interface SerializeOperationContext {
 const staticScheduleIdPrefix = "\0vitehub:static:"
 
 function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
+  return Object(value) === value && !Array.isArray(value)
 }
 
 function isScheduleRegistryDefinition(value: unknown): value is ScheduleRegistryDefinition {
-  return isObject(value) && Object.hasOwn(value, "handler") && typeof value.handler === "function"
+  return isObject(value) && Object.hasOwn(value, "handler") && value.handler instanceof Function
 }
 
 function unwrapDefinition(loaded: ScheduleRegistryDefinition | { default?: ScheduleRegistryDefinition }): ScheduleRegistryDefinition | undefined {
