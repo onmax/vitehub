@@ -3291,7 +3291,7 @@ describe("agent message protocol", () => {
     expect(validate).not.toHaveBeenCalled()
   })
 
-  it("supports a lazy inherited Standard Schema marker getter", async () => {
+  it("rejects an inherited Standard Schema marker getter", async () => {
     const { defineAgent, runAgentTrigger } = await import("../src/index.ts")
     const { defineChannel, defineChannelTrigger } = await import("../src/channels.ts")
     const validate = vi.fn(() => ({ value: { payload: "validated" } }))
@@ -3316,8 +3316,8 @@ describe("agent message protocol", () => {
     })
 
     await expect(runAgentTrigger(agent, { memo: vi.fn(), runtime: "unknown", waitUntil: vi.fn() }, "portal.webhook", { payload: "raw" })).resolves.toBe("accepted")
-    expect(received).toEqual([{ payload: "validated" }])
-    expect(validate).toHaveBeenCalledWith({ payload: "raw" })
+    expect(received).toEqual([{ payload: "raw" }])
+    expect(validate).not.toHaveBeenCalled()
   })
 
   it.each([false, true])("propagates webhook validator exceptions (async: %s)", async (asyncValidation) => {
