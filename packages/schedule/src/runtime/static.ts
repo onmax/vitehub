@@ -1,4 +1,4 @@
-import type { ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRegistryDefinition, ScheduleRunContext } from "../types.ts"
+import type { ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRunContext } from "../types.ts"
 import { runWithScheduleWaitUntil } from "./wait-until.ts"
 import { scheduleErrorDiagnostics } from "../error-diagnostics.ts"
 
@@ -31,8 +31,6 @@ interface CloudflareScheduledEventLike {
   cron?: string
   scheduledTime?: number | string | Date
 }
-
-type LoadedScheduleModule = ScheduleRegistryDefinition | { default?: ScheduleRegistryDefinition }
 
 export interface StaticScheduleRun extends ScheduleRunContext {
   cron: string
@@ -234,7 +232,7 @@ function isStaticScheduleDefinition(value: unknown): value is ScheduleDefinition
     && typeof value.handler === "function"
 }
 
-function unwrapScheduleDefinition(loaded: LoadedScheduleModule): ScheduleDefinition | undefined {
+export function unwrapScheduleDefinition(loaded: unknown): ScheduleDefinition | undefined {
   const candidate = isObjectRecord(loaded) && Object.hasOwn(loaded, "default") ? loaded.default : loaded
   return isStaticScheduleDefinition(candidate) ? candidate : undefined
 }
