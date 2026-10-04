@@ -25,6 +25,19 @@ describe("Workspace Collection query snapshots", () => {
       .toEqual({ digest: first.digest, item: { slug: "beta" } })
   })
 
+  it("does not expose object prototype properties through query paths", async () => {
+    Object.defineProperty(Object.prototype, "collectionLeak", { configurable: true, value: "secret" })
+    try {
+      const collection = await createWorkspaceCollectionQuery(JSON.stringify([{ title: "Guide" }]), { path: "data/items.json" })
+
+      await expect(collection.page({ query: { filters: { "__proto__.collectionLeak": "secret" }, limit: 10 } }))
+        .resolves.toMatchObject({ items: [], total: 0 })
+    }
+    finally {
+      Reflect.deleteProperty(Object.prototype, "collectionLeak")
+    }
+  })
+
   it("uses the supplied revision digest and rejects cursors from another snapshot", async () => {
     const original = await createWorkspaceCollectionQuery(raw, { digest: "original", path: "data/items.json" })
     const changed = await createWorkspaceCollectionQuery(raw, { digest: "changed", path: "data/items.json" })
