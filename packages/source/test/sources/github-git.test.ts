@@ -22,6 +22,19 @@ describe("@vite-hub/source GitHub git materialization", () => {
     expect(() => parseGitHubArchive(gzipSync(header))).toThrow("Invalid GitHub archive entry size")
   })
 
+  it("rejects archive entries with truncated padding", () => {
+    const tar = Buffer.alloc(513)
+    tar.write("archive-main/small.txt", 0)
+    tar.write("1", 124)
+    tar[156] = 48
+    tar[512] = 97
+
+    expect(() => parseGitHubArchive(gzipSync(tar))).toThrow("Invalid GitHub archive entry size")
+    expect(parseGitHubArchive(gzipSync(Buffer.concat([tar, Buffer.alloc(511)])))).toEqual([
+      { content: new Uint8Array([97]), path: "small.txt" },
+    ])
+  })
+
   it("archives simple sparse source paths without putting auth in git arguments", async () => {
     const calls: Array<{
       args: string[]

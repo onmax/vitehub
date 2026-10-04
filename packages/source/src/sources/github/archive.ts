@@ -29,7 +29,8 @@ export function parseGitHubArchive(bytes: Uint8Array) {
     const type = String.fromCharCode(header[156] || 0)
     const contentStart = offset + 512
     const contentEnd = contentStart + size
-    if (contentEnd > tar.length) {
+    const entryEnd = contentStart + Math.ceil(size / 512) * 512
+    if (entryEnd > tar.length) {
       throw new Error("Invalid GitHub archive entry size.")
     }
     const content = tar.subarray(contentStart, contentEnd)
@@ -50,7 +51,7 @@ export function parseGitHubArchive(bytes: Uint8Array) {
       paxPath = undefined
     }
 
-    offset = contentStart + Math.ceil(size / 512) * 512
+    offset = entryEnd
   }
 
   return files
