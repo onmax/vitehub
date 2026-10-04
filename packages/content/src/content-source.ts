@@ -79,6 +79,25 @@ function isRuntimeObject(value: unknown): value is object {
   return value !== null && Object(value) === value && !isRuntimeFunction(value)
 }
 
+function hasCallableMethod(value: object, key: string): boolean {
+  if (Object.hasOwn(value, key)) {
+    return isRuntimeFunction((value as Record<string, unknown>)[key])
+  }
+
+  // Native class-based Sources keep their methods on a prototype. Treat a
+  // prototype-backed object as a Source only when its immediate prototype is
+  // an intentional constructor prototype. A plain object supplied through
+  // Object.create({ ... }) has no own constructor and must not inherit a
+  // Source marker from that object (or from Object.prototype pollution).
+  let prototype = Object.getPrototypeOf(value)
+  if (!prototype || prototype === Object.prototype || !Object.hasOwn(prototype, "constructor")) return false
+  while (prototype && prototype !== Object.prototype) {
+    if (Object.hasOwn(prototype, key)) return isRuntimeFunction((prototype as Record<string, unknown>)[key])
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return false
+}
+
 function isSourceName(input: ContentSourceInput): input is SourceName {
   return Object(input) !== input && Object.prototype.toString.call(input) === "[object String]"
 }
@@ -86,22 +105,17 @@ function isSourceName(input: ContentSourceInput): input is SourceName {
 function isComarkContentSource(input: ContentSourceInput): input is ComarkContentSource {
   return (
     isRuntimeObject(input)
-    && "getItem" in input
-    && isRuntimeFunction(input.getItem)
-    && "getItemRaw" in input
-    && isRuntimeFunction(input.getItemRaw)
-    && "keys" in input
-    && isRuntimeFunction(input.keys)
+    && hasCallableMethod(input, "getItem")
+    && hasCallableMethod(input, "getItemRaw")
+    && hasCallableMethod(input, "keys")
   )
 }
 
 function isSourceDefinition(input: ContentSourceInput): input is Source<string, unknown, object> {
   return (
     isRuntimeObject(input)
-    && "getKeys" in input
-    && isRuntimeFunction(input.getKeys)
-    && "getItem" in input
-    && isRuntimeFunction(input.getItem)
+    && hasCallableMethod(input, "getKeys")
+    && hasCallableMethod(input, "getItem")
   )
 }
 

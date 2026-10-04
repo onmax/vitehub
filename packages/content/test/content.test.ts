@@ -621,6 +621,33 @@ describe("contentSource", () => {
     await expect(source.getItem("index.md")).resolves.toBe("# Native")
   })
 
+  it("does not treat a reader with inherited Comark methods as a native source", async () => {
+    const source = Object.assign(Object.create({
+      keys: async () => ["inherited.md"],
+      getItem: async () => "# Inherited",
+      getItemRaw: async () => "# Inherited",
+    }), {
+      items: async () => [{ content: "# Reader", key: "reader.md" }],
+    })
+
+    const adapted = contentSource(source as never)
+    await expect(adapted.keys()).resolves.toEqual(["reader.md"])
+    await expect(adapted.getItem("reader.md")).resolves.toBe("# Reader")
+  })
+
+  it("does not treat a reader with inherited Source methods as a Source definition", async () => {
+    const source = Object.assign(Object.create({
+      getKeys: async () => ["inherited.md"],
+      getItem: async () => ({ content: "# Inherited", key: "inherited.md" }),
+    }), {
+      items: async () => [{ content: "# Reader", key: "reader.md" }],
+    })
+
+    const adapted = contentSource(source as never)
+    await expect(adapted.keys()).resolves.toEqual(["reader.md"])
+    await expect(adapted.getItem("reader.md")).resolves.toBe("# Reader")
+  })
+
   it("rejects duplicate public paths", async () => {
     registerSources({
       duplicate: {
