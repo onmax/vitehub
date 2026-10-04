@@ -37,7 +37,7 @@ const urlAttributesByTag = new Map([
   ["video", new Set(["poster", "src"])],
 ])
 // Comark normalizes SVG image tags to img nodes.
-const svgUrlAttributes = new Set(["a", "animate", "feimage", "image", "img", "use"])
+const svgUrlAttributes = new Set(["a", "animate", "feimage", "image", "use"])
 
 export async function renderMarkdownTemplate(template: string, options: RenderMarkdownTemplateOptions = {}): Promise<string> {
   return await renderMarkdownTemplateInternal(template, options)
@@ -105,7 +105,7 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         handler: async (node, state, parent) => {
           const [tag, attrs, ...children] = node
           const props = resolveScalarTemplateAttributes(attrs, renderData(state))
-          const sanitized = await sanitizeUrlAttributes(tag, props, attrs)
+          const sanitized = await sanitizeUrlAttributes(tag, props, attrs, parent?.[0] === "svg")
           const escaped = Object.fromEntries(Object.entries(sanitized).map(([key, value]) =>
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- String XML attributes need escaping; Comark serializes boolean and numeric attributes.
             [key, typeof value === "string" ? escapeHtml(value) : value]))
@@ -120,12 +120,13 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
   })).trim())
 }
 
-async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>, source: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>, source: Record<string, unknown>, svgParent = false): Promise<Record<string, unknown>> {
   const sanitized = { ...props }
   for (const [key, value] of Object.entries(props)) {
     const attribute = key.toLowerCase()
     const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
-      || (attribute === "href" || attribute === "xlink:href") && svgUrlAttributes.has(tag.toLowerCase())
+      || (attribute === "href" || attribute === "xlink:href")
+        && (svgUrlAttributes.has(tag.toLowerCase()) || tag.toLowerCase() === "img" && svgParent)
     if (typeof value !== "string" || !isUrl) continue
     const binding = source[`:${key}`]
     sanitized[key] = await safeLinkDestination(value, String(binding ?? key), { decodeHtmlEntities: binding === undefined })

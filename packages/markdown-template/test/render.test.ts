@@ -408,6 +408,8 @@ Unavailable
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<img src="data:text/html,<script>alert(1)</script>">'))
       .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<img href="javascript:alert(1)">'))
+      .resolves.toContain('href="javascript:alert(1)"')
     await expect(renderMarkdownTemplate('<object data="data:text/html,<script>alert(1)</script>"></object>'))
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<a xlink:href="javascript:alert(1)">Open</a>'))
