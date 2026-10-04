@@ -158,7 +158,8 @@ function hasDeclaredProperty(value: object, key: PropertyKey): boolean {
   let prototype = Object.getPrototypeOf(value)
   while (prototype && prototype !== Object.prototype) {
     if (Object.hasOwn(prototype, key)) {
-      return Object.hasOwn(prototype, "constructor") && prototype.constructor !== Object
+      const constructor = Object.hasOwn(prototype, "constructor") ? prototype.constructor : undefined
+      return typeof constructor === "function" && constructor.prototype === prototype
     }
     prototype = Object.getPrototypeOf(prototype)
   }
