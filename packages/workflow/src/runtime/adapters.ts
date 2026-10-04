@@ -91,7 +91,8 @@ const cloudflareStatusMap: Record<string, WorkflowRunStatus> = {
 function normalizeCloudflareStatus(status: unknown): WorkflowRunStatus {
   // SAFETY: Workflow provider normalization establishes the asserted run contract.
   const value = hasRuntimeType(status, "object") && status ? (status as { status?: unknown }).status : status
-  return cloudflareStatusMap[String(value || "").toLowerCase()] || "unknown"
+  const normalized = String(value || "").toLowerCase()
+  return Object.hasOwn(cloudflareStatusMap, normalized) ? cloudflareStatusMap[normalized]! : "unknown"
 }
 
 function hasUnknownWorkflowAcknowledgement(error: unknown): boolean {

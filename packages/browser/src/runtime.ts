@@ -188,7 +188,7 @@ function isBrowserDefinition(value: unknown): value is BrowserDefinition {
 }
 
 async function resolveBrowserDefinition(name: string): Promise<BrowserDefinition> {
-  const entry = browserRegistry[name]
+  const entry = Object.hasOwn(browserRegistry, name) ? browserRegistry[name] : undefined
   if (!entry) throw browserDefinitionNotFoundError(name)
   const loaded = typeof entry === "function" ? await entry() : entry
   const definition = "default" in loaded && loaded.default ? loaded.default : loaded

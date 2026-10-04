@@ -72,6 +72,7 @@ function createVercelWorkflowRuntime(api: VercelWorkflowApiModule, runtime: Verc
     getRun: getRun as (id: string) => VercelRun,
     async listSteps(id) {
       const steps: VercelStep[] = []
+      const cursors = new Set<string>()
       let cursor: string | undefined
       do {
         const page = await (await getWorld()).steps.list({
@@ -81,7 +82,12 @@ function createVercelWorkflowRuntime(api: VercelWorkflowApiModule, runtime: Verc
         })
         // SAFETY: normalizeSteps validates every provider step before public use.
         steps.push(...(page.data as VercelStep[]))
-        cursor = page.hasMore && page.cursor ? page.cursor : undefined
+        if (!page.hasMore) break
+        if (!hasRuntimeType(page.cursor, "string") || !page.cursor || cursors.has(page.cursor)) {
+          throw invalidVercelResult("step pagination cursor")
+        }
+        cursors.add(page.cursor)
+        cursor = page.cursor
       } while (cursor)
       return steps
     },
@@ -130,7 +136,8 @@ function invalidVercelResult(field: string): Error {
 
 function normalizeStatus(status: unknown): WorkflowRunStatus {
   if (!hasRuntimeType(status, "string")) throw invalidVercelResult("status")
-  return statusMap[status.toLowerCase()] || "unknown"
+  const normalized = status.toLowerCase()
+  return Object.hasOwn(statusMap, normalized) ? statusMap[normalized]! : "unknown"
 }
 
 function normalizeRunId(id: unknown): string {

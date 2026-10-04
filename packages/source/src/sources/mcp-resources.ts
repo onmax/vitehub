@@ -289,8 +289,15 @@ function shouldInclude(path: string, options: Pick<McpResourcesSourceOptions, "i
 
 async function listAllResources(client: McpResourcesClient, request: McpResourcesRequestOptions | undefined) {
   const resources: McpResourceDescriptor[] = []
+  const seenCursors = new Set<string>()
   let cursor: string | undefined
   do {
+    if (cursor !== undefined) {
+      if (seenCursors.has(cursor)) {
+        throw sourceError(`[vitehub] MCP Resources server repeated pagination cursor ${JSON.stringify(cursor)}.`)
+      }
+      seenCursors.add(cursor)
+    }
     const page = await client.listResources(cursor ? { cursor } : undefined, request)
     resources.push(...page.resources)
     cursor = page.nextCursor

@@ -493,6 +493,9 @@ describe("blob runtime", () => {
     expect(head.url).toBe("https://assets.example/api/_vitehub/blob/notes/served.txt")
     expect(list.blobs[0]?.url).toBe("https://assets.example/api/_vitehub/blob/notes/served.txt")
     expect(otherStore.url).toBe("https://blob.example/notes/private.txt")
+
+    const reserved = expectBlobSuccess(await blob.store("assets").put("notes/query?draft#one.txt", "value"))
+    expect(reserved.url).toBe("https://assets.example/api/_vitehub/blob/notes/query%3Fdraft%23one.txt")
   })
 
   it.each([
@@ -548,6 +551,31 @@ describe("blob runtime", () => {
       code: "BLOB_R0027",
       message: "Unknown Blob store \"missing\".",
     })
+  })
+
+  it("does not resolve inherited named stores at runtime", async () => {
+    const inheritedStores = Object.create({
+      inherited: {
+        access: "public",
+        driver: "vercel-blob",
+        token: "inherited-token",
+      },
+    }) as Record<string, { access: "public", driver: "vercel-blob", token: string }>
+    inheritedStores.default = {
+      access: "public",
+      driver: "vercel-blob",
+      token: "default-token",
+    }
+    setBlobRuntimeConfig({
+      store: inheritedStores.default,
+      stores: inheritedStores,
+    })
+
+    await expect(blob.store("inherited").get("notes/inherited.txt")).rejects.toMatchObject({
+      code: "BLOB_R0027",
+      message: "Unknown Blob store \"inherited\".",
+    })
+    expect(vercelBlobMock.get).not.toHaveBeenCalled()
   })
 
   it("uses the active Cloudflare binding", async () => {
