@@ -15,7 +15,7 @@ import { createCloudflareQueueRuntimeClient } from "../src/internal/runtime/clou
 import { createQueueClient } from "../src/runtime/create-client.ts"
 import { createQueueVercelServer } from "../src/internal/runtime/vercel-vite.ts"
 import { createVercelQueueRuntimeClient } from "../src/internal/runtime/vercel-client.ts"
-import { enterQueueRuntimeEvent, getQueueRuntimeClientFactory, getQueueRuntimeEvent, missingQueueDefinitionError, runWithQueueRuntimeEvent, setQueueRuntimeConfig, setQueueRuntimeRegistry } from "../src/internal/runtime/state.ts"
+import { enterQueueRuntimeEvent, getQueueRuntimeClientFactory, getQueueRuntimeEvent, loadQueueDefinition, missingQueueDefinitionError, runWithQueueRuntimeEvent, setQueueRuntimeConfig, setQueueRuntimeRegistry } from "../src/internal/runtime/state.ts"
 
 import type { VercelQueueCallbackOptions } from "../src/types.ts"
 
@@ -40,6 +40,14 @@ it("identifies a missing generated Queue Definition", () => {
     code: "QUEUE_R0013",
     message: "Missing queue definition.",
   })
+})
+
+it("does not load inherited Queue Definitions", async () => {
+  const inherited = async () => ({ handler: async () => {} })
+  const registry = Object.create({ inherited }) as import("../src/types.ts").QueueDefinitionRegistry
+  setQueueRuntimeRegistry(registry)
+
+  await expect(loadQueueDefinition("inherited")).resolves.toBeUndefined()
 })
 
 vi.mock("@vercel/queue", () => ({
