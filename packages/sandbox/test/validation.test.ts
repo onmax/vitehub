@@ -28,6 +28,19 @@ describe.each([
     await expect(read("payload", value => value.toUpperCase())).resolves.toBe("PAYLOAD")
   })
 
+  it.each([
+    { failure: { issues: [] } },
+    { failure: { issues: [], value: "must not be returned" } },
+    { failure: { issues: [{ message: "Invalid payload" }], value: "must not be returned" } },
+  ])("rejects failure result $failure", async ({ failure }) => {
+    const read = await load()
+    const { issues } = failure
+    const validate = { "~standard": { validate: () => failure } }
+    await expect(read("payload", validate)).rejects.toMatchObject(
+      name === "host" ? { data: { issues } } : { issues },
+    )
+  })
+
   it("does not execute a Standard Schema validator inherited from a foreign prototype", async () => {
     const read = await load()
     let calls = 0

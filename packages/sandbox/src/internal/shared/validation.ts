@@ -11,7 +11,6 @@ export type StandardSchemaValidationResult<TOutput = unknown> = {
   value: TOutput
   issues?: undefined
 } | {
-  value?: never
   issues: readonly ValidationIssue[]
 }
 
@@ -64,6 +63,7 @@ function hasStandardValidator<TInput, TOutput>(
 
   // Lazy schema getters can create the own marker when first read.
   const standard = value['~standard']
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Standard Schema validators cross the public boundary and must expose a callable validate method.
   return Object.hasOwn(value, '~standard') && isObject(standard) && typeof standard.validate === 'function'
 }
 
@@ -167,7 +167,7 @@ export async function readValidatedPayload<TInput>(
 ): Promise<unknown> {
   if (hasStandardValidator<TInput, unknown>(validate)) {
     const result = await validate['~standard'].validate(payload)
-    if (result.issues?.length) {
+    if (result.issues !== undefined) {
       throw createValidationError(options?.onError?.({
         issues: result.issues,
         value: payload,

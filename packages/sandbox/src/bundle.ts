@@ -135,7 +135,7 @@ export async function bundleSandboxDefinition(
               'export async function readValidatedPayload(payload, validate) {',
               '  if (hasStandardValidator(validate)) {',
               '    const result = await validate["~standard"].validate(payload)',
-              '    if (result.issues?.length)',
+              '    if (result.issues !== undefined)',
               '      throw createValidationError({ message: "Validation failed", issues: result.issues })',
               '    return result.value',
               '  }',
