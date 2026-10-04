@@ -754,6 +754,7 @@ describe("blob runtime", () => {
     ["invalid encoding", "!"],
     ["padded valid cursor", `${validFilesSdkCursor}==`],
     ["ignored punctuation", `${validFilesSdkCursor}?`],
+    ["nonzero trailing bits", `${validFilesSdkCursor.slice(0, -1)}1`],
     ["invalid JSON", btoa("invalid JSON")],
     ["null", Buffer.from(JSON.stringify(null)).toString("base64url")],
     ["array", Buffer.from(JSON.stringify([])).toString("base64url")],
