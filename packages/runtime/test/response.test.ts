@@ -65,4 +65,15 @@ describe("durable Response representation", () => {
     expect(isSerializedResponse({})).toBe(false)
     expect(() => deserializeResponse({} as never)).toThrow(TypeError)
   })
+
+  it.each([204, 205, 304])("rejects a non-empty body for status %s", (status) => {
+    const serialized = {
+      body: { data: "YQ==", encoding: "base64" as const, mediaType: "text/plain" },
+      headers: [],
+      status,
+      statusText: "",
+    }
+    expect(isSerializedResponse(serialized)).toBe(false)
+    expect(() => deserializeResponse(serialized)).toThrow(TypeError)
+  })
 })

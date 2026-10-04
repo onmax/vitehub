@@ -79,6 +79,9 @@ export function isSerializedResponse(value: unknown): value is SerializedRespons
   }
   if (!hasRuntimeType(record.status, "number") || !Number.isInteger(record.status) || record.status < 200 || record.status > 599) return false
   if (!hasRuntimeType(record.statusText, "string") || !Array.isArray(record.headers)) return false
+  // Responses with these status codes cannot carry a body. Reject malformed
+  // records before deserialization would pass bytes to the native constructor.
+  if ([204, 205, 304].includes(record.status) && body.data !== "") return false
   return record.headers.every((entry) => Array.isArray(entry) && entry.length === 2 && hasRuntimeType(entry[0], "string") && hasRuntimeType(entry[1], "string"))
 }
 
