@@ -45,7 +45,7 @@ export function addConsoleRpcHandler(
   const ownedSuffixes = new Set(registrations.map(registration => registration.suffix))
   const retainedHandlers = handlers.filter(candidate => {
     if (!ownedHandlers.has(candidate.handler)) return true
-    return !Array.from(ownedSuffixes).some(suffix => typeof candidate.route === "string" && (candidate.route === suffix || candidate.route.endsWith(suffix)))
+    return !Array.from(ownedSuffixes).some(suffix => candidate.route === suffix || candidate.route.endsWith(suffix))
   })
   handlers.splice(0, handlers.length, ...retainedHandlers)
 

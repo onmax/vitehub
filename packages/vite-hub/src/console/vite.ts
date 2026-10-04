@@ -185,7 +185,7 @@ function configureConsoleNitroRoutes(
     previousConsoleAuthHandlers?.middleware,
     previousConsoleAuthHandlers?.route,
     previousConsoleAuthHandlers?.signIn,
-  ].filter((handler): handler is string => typeof handler === "string"))
+  ].filter((handler): handler is string => handler !== undefined))
   const handlers = Array.isArray(nitro.handlers)
     ? nitro.handlers.filter(handler => !runtimeHandlers.has(handler?.handler) && !authHandlers.has(handler?.handler))
     : []
