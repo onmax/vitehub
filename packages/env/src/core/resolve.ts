@@ -6,7 +6,7 @@ import { promisify } from "node:util"
 import { parseSchema } from "../schema.ts"
 import { runtimeValueSchema } from "./declarations.ts"
 import { envValueTypeName, parseEnvValue } from "./values.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { isViteHubError } from "@vite-hub/runtime"
 import { envSourceFailed, invalidEnvDeclaration, isAbortError, missingRequiredEnv } from "./errors.ts"
 
@@ -477,7 +477,7 @@ function isBuildStaticValue(value: unknown): value is EnvBuildStaticValue {
         return false
       }
       for (let index = 0; index < value.length; index += 1) {
-        if (!(index in value) || !isBuildStaticValue(value[index])) {
+        if (!Object.hasOwn(value, index) || !isBuildStaticValue(value[index])) {
           return false
         }
       }

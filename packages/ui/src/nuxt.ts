@@ -25,6 +25,7 @@ const componentNames = [
   "AgentInvocation",
   "AgentInvocationInspector",
   "AgentInvocationList",
+  "AgentInvocationTimeline",
   "AgentMarkdown",
   "AgentMessageParts",
   "AgentMultiFileDiff",

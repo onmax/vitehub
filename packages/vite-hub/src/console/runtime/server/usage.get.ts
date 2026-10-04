@@ -76,7 +76,7 @@ const usageHandler = async (event: ConsoleRequestEvent): Promise<Record<string, 
   if (search && search.length > 512) {
     throw Object.assign(
       viteHubErrorDiagnostics.VITE_HUB_R0072({ message: "Invalid usage search" }),
-      { statusCode: 400 },
+      { statusCode: 400, statusMessage: "Invalid usage search" },
     );
   }
   const cursor = query.get("cursor") ?? undefined;
