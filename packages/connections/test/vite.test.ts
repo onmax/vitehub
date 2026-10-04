@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { VITEHUB_NITRO_CONFIG_CONTEXT } from "@vite-hub/internal/build/vite";
-import { mergeConfig } from "vite";
+import { mergeConfig, resolveConfig } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { discoverConnectionDefinitions } from "../src/discovery.ts";
@@ -95,6 +95,42 @@ describe("hubConnections", () => {
     await expect(readFile(nitro.handlers[0]!.handler, "utf8")).resolves.toContain(
       'basePath: "/portal/_vitehub/connections"',
     );
+  });
+
+  it("mounts management routes from the final resolved Vite base", async () => {
+    const root = await createTempProject();
+    const connections = hubConnections();
+    const initializedNitro = { options: { handlers: [] as Array<{ handler: string; route: string }> }, routing: { sync: vi.fn() } };
+    const config = await resolveConfig({
+      root,
+      configFile: false,
+      base: "/early/",
+      plugins: [
+        { name: "nitro-context", enforce: "pre", config: config => {
+          Reflect.set(config, VITEHUB_NITRO_CONFIG_CONTEXT, true);
+          Reflect.set(config, "nitro", { handlers: [{ handler: "existing.ts", route: "/existing" }] });
+        } },
+        connections,
+        { name: "initialize-nitro", config: config => {
+          initializedNitro.options = structuredClone(Reflect.get(config, "nitro"));
+          connections.nitro.setup(initializedNitro);
+        } },
+        { name: "change-base", config: () => ({ base: "/portal/" }) },
+      ],
+    }, "serve", "development");
+    const nitro = Reflect.get(config, "nitro") as {
+      handlers: Array<{ handler: string; route: string }>;
+    };
+    expect(nitro.handlers.map(handler => handler.route)).toEqual([
+      "/existing",
+      "/portal/_vitehub/connections",
+      "/portal/_vitehub/connections/**",
+    ]);
+    expect(initializedNitro.options.handlers).toEqual(nitro.handlers);
+    expect(initializedNitro.routing.sync).toHaveBeenCalledOnce();
+    const handler = await readFile(nitro.handlers[1]!.handler, "utf8");
+    expect(handler).toContain('basePath: "/portal/_vitehub/connections"');
+    expect(handler).not.toContain("/early/");
   });
 
   it("requires authenticated management configuration in production", async () => {

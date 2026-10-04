@@ -17,6 +17,7 @@ import { createNitroServerKit } from "@vite-hub/internal/nitro-kit";
 import { discoverConnectionDefinitions } from "./discovery.ts";
 import { withConnectionsTypesLock } from "./internal/types-lock.ts";
 
+import type { NitroServerHandler } from "@vite-hub/internal/nitro-kit";
 import type { ViteHubCliContributor } from "@vite-hub/internal/cli";
 import type { Plugin, ResolvedConfig } from "vite";
 import type { DiscoveredConnectionDefinition } from "./types.ts";
@@ -249,6 +250,10 @@ export interface ConnectionsVitePluginAPI {
 export type ConnectionsVitePlugin = Plugin<ConnectionsVitePluginAPI> & {
   api: ConnectionsVitePluginAPI;
   vitehub: { cli: () => Promise<ViteHubCliContributor> };
+  nitro: {
+    name: string;
+    setup: (nitro: { options: { handlers: NitroServerHandler[] }; routing: { sync: () => void } }) => void;
+  };
 };
 
 function renderRegistry(
@@ -319,6 +324,8 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
   let projectRoot = process.cwd();
   const generationSession = randomUUID();
   let nitroRegistryFile: string | undefined;
+  let nitroInstance: Parameters<ConnectionsVitePlugin["nitro"]["setup"]>[0] | undefined;
+  let refreshManagement: ((config: ResolvedConfig) => Promise<void>) | undefined;
 
   function refresh(): DiscoveredConnectionDefinition[] {
     defaultProjectRoot = resolveViteHubProjectRoot(resolve(resolved?.root ?? process.cwd()))
@@ -379,6 +386,12 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
       },
       getDefinitions: () => definitions,
       refresh,
+    },
+    nitro: {
+      name: "@vite-hub/connections/management",
+      setup(nitro) {
+        nitroInstance = nitro;
+      },
     },
     vitehub: {
       cli: async () => {
@@ -443,8 +456,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
           );
         }
         const actorImport = actorModule?.startsWith(".") ? resolve(root, actorModule) : actorModule;
-        const managementRoute = connectionManagementRoute(Reflect.get(config, "base"));
-        await writeFileIfChanged(
+        const writeManagementHandler = async (managementRoute: string) => await writeFileIfChanged(
           handlerFile,
           [
             `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`,
@@ -459,6 +471,29 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
             "",
           ].join("\n"),
         );
+        const managementRoute = connectionManagementRoute(Reflect.get(config, "base"));
+        await writeManagementHandler(managementRoute);
+        refreshManagement = async (config) => {
+          const route = connectionManagementRoute(config.base);
+          const updateHandlers = (value: unknown) => {
+            const kit = createNitroServerKit(value);
+            if (Array.isArray(kit.config.handlers)) {
+              kit.config.handlers.splice(0, kit.config.handlers.length, ...kit.config.handlers.filter(handler =>
+                !v.is(v.looseObject({ handler: v.literal(handlerFile) }), handler),
+              ));
+            }
+            kit.addHandler({ handler: handlerFile, route });
+            kit.addHandler({ handler: handlerFile, route: `${route}/**` });
+            return kit.config;
+          };
+          Reflect.set(config, "nitro", updateHandlers(Reflect.get(config, "nitro")));
+          // Nitro initializes during config hooks, before Vite resolves its final base.
+          if (nitroInstance) {
+            Object.assign(nitroInstance.options, updateHandlers(nitroInstance.options));
+            nitroInstance.routing.sync();
+          }
+          await writeManagementHandler(route);
+        };
         const kit = createNitroServerKit(nitro);
         kit.addHandler({ handler: handlerFile, route: managementRoute });
         kit.addHandler({ handler: handlerFile, route: `${managementRoute}/**` });
@@ -469,6 +504,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
     },
     async configResolved(config) {
       resolved = config;
+      await refreshManagement?.(config);
       refresh();
       await refreshGeneratedFiles();
     },
