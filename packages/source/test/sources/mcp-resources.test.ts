@@ -224,6 +224,10 @@ describe("mcpResources", () => {
     const configSource = mcpResources({ server: inheritedConfig })
     await expect(configSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/must resolve to an MCP client or MCP client config/i)
 
+    const inheritedTransport = Object.create({ url: "https://example.com/mcp" })
+    const nestedConfigSource = mcpResources({ server: { transport: inheritedTransport } })
+    await expect(nestedConfigSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/must resolve to an MCP client or MCP client config/i)
+
     const inheritedOptions = Object.create({ server: createClient() })
     expect(() => mcpResources(inheritedOptions)).toThrow(/requires an MCP server/i)
   })

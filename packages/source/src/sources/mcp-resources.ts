@@ -143,6 +143,7 @@ function isMcpResourcesClientConfig(value: unknown): value is McpResourcesClient
   return typeof value === "object"
     && value !== null
     && hasDeclaredProperty(value, "transport")
+    && (isMcpTransport(Reflect.get(value, "transport")) || isMcpTransportConfig(Reflect.get(value, "transport")))
 }
 
 function isMcpTransport(value: unknown): value is McpResourcesTransport {
@@ -151,6 +152,13 @@ function isMcpTransport(value: unknown): value is McpResourcesTransport {
     && hasDeclaredFunction(value, "close")
     && hasDeclaredFunction(value, "send")
     && hasDeclaredFunction(value, "start")
+}
+
+function isMcpTransportConfig(value: unknown): value is Exclude<McpResourcesTransportConfig, McpResourcesTransport> {
+  return typeof value === "object"
+    && value !== null
+    && Object.hasOwn(value, "url")
+    && (!Object.hasOwn(value, "type") || value.type === "http" || value.type === "sse")
 }
 
 function hasDeclaredProperty(value: object, key: PropertyKey): boolean {
