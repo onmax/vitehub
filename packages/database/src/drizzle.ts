@@ -32,7 +32,7 @@ export const databases = runtimeDatabases as RuntimeDatabaseLookup
 export const db = runtimeDb as DrizzleRuntimeDatabase<typeof schema>
 
 export function useDatabase<Name extends keyof RuntimeDatabaseRegistry>(name: Name): RuntimeDatabaseRegistry[Name] {
-  return databases[name]
+  return Object.hasOwn(databases, name) ? databases[name] : undefined as RuntimeDatabaseRegistry[Name]
 }
 
 export const agentDb = createAgentDatabase(databases)
