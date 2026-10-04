@@ -3290,7 +3290,7 @@ describe("agent message protocol", () => {
     expect(resolve).not.toHaveBeenCalled()
   })
 
-  it("supports class-based webhook secret resolvers", async () => {
+  it("rejects class-based webhook secret resolvers", async () => {
     const { defineAgent, resolveAgentTriggerInvocation } = await import("../src/index.ts")
     const { defineChannel, defineChannelTrigger } = await import("../src/channels.ts")
     class SecretResolver {
@@ -3318,7 +3318,7 @@ describe("agent message protocol", () => {
       request: new Request("https://example.test/webhook", { headers: { "x-webhook-secret": "secret" }, method: "POST" }),
       runtime: "unknown",
       waitUntil: vi.fn(),
-    }, "portal.webhook", {})).resolves.toMatchObject({ input: { prompt: "accepted" } })
+    }, "portal.webhook", {})).rejects.toMatchObject({ statusCode: 401 })
   })
 
   it.each([false, true])("propagates webhook validator exceptions (async: %s)", async (asyncValidation) => {
