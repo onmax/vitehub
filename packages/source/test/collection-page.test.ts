@@ -185,7 +185,7 @@ describe("Collections", () => {
         query,
       }),
     ).rejects.toBeInstanceOf(CollectionCursorError)
-    for (const cursor of ["A", "AA=", "Zm9v==", "AA\u002fAA"]) {
+    for (const cursor of ["A", "AA=", "Zm9v==", "AA\u002fAA", "MB"]) {
       await expect(collection.page({ cursor, query })).rejects.toBeInstanceOf(CollectionCursorError)
     }
     const first = await collection.page({ query })

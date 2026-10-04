@@ -31,6 +31,7 @@ function decodeBase64Url(value: string): string {
   if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new TypeError("Malformed base64url cursor")
   const normalized = value.replaceAll("-", "+").replaceAll("_", "/")
   const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
+  if (btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "") !== value) throw new TypeError("Noncanonical base64url cursor")
   return new TextDecoder().decode(Uint8Array.from(binary, character => character.charCodeAt(0)))
 }
 
