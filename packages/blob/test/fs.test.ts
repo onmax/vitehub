@@ -44,6 +44,19 @@ describe("fs blob driver", () => {
     await expect(driver.list()).rejects.toMatchObject({ code: "ENOTDIR" })
   })
 
+  it.each([
+    ["invalid alphabet", "!!!"],
+    ["non-numeric payload", Buffer.from("foo").toString("base64url")],
+    ["padded numeric payload", `${Buffer.from("0").toString("base64url")}=`],
+  ])("rejects malformed list cursors (%s)", async (_, cursor) => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    tempDirs.push(base)
+    const driver = createDriver({ base, driver: "fs" })
+    await driver.put("notes/one.txt", "one")
+
+    await expect(driver.list({ cursor })).rejects.toThrow("Invalid Blob cursor.")
+  })
+
   it("returns a cursor for folded listings that stop before the end", async () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
     tempDirs.push(base)

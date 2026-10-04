@@ -42,8 +42,13 @@ function encodeCursor(value: number) {
 }
 
 function decodeCursor(cursor: string | undefined) {
-  const parsed = Number.parseInt(Buffer.from(cursor || "", "base64url").toString("utf8") || "0")
-  return Number.isFinite(parsed) ? parsed : 0
+  if (!cursor) return 0
+  if (!/^[A-Za-z0-9_-]*$/.test(cursor) || cursor.length % 4 === 1) throw new TypeError("Invalid Blob cursor.")
+  const decoded = Buffer.from(cursor, "base64url").toString("utf8")
+  if (!/^\d+$/.test(decoded)) throw new TypeError("Invalid Blob cursor.")
+  const parsed = Number(decoded)
+  if (!Number.isSafeInteger(parsed)) throw new TypeError("Invalid Blob cursor.")
+  return parsed
 }
 
 function encodeMetaKey(pathname: string) {
