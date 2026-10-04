@@ -104,6 +104,7 @@ export default defineAppConfig({
         description: "mt-1 text-sm/6 text-muted",
       },
     },
+    // SAFETY: Nuxt UI's content search button variants accept these custom slot classes.
     contentSearchButton: {
       defaultVariants: {
         collapsed: false,
@@ -117,6 +118,7 @@ export default defineAppConfig({
         trailing: "ms-auto flex items-center gap-0.5",
       },
     } as any,
+    // SAFETY: Nuxt UI's content search modal variants accept these custom slot classes.
     contentSearch: {
       defaultVariants: {
         placeholder: "Search",
@@ -136,6 +138,7 @@ export default defineAppConfig({
         title: "text-sm font-medium text-muted",
       },
     },
+    // SAFETY: Nuxt UI's prose variants accept these custom slot classes.
     prose: {
       a: {
         base: "font-medium underline underline-offset-4 text-default hover:text-primary transition-colors",
@@ -192,6 +195,8 @@ export default defineAppConfig({
           root: "relative my-5 group",
           header: "flex items-center gap-1.5 border border-default bg-default border-b-0 relative rounded-none px-4 py-3",
           base: "group font-mono text-sm/6 border border-default bg-muted rounded-none px-4 py-3 whitespace-pre-wrap wrap-break-word overflow-x-auto focus:outline-none",
+          // Touch screens cannot reveal the hover-only copy button, so keep it visible and larger.
+          copy: "pointer-coarse:opacity-100 pointer-coarse:size-9 pointer-coarse:justify-center pointer-coarse:top-[5px] pointer-coarse:end-[5px]",
         },
       },
       steps: {

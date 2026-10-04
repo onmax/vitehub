@@ -207,7 +207,7 @@ describe("UI server rendering", () => {
       defineComponent({
         props: ["id", "parts", "role"],
         setup(_props, { slots }) {
-          return () => h("article", slots.body?.());
+          return () => h("article", slots.body?.() ?? slots.content?.());
         },
       }),
     );

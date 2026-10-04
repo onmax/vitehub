@@ -104,6 +104,22 @@ describe("normalizeKVOptions", () => {
     })
   })
 
+  it("detects Upstash credentials under the Upstash console names", () => {
+    expect(normalizeKVOptions(undefined, {
+      env: {
+        UPSTASH_REDIS_REST_TOKEN: "token",
+        UPSTASH_REDIS_REST_URL: "https://upstash.example.com",
+      },
+      hosting: "node-server",
+    })).toEqual({
+      store: {
+        driver: "upstash",
+        token: "********",
+        url: "********",
+      },
+    })
+  })
+
   it("defaults Vercel hosting to masked Upstash runtime config", () => {
     expect(normalizeKVOptions(undefined, {
       env: {},

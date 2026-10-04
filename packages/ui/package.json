@@ -61,20 +61,20 @@
     "nostics": "catalog:runtime",
     "@vueuse/core": "catalog:ui",
     "katex": "^0.17.0",
-    "@json-render/vue": "0.20.0",
-    "@json-render/core": "0.20.0"
+    "@json-render/vue": "0.21.0",
+    "@json-render/core": "0.21.0"
   },
   "devDependencies": {
     "@nuxt/ui": "catalog:nuxt",
-    "@pierre/diffs": "1.4.0",
+    "@pierre/diffs": "1.5.1",
     "@pierre/theme": "1.1.0",
     "@pierre/trees": "1.0.0-beta.6",
-    "@vitejs/plugin-vue": "^6.0.8",
+    "@vitejs/plugin-vue": "^6.0.9",
     "@vite-hub/runtime": "workspace:*",
-    "@vue/server-renderer": "3.5.40",
-    "@vue/test-utils": "2.5.0",
+    "@vue/server-renderer": "3.5.43",
+    "@vue/test-utils": "2.5.1",
     "ai": "catalog:ai",
-    "happy-dom": "20.14.0",
+    "happy-dom": "20.14.5",
     "nuxt": "catalog:nuxt",
     "publint": "catalog:tooling",
     "typescript": "catalog:tooling",
@@ -82,7 +82,7 @@
     "vite-plus": "catalog:tooling",
     "vitest": "catalog:tooling",
     "vue": "catalog:ui",
-    "@types/markdown-it": "^14.1.2",
+    "@types/markdown-it": "^14.2.0",
     "@vite-hub/agent": "workspace:*"
   },
   "peerDependencies": {

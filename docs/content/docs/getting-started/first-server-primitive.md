@@ -1,8 +1,8 @@
 ---
 title: First Server Primitive
+navigation.title: First Server Primitive
 description: Add local KV to a small Vite server and return one stored value.
 navigation.order: 3
-navigation.lanes: [server-primitives]
 icon: i-lucide-server-cog
 ---
 
@@ -121,5 +121,5 @@ To move to a hosted store, change the preset or the KV driver in
 ## Next steps
 
 - Follow the longer [Server Primitives tutorial](/blog/server-primitives) for a complete walkthrough.
-- Read [KV](/docs/server-primitives/kv) for named stores and hosted drivers.
-- Read [Runtime Helpers and stable imports](/docs/concepts/runtime-helpers-and-stable-imports) to see how provider changes stay out of server code.
+- Read [KV](/docs/kv) for named stores and hosted drivers.
+- Read [Runtime Helpers and stable imports](/docs/getting-started/concepts/runtime-helpers-and-stable-imports) to see how provider changes stay out of server code.

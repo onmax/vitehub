@@ -11,7 +11,7 @@ import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@
 import type { AuthModuleOptions, ResolvedAuthViteConfig } from "@vite-hub/auth"
 import type { ViteHubCliContributingPlugin } from "@vite-hub/internal/cli"
 import type { Environment, Plugin } from "vite"
-import type { ConsoleSectionId } from "./runtime/sections.ts"
+import { isConsoleConnectionsEnabled, type ConsoleSectionId } from "./runtime/sections.ts"
 
 import { discoverConsoleBuildCatalog } from "./build.ts"
 import { consoleConnectionsActorId, writeConsoleConnectionsActor, registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, type ConsoleAuthConfig, type ConsoleAuthHandlers } from "./auth-build.ts"
@@ -63,6 +63,7 @@ export type ConsoleOptions = (
 interface ConsoleVitePluginOptions {
   blobStores?: readonly string[]
   console?: true | ConsoleOptions
+  connections?: unknown
   /** D1 binding that stores the journal in production Cloudflare builds. */
   resolveD1Binding?: (root: string, serverDirs: string[] | undefined) => string | undefined
   databaseUrl?: string
@@ -334,6 +335,9 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   const plugin: Plugin & ViteHubCliContributingPlugin = {
     name: "vite-hub/console",
     async config(config, environment) {
+      if (options.connections !== undefined && !isConsoleConnectionsEnabled(options, environment.command === "serve")) {
+        sections = sections.filter(section => section !== "connections")
+      }
       root = resolve(config.root || process.cwd())
       const configured = options.console ?? true
       resolvedConsoleConfiguration = configured
