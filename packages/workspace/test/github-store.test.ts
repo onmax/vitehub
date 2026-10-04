@@ -661,6 +661,24 @@ describe("GitHub workspace store", () => {
     expect(requests.some(request => request.path === "/repos/onmax/repo/git/refs" && request.method === "POST")).toBe(false);
   });
 
+  it("encodes branch ref segments before constructing GitHub API paths", async () => {
+    const { createGitHubWorkspaceStore } = await import("../src/providers/github/store.ts");
+    const store = createGitHubWorkspaceStore(
+      {
+        branch: "feature?audio#draft",
+        provider: "github",
+        repository: "onmax/repo",
+        token: "token",
+      },
+      "docs",
+    );
+
+    await expect(store.list()).resolves.toEqual([]);
+    expect(requests[0]?.path).toBe(
+      "/repos/onmax/repo/git/ref/heads/feature%3Faudio%23draft",
+    );
+  });
+
   it("does not treat non-404 branch failures as missing", async () => {
     mirrorRefStatus = 403;
     const { createGitHubWorkspaceStore } = await import("../src/providers/github/store.ts");

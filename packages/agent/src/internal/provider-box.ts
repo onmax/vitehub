@@ -7,8 +7,7 @@ import type { Server, Socket } from "node:net"
 import type { BoxDefinition, BoxFile, BoxProcess, BoxRuntimeDefinition, BoxSession } from "@vite-hub/box"
 
 import { agentDiagnostics } from "../agent-diagnostics.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 /** Environment names that a Box runtime owns. The relay never forwards them. */
 const boxRuntimeEnvironmentKeys = new Set([

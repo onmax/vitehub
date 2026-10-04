@@ -24,6 +24,23 @@ afterEach(() => {
 })
 
 describe("Workspace Collections", () => {
+  it("ignores null filters and accepts cursors with omitted filters", async () => {
+    await createCollection("collection-null-filters")
+    const first = await queryWorkspaceCollection({
+      path: "data/items.json",
+      query: { filters: { title: null as never }, limit: 1 },
+      workspace: "collection-null-filters",
+    })
+
+    expect(first).toMatchObject({ items: [records[0]], total: records.length })
+    expect(first.nextCursor).toEqual(expect.any(String))
+    await expect(queryWorkspaceCollection({
+      path: "data/items.json",
+      query: { cursor: first.nextCursor!, limit: 1 },
+      workspace: "collection-null-filters",
+    })).resolves.toMatchObject({ items: [records[1]], total: records.length })
+  })
+
   it("filters, searches, sorts, facets, projects, and paginates explicit paths", async () => {
     await createCollection("collection-query")
     const query = {

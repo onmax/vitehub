@@ -3,7 +3,7 @@ import {
   getViteHubErrorShape,
 } from "@vite-hub/runtime"
 
-import { hasRuntimeType, isRuntimeObject } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType, isRuntimeObject } from "./internal/runtime-type.ts"
 
 interface NormalizedAgentError {
   message: string
