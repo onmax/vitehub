@@ -81,6 +81,23 @@ describe("createWorkspaceTools", () => {
     expect(writeFile).not.toHaveBeenCalled()
   })
 
+  it("requires own writeFile for copy and move operations", () => {
+    const writeFile = vi.fn()
+    const assets = Object.assign(Object.create({ writeFile }), createAssets({ "README.md": "# Docs\n" }), {
+      sync: async () => {},
+      stat: async () => ({ type: "file", size: 0, mtime: 0 }),
+      exists: async () => true,
+      readFile: async () => "# Docs\n",
+      list: async () => [],
+      mkdir: async () => {},
+      rm: async () => {},
+    })
+
+    expect(() => createWorkspaceTools(assets, { operations: { write: { copyPath: true } } })).toThrow(/require a mutable Workspace/)
+    expect(() => createWorkspaceTools(assets, { operations: { write: { movePath: true } } })).toThrow(/require a mutable Workspace/)
+    expect(writeFile).not.toHaveBeenCalled()
+  })
+
   it.each([null, Object, function ForgedWorkspace() {}])("rejects inherited capabilities with constructor %s", async (constructor) => {
     const writeFile = vi.fn()
     const startSession = vi.fn()

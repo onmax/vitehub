@@ -230,6 +230,7 @@ function hasWriteCapabilities(workspace: Workspace, enabled: ReturnType<typeof r
     required.add("mkdir")
   }
   if (enabled.copyPath || enabled.movePath) {
+    required.add("writeFile")
     required.add("stat")
     required.add("exists")
     required.add("readFile")
