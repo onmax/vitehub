@@ -184,7 +184,10 @@ function resolveConfiguredClient(): BrowserClient<PlaywrightBrowserConnection> {
 }
 
 function isBrowserDefinition(value: unknown): value is BrowserDefinition {
-  return !!value && typeof value === "object" && "run" in value && typeof value.run === "function"
+  return !!value
+    && typeof value === "object"
+    && Object.hasOwn(value, "run")
+    && typeof (value as { run?: unknown }).run === "function"
 }
 
 async function resolveBrowserDefinition(name: string): Promise<BrowserDefinition> {

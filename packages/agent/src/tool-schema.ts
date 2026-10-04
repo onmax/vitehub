@@ -1,6 +1,6 @@
 import { toJsonSchema } from "@valibot/to-json-schema"
 
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { isCallableMember, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { copyToolWithOverrides } from "./tool-runtime.ts"
 
 import type { BaseIssue, BaseSchema } from "valibot"
@@ -10,7 +10,7 @@ import type { AgentToolSchema, AgentToolSet } from "./types.ts"
 type JsonStandardSchema = AgentToolSchema & StandardJSONSchemaV1
 
 /** Recognize own markers, with bounded lazy initialization for Zod 4 schemas. */
-export function hasAgentToolStandardSchema(schema: object): boolean {
+export function hasAgentToolStandardSchema(schema: AgentToolSchema | Record<string, unknown>): boolean {
   try {
     if (Object.hasOwn(schema, "~standard")) return true
     // Zod 4 puts its lazy marker on the prototype and brands each schema with _zod.
@@ -31,8 +31,10 @@ export function withAgentToolJsonSchema<TSchema extends AgentToolSchema>(schema:
   if (!hasAgentToolStandardSchema(schema)) return schema
   const standard = schema["~standard"]
   if (!standard) return schema
+  // SAFETY: The own marker is checked above; JSON Schema conversion is optional on Standard Schema.
   if (Object.hasOwn(standard, "jsonSchema") && (standard as Partial<StandardJSONSchemaV1["~standard"]>).jsonSchema) return schema
   if (standard.vendor !== "valibot") return schema
+  // SAFETY: Valibot exposes async metadata; ownership is checked before reading this optional field.
   if (Object.hasOwn(schema, "async") && (schema as { async?: unknown }).async === true) {
     throw new Error("[vitehub] Async Valibot Agent tool schemas cannot be converted to JSON Schema.")
   }
@@ -59,7 +61,7 @@ export function agentToolJsonSchema(schema: AgentToolSchema | undefined, directi
   if (!Object.hasOwn(standard, "jsonSchema") || !standard.jsonSchema) return
   // SAFETY: Runtime feature detection checks the Standard JSON Schema method before calling it.
   const jsonSchema = standard.jsonSchema[direction]
-  return typeof jsonSchema === "function" ? jsonSchema({ target: "draft-07" }) : undefined
+  return isCallableMember(jsonSchema) ? jsonSchema({ target: "draft-07" }) : undefined
 }
 
 export function withAgentToolJsonSchemas<TTools extends AgentToolSet>(tools: TTools): TTools {

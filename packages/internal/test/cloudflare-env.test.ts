@@ -13,6 +13,14 @@ import {
 afterEach(() => clearActiveCloudflareEnv())
 
 describe("Cloudflare environment context", () => {
+  it("does not expose inherited environment bindings", () => {
+    const env = Object.create({ BUCKET: "inherited-bucket" }) as Record<string, unknown>
+    setActiveCloudflareEnv(env)
+
+    expect(getActiveCloudflareEnv()).toBe(env)
+    expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+  })
+
   it("clears the installed environment and its bindings", async () => {
     setActiveCloudflareEnv({ BUCKET: "old-bucket" })
 
