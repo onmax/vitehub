@@ -3774,6 +3774,45 @@ cli_auth_credentials_store = "keyring"
     expect(execute).toHaveBeenCalledWith({ query: "vitehub" }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }))
   })
 
+  it("ignores inherited schema validators through the provider MCP boundary", async () => {
+    const validate = vi.fn(() => ({ value: { query: "inherited" } }))
+    const execute = vi.fn(async (input: unknown) => ({ echoed: input }))
+    const inputSchema = Object.assign(Object.create({ "~standard": { validate } }), {
+      additionalProperties: false,
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      type: "object",
+    })
+    const threadId = "thread-tools-inherited-schema"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn(mcp) {
+        const client = new McpClient({ name: "provider-test", version: "1" })
+        const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), {
+          requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
+        })
+        await client.connect(transport)
+        try {
+          expect((await client.listTools()).tools[0]?.inputSchema).toEqual(inputSchema)
+          await expect(client.callTool({ arguments: { query: 42 }, name: "search" })).resolves.toMatchObject({ isError: true })
+          expect(execute).not.toHaveBeenCalled()
+          await expect(client.callTool({ arguments: { query: "vitehub" }, name: "search" })).resolves.toMatchObject({
+            content: [{ text: '{"echoed":{"query":"vitehub"}}', type: "text" }],
+          })
+        }
+        finally {
+          await client.close()
+        }
+      },
+    })
+
+    // SAFETY: This fixture supplies the runtime context exercised by the provider adapter.
+    await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId, {
+      tools: { search: { execute, inputSchema, name: "search" } },
+    }) as never)
+    expect(validate).not.toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledExactlyOnceWith({ query: "vitehub" }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }))
+  })
+
   it.each(["codex", "claude-code"] as const)("returns diagnostic guidance through %s Capability tools", async (provider) => {
     const failure = new Diagnostic({
       cause: new Error("private provider response"),

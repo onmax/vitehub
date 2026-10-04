@@ -10,12 +10,13 @@ type JsonStandardSchema = AgentToolSchema & StandardJSONSchemaV1
 
 /** Add JSON Schema conversion to Valibot's Standard Schema validation contract. */
 export function withAgentToolJsonSchema<TSchema extends AgentToolSchema>(schema: TSchema): TSchema {
-  if (!Object.hasOwn(schema, "~standard")) return schema
+  // Zod materializes its own Standard Schema property on first access.
   const standard = schema["~standard"]
+  if (!Object.hasOwn(schema, "~standard")) return schema
   if (!standard) return schema
-  if (Object.hasOwn(standard, "jsonSchema") && standard.jsonSchema) return schema
+  if (Object.hasOwn(standard, "jsonSchema") && (standard as Partial<StandardJSONSchemaV1["~standard"]>).jsonSchema) return schema
   if (standard.vendor !== "valibot") return schema
-  if (Object.hasOwn(schema, "async") && schema.async === true) {
+  if (Object.hasOwn(schema, "async") && (schema as { async?: unknown }).async === true) {
     throw new Error("[vitehub] Async Valibot Agent tool schemas cannot be converted to JSON Schema.")
   }
   // SAFETY: Valibot marks its synchronous schemas with the Standard Schema vendor value used above.

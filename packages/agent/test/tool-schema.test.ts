@@ -19,6 +19,11 @@ it("converts Valibot input for provider and inspection while preserving validati
 
 it("uses Zod's Standard JSON Schema conversion directly", async () => {
   const schema = z.object({ message: z.string().min(1) })
+  expect(inspectAgentTools({ send_message: { inputSchema: schema } })?.[0]?.inputSchema).toMatchObject({
+    properties: { message: { minLength: 1, type: "string" } },
+    required: ["message"],
+    type: "object",
+  })
   expect(withAgentToolJsonSchema(schema)).toBe(schema)
   expect(agentToolJsonSchema(schema, "input")).toMatchObject({
     properties: { message: { minLength: 1, type: "string" } },

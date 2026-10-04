@@ -44,6 +44,13 @@ function standardJsonSchema(value: Record<string, unknown>, direction: "input" |
 
 function toolJsonSchema(value: unknown, direction: "input" | "output"): AgentInspectionValue | undefined {
   if (!isRuntimeRecord(value)) return
+  // Access first so lazy Standard Schema implementations can create an own marker.
+  try {
+    Reflect.get(value, "~standard")
+  }
+  catch {
+    return
+  }
   if (Object.hasOwn(value, "~standard")) return standardJsonSchema(value, direction)
   if (Object.hasOwn(value, "jsonSchema")) return inspectionValue(value.jsonSchema)
   return inspectionValue(value)

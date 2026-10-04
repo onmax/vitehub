@@ -1493,8 +1493,8 @@ function toolJsonSchema(schema: AgentToolSchema | undefined): Record<string, unk
 
 async function validateToolInput(tool: AgentToolDefinition, input: unknown): Promise<unknown> {
   if (!tool.inputSchema) return input
-  if ("~standard" in tool.inputSchema) {
-    const standard = tool.inputSchema["~standard"]
+  const standard = tool.inputSchema["~standard"]
+  if (Object.hasOwn(tool.inputSchema, "~standard")) {
     if (!standard) throw agentDiagnostics.AGENT_R0696({ message: `[vitehub] Invalid schema for Agent tool "${tool.name}".` })
     const result = await standard.validate(input)
     if (result.issues?.length) throw agentDiagnostics.AGENT_R0697({ message: `[vitehub] Invalid input for Agent tool "${tool.name}".` })
