@@ -57,6 +57,16 @@ describe("Box runtime selection", () => {
     });
     await expect(resolveBox({ runtime: inherited }, {})).rejects.toThrow(/Unknown Box runtime kind/);
 
+    for (const constructor of [function Fake() {}, class Fake {}]) {
+      const forged = Object.create({
+        constructor,
+        name: "custom",
+        open: async () => undefined,
+        prepare: async () => undefined,
+      });
+      await expect(resolveBox({ runtime: forged }, {})).rejects.toThrow(/Unknown Box runtime kind/);
+    }
+
     const markerInherited = Object.create({ [Symbol.for("vitehub.box.internal-runtime")]: true });
     Object.assign(markerInherited, {
       name: "trusted-host",
@@ -73,6 +83,23 @@ describe("Box runtime selection", () => {
       prepare: async () => undefined,
     }); ({})`);
     await expect(resolveBox({ runtime: foreignRealm }, {})).rejects.toThrow(/Unknown Box runtime kind/);
+  });
+
+  it("accepts runtime capabilities from class prototypes across realms", async () => {
+    class CustomRuntime {
+      get name() { return "custom"; }
+      async open(): Promise<never> { throw new Error("not reached"); }
+      async prepare(): Promise<never> { throw new Error("custom prepare reached"); }
+    }
+    class DerivedRuntime extends CustomRuntime {}
+    const foreign = runInNewContext(`new (class CustomRuntime {
+      get name() { return "custom"; }
+      async open() { throw new Error("not reached"); }
+      async prepare() { throw new Error("custom prepare reached"); }
+    })()`);
+    for (const runtime of [new CustomRuntime(), new DerivedRuntime(), foreign]) {
+      await expect(resolveBox({ runtime }, {})).rejects.toThrow("custom prepare reached");
+    }
   });
 
   it("keeps built-in names closed while allowing custom runtimes", () => {
