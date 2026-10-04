@@ -85,9 +85,15 @@ export async function createBasicWorkspaceSession(workspace: Workspace, options?
       return hits
     },
     async diff() {
+      if (options?.writeBack === false) {
+        throw workspaceError("[vitehub] Workspace Session diff is unavailable when writeBack is false.")
+      }
       return filterSessionDiff(await overlay.diff(), sessionPaths)
     },
     async commit(commitOptions) {
+      if (options?.writeBack === false) {
+        throw workspaceError("[vitehub] Workspace Session commit is unavailable when writeBack is false.")
+      }
       const diff = await overlay.diff()
       assertDiffInsideSessionPaths(diff, sessionPaths)
       assertDiffInsideSessionPaths(await workspace.diff(), sessionPaths)
