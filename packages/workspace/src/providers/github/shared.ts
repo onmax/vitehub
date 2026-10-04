@@ -157,8 +157,10 @@ export function splitGitHubRepository(
   repository: string,
   kind: "publisher" | "store",
 ): { owner: string; repo: string } {
-  const [owner, repo] = repository.split("/");
-  if (!owner || !repo) {
+  const parts = repository.split("/");
+  const owner = parts[0];
+  const repo = parts[1];
+  if (parts.length !== 2 || !owner || !repo) {
     throw workspaceError(
       `[vitehub] GitHub workspace ${kind} requires a repository in owner/repo format.`,
     );
