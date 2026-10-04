@@ -23,7 +23,6 @@ const docsShellUi = {
     </UContainer>
 
     <div v-else-if="isLanding" class="vh-docs-landing">
-      <AnnouncementBanner />
       <slot />
     </div>
 
@@ -55,7 +54,7 @@ const docsShellUi = {
 }
 
 .vh-docs-landing {
-  max-width: 84rem;
+  max-width: var(--vh-landing-width);
 }
 
 @media (min-width: 40rem) {

@@ -132,6 +132,8 @@ describe("handleMultipartUpload", () => {
 
   it("rejects unknown actions, wrong methods, and incomplete requests", async () => {
     await expect(storage.handleMultipartUpload(multipartEvent("rename", "a.txt", { method: "POST" }))).rejects.toMatchObject({ statusCode: 400 })
+    await expect(storage.handleMultipartUpload(multipartEvent("toString", "a.txt", { method: "POST" })))
+      .rejects.toThrow('Unknown multipart action "toString".')
     await expect(storage.handleMultipartUpload(multipartEvent("create", "a.txt", { method: "GET" }))).rejects.toMatchObject({ statusCode: 405 })
     await expect(storage.handleMultipartUpload(multipartEvent("upload", "a.txt", { body: "x", method: "PUT" })))
       .rejects.toThrow("Missing `uploadId` query parameter.")
