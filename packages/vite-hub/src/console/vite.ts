@@ -208,16 +208,16 @@ function configureConsoleNitroRoutes(
   if (consoleAuthHandlers) kit.addHandler({ handler: consoleAuthHandlers.middleware, middleware: true, route: "/**" })
   addConsoleRpcHandler(kit.config, consoleRuntimeRoot, baseURL)
   const consoleAssetsBase = consoleMountPath(baseURL, "/_vitehub/assets")
-  const publicAssets = Array.isArray(nitro.publicAssets)
+  const userPublicAssets = Array.isArray(nitro.publicAssets)
     ? nitro.publicAssets.filter(asset => asset?.dir !== consolePublicRoot)
     : []
-  publicAssets.push({
+  const publicAssets = [{
     baseURL: consoleAssetsBase,
     dir: consolePublicRoot,
     fallthrough: false,
     // Every Console asset name contains a content hash.
     maxAge: 60 * 60 * 24 * 365,
-  })
+  }, ...userPublicAssets]
   return { kit, publicAssets }
 }
 

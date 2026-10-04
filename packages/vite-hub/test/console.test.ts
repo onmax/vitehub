@@ -592,8 +592,8 @@ describe("Agent invocation console", () => {
         "/portal/_vitehub/schedules/run",
       ])
       expect(resolvedConfig.nitro?.publicAssets).toEqual([
-        { baseURL: "/portal/_vitehub/assets", dir: "/user-owned-assets" },
         expect.objectContaining({ baseURL: "/portal/_vitehub/assets", dir: expect.stringContaining("public/console") }),
+        { baseURL: "/portal/_vitehub/assets", dir: "/user-owned-assets" },
       ])
     }
     finally {
