@@ -570,7 +570,7 @@ describe("agent chat capability discovery", () => {
     await configurePluginServer(plugin, server)
 
     try {
-      const response = await invokeMiddleware(handlers[0]!, {
+      const response = await invokeMiddleware(handlers, {
         trigger: "toString",
         messages: [{ id: "user-1", parts: [{ text: "hello", type: "text" }], role: "user" }],
       }, agentInvocationStreamRoute, {
