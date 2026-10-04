@@ -50,6 +50,7 @@ function scalarValues(value: unknown): string[] {
 }
 
 function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | undefined): boolean {
+  if (expected === null || expected === undefined) return true
   const values = scalarValues(value).map(item => item.toLocaleLowerCase())
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public filter union uses an object for the empty operator and strings or arrays for value matching.
   if (typeof expected === "object" && !Array.isArray(expected)) return expected.empty && values.length === 0
@@ -74,10 +75,10 @@ async function digest(value: string): Promise<string> {
 
 function normalizedFilters(filters: WorkspaceCollectionQuery["filters"]): Record<string, string[]> {
   return Object.fromEntries(Object.entries(filters || {})
-    .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined)
+    .filter((entry): entry is [string, WorkspaceCollectionFilter] => entry[1] !== undefined && entry[1] !== null)
     .sort(([left], [right]) => left.localeCompare(right))
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Fingerprints must distinguish the public empty operator from string and array filter values.
-    .map(([field, value]) => [field, typeof value === "object" && !Array.isArray(value)
+    .map(([field, value]) => [field, typeof value === "object" && value !== null && !Array.isArray(value)
       ? ["operator:empty"]
       : (Array.isArray(value) ? value : [value]).map(item => `value:${item.toLocaleLowerCase()}`).sort()]))
 }

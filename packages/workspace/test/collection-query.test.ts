@@ -25,6 +25,13 @@ describe("Workspace Collection query snapshots", () => {
       .toEqual({ digest: first.digest, item: { slug: "beta" } })
   })
 
+  it("rejects null filter values without throwing", async () => {
+    const collection = await createWorkspaceCollectionQuery(JSON.stringify([{ title: "Guide" }]), { path: "data/items.json" })
+
+    await expect(collection.page({ query: { filters: { title: null as never }, limit: 10 } }))
+      .resolves.toMatchObject({ items: [{ title: "Guide" }], total: 1 })
+  })
+
   it("uses the supplied revision digest and rejects cursors from another snapshot", async () => {
     const original = await createWorkspaceCollectionQuery(raw, { digest: "original", path: "data/items.json" })
     const changed = await createWorkspaceCollectionQuery(raw, { digest: "changed", path: "data/items.json" })
