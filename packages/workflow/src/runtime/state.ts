@@ -40,7 +40,7 @@ function isWeakReference(reference: ActiveRunReference): reference is WeakRef<Wo
 }
 
 function getRunKey(name: string, id: string): string {
-  return `${name}\0${id}`
+  return JSON.stringify([name, id])
 }
 
 function pruneWorkflowRuns(): void {
