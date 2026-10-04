@@ -83,7 +83,7 @@ function hasDeclaredMethod(value: object, key: PropertyKey): boolean {
   while (prototype && prototype !== Object.prototype) {
     if (Object.hasOwn(prototype, key)) {
       const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value
-      return typeof constructor === "function" && constructor !== Object && constructor.prototype === prototype
+      return Function.prototype.isPrototypeOf(constructor) && constructor !== Object && constructor.prototype === prototype
         && typeof Reflect.get(value, key) === "function"
     }
     prototype = Object.getPrototypeOf(prototype)
