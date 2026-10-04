@@ -156,6 +156,16 @@ describe("mcpResources", () => {
     connect.mockRejectedValueOnce(connectError)
     await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toBe(connectError)
     expect(close).toHaveBeenCalledTimes(2)
+
+    class ClassTransport {
+      async close() {}
+      async send() {}
+      async start() {}
+    }
+    const classTransport = new ClassTransport()
+    const classSource = mcpResources({ server: { transport: classTransport } })
+    await expect(classSource.getItem("mock/resource.txt", { rootDir: "/tmp" })).resolves.toMatchObject({ content: "hello" })
+    expect(connect).toHaveBeenLastCalledWith(classTransport, { signal: expect.any(AbortSignal) })
     vi.doUnmock("@modelcontextprotocol/sdk/client/index.js")
     vi.doUnmock("@modelcontextprotocol/sdk/client/streamableHttp.js")
     vi.doUnmock("@modelcontextprotocol/sdk/client/sse.js")
@@ -251,6 +261,32 @@ describe("mcpResources", () => {
     })
 
     await expect(source.getItem("example/item", { rootDir: "/tmp" })).resolves.toMatchObject({ content: "" })
+  })
+
+  it("rejects inherited capabilities on forged class prototypes", async () => {
+    function ForgedClient() {}
+    const listResources = vi.fn(async () => ({ resources: [] }))
+    ForgedClient.prototype = {
+      constructor: ForgedClient,
+      listResources,
+      readResource: vi.fn(async () => ({ contents: [] })),
+    }
+    ForgedClient.toString = () => "class ForgedClient {}"
+    const clientSource = mcpResources({ server: Object.create(ForgedClient.prototype) })
+    await expect(clientSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/must resolve to an MCP client or MCP client config/i)
+    expect(listResources).not.toHaveBeenCalled()
+
+    function ForgedTransport() {}
+    const start = vi.fn()
+    ForgedTransport.prototype = { close: vi.fn(), constructor: ForgedTransport, send: vi.fn(), start }
+    const transportSource = mcpResources({ server: { transport: Object.create(ForgedTransport.prototype) } })
+    await expect(transportSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/must resolve to an MCP client or MCP client config/i)
+    expect(start).not.toHaveBeenCalled()
+
+    function ForgedConfig() {}
+    ForgedConfig.prototype = { constructor: ForgedConfig, transport: { url: "not-a-url" } }
+    const configSource = mcpResources({ server: Object.create(ForgedConfig.prototype) })
+    await expect(configSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/must resolve to an MCP client or MCP client config/i)
   })
 
   it("accepts MCP clients implemented with class methods", async () => {
