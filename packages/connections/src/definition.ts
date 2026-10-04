@@ -33,15 +33,20 @@ const oauthDefinitionSchema = v.looseObject({
   ...rulesSchema,
 })
 const apiKeyDefinitionSchema = v.looseObject({
-  provider: v.pipe(v.looseObject({
-    kind: v.literal("api-key"),
-    id: v.pipe(v.string(), v.regex(/^\S+$/)),
-    header: v.string(),
-    scheme: v.optional(v.string()),
-    origins: v.array(v.string()),
-    apis: apiCatalogsSchema,
-    verify: v.optional(v.function()),
-  }), v.check(provider => isValidApiKeyProvider(provider))),
+  provider: v.pipe(
+    v.unknown(),
+    v.check(provider => typeof provider === "object" && provider !== null && Object.hasOwn(provider, "kind")),
+    v.looseObject({
+      kind: v.literal("api-key"),
+      id: v.pipe(v.string(), v.regex(/^\S+$/)),
+      header: v.string(),
+      scheme: v.optional(v.string()),
+      origins: v.array(v.string()),
+      apis: apiCatalogsSchema,
+      verify: v.optional(v.function()),
+    }),
+    v.check(provider => isValidApiKeyProvider(provider)),
+  ),
   scopes: v.optional(v.undefined()),
   ...rulesSchema,
 })
