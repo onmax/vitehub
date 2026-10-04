@@ -72,9 +72,10 @@ function readPaxPath(content: Uint8Array) {
 }
 
 function stripArchiveRoot(path: string) {
-  const slash = path.indexOf("/")
-  if (slash === -1) return
   try {
+    normalizeSafeSourcePath(path)
+    const slash = path.indexOf("/")
+    if (slash === -1) return
     return normalizeSafeSourcePath(path.slice(slash + 1))
   }
   catch {

@@ -13,7 +13,8 @@ import type { FileSource, SourceContext, SourceRevision } from "../../core/types
 import type { GitHubCommitResponse, GitHubContentResponse, GitHubFile, GitHubRepositoryResponse, GitHubSourceOptions } from "./types.ts"
 
 function normalizeGitHubRoot(path = "") {
-  return normalizeSourcePath(path).split("/").filter(part => part && part !== ".").join("/")
+  const root = path.replace(/\\/g, "/").split("/").filter(part => part !== ".").join("/")
+  return normalizeSafeSourcePath(root, { allowEmpty: true, allowReserved: true }).split("/").filter(Boolean).join("/")
 }
 
 function dedupeProviderPromise<TResult>(

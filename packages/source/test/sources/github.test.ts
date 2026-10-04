@@ -23,6 +23,14 @@ afterEach(() => {
 })
 
 describe("@vite-hub/source GitHub source", () => {
+  it.each(["docs/..", "../docs", "/docs", "C:/docs", "docs\0secret"])("rejects unsafe configured root %s before any request", (root) => {
+    const fetch = vi.fn()
+    vi.stubGlobal("fetch", fetch)
+
+    expect(() => github({ ref: "main", repo: "acme/app", root })).toThrow()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
   it("rejects parent traversal before requesting a GitHub file", async () => {
     const fetch = vi.fn(async () => jsonResponse({
       content: Buffer.from("secret").toString("base64"),

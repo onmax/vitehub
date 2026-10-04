@@ -12,6 +12,12 @@ import { getGitSparsePatterns, loadGitArchiveFiles } from "../../src/sources/git
 import { createTarGz } from "./fixtures/github.ts"
 
 describe("@vite-hub/source GitHub git materialization", () => {
+  it.each(["../secret.md", "/secret.md", "C:/secret.md", "./secret.md"])("rejects unsafe full archive path %s", (path) => {
+    const files = parseGitHubArchive(createTarGz({ [path]: "secret\n", "archive-main/docs/guide.md": "safe\n" }, ""))
+
+    expect(files.map(file => file.path)).toEqual(["docs/guide.md"])
+  })
+
   it("does not expose archive entries that escape the Source root", () => {
     const files = parseGitHubArchive(createTarGz({ "../outside.md": "secret\n", "docs/guide.md": "safe\n" }))
 
