@@ -113,11 +113,15 @@ function joinServedBlobUrl(...parts: string[]): string {
   return path ? `${base}/${path}` : base
 }
 
+function encodeServedBlobPath(pathname: string): string {
+  return pathname.split("/").map(segment => encodeURIComponent(segment)).join("/")
+}
+
 async function withServedBlobUrl(name: string, object: BlobObject): Promise<BlobObject> {
   const config = await getBlobRuntimeConfig()
   const serve = config && typeof config === "object" ? config.serve : undefined
   if (!serve || serve.store !== name) return object
-  return { ...object, url: joinServedBlobUrl(serve.publicBaseUrl || "/", serve.route, object.pathname) }
+  return { ...object, url: joinServedBlobUrl(serve.publicBaseUrl || "/", serve.route, encodeServedBlobPath(object.pathname)) }
 }
 
 async function resolveStorage(name = "default") {
@@ -132,7 +136,7 @@ async function resolveStorage(name = "default") {
   }
 
   const stores = config.stores || { default: config.store }
-  const store = stores[name]
+  const store = Object.hasOwn(stores, name) ? stores[name] : undefined
   if (!store) throw new UnknownBlobStoreError(`Unknown Blob store "${name}".`)
   const storage = await createConfiguredBlobStorage({ store, stores: { default: store, [name]: store } }, name)
   setNamedBlobRuntimeStorage(name, storage)

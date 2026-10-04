@@ -2210,7 +2210,11 @@ describe("workflow runtime", () => {
     })
   })
 
-  it("normalizes unrecognized native Vercel states conservatively", async () => {
+  it.each([
+    { runStatus: "suspended", stepStatus: "waiting" },
+    { runStatus: "constructor", stepStatus: "constructor" },
+    { runStatus: "__proto__", stepStatus: "__proto__" },
+  ])("normalizes unrecognized native Vercel states $runStatus and $stepStatus conservatively", async ({ runStatus, stepStatus }) => {
     const run: VercelRun = {
       cancel: vi.fn(),
       completedAt: Promise.resolve(undefined),
@@ -2219,12 +2223,12 @@ describe("workflow runtime", () => {
       returnValue: Promise.resolve(undefined),
       runId: "wdk-unknown",
       startedAt: Promise.resolve(undefined),
-      status: Promise.resolve("suspended"),
+      status: Promise.resolve(runStatus),
       workflowName: Promise.resolve("durable-welcome"),
     }
     setVercelWorkflowRuntimeLoader(async () => ({
       getRun: () => run,
-      listSteps: async () => [{ attempt: 1, status: "waiting", stepId: "step-unknown", stepName: "wait" }],
+      listSteps: async () => [{ attempt: 1, status: stepStatus, stepId: "step-unknown", stepName: "wait" }],
       resumeHook: vi.fn(),
       start: vi.fn(async () => run),
     }))
@@ -2826,6 +2830,22 @@ describe("workflow runtime", () => {
       provider: "cloudflare",
     })
     expect(createBatch).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    { providerStatus: "suspended", status: "unknown" },
+    { providerStatus: "constructor", status: "unknown" },
+    { providerStatus: "__proto__", status: "unknown" },
+    { providerStatus: "COMPLETE", status: "completed" },
+  ])("normalizes Cloudflare state $providerStatus to $status", async ({ providerStatus, status }) => {
+    setWorkflowRuntimeConfig({ binding: "WORKFLOW_CUSTOM", provider: "cloudflare" })
+    enterWorkflowRuntimeEvent({
+      env: {
+        WORKFLOW_CUSTOM: { get: async () => ({ status: async () => ({ status: providerStatus }) }) },
+      },
+    })
+
+    await expect(getWorkflowRun("welcome", "state-run")).resolves.toMatchObject({ status })
   })
 
   it("treats terminated Cloudflare workflow runs as failed", async () => {
