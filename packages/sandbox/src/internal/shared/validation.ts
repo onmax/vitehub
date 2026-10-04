@@ -5,12 +5,14 @@ export const VALIDATION_FAILED = 'Validation failed'
 export interface ValidationIssue {
   message: string
   path?: readonly unknown[]
-  [key: string]: unknown
 }
 
-export interface StandardSchemaValidationResult<TOutput = unknown> {
+export type StandardSchemaValidationResult<TOutput = unknown> = {
   value: TOutput
   issues?: readonly ValidationIssue[]
+} | {
+  value?: never
+  issues: readonly ValidationIssue[]
 }
 
 export interface StandardSchemaValidator<TInput = unknown, TOutput = TInput> {
@@ -57,7 +59,12 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function hasStandardValidator<TInput, TOutput>(
   value: unknown,
 ): value is StandardSchemaValidator<TInput, TOutput> {
-  return isObject(value) && Object.hasOwn(value, '~standard') && isObject(value['~standard']) && typeof value['~standard'].validate === 'function'
+  if (!isObject(value))
+    return false
+
+  // Lazy schema getters can create the own marker when first read.
+  const standard = value['~standard']
+  return Object.hasOwn(value, '~standard') && isObject(standard) && typeof standard.validate === 'function'
 }
 
 function isErrorWithHttpMetadata(error: unknown): error is Error & ValidationErrorLike {
