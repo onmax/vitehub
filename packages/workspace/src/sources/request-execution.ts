@@ -1,5 +1,6 @@
 import { createSourceContext, normalizeWorkspaceSources } from "./config.ts"
 import { getWorkspaceSourceRequestExecutor, workspaceSourceRequestDescriptorPath } from "./request-metadata.ts"
+import { requestJsonEqual } from "./request-json.ts"
 
 import type {
   WorkspaceDefinition,
@@ -97,13 +98,13 @@ function sameRequestTarget(left: string, right: string): boolean {
 function requestShapeMatches(descriptor: WorkspaceSourceRequestDescriptor, input: WorkspaceSourceRequestExecutionInput): boolean {
   const request = descriptor.request
   if (request?.querySchema) return bodyShapeMatches(request, input)
-  if (!jsonEqual(queryFromUrl(new URL(input.url)) || {}, serializedQuery(request?.query) || {})) return false
+  if (!requestJsonEqual(queryFromUrl(new URL(input.url)) || {}, serializedQuery(request?.query) || {})) return false
   return bodyShapeMatches(request, input)
 }
 
 function bodyShapeMatches(request: NonNullable<WorkspaceSourceRequestDescriptor["request"]> | undefined, input: WorkspaceSourceRequestExecutionInput): boolean {
   if (request?.bodySchema) return true
-  if (request && "body" in request) return jsonEqual(input.body, request.body)
+  if (request && "body" in request) return requestJsonEqual(input.body, request.body)
   return input.body === undefined
 }
 
@@ -124,8 +125,4 @@ function serializedQuery(query: Record<string, unknown> | undefined): Record<str
     for (const item of values) params.append(key, String(item))
   }
   return queryFromUrl(new URL(`https://vitehub.local/?${params}`))
-}
-
-function jsonEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
 }

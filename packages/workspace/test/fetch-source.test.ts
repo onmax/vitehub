@@ -28,6 +28,69 @@ afterEach(() => {
 })
 
 describe("fetch sources", () => {
+  it("matches declared request query fields regardless of their key order", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ status: "ok" }))
+    const execution = createWorkspaceSourceRequestExecution({
+      name: "fetch-query-order",
+      sources: { status: fetch({ url: "https://status.example.com/query?region=eu&tag=first&tag=second" }) },
+    })!
+
+    await expect(execution.executeSourceRequest({
+      method: "GET",
+      url: "https://status.example.com/query?tag=first&tag=second&region=eu",
+    })).resolves.toMatchObject({ status: 200 })
+    expect(request).toHaveBeenCalledOnce()
+
+    await expect(execution.executeSourceRequest({
+      method: "GET",
+      url: "https://status.example.com/query?region=eu&tag=second&tag=first",
+    })).rejects.toThrow("does not match a declared Source target")
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it("matches declared JSON body fields regardless of nested object key order", async () => {
+    const request = vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ status: "ok" }))
+    const execution = createWorkspaceSourceRequestExecution({
+      name: "fetch-body-order",
+      sources: { status: fetch({
+        body: { filter: { region: "eu", enabled: true }, tags: ["first", "second"] },
+        method: "POST",
+        url: "https://status.example.com/query",
+      }) },
+    })!
+
+    await expect(execution.executeSourceRequest({
+      body: { tags: ["first", "second"], filter: { enabled: true, region: "eu" } },
+      method: "POST",
+      url: "https://status.example.com/query",
+    })).resolves.toMatchObject({ status: 200 })
+    expect(request).toHaveBeenCalledOnce()
+
+    await expect(execution.executeSourceRequest({
+      body: { filter: { region: "eu", enabled: true }, tags: ["second", "first"] },
+      method: "POST",
+      url: "https://status.example.com/query",
+    })).rejects.toThrow("does not match a declared Source target")
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it("keeps distinct Unicode query keys stable when matching their order", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse({ status: "ok" }))
+    const execution = createWorkspaceSourceRequestExecution({
+      name: "fetch-unicode-query-order",
+      sources: { status: fetch({
+        query: { "\u00e9": "first", "e\u0301": "second" },
+        url: "https://status.example.com/query",
+      }) },
+    })!
+    const query = new URLSearchParams([["e\u0301", "second"], ["\u00e9", "first"]])
+
+    await expect(execution.executeSourceRequest({
+      method: "GET",
+      url: `https://status.example.com/query?${query}`,
+    })).resolves.toMatchObject({ status: 200 })
+  })
+
   it("identifies explicit and resolved fetch Sources by provider", async () => {
     expect(fetch({ url: "https://status.example.com/health" })).toMatchObject({ name: "fetch" })
     expect(normalizeWorkspaceSources({ status: { url: "https://status.example.com/health" } })[0]?.source).toMatchObject({ name: "fetch" })
