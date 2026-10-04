@@ -186,6 +186,9 @@ describe("landing page", () => {
   it("wires landing-page metadata through Docus", async () => {
     const source = await readFile(new URL("../app/pages/index.vue", import.meta.url), "utf8");
 
+    expect(source.indexOf("<LandingPrimitives />")).toBeLessThan(source.indexOf("<LandingHero />"));
+    expect(source).not.toContain("<LandingSharedApi />");
+    expect(source).not.toContain("<LandingNuxtHubMigration />");
     expect(source).toContain("useSeo({");
     expect(source).toContain('type: "website"');
     expect(source).toContain('defineOgImage("Landing"');
