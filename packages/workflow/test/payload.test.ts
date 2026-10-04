@@ -24,6 +24,16 @@ describe("workflow payload validation", () => {
     await expect(validatePayload("hello", Object.create(inherited))).rejects.toMatchObject({ code: "WORKFLOW_R0022" })
   })
 
+  it("accepts class-backed parser schemas", async () => {
+    class ParserSchema {
+      parse(value: unknown) {
+        return String(value).toUpperCase()
+      }
+    }
+
+    await expect(validatePayload("hello", new ParserSchema())).resolves.toBe("HELLO")
+  })
+
   it("accepts parser functions", async () => {
     await expect(validatePayload("hello", value => String(value).length)).resolves.toBe(5)
   })

@@ -25,7 +25,7 @@ export async function validatePayload<T>(payload: unknown, schema: PayloadValida
     return await schema(payload)
   }
 
-  if (Object.hasOwn(schema, "safeParse") && typeof (schema as { safeParse?: unknown }).safeParse === "function") {
+  if (hasSchemaMethod(schema, "safeParse") && typeof (schema as { safeParse?: unknown }).safeParse === "function") {
     const result = (schema as PayloadSchema<T>).safeParse(payload)
     if (!result.success) {
       throw result.error || workflowErrorDiagnostics.WORKFLOW_R0021({ message: "Invalid workflow payload." })
@@ -33,11 +33,21 @@ export async function validatePayload<T>(payload: unknown, schema: PayloadValida
     return result.data as T
   }
 
-  if (Object.hasOwn(schema, "parse") && typeof (schema as { parse?: unknown }).parse === "function") {
+  if (hasSchemaMethod(schema, "parse") && typeof (schema as { parse?: unknown }).parse === "function") {
     return (schema as ParsePayloadSchema<T>).parse(payload)
   }
 
   throw workflowErrorDiagnostics.WORKFLOW_R0022({ message: "Invalid workflow payload schema." })
+}
+
+function hasSchemaMethod(value: object, key: "parse" | "safeParse"): boolean {
+  if (Object.hasOwn(value, key)) return true
+  const prototype = Object.getPrototypeOf(value)
+  return prototype !== null
+    && prototype !== Object.prototype
+    && Object.hasOwn(prototype, "constructor")
+    && prototype.constructor !== Object
+    && Object.hasOwn(prototype, key)
 }
 
 export async function readValidatedPayload<T>(request: Request, schema: PayloadValidator<T>): Promise<T> {
