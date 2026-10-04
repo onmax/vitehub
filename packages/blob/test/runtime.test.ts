@@ -749,8 +749,11 @@ describe("blob runtime", () => {
     ])
   })
 
+  const validFilesSdkCursor = Buffer.from(JSON.stringify({ index: 0 })).toString("base64url")
   it.each([
     ["invalid encoding", "!"],
+    ["padded valid cursor", `${validFilesSdkCursor}==`],
+    ["ignored punctuation", `${validFilesSdkCursor}?`],
     ["invalid JSON", btoa("invalid JSON")],
     ["null", Buffer.from(JSON.stringify(null)).toString("base64url")],
     ["array", Buffer.from(JSON.stringify([])).toString("base64url")],
