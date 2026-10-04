@@ -117,6 +117,16 @@ describe("defineCollectionHandler", () => {
     expect(() => defineCollectionHandler(collection as never)).toThrow("defineCollectionHandler() requires a Collection")
   })
 
+  it("rejects inherited Collection methods with a forged constructor", () => {
+    const collection = Object.create({
+      constructor: function Fake() {},
+      page: async () => ({ items: [], nextCursor: null }),
+      parseQuery: async () => ({}),
+    })
+
+    expect(() => defineCollectionHandler(collection as never)).toThrow("defineCollectionHandler() requires a Collection")
+  })
+
   it("accepts Collection methods declared on a class prototype", () => {
     class CollectionLike {
       async page() {
