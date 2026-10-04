@@ -214,4 +214,22 @@ describe("mcpResources", () => {
 
     await expect(source.getItem("example/payload.bin", { rootDir: "/tmp" })).rejects.toThrow(/invalid base64/i)
   })
+
+  it("rejects a server that repeats a pagination cursor", async () => {
+    const source = mcpResources({
+      server: {
+        async listResources() {
+          return {
+            nextCursor: "same",
+            resources: [],
+          }
+        },
+        async readResource() {
+          return { contents: [] }
+        },
+      },
+    })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/pagination cursor/i)
+  })
 })

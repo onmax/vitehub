@@ -1,7 +1,12 @@
 <script setup lang="ts">
+import { docsManifest } from "~~/modules/vitehub-docs/runtime/utils/docs";
+import { isDocsLandingPath } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+
 const route = useRoute();
 // On docs routes the brand opens the product catalog, like a docs site logo. Elsewhere it opens the home page.
 const isDocsRoute = computed(() => route.path.startsWith("/docs"));
+// Landing pages center their content, so the header container matches that width and the brand aligns with the hero.
+const isLanding = computed(() => isDocsLandingPath(docsManifest.sections, route.path));
 const isSupportMatrix = computed(
   () => route.path.replace(/\/+$/, "") === "/docs/frameworks-hosts/support-matrix",
 );
@@ -33,8 +38,8 @@ const touchIconButton = "pointer-coarse:h-10 pointer-coarse:w-9 pointer-coarse:j
   <div class="sticky top-0 z-50">
     <UHeader
       :ui="{
-        // Docs pages pin the sidebar to the left edge, so the docs header spans the full width.
-        container: isDocsRoute && !isSupportMatrix ? 'max-w-none' : undefined,
+        // Landing pages share the landing column width. Other docs pages pin the sidebar left, so the header spans the full width.
+        container: isLanding ? 'max-w-(--vh-landing-width) mx-auto !ps-4 !pe-4 sm:!ps-8 sm:!pe-8' : isDocsRoute && !isSupportMatrix ? 'max-w-none' : undefined,
         left: 'gap-6',
         right: 'pointer-coarse:gap-0.5',
         toggle: touchIconButton,

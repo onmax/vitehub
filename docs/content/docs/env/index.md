@@ -6,142 +6,73 @@ navigation.order: 1
 icon: i-lucide-key-round
 ---
 
-::product-hero{tagline="Declare browser-safe values, build replacements, server-only values, and secrets in the Vite config. ViteHub generates typed imports for each, and Secret Env values stay redacted until server code calls unseal()."}
+::product-hero{tagline="Declare public, build-time, server, and secret values in the Vite config, and read them through generated typed imports." hosts="Node, Docker, Cloudflare, Vercel, Netlify, Deno"}
+  :::code-group
+  ```ts [vite.config.ts]
+  import { env, hubEnv } from '@vite-hub/env/vite'
+  import { defineConfig } from 'vite'
 
-```ts [server/github.ts]
-import { useServerEnv } from '#vitehub/env/server'
-
-export async function listIssues() {
-  const { github } = useServerEnv()
-
-  return fetch('https://api.github.com/issues', {
-    headers: {
-      authorization: `Bearer ${github.token.unseal()}`,
-    },
-  })
-}
-```
-
-::
-
-::product-feature{label="Configure" title="Host strings become typed values" to="/docs/env/configure" link-label="Declare Env values"}
-`env.public` becomes browser-safe Public Env, `env.define` becomes Vite replacements, and `env.server` becomes Server Env. Each declaration selects its source, default, and secret flag.
-
-`env.boolean()`, `env.number()`, and `env.enum()` parse the value and generate the exact type. An invalid value fails with `ENV_RUNTIME_VALUE_INVALID`, and the error never contains the value.
-
-#code
-```ts [vite.config.ts]
-import { env, hubEnv } from '@vite-hub/env/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [hubEnv()],
-  env: {
-    server: {
-      labeller: {
-        dryRun: env.boolean({ default: true }),
-        minConfidence: env.number({ default: 0.6 }),
-        mode: env.enum(['draft', 'send'], { default: 'draft' }),
-        apiKey: env({ secret: true }),
+  export default defineConfig({
+    plugins: [hubEnv()],
+    env: {
+      server: {
+        github: {
+          token: env({ secret: true, source: env.source('GITHUB_TOKEN') }),
+        },
+        labeller: {
+          dryRun: env.boolean({ default: true }),
+          minConfidence: env.number({ default: 0.6 }),
+          mode: env.enum(['draft', 'send'], { default: 'draft' }),
+        },
       },
     },
-  },
-})
-```
+  })
+  ```
 
-```ts [server/labeller.ts]
-import { useServerEnv } from '#vitehub/env/server'
+  ```ts [Server]
+  import { useServerEnv } from '#vitehub/env/server'
 
-const { labeller } = useServerEnv()
-if (!labeller.dryRun && labeller.mode === 'send') {
-  // labeller.minConfidence is a number.
-}
-```
-::
+  export async function listIssues() {
+    const { github } = useServerEnv()
 
-::product-feature{label="Public Env" title="Browser code reads Public Env from one stable import" to="/docs/env/server-api" link-label="Read the Env server API" reverse}
-ViteHub generates the backing module. Application code imports `#vitehub/env/public` and `#vitehub/env/server`, not generated file paths.
-
-Public Env and define values are visible in built client code. Put secrets only in Server Env with `secret: true`.
-
-#code
-```ts [src/config.ts]
-import { usePublicEnv } from '#vitehub/env/public'
-
-export const appName = usePublicEnv().appName
-```
-::
-
-::product-feature{label="Providers" title="Read credentials from external storage at each operation" to="/docs/env/server-api#read-external-env-storage" link-label="Read external Env storage"}
-An Env provider reads application-owned credentials that live outside the host environment. Declare only the keys the application uses.
-
-`loadServerEnv()` returns a new frozen snapshot on each call, so a rotated value is visible to the next load.
-
-#code
-```ts [vite.config.ts]
-import { env, hubEnv } from '@vite-hub/env/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [hubEnv({
-    providers: {
-      credentials: './server/env/credentials.ts',
-    },
-  })],
-  env: {
-    server: {
-      githubToken: env({
-        secret: true,
-        source: env.provider('credentials', 'github/token'),
-      }),
-    },
-  },
-})
-```
-
-```ts [server/sources/private-repository.ts]
-import { loadServerEnv } from '#vitehub/env/server'
-import { github } from 'vite-hub/workspace'
-
-export const privateRepository = github(async () => {
-  const env = await loadServerEnv()
-  return {
-    auth: env.githubToken.unseal(),
-    repo: 'acme/private-repository',
+    return fetch('https://api.github.com/issues', {
+      headers: {
+        authorization: `Bearer ${github.token.unseal()}`,
+      },
+    })
   }
-})
-```
+  ```
+
+  ```bash [CLI]
+  pnpm vitehub env inspect [--stage <name>] [--json]
+  pnpm vitehub env check [--stage <name>] [--json]
+  ```
+  :::
 ::
 
-::product-feature{label="Inspection" title="Check a stage before you deploy, without printing values" to="/docs/development/cli#inspect-server-env" link-label="Inspect Server Env from the CLI" reverse}
-`env inspect` lists each declared variable with its status, source, required flag, and secret flag. `env check` exits with `1` when Server Env would not load, so it can gate CI and deploy steps.
 
-The Console Env section shows the same status.
+::product-features
+  :::product-feature-item{title="Host strings become typed values" icon="i-lucide-sliders-horizontal" to="/docs/env/configure"}
+  `env.boolean()`, `env.number()`, and `env.enum()` parse each value.
+  :::
 
-#code
-```bash [Terminal]
-pnpm vitehub env inspect [--stage <name>] [--json]
-pnpm vitehub env check [--stage <name>] [--json]
-```
-::
+  :::product-feature-item{title="Secrets stay on the server, redacted" icon="i-lucide-shield-check" to="/docs/env/server-api"}
+  Secret Env stays redacted in Server Env until `unseal()`.
+  :::
 
-::product-feature{label="Env Bridge" title="Replace a credential without a redeploy" to="/docs/env/bridge" link-label="Set up Env Bridge"}
-Env Bridge is an Env provider with a secret store, per-key grants, and a durable activity log. A user, Agent, or service gets only the permissions you grant for that key. Host variables stay read-only.
+  :::product-feature-item{title="Read credentials from external storage" icon="i-lucide-database" to="/docs/env/server-api#read-external-env-storage"}
+  Each `loadServerEnv()` call reads a fresh snapshot from an Env provider.
+  :::
 
-A replacement with a stale revision fails with `ENV_BRIDGE_CONFLICT`. Use [Connections](/docs/connections) for OAuth tokens of connected accounts.
+  :::product-feature-item{title="Check a stage without printing values" icon="i-lucide-terminal" to="/docs/development/cli#inspect-server-env"}
+  `env check` exits `1` when Server Env would not load.
+  :::
 
-#code
-```ts
-// owner is an EnvAccessContext returned by your server authentication policy.
-await bridge.replace(owner, {
-  key: 'github/token',
-  value: newToken,
-  expectedRevision: null,
-})
-await bridge.grant(owner, {
-  actor: { kind: 'service', id: 'application' },
-  key: 'github/token',
-  permissions: ['use'],
-})
-```
+  :::product-feature-item{title="Replace a credential without a redeploy" icon="i-lucide-key-round" to="/docs/env/bridge"}
+  A secret store with per-key grants and a durable activity log.
+  :::
+
+  :::product-feature-item{title="Secrets resolve at runtime" icon="i-lucide-lock-keyhole" to="/docs/env/server-api"}
+  Keep secret values out of generated client and provider output.
+  :::
 ::

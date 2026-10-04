@@ -581,6 +581,7 @@ describe("vitehub", () => {
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
       "vite-hub/public-url",
+      "vite-hub/database-disabled",
       "vite-hub/dependencies",
       "@vite-hub/env/vite",
       "@vite-hub/connections/types-cleanup",

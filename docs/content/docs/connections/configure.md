@@ -19,9 +19,9 @@ export default defineConnection({
     client: ({ event }) => useServerEnv(event).crm,
     id: 'crm',
     origins: ['https://api.crm.example.com'],
-    scopes: ['contacts.read'],
     tokenUrl: 'https://crm.example.com/oauth/token',
   }),
+  scopes: ['contacts.read'],
 })
 ```
 
