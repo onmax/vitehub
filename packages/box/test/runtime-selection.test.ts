@@ -1,4 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 
 import { describe, expect, it } from "vitest";
 
@@ -65,6 +66,13 @@ describe("Box runtime selection", () => {
     await expect(resolveBox({ runtime: markerInherited }, {})).rejects.toThrow(
       'Custom Box runtimes cannot use the reserved name "trusted-host"',
     );
+
+    const foreignRealm = runInNewContext(`Object.assign(Object.prototype, {
+      name: "foreign",
+      open: async () => undefined,
+      prepare: async () => undefined,
+    }); ({})`);
+    await expect(resolveBox({ runtime: foreignRealm }, {})).rejects.toThrow(/Unknown Box runtime kind/);
   });
 
   it("keeps built-in names closed while allowing custom runtimes", () => {
