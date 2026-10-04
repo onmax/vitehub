@@ -71,14 +71,33 @@ describe("createWorkspaceTools", () => {
     expect(writeFile).not.toHaveBeenCalled()
   })
 
-  it("preserves mutable methods declared on Workspace classes", () => {
+  it.each([null, Object, function ForgedWorkspace() {}])("rejects inherited capabilities with constructor %s", async (constructor) => {
+    const writeFile = vi.fn()
+    const startSession = vi.fn()
+    const materializeSources = vi.fn()
+    const assets = Object.assign(Object.create({ constructor, sync: async () => {}, writeFile, startSession, materializeSources }), createAssets({ "README.md": "# Docs\n" }))
+
+    expect(() => createWorkspaceTools(assets, { operations: { write: true } })).toThrow(/require a mutable Workspace/)
+    const tools = createWorkspaceTools(assets, { operations: { materialize: true } })
+    await expect(runShell(tools, "cat README.md")).resolves.toMatchObject({ exitCode: 0, stdout: "# Docs\n" })
+    await expect(tools.materialize_sources.execute!({}, { toolCallId: "test", messages: [] } as never)).resolves.toMatchObject({ files: 1, sources: [] })
+    expect(writeFile).not.toHaveBeenCalled()
+    expect(startSession).not.toHaveBeenCalled()
+    expect(materializeSources).not.toHaveBeenCalled()
+  })
+
+  it("requires class capabilities to be explicitly bound as own methods", async () => {
     class WorkspaceLike {
       sync() {}
-      writeFile() {}
+      writeFile = vi.fn()
     }
-    const workspace = Object.assign(Object.create(WorkspaceLike.prototype), createAssets({ "README.md": "# Docs\n" }))
+    const workspace = Object.assign(new WorkspaceLike(), createAssets({ "README.md": "# Docs\n" }))
 
-    expect(createWorkspaceTools(workspace, { operations: { write: { writeFile: true } } })).toHaveProperty("writeFile")
+    expect(() => createWorkspaceTools(workspace, { operations: { write: { writeFile: true } } })).toThrow(/require a mutable Workspace/)
+    Object.assign(workspace, { sync: workspace.sync.bind(workspace) })
+    const tools = createWorkspaceTools(workspace, { operations: { write: { writeFile: true } } })
+    await tools.writeFile.execute!({ path: "README.md", content: "updated" }, { toolCallId: "test", messages: [] } as never)
+    expect(workspace.writeFile).toHaveBeenCalledWith("README.md", "updated", { mediaType: undefined })
   })
 
   it("does not call inherited asset materializers", async () => {
