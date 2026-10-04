@@ -171,6 +171,8 @@ function decodeUsageCursor(value: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error("Invalid usage cursor encoding")
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/")
   const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
+  // atob ignores unused pad bits, so require the canonical spelling too.
+  if (btoa(binary).replace(/=+$/, "") !== normalized) throw new Error("Invalid usage cursor encoding")
   return Uint8Array.from(binary, character => character.charCodeAt(0))
 }
 
