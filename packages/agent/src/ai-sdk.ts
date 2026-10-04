@@ -889,8 +889,20 @@ function isStandardSchemaInput(value: unknown): boolean {
   if (!("~standard" in value)) return false
   const marker = value["~standard"]
   if (!hasRuntimeType(marker, "object") || marker === null) return false
-  const version = Object.getOwnPropertyDescriptor(marker, "version")?.value
-  const validate = Object.getOwnPropertyDescriptor(marker, "validate")?.value
+  const versionDescriptor = Object.getOwnPropertyDescriptor(marker, "version")
+  const validateDescriptor = Object.getOwnPropertyDescriptor(marker, "validate")
+  let version: unknown
+  let validate: unknown
+  try {
+    version = versionDescriptor && ("value" in versionDescriptor
+      ? versionDescriptor.value
+      : versionDescriptor.get?.call(marker))
+    validate = validateDescriptor && ("value" in validateDescriptor
+      ? validateDescriptor.value
+      : validateDescriptor.get?.call(marker))
+  } catch {
+    return false
+  }
   return version === 1 && hasRuntimeType(validate, "function")
 }
 
