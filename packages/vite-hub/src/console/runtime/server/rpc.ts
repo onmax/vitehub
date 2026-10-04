@@ -97,12 +97,15 @@ async function consoleSearchError(response: Response): Promise<Error> {
   const text = await response.text()
   let message = text
   try {
-    const value: unknown = JSON.parse(text)
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      const statusMessage = Reflect.get(value, "statusMessage")
-      const responseMessage = Reflect.get(value, "message")
-      if (typeof statusMessage === "string") message = statusMessage
-      else if (typeof responseMessage === "string") message = responseMessage
+    const parsed = v.safeParse(v.object({
+      statusMessage: v.optional(v.unknown()),
+      message: v.optional(v.unknown()),
+    }), JSON.parse(text))
+    if (parsed.success) {
+      const statusMessage = v.safeParse(v.string(), parsed.output.statusMessage)
+      const responseMessage = v.safeParse(v.string(), parsed.output.message)
+      if (statusMessage.success) message = statusMessage.output
+      else if (responseMessage.success) message = responseMessage.output
     }
   }
   catch {
