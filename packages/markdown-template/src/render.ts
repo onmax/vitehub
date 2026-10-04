@@ -105,7 +105,7 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         handler: async (node, state, parent) => {
           const [tag, attrs, ...children] = node
           const props = resolveScalarTemplateAttributes(attrs, renderData(state))
-          const sanitized = await sanitizeUrlAttributes(tag, props, attrs, parent?.[0] === "svg")
+          const sanitized = await sanitizeUrlAttributes(tag, props, attrs, state.context.svg === true)
           const escaped = Object.fromEntries(Object.entries(sanitized).map(([key, value]) =>
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- String XML attributes need escaping; Comark serializes boolean and numeric attributes.
             [key, typeof value === "string" ? escapeHtml(value) : value]))
@@ -113,20 +113,27 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
           const content = attrs.$?.block === 1 && !literalHtmlTags.has(tag) && children.every(child => typeof child === "string")
             ? (await parseMarkdown(children.join(""), parseOptions)).nodes
             : children
-          return await state.handlers.html!([tag, { ...escaped, $: attrs.$ }, ...content], state, parent)
+          // Preserve SVG ancestry across descendants; foreignObject children use HTML semantics.
+          const revert = state.applyContext({ svg: tag.toLowerCase() === "svg" || state.context.svg === true && tag.toLowerCase() !== "foreignobject" })
+          try {
+            return await state.handlers.html!([tag, { ...escaped, $: attrs.$ }, ...content], state, parent)
+          }
+          finally {
+            state.applyContext(revert)
+          }
         },
       },
     },
   })).trim())
 }
 
-async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>, source: Record<string, unknown>, svgParent = false): Promise<Record<string, unknown>> {
+async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>, source: Record<string, unknown>, svgContext = false): Promise<Record<string, unknown>> {
   const sanitized = { ...props }
   for (const [key, value] of Object.entries(props)) {
     const attribute = key.toLowerCase()
     const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
       || (attribute === "href" || attribute === "xlink:href")
-        && (svgUrlAttributes.has(tag.toLowerCase()) || tag.toLowerCase() === "img" && svgParent)
+        && (svgUrlAttributes.has(tag.toLowerCase()) || tag.toLowerCase() === "img" && svgContext)
     if (typeof value !== "string" || !isUrl) continue
     const binding = source[`:${key}`]
     sanitized[key] = await safeLinkDestination(value, String(binding ?? key), { decodeHtmlEntities: binding === undefined })

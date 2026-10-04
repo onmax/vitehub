@@ -429,6 +429,21 @@ Unavailable
       .resolves.toBe('<policy action="review now">Use it.</policy>')
   })
 
+  it("validates normalized SVG image URLs through nested SVG elements", async () => {
+    for (const attribute of ["href", "xlink:href"]) {
+      await expect(renderMarkdownTemplate(`<svg><g><g><image ${attribute}="javascript:alert(1)"></image></g></g></svg>`))
+        .rejects.toThrow("must resolve to a safe destination")
+      await expect(renderMarkdownTemplate(`<svg><g><image :${attribute}="data.url"></image></g></svg>`, { data: { url: "https://example.com/a b" } }))
+        .resolves.toContain(`${attribute}="https://example.com/a%20b"`)
+      await expect(renderMarkdownTemplate(`<svg><g><image ${attribute}="https://example.com/a b"></image></g></svg>`))
+        .resolves.toContain(`${attribute}="https://example.com/a%20b"`)
+      await expect(renderMarkdownTemplate(`<svg><g></g></svg><img ${attribute}="javascript:alert(1)">`))
+        .resolves.toContain(`${attribute}="javascript:alert(1)"`)
+      await expect(renderMarkdownTemplate(`<svg><foreignObject><img ${attribute}="javascript:alert(1)"></foreignObject></svg>`))
+        .resolves.toContain(`${attribute}="javascript:alert(1)"`)
+    }
+  })
+
   it("renders scalar bindings in quoted XML attributes", async () => {
     expect(await renderMarkdownTemplate("<policy :audience=\"data.audience\" :tone=\"data.tone\">Use it.</policy>", {
       data: {
