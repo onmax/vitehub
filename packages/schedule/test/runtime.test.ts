@@ -44,6 +44,24 @@ function createDelayedHasKVStore(): ScheduleKVStorage & { releaseHas: () => void
   }
 }
 
+function createDelayedGetKVStore(): ScheduleKVStorage & { releaseGet: () => void } {
+  const store = createTestKVStore()
+  let reads = 0
+  let releaseGet!: () => void
+  const gate = new Promise<void>(resolve => { releaseGet = resolve })
+  return {
+    ...store,
+    async get(key) {
+      if (key.includes("/schedule-runs/") || key.includes("/schedule-run-attempts/")) {
+        reads++
+        if (reads <= 2) await gate
+      }
+      return await store.get(key)
+    },
+    releaseGet,
+  }
+}
+
 async function flushAsyncWork(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
@@ -1351,6 +1369,41 @@ describe("KV Schedule Run Store", () => {
     expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1)
     expect(results.filter(result => result.status === "rejected")).toHaveLength(1)
     await expect(store.getAttempt("attempt/1")).resolves.toMatchObject({ id: "attempt/1" })
+  })
+
+  it("serializes concurrent updates for the same KV schedule run and attempt keys", async () => {
+    const kvStore = createDelayedGetKVStore()
+    const store = createKVScheduleRunStore({ kvStore, prefix: "tests/update-lock" })
+    const createdAt = new Date("2026-05-23T09:00:00.000Z")
+    await store.createRun({
+      attemptCount: 0,
+      createdAt,
+      id: "run/1",
+      scheduleId: "schedule/1",
+      scheduledAt: createdAt,
+      status: "pending",
+      target: "daily/report",
+      updatedAt: createdAt,
+    })
+    await store.createAttempt({
+      createdAt,
+      id: "attempt/1",
+      runId: "run/1",
+      startedAt: createdAt,
+      status: "running",
+      updatedAt: createdAt,
+    })
+
+    const runStatus = store.updateRun("run/1", { status: "succeeded", updatedAt: new Date("2026-05-23T09:01:00.000Z") })
+    const runAttempts = store.updateRun("run/1", { attemptCount: 1, updatedAt: new Date("2026-05-23T09:02:00.000Z") })
+    const attemptStatus = store.updateAttempt("attempt/1", { status: "succeeded", updatedAt: new Date("2026-05-23T09:03:00.000Z") })
+    const attemptError = store.updateAttempt("attempt/1", { error: { message: "late" }, updatedAt: new Date("2026-05-23T09:04:00.000Z") })
+    await flushAsyncWork()
+    kvStore.releaseGet()
+    await Promise.all([runStatus, runAttempts, attemptStatus, attemptError])
+
+    await expect(store.getRun("run/1")).resolves.toMatchObject({ status: "succeeded", attemptCount: 1 })
+    await expect(store.getAttempt("attempt/1")).resolves.toMatchObject({ status: "succeeded", error: { message: "late" } })
   })
 })
 
