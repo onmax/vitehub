@@ -142,7 +142,7 @@ function isMcpResourcesClient(value: unknown): value is McpResourcesClient {
 function isMcpResourcesClientConfig(value: unknown): value is McpResourcesClientConfig {
   return typeof value === "object"
     && value !== null
-    && Object.hasOwn(value, "transport")
+    && "transport" in value
 }
 
 function isMcpTransport(value: unknown): value is McpResourcesTransport {

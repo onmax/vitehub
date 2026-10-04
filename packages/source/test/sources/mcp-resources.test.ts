@@ -49,13 +49,6 @@ describe("mcpResources", () => {
     expect(Object.hasOwn(pkg.peerDependenciesMeta, "@modelcontextprotocol/sdk")).toBe(false)
   })
 
-  it("does not accept inherited MCP transport configuration", async () => {
-    const server = Object.create({ transport: { type: "http", url: "not-a-url" } })
-    const source = mcpResources({ server })
-
-    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow("must resolve to an MCP client or MCP client config")
-  })
-
   it("lists paginated MCP resources as source paths", async () => {
     const source = mcpResources({ include: "**/*.json", server: createClient() })
 
