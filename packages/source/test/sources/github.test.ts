@@ -216,6 +216,17 @@ describe("@vite-hub/source GitHub source", () => {
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).startsWith("https://codeload.github.com/"))).toHaveLength(1)
   })
 
+  it("does not expose repeated-separator archive entries outside the configured root", async () => {
+    stubGitHubSource({
+      "docs//secret.md": "secret\n",
+      "docs/guide.md": "safe\n",
+    })
+
+    const docs = github({ ref: "main", repo: "acme/app", root: "docs" })
+
+    await expect(docs.getKeys({ rootDir: process.cwd() })).resolves.toEqual(["guide.md"])
+  })
+
   it("uses the GitHub archive directly for unsupported sparse patterns", async () => {
     stubGitHubSource({
       "docs/guides/setup.md": "# Setup\n",

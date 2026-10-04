@@ -77,7 +77,9 @@ export function github(options: GitHubSourceOptions): FileSource<string> {
     }
     if (!root) return normalized
     if (!normalized.startsWith(`${root}/`)) return undefined
-    return normalized.slice(root.length + 1)
+    const key = normalized.slice(root.length + 1)
+    if (!key || key.startsWith("/")) return undefined
+    return normalizeSafeSourcePath(key)
   }
 
   function repoPathForKey(key: string) {
