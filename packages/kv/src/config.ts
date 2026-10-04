@@ -63,6 +63,7 @@ function createResolvedConfig(store: ResolvedKVModuleOptions["store"], stores?: 
 }
 
 function hasStoresConfig(options: KVModuleOptions | undefined): options is KVStoresConfig {
+  // SAFETY: The own-property check establishes stores exists; its value stays unknown until isPlainObject validates it.
   return !!options && Object.hasOwn(options, "stores") && isPlainObject((options as { stores?: unknown }).stores)
 }
 
