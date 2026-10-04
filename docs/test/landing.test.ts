@@ -1,12 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { agentStory, installOptions, landingPrimitives } from "../app/components/landing/content";
+import {
+  agentStory,
+  installOptions,
+  landingPrimitives,
+  nuxtHubMigration,
+  sharedApi,
+} from "../app/components/landing/content";
 
 const landingFiles = [
   "Hero.vue",
   "InstallCommand.vue",
   "AgentStory.vue",
+  "SharedApi.vue",
   "Primitives.vue",
+  "NuxtHubMigration.vue",
   "Closing.vue",
   "PrimitiveMotion.vue",
   "content.ts",
@@ -41,6 +49,33 @@ describe("landing page", () => {
     }
   });
 
+  it("shows one primitive called from a route and from an Agent Capability", () => {
+    const [route, agent] = sharedApi.panes;
+    const routeCode = route.code.join("\n");
+    const agentCode = agent.code.join("\n");
+
+    expect(routeCode).toContain('import { kv } from "vite-hub/kv"');
+    expect(routeCode).toContain("kv.get(");
+    expect(agentCode).toContain('import { kv } from "vite-hub/agent/capabilities"');
+    expect(agentCode).toContain("capabilities: [kv(");
+    expect(`${routeCode}\n${agentCode}`).not.toContain("@vite-hub/");
+    expect(sharedApi.primitiveTo).toBe("/docs/kv");
+    expect(sharedApi.capabilityTo).toBe("/docs/kv/agent-capability");
+  });
+
+  it("links NuxtHub users to a migration guide with real import paths", async () => {
+    const guide = await readFile(
+      new URL("../content/docs/frameworks-hosts/migrate-from-nuxthub.md", import.meta.url),
+      "utf8",
+    );
+
+    expect(nuxtHubMigration.to).toBe("/docs/frameworks-hosts/migrate-from-nuxthub");
+    for (const entry of nuxtHubMigration.imports) {
+      expect(guide).toContain(entry.from);
+      expect(guide).toContain(entry.to);
+    }
+  });
+
   it("offers one-click skill and package commands in the hero", () => {
     expect(installOptions.skill.command).toBe("npx skills add https://vitehub.dev --skill vitehub");
     expect(installOptions.packages.map((option) => option.value)).toEqual([
@@ -68,6 +103,9 @@ describe("landing page", () => {
     const normalizedSource = source.replace(/\s+/g, " ");
 
     expect(source).toContain("Any agent, anywhere.");
+    expect(source).toContain("The server layer for Vite apps");
+    expect(source).toContain("One server API, Agents included.");
+    expect(source).toContain("Coming from NuxtHub?");
     expect(normalizedSource).toContain(
       "Bring any model or coding provider, compose your own Capabilities around a persistent Workspace",
     );
@@ -92,6 +130,7 @@ describe("landing page", () => {
     );
 
     expect(landingPrimitives.map((primitive) => primitive.id)).toEqual([
+      "agent",
       "workspace",
       "sandbox",
       "connections",

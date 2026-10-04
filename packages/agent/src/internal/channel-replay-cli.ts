@@ -1,7 +1,6 @@
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../invocation-stream.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 interface ChannelReplayCliContext {
   env: NodeJS.ProcessEnv
