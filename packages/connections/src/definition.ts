@@ -34,8 +34,8 @@ const oauthDefinitionSchema = v.looseObject({
 })
 const apiKeyDefinitionSchema = v.looseObject({
   provider: v.pipe(
-    v.unknown(),
-    v.check(provider => typeof provider === "object" && provider !== null && Object.hasOwn(provider, "kind")),
+    v.nonNullish(v.unknown()),
+    v.check(provider => Object.prototype.hasOwnProperty.call(provider, "kind")),
     v.looseObject({
       kind: v.literal("api-key"),
       id: v.pipe(v.string(), v.regex(/^\S+$/)),
