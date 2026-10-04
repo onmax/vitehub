@@ -378,6 +378,9 @@ async function verifyRequiredWebhookHeaders<TRuntimeConfig extends AgentRuntimeC
 ): Promise<AgentWebhookVerificationResult> {
   for (const registration of registrations) {
     const secretToken = await resolveMaybe(registration.secretToken, context)
+    if (secretToken !== undefined && secretToken !== false && typeof secretToken !== "string") {
+      throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" resolved secretToken to an invalid value.`)
+    }
     if (!registration.secretHeader) {
       if (secretToken === false) return { registration, verified: true }
       if (secretToken) {
@@ -429,6 +432,9 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
 
   for (const { headerValue, registration } of targeted) {
     const secretToken = await resolveMaybe(registration.secretToken, verificationContext)
+    if (secretToken !== undefined && secretToken !== false && typeof secretToken !== "string") {
+      throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" resolved secretToken to an invalid value.`)
+    }
     if (secretToken === false) {
       return { registration, verified: true }
     }
