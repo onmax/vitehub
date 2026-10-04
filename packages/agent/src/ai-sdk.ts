@@ -868,7 +868,7 @@ function withDefaultToolInputSchemas<TTools extends Record<string, unknown> | un
     }
     if (record.inputSchema != null) {
       const inputSchema = record.inputSchema
-      if (!hasRuntimeType(inputSchema, "object") || inputSchema === null || "~standard" in inputSchema || "jsonSchema" in inputSchema) {
+      if (!hasRuntimeType(inputSchema, "object") || inputSchema === null || Object.hasOwn(inputSchema, "~standard") || Object.hasOwn(inputSchema, "jsonSchema")) {
         return [name, tool]
       }
       return [name, copyToolWithOverrides(record, {
