@@ -7,11 +7,18 @@ import { toResponse } from "@vite-hub/runtime"
 import type { CloudflareQueueBatchErrorAction, CloudflareQueueBatchHandlerOptions, CloudflareQueueBinding, CloudflareQueueClient, CloudflareQueueMessage, CloudflareQueueMessageBatch, CloudflareQueueProviderOptions, QueueEnqueueOptions } from "../types.ts"
 
 function isCloudflareQueueBinding(binding: unknown): binding is CloudflareQueueBinding {
-  return binding !== null
-    && typeof binding === "object"
-    && !Array.isArray(binding)
-    && Object.hasOwn(binding, "send")
-    && Object.hasOwn(binding, "sendBatch")
+  if (binding === null || typeof binding !== "object" || Array.isArray(binding)) return false
+
+  const hasCallableMethod = (name: "send" | "sendBatch") =>
+    Object.hasOwn(binding, name) && typeof (binding as Record<string, unknown>)[name] === "function"
+
+  const prototype = Object.getPrototypeOf(binding)
+  const isClassInstance = prototype !== null
+    && Object.hasOwn(prototype, "constructor")
+    && typeof prototype.constructor === "function"
+    && prototype.constructor !== Object
+
+  return (isClassInstance || (hasCallableMethod("send") && hasCallableMethod("sendBatch")))
     && typeof (binding as CloudflareQueueBinding).send === "function"
     && typeof (binding as CloudflareQueueBinding).sendBatch === "function"
 }
