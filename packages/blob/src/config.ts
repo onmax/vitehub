@@ -197,7 +197,7 @@ function createResolvedConfig(
 }
 
 function hasStoresConfig(options: BlobModuleOptions | undefined): options is BlobStoresConfig {
-  return !!options && "stores" in options && isPlainObject((options as { stores?: unknown }).stores)
+  return !!options && Object.hasOwn(options, "stores") && isPlainObject((options as { stores?: unknown }).stores)
 }
 
 export function hasVercelBlobEnv(env: Record<string, string | undefined>): boolean {
