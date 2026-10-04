@@ -4,6 +4,7 @@ import json from "comark-content/plugins/json"
 import media from "comark-content/plugins/media"
 import sqliteFullTextSearch from "comark-content/plugins/sqlite-full-text-search"
 import { setTimeout as delay } from "node:timers/promises"
+import { runInNewContext } from "node:vm"
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest"
 
 import { clearSources, createSource, defineSource, registerSources, useSource } from "@vite-hub/source"
@@ -621,6 +622,30 @@ describe("contentSource", () => {
     await expect(source.getItem("index.md")).resolves.toBe("# Native")
   })
 
+  it("reads inherited class accessors with the source instance as this", async () => {
+    class AccessorSource {
+      #content = "# Native"
+
+      get keys() {
+        return async () => ["index.md"]
+      }
+
+      get getItem() {
+        const content = this.#content
+        return async () => content
+      }
+
+      get getItemRaw() {
+        const content = this.#content
+        return async () => content
+      }
+    }
+
+    const source = contentSource(new AccessorSource() as never)
+    await expect(source.keys()).resolves.toEqual(["index.md"])
+    await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
   it("does not treat a reader with inherited Comark methods as a native source", async () => {
     const source = Object.assign(Object.create({
       keys: async () => ["inherited.md"],
@@ -642,6 +667,19 @@ describe("contentSource", () => {
     }), {
       items: async () => [{ content: "# Reader", key: "reader.md" }],
     })
+
+    const adapted = contentSource(source as never)
+    await expect(adapted.keys()).resolves.toEqual(["reader.md"])
+    await expect(adapted.getItem("reader.md")).resolves.toBe("# Reader")
+  })
+
+  it("does not treat a reader from another realm's Object.prototype as a native source", async () => {
+    const source = runInNewContext(`
+      Object.prototype.keys = async () => ["inherited.md"];
+      Object.prototype.getItem = async () => "# Inherited";
+      Object.prototype.getItemRaw = async () => "# Inherited";
+      ({ items: async () => [{ content: "# Reader", key: "reader.md" }] })
+    `)
 
     const adapted = contentSource(source as never)
     await expect(adapted.keys()).resolves.toEqual(["reader.md"])

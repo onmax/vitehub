@@ -88,11 +88,13 @@ function hasCallableMethod(value: object, key: string): boolean {
   // prototype-backed object as a Source only when its immediate prototype is
   // an intentional constructor prototype. A plain object supplied through
   // Object.create({ ... }) has no own constructor and must not inherit a
-  // Source marker from that object (or from Object.prototype pollution).
+  // Source marker from that object (or from any realm's Object.prototype).
   let prototype = Object.getPrototypeOf(value)
-  if (!prototype || prototype === Object.prototype || !Object.hasOwn(prototype, "constructor")) return false
-  while (prototype && prototype !== Object.prototype) {
-    if (Object.hasOwn(prototype, key)) return isRuntimeFunction((prototype as Record<string, unknown>)[key])
+  if (!prototype || Object.getPrototypeOf(prototype) === null || !Object.hasOwn(prototype, "constructor")) return false
+  const constructor = (prototype as Record<string, unknown>).constructor
+  if (!isRuntimeFunction(constructor) || (constructor as { prototype?: unknown }).prototype !== prototype) return false
+  while (prototype && Object.getPrototypeOf(prototype) !== null) {
+    if (Object.hasOwn(prototype, key)) return isRuntimeFunction((value as Record<string, unknown>)[key])
     prototype = Object.getPrototypeOf(prototype)
   }
   return false
