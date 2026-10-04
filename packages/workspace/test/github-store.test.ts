@@ -174,10 +174,22 @@ it("rejects GitHub Workspace roots that escape the repository", () => {
   expect(() => resolveGitHubWorkspaceRoot("workspaces/<workspace>/../outside", "docs")).toThrow("escapes the workspace root");
 });
 
-it.each(["owner", "owner/", "/repo", "owner/repo/extra", "owner//repo"]) (
+it.each([
+  "owner", "owner/", "/repo", "owner/repo/extra", "owner//repo",
+  "owner/repo\\..\\other", "owner/.", "owner/..", "../repo",
+  "owner/%2e%2e", "owner/repo?ref=other", "owner/repo#other", "owner/repo\n", "owner/re po",
+]) (
   "rejects malformed GitHub repository %j",
   repository => {
     expect(() => splitGitHubRepository(repository, "store")).toThrow("requires a repository in owner/repo format");
+  },
+);
+
+it.each(["owner/repo", "owner-name/.github", "Owner123/repo_name-1.2"]) (
+  "accepts valid GitHub repository %j",
+  repository => {
+    const [owner, repo] = repository.split("/");
+    expect(splitGitHubRepository(repository, "store")).toEqual({ owner, repo });
   },
 );
 
