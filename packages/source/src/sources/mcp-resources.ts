@@ -337,7 +337,7 @@ function decodeBase64(value: string) {
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 === 1 || /=[A-Za-z0-9+/]/.test(normalized)) {
     throw sourceError("[vitehub] MCP resource returned invalid base64 content.")
   }
-  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(normalized, "base64"))
+  if (globalThis.Buffer) return new Uint8Array(globalThis.Buffer.from(normalized, "base64"))
   const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index++) {
