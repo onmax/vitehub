@@ -73,7 +73,7 @@ async function loadVercelQueueClient(region: string | undefined): Promise<Vercel
       })
     }
 
-    return new (module.QueueClient as new (options: { region: string }) => VercelQueueSDK)({ region: resolvedRegion })
+    return new (module.QueueClient as unknown as new (options: { region: string }) => VercelQueueSDK)({ region: resolvedRegion })
   }
 
   if (Object.hasOwn(module, "send") && Object.hasOwn(module, "handleCallback") && isRuntimeFunction(module.send) && isRuntimeFunction(module.handleCallback)) {
