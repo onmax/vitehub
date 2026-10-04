@@ -23,6 +23,7 @@ function normalizeSessionPath(path = "", options: { allowEmpty?: boolean } = {})
 }
 
 export async function createBasicWorkspaceSession(workspace: Workspace, options?: WorkspaceSessionOptions): Promise<WorkspaceSession> {
+  const writeBackDisabled = options?.writeBack === false
   const sessionPaths = normalizeSessionPaths(options)
   const overlay = createMemoryWorkspaceStore()
   const initialEntries = filterSessionEntries(await workspace.list("", { recursive: true }), sessionPaths)
@@ -85,13 +86,13 @@ export async function createBasicWorkspaceSession(workspace: Workspace, options?
       return hits
     },
     async diff() {
-      if (options?.writeBack === false) {
+      if (writeBackDisabled) {
         throw workspaceError("[vitehub] Workspace Session diff is unavailable when writeBack is false.")
       }
       return filterSessionDiff(await overlay.diff(), sessionPaths)
     },
     async commit(commitOptions) {
-      if (options?.writeBack === false) {
+      if (writeBackDisabled) {
         throw workspaceError("[vitehub] Workspace Session commit is unavailable when writeBack is false.")
       }
       const diff = await overlay.diff()
