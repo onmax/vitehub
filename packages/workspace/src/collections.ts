@@ -120,7 +120,7 @@ function matchesFilter(value: unknown, expected: WorkspaceCollectionFilter | und
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Filter values are parsed from the public collection query contract.
   if (typeof expected === "object" && !Array.isArray(expected)) return expected.empty && values.length === 0
   const candidates = (Array.isArray(expected) ? expected : [expected])
-    .filter((item): item is string => item !== undefined)
+    .filter((item): item is string => item !== undefined && item !== null)
     .map(item => item.toLocaleLowerCase())
   if (!candidates.length) return true
   return candidates.some(candidate => values.includes(candidate))
@@ -159,7 +159,10 @@ function normalizedFilters(filters: WorkspaceCollectionQuery["filters"]): Record
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Collection filters cross a JSON boundary.
     .map(([field, value]) => [field, typeof value === "object" && value !== null && !Array.isArray(value)
       ? ["operator:empty"]
-      : (Array.isArray(value) ? value : [value]).map(item => `value:${item.toLocaleLowerCase()}`).sort()]))
+      : (Array.isArray(value) ? value : [value])
+        .filter((item): item is string => item !== undefined && item !== null)
+        .map(item => `value:${item.toLocaleLowerCase()}`).sort()])
+    .filter(([, values]) => values.length > 0))
 }
 
 async function queryDigest(query: WorkspaceCollectionQuery, limit: number): Promise<string> {
