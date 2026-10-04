@@ -193,4 +193,43 @@ describe("mcpResources", () => {
     expect(requestSignal?.aborted).toBe(true)
     expect(close).not.toHaveBeenCalled()
   })
+
+  it("rejects malformed base64 resource content", async () => {
+    const source = mcpResources({
+      server: {
+        async listResources() {
+          return {
+            resources: [{
+              mimeType: "application/octet-stream",
+              name: "payload",
+              uri: "resource://example/payload",
+            }],
+          }
+        },
+        async readResource() {
+          return { contents: [{ blob: "not-base64!", mimeType: "application/octet-stream", uri: "resource://example/payload" }] }
+        },
+      },
+    })
+
+    await expect(source.getItem("example/payload.bin", { rootDir: "/tmp" })).rejects.toThrow(/invalid base64/i)
+  })
+
+  it("rejects a server that repeats a pagination cursor", async () => {
+    const source = mcpResources({
+      server: {
+        async listResources() {
+          return {
+            nextCursor: "same",
+            resources: [],
+          }
+        },
+        async readResource() {
+          return { contents: [] }
+        },
+      },
+    })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/pagination cursor/i)
+  })
 })

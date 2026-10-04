@@ -46,7 +46,7 @@ import { encodeAgentRouteParam } from "../src/console/runtime/console-route.ts"
 import { installConsoleAgentDefinitions, installConsoleAgents } from "../src/console/runtime/server/agents.ts"
 import { createConsoleFixtureInvocations, createConsoleInvocations, getConsoleInvocationsDatabase, installConsoleFixtureInvocations, installConsoleInvocations, resolveConsoleDatabaseOptions } from "../src/console/runtime/server/invocations.ts"
 import { console as consoleRuntime } from "../src/console/server.ts"
-import invocationHandler from "../src/console/runtime/server/invocation.get.ts"
+import invocationHandler, { cancelConsoleInvocation, getConsoleInvocationDetail } from "../src/console/runtime/server/invocation.get.ts"
 import invocationCapabilitiesHandler from "../src/console/runtime/server/invocation-capabilities.get.ts"
 import invocationsHandler from "../src/console/runtime/server/invocations.get.ts"
 import consolePageHandler from "../src/console/runtime/server/page.get.ts"
@@ -2126,6 +2126,134 @@ describe("Agent invocation console", () => {
     }
   })
 
+  it("cancels running invocations only with Console invoke access", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-invocation-cancel-"))
+    let release: (value: string) => void = () => {}
+    let handlerStarted = false
+    const definition = defineAgent({
+      driver: { run: () => new Promise<string>((resolve) => {
+        release = resolve
+        handlerStarted = true
+      }) },
+      name: "support",
+    })
+    const detailEvent = (id: string, body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = `http://localhost/api/_vitehub/console/invocations/${id}`
+      return {
+        headers: new Headers({ host: "localhost" }),
+        method,
+        node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } },
+        req: { ...(body === undefined ? {} : { json: async () => body }), method, url },
+      }
+    }
+    const install = (invoke: boolean) => installConsoleAgentDefinitions([
+      { definition: { default: definition }, fallbackName: "help" },
+    ], { invoke, projectRoot: root })
+    try {
+      install(true)
+      const running = await agentInvocationsHandler({
+        context: { params: { agent: "support" } },
+        method: "POST",
+        req: {
+          json: async () => ({ prompt: "Compile the digest." }),
+          method: "POST",
+          url: "http://localhost/api/_vitehub/console/agents/support/invocations",
+        },
+      })
+      await vi.waitFor(async () => {
+        expect(handlerStarted).toBe(true)
+        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "running" })
+      }, { timeout: 4_000 })
+      await expect(getConsoleInvocationDetail(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { actions: { cancel: { available: true } } },
+      })
+
+      install(false)
+      const inspected = await getConsoleInvocationDetail(detailEvent(running.id))
+      expect(inspected.invocation).not.toHaveProperty("actions")
+      await expect(cancelConsoleInvocation(detailEvent(running.id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 403 })
+      await expect(definition.invocations?.getSummary(running.id)).resolves.not.toHaveProperty("cancelRequestedAt")
+
+      install(true)
+      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).rejects.toMatchObject({ statusCode: 409 })
+      await expect(invocationHandler(detailEvent("missing", { action: "cancel" }))).rejects.toMatchObject({ statusCode: 404 })
+      // A custom `run` Driver receives the abort signal, but the Console does not report the cancel as enforced.
+      await expect(invocationHandler(detailEvent(running.id, { action: "cancel" }))).resolves.toEqual({
+        delivery: "local",
+        id: running.id,
+        notEnforcedBy: "run",
+        outcome: "requested",
+        status: "running",
+      })
+      await expect(getConsoleInvocationDetail(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { cancelNotEnforcedBy: "run", cancelRequestedAt: expect.any(String), status: "running" },
+      })
+
+      release("done")
+      await vi.waitFor(async () => {
+        await expect(definition.invocations?.get(running.id)).resolves.toMatchObject({ status: "completed" })
+      }, { timeout: 4_000 })
+      await expect(invocationHandler(detailEvent(running.id, { action: "cancel" }))).resolves.toMatchObject({ outcome: "terminal", status: "completed" })
+      await expect(getConsoleInvocationDetail(detailEvent(running.id))).resolves.toMatchObject({
+        invocation: { actions: { cancel: { available: true }, delete: { available: true }, rerun: { available: true, prompt: "Compile the digest." } } },
+      })
+      await expect(invocationHandler(detailEvent(running.id, { action: "delete" }))).resolves.toEqual({ id: running.id, outcome: "deleted" })
+      await expect(definition.invocations?.getSummary(running.id)).resolves.toBeUndefined()
+    }
+    finally {
+      release("done")
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["completed", "failed", "cancelled"] as const)("aborts a stale local custom execution with a %s journal through Console", async status => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-terminal-abort-"))
+    const backing = createMemoryAgentInvocationStore()
+    const invocations = defineAgentInvocations({ store: backing })
+    let release: (value: string) => void = () => {}
+    let signal: AbortSignal | undefined
+    let ended = false
+    const definition = defineAgent({ driver: { run: async ({ input }) => {
+      signal = input.abortSignal
+      const result = await new Promise<string>(resolve => { release = resolve })
+      ended = true
+      return result
+    } }, invocations, name: "support" })
+    const request = (id: string, body?: unknown): ConsoleRequestEvent => {
+      const method = body === undefined ? "GET" : "POST"
+      const url = `http://localhost/api/_vitehub/console/invocations/${id}`
+      return { headers: new Headers({ host: "localhost" }), method, node: { req: { method, socket: { remoteAddress: "127.0.0.1" }, url } }, req: { ...(body === undefined ? {} : { json: async () => body }), method, url } }
+    }
+    try {
+      installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: true, projectRoot: root })
+      installConsoleInvocations(root, invocations)
+      const { id } = await agentInvocationsHandler({
+        context: { params: { agent: "support" } }, method: "POST",
+        req: { json: async () => ({ prompt: "Work until released." }), method: "POST", url: "http://localhost/api/_vitehub/console/agents/support/invocations" },
+      })
+      await vi.waitFor(() => expect(signal).toBeDefined())
+      // A replacement owner writes a terminal state while the original handler still runs.
+      await backing.update(id, { status, timestamp: new Date().toISOString() })
+      const terminalRecord = await backing.get(id)
+      installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: false, projectRoot: root })
+      expect((await getConsoleInvocationDetail(request(id))).invocation).not.toHaveProperty("actions")
+      await expect(invocationHandler(request(id, { action: "cancel" }))).rejects.toMatchObject({ statusCode: 403 })
+      expect(signal?.aborted).toBe(false)
+      installConsoleAgentDefinitions([{ definition: { default: definition }, fallbackName: "help" }], { invoke: true, projectRoot: root })
+      await expect(getConsoleInvocationDetail(request(id))).resolves.toMatchObject({
+        invocation: { status, actions: { cancel: { available: true } } },
+      })
+      await expect(invocationHandler(request(id, { action: "cancel" }))).resolves.toEqual({ delivery: "local", id, notEnforcedBy: "run", outcome: "terminal", status })
+      expect(signal?.aborted).toBe(true)
+      expect(ended).toBe(false)
+      expect(await backing.get(id)).toEqual(terminalRecord)
+      release("done")
+      await vi.waitFor(() => expect(ended).toBe(true))
+    }
+    finally { release("done"); await rm(root, { force: true, recursive: true }) }
+  })
+
   it("rejects disabled Agents, unknown profiles, and unsupported fields", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-invoke-validation-"))
     const definition = defineAgent({
@@ -2528,8 +2656,7 @@ describe("Agent invocation console", () => {
     const detailURL = "http://localhost/api/_vitehub/console/invocations/inv-delta"
     requestEvent.node!.req!.url = detailURL
     requestEvent.req!.url = detailURL
-    const initial = await invocationHandler(requestEvent)
-    if (!("observationCursor" in initial)) throw new TypeError("Expected invocation detail response")
+    const initial = await getConsoleInvocationDetail(requestEvent)
     await store.update("inv-delta", {
       observation: {
         name: "agent.invocation.running",
@@ -2543,7 +2670,7 @@ describe("Agent invocation console", () => {
     requestEvent.node!.req!.url = url
     requestEvent.req!.url = url
 
-    await expect(invocationHandler(requestEvent)).resolves.toMatchObject({
+    await expect(getConsoleInvocationDetail(requestEvent)).resolves.toMatchObject({
       appendObservations: true,
       invocation: { id: "inv-delta" },
       observations: [{ sequence: 3 }],
@@ -2558,8 +2685,7 @@ describe("Agent invocation console", () => {
       },
       timestamp: "2026-08-23T12:00:04.000Z",
     })
-    const replaced = await invocationHandler(requestEvent)
-    if (!("observations" in replaced) || !("observationCursor" in replaced)) throw new TypeError("Expected invocation detail response")
+    const replaced = await getConsoleInvocationDetail(requestEvent)
     expect(replaced.appendObservations).toBeUndefined()
     expect(replaced.observations.map(observation => observation.sequence)).toEqual([0, 1, 2, 3])
 
@@ -2570,7 +2696,72 @@ describe("Agent invocation console", () => {
     const truncatedURL = `${detailURL}?observationCount=4&observationCursor=${encodeURIComponent(replaced.observationCursor)}`
     requestEvent.node!.req!.url = truncatedURL
     requestEvent.req!.url = truncatedURL
-    await expect(invocationHandler(requestEvent)).resolves.not.toHaveProperty("appendObservations")
+    await expect(getConsoleInvocationDetail(requestEvent)).resolves.not.toHaveProperty("appendObservations")
+  })
+
+  it("rejects malformed invocation URL ids with a client error", async () => {
+    installConsoleInvocationFallback(defineAgentInvocations({ store: createMemoryAgentInvocationStore() }), process.cwd())
+    const requestEvent = event("127.0.0.1")
+    const malformedURL = "http://localhost/api/_vitehub/console/invocations/%E0%A4%A"
+    requestEvent.node!.req!.url = malformedURL
+    requestEvent.req!.url = malformedURL
+
+    await expect(invocationHandler(requestEvent)).rejects.toMatchObject({
+      statusCode: 400,
+      statusMessage: "Malformed invocation id.",
+    })
+  })
+
+  it("rejects malformed invocation URL ids with a client error", async () => {
+    installConsoleInvocationFallback(defineAgentInvocations({ store: createMemoryAgentInvocationStore() }), process.cwd())
+    const requestEvent = event("127.0.0.1")
+    const malformedURL = "http://localhost/api/_vitehub/console/invocations/%E0%A4%A"
+    requestEvent.node!.req!.url = malformedURL
+    requestEvent.req!.url = malformedURL
+
+    await expect(invocationHandler(requestEvent)).rejects.toMatchObject({
+      statusCode: 400,
+      statusMessage: "Malformed invocation id.",
+    })
+  })
+
+  it("rejects malformed invocation URL ids with a client error", async () => {
+    installConsoleInvocationFallback(defineAgentInvocations({ store: createMemoryAgentInvocationStore() }), process.cwd())
+    const requestEvent = event("127.0.0.1")
+    const malformedURL = "http://localhost/api/_vitehub/console/invocations/%E0%A4%A"
+    requestEvent.node!.req!.url = malformedURL
+    requestEvent.req!.url = malformedURL
+
+    await expect(invocationHandler(requestEvent)).rejects.toMatchObject({
+      statusCode: 400,
+      statusMessage: "Malformed invocation id.",
+    })
+  })
+
+  it("rejects malformed invocation URL ids with a client error", async () => {
+    installConsoleInvocationFallback(defineAgentInvocations({ store: createMemoryAgentInvocationStore() }), process.cwd())
+    const requestEvent = event("127.0.0.1")
+    const malformedURL = "http://localhost/api/_vitehub/console/invocations/%E0%A4%A"
+    requestEvent.node!.req!.url = malformedURL
+    requestEvent.req!.url = malformedURL
+
+    await expect(invocationHandler(requestEvent)).rejects.toMatchObject({
+      statusCode: 400,
+      statusMessage: "Malformed invocation id.",
+    })
+  })
+
+  it("rejects malformed invocation URL ids with a client error", async () => {
+    installConsoleInvocationFallback(defineAgentInvocations({ store: createMemoryAgentInvocationStore() }), process.cwd())
+    const requestEvent = event("127.0.0.1")
+    const malformedURL = "http://localhost/api/_vitehub/console/invocations/%E0%A4%A"
+    requestEvent.node!.req!.url = malformedURL
+    requestEvent.req!.url = malformedURL
+
+    await expect(invocationHandler(requestEvent)).rejects.toMatchObject({
+      statusCode: 400,
+      statusMessage: "Malformed invocation id.",
+    })
   })
 
   it("bounds each console response to the requested page size", async () => {

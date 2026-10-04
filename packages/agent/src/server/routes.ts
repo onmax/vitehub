@@ -37,6 +37,8 @@ import { createAgentInvocationContextStore } from "../invocation-context.ts"
 import { withAgentInvocationResponseOwner } from "../internal/agent-invocation-response-owner.ts"
 import { sameInlineInvoker } from "../internal/inline-invoker.ts"
 import { agentInvocationId, recoverInterruptedAgentInvocations } from "../invocations.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
+import { isAgentInvocationCancellationError } from "../internal/invocation-cancellation.ts"
 import { finalChannelOutputContextKey, hasOnlyPortableAgentWorkflowCapabilities, requireAgentWorkflowContextKey } from "../internal/final-channel-output.ts"
 import { agentChannelHistoryHeader } from "../internal/channel-history.ts"
 import { agentChannelSyncProviderHeader } from "../internal/channel-sync.ts"
@@ -1405,6 +1407,18 @@ function startWebhookQueueHeartbeat(state: AgentWebhookQueueStateAdapter, delive
   }
 }
 
+async function queuedWebhookInvocationCancelled(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  runId: string | undefined,
+  error: unknown,
+): Promise<boolean> {
+  if (!runId) return false
+  const agentName = (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
+  const id = await agentInvocationId(runId, agentName)
+  return isAgentInvocationCancellationError(error, id)
+}
+
 async function executeQueuedWebhookDelivery(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   state: AgentWebhookQueueStateAdapter,
@@ -1493,6 +1507,7 @@ async function executeQueuedWebhookDelivery(
   else lifecycleSignal.addEventListener("abort", stopForLifecycle, { once: true })
   let context: ViteAgentRouteRuntimeContext
   let channelDelivery: Awaited<ReturnType<typeof resumeAgentChannelDelivery>>
+  let invocationRunId: string | undefined
   try {
     if (delivery.concurrencyKey) {
       const fenceAcquisition = state.acquireLock(webhookConcurrencyFenceKey(delivery.concurrencyKey), delivery.leaseTtlMs)
@@ -1589,6 +1604,7 @@ async function executeQueuedWebhookDelivery(
       }
     }
     if (invocation) {
+      invocationRunId = invocation.run?.runId
       const baseRunContext = createRuntimeContext(
         request,
         invocation.run,
@@ -1660,6 +1676,7 @@ async function executeQueuedWebhookDelivery(
           }
           throw error
         })
+        invocationRunId ??= controller.id
         const result = awaitAgentInvocationResult(controller)
         const settlement = result.then(async (output) => {
           if (!isWorkflowRun(output) || output.status !== "queued") await runContext.flushWaitUntil?.()
@@ -1737,6 +1754,17 @@ async function executeQueuedWebhookDelivery(
     resolveActiveCompletion?.()
   } catch (error) {
     rejectActiveCompletion?.(error)
+    // A user cancellation is final. A retry would run the cancelled Invocation again.
+    if (!executionTimedOut && await queuedWebhookInvocationCancelled(agent, handlerOptions, invocationRunId, error)) {
+      if (await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken) && channelDelivery) {
+        await settleChannelDeliveryInvocation(channelDelivery, "failed", "failed", {
+          attempt: delivery.attempts + 1,
+          error: channelDeliveryError(error),
+          runId: invocationRunId,
+        })
+      }
+      return
+    }
     if (executionTimedOut || (!lifecycleSignal.aborted && delivery.attempts + 1 >= maxWebhookQueueAttempts)) {
       if (await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
         if (channelDelivery)

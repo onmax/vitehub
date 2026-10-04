@@ -4,8 +4,7 @@ import {
   normalizeCapabilities,
 } from "./capability-runtime.ts"
 import { AgentHttpError } from "./http-error.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { isRuntimeFunction, isRuntimeString } from "./internal/runtime-value.ts"
 
 import type {
@@ -40,7 +39,7 @@ import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 
-function isTriggerInputSchema<TInput>(input: string | StandardSchemaV1<unknown, TInput> | undefined): input is StandardSchemaV1<unknown, TInput> {
+export function isTriggerInputSchema<TInput>(input: string | StandardSchemaV1<unknown, TInput> | undefined): input is StandardSchemaV1<unknown, TInput> {
   if (!isRuntimeRecord(input) && !hasRuntimeType(input, "function")) return false
   if (!("~standard" in input)) return false
   const standard = input["~standard"]

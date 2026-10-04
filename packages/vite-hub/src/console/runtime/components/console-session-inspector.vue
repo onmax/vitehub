@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AgentCapabilityInspector, AgentFileTree, AgentInvocationInspector, AgentPatchDiff, invocationActivities, type AgentInvocationView } from "@vite-hub/ui";
 import type { DropdownMenuItem, TabsItem } from "@nuxt/ui";
+import { TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import ConsoleSessionCodePreview from "./console-session-code-preview.vue";
 import ConsoleSessionTrace from "./console-session-trace.vue";
@@ -494,37 +495,34 @@ function message(error: unknown) {
   <aside class="session-inspector">
     <header class="session-inspector__header">
       <div ref="tabstrip" class="session-inspector__tabstrip">
-        <UTabs
+        <TabsRoot
           v-if="surfaceItems.length"
           :model-value="activeSurface"
-          :items="surfaceItems"
-          :content="false"
           class="session-inspector__tabs"
-          color="neutral"
-          size="xs"
-          variant="pill"
-          :ui="{
-            root: 'min-w-0',
-            list: 'w-max min-w-0 gap-1 bg-transparent p-0',
-            indicator: 'hidden',
-            trigger:
-              'group/tab h-6 max-w-36 shrink-0 grow-0 cursor-pointer justify-start gap-0.5 rounded-md px-1.5 py-0 text-xs',
-            label: 'truncate',
-          }"
+          orientation="horizontal"
           @update:model-value="activateSurface"
         >
-          <template #leading="{ item }">
-            <button
-              type="button"
-              class="session-inspector__tab-close"
-              :aria-label="`Close ${item.label}`"
-              @click.stop="closeSurface(item)"
-            >
-              <UIcon :name="item.icon" class="session-inspector__surface-icon" />
-              <UIcon name="i-lucide-x" class="session-inspector__surface-close" />
-            </button>
-          </template>
-        </UTabs>
+          <TabsList data-slot="list">
+            <div v-for="item in surfaceItems" :key="String(item.value)" class="session-inspector__tab">
+              <TabsTrigger
+                :value="String(item.value)"
+                data-slot="trigger"
+                class="group/tab h-6 max-w-36 shrink-0 grow-0 cursor-pointer justify-start gap-0.5 rounded-md px-1.5 py-0 text-xs"
+              >
+                <UIcon :name="item.icon" class="session-inspector__surface-icon" aria-hidden="true" />
+                <span class="truncate">{{ item.label }}</span>
+              </TabsTrigger>
+              <button
+                type="button"
+                class="session-inspector__tab-close"
+                :aria-label="`Close ${item.label}`"
+                @click.stop="closeSurface(item)"
+              >
+                <UIcon name="i-lucide-x" class="session-inspector__surface-close" aria-hidden="true" />
+              </button>
+            </div>
+          </TabsList>
+        </TabsRoot>
         <UDropdownMenu
           :items="launcherItems"
           :content="{ align: 'start', side: 'bottom', sideOffset: 6 }"
