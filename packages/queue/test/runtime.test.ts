@@ -192,9 +192,13 @@ describe("cloudflare queue runtime", () => {
     expect(report.mock.calls[0]?.[1]).toMatchObject({ queue: "image-expiry", retryable: true })
   })
 
-  it("ignores inherited Cloudflare retry directives", async () => {
+  it.each([
+    ["inherited", Object.create({ retry: { delaySeconds: 30 } })],
+    ["callable", Object.assign(() => undefined, { retry: { delaySeconds: 30 } })],
+    ["array", Object.assign([], { retry: { delaySeconds: 30 } })],
+  ])("ignores %s Cloudflare retry directives", async (_kind, action) => {
     const retry = vi.fn()
-    const onError = vi.fn(() => Object.create({ retry: { delaySeconds: 30 } }))
+    const onError = vi.fn(() => action)
     const batchHandler = createCloudflareQueueBatchHandler({
       onError,
       onMessage: async () => { throw new Error("boom") },

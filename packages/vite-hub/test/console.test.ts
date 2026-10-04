@@ -2573,17 +2573,33 @@ describe("Agent invocation console", () => {
     await expect(invocationHandler(requestEvent)).resolves.not.toHaveProperty("appendObservations")
   })
 
-  it("rejects malformed invocation URL ids with a client error", async () => {
+  it.each([false, true])("rejects malformed invocation URL ids with route params: %s", async (withParams) => {
     installConsoleInvocationFallback(defineAgentInvocations({ store: createMemoryAgentInvocationStore() }), process.cwd())
     const requestEvent = event("127.0.0.1")
     const malformedURL = "http://localhost/api/_vitehub/console/invocations/%E0%A4%A"
     requestEvent.node!.req!.url = malformedURL
     requestEvent.req!.url = malformedURL
+    if (withParams) requestEvent.context = { params: { id: "%E0%A4%A" } }
 
     await expect(invocationHandler(requestEvent)).rejects.toMatchObject({
       statusCode: 400,
       statusMessage: "Malformed invocation id.",
     })
+  })
+
+  it.each(["team/run", "team%2Frun", "%E0%A4%A"])("decodes invocation URL ids once: %s", async (id) => {
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = "2026-08-23T12:00:00.000Z"
+    await store.create({ id, createdAt: timestamp, updatedAt: timestamp, status: "completed", observations: [], traceId: "trace-encoded" })
+    installConsoleInvocationFallback(defineAgentInvocations({ store }), process.cwd())
+    for (const paramId of [encodeURIComponent(id), id]) {
+      const requestEvent = event("127.0.0.1")
+      const url = `http://localhost/api/_vitehub/console/invocations/${encodeURIComponent(id)}`
+      requestEvent.node!.req!.url = url
+      requestEvent.req!.url = url
+      requestEvent.context = { params: { id: paramId } }
+      await expect(invocationHandler(requestEvent)).resolves.toMatchObject({ invocation: { id } })
+    }
   })
 
   it("bounds each console response to the requested page size", async () => {

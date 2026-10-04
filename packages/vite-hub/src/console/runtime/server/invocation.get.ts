@@ -78,8 +78,8 @@ function invocationActions(invocation: AgentInvocationRecord): ConsoleInvocation
 }
 
 function requestedInvocationId(event: ConsoleRequestEvent): string {
+  // Both route and RPC adapters provide an encoded URL; context params can already be decoded.
   const pathId = consoleRequestURL(event).pathname.split("/").at(-1)
-  if (event.context?.params?.id !== undefined) return event.context.params.id
   if (!pathId) return ""
   try {
     return decodeURIComponent(pathId)

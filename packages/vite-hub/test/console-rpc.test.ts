@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
+import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server"
 import { inspectServerEnv } from "@vite-hub/env"
 import { installConsoleEnv } from "../src/console/runtime/server/env.ts"
+import { consoleInvocationsIdentityKey, consoleInvocationsIdentityRootKey, consoleInvocationsKey, consoleInvocationsRegistryKey, consoleInvocationsRootIdentityRegistryKey, consoleInvocationsRootKey, installConsoleInvocationFallback } from "../src/console/internal.ts"
 
 import { requestConsole } from "../src/console/runtime/client/request.ts"
 import { consoleRpcHeader, consoleRpcMethods } from "../src/console/runtime/rpc.ts"
@@ -22,9 +24,23 @@ function call(body: string, init: RequestInit = {}): Promise<Response> {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  for (const key of [consoleInvocationsKey, consoleInvocationsRootKey, consoleInvocationsIdentityKey, consoleInvocationsIdentityRootKey, consoleInvocationsRegistryKey, consoleInvocationsRootIdentityRegistryKey]) {
+    Reflect.deleteProperty(globalThis, key)
+    Reflect.deleteProperty(process, key)
+  }
 })
 
 describe("Console RPC", () => {
+  it.each(["team/run", "team%2Frun", "%E0%A4%A"])("preserves decoded invocation ids: %s", async (id) => {
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = "2026-08-23T12:00:00.000Z"
+    await store.create({ id, createdAt: timestamp, updatedAt: timestamp, status: "completed", observations: [], traceId: "trace-rpc-encoded" })
+    installConsoleInvocationFallback(defineAgentInvocations({ store }), process.cwd())
+    const response = await call(JSON.stringify({ method: consoleRpcMethods.invocation, input: { id } }))
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ ok: true, value: { invocation: { id } } })
+  })
+
   it("preserves request bindings through Env status inspection", async () => {
     installConsoleSections("/console-rpc-env", ["env"])
     const binding = "request-only-secret"
