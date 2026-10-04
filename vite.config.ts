@@ -120,8 +120,7 @@ export default defineConfig({
       ...rootTestTasks,
       typecheck: {
         cache: false,
-        command:
-          "vp run build && vp run --filter vitehub-docs --ignore-depends-on typecheck && node test/run-package-task.mjs typecheck",
+        command: "node test/typecheck.mjs",
       },
       verify: {
         cache: false,

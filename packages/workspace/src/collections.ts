@@ -102,7 +102,9 @@ function valueAt(value: unknown, path: string): unknown {
       return current.map(item => visit(item, remaining)).filter(item => item !== undefined)
     }
     if (!isRecord(current)) return
-    return visit(current[remaining[0]!], remaining.slice(1))
+    const segment = remaining[0]!
+    if (!Object.hasOwn(current, segment)) return
+    return visit(current[segment], remaining.slice(1))
   }
   return visit(value, segments)
 }
@@ -181,8 +183,11 @@ function decodeCursor(cursor: string | undefined, expected: Omit<CollectionCurso
   if (!cursor) return 0
   let parsed: unknown
   try {
+    if (!/^[A-Za-z0-9_-]*$/.test(cursor) || cursor.length % 4 === 1) throw new TypeError("Malformed base64url cursor")
     const normalized = cursor.replaceAll("-", "+").replaceAll("_", "/")
-    parsed = JSON.parse(atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")))
+    const decoded = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
+    if (btoa(decoded).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "") !== cursor) throw new TypeError("Non-canonical base64url cursor")
+    parsed = JSON.parse(decoded)
   }
   catch {
     throw workspaceCollectionCursorError("malformed")
