@@ -158,7 +158,7 @@ function isMcpTransportConfig(value: unknown): value is Exclude<McpResourcesTran
   return typeof value === "object"
     && value !== null
     && Object.hasOwn(value, "url")
-    && (!Object.hasOwn(value, "type") || value.type === "http" || value.type === "sse")
+    && (!Reflect.has(value, "type") || (Object.hasOwn(value, "type") && (value.type === "http" || value.type === "sse")))
 }
 
 function hasDeclaredProperty(value: object, key: PropertyKey): boolean {
