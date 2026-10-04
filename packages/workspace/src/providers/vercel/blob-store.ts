@@ -310,8 +310,13 @@ class VercelBlobWorkspaceStore implements WorkspaceStore {
 
   async #listBlobs(prefix: string): Promise<BlobListItem[]> {
     const blobs: BlobListItem[] = []
+    const seenCursors = new Set<string>()
     let cursor: string | undefined
     do {
+      if (cursor && seenCursors.has(cursor)) {
+        throw workspaceError("[vitehub] Vercel Blob pagination returned a repeated cursor.")
+      }
+      if (cursor) seenCursors.add(cursor)
       const result = await (await this.#client()).list({
         cursor,
         limit: 1000,

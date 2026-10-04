@@ -80,6 +80,16 @@ afterEach(() => {
 })
 
 describe("Vercel Blob workspace store", () => {
+  it("rejects repeated pagination cursors before looping", async () => {
+    process.env.BLOB_READ_WRITE_TOKEN = "token"
+    const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
+    blobMock.list
+      .mockImplementationOnce(async () => ({ blobs: [], cursor: "same", hasMore: true }))
+      .mockImplementationOnce(async () => ({ blobs: [], cursor: "same", hasMore: true }))
+    const store = createVercelBlobWorkspaceStore({ provider: "vercel-blob", token: "token" }, "docs")
+    await expect(store.list()).rejects.toThrow("pagination returned a repeated cursor")
+    expect(blobMock.list).toHaveBeenCalledTimes(2)
+  })
   it("detects equal-size content changes in snapshot diffs", async () => {
     process.env.BLOB_READ_WRITE_TOKEN = "token"
     const { createVercelBlobWorkspaceStore } = await import("../src/providers/vercel/blob-store.ts")
