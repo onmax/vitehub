@@ -289,11 +289,16 @@ function shouldInclude(path: string, options: Pick<McpResourcesSourceOptions, "i
 
 async function listAllResources(client: McpResourcesClient, request: McpResourcesRequestOptions | undefined) {
   const resources: McpResourceDescriptor[] = []
+  const seenCursors = new Set<string>()
   let cursor: string | undefined
   do {
     const page = await client.listResources(cursor ? { cursor } : undefined, request)
     resources.push(...page.resources)
     cursor = page.nextCursor
+    if (cursor && seenCursors.has(cursor)) {
+      throw sourceError("[vitehub] mcpResources server returned the same pagination cursor twice.")
+    }
+    if (cursor) seenCursors.add(cursor)
   } while (cursor)
   return resources
 }

@@ -39,6 +39,24 @@ function createClient(): McpResourcesClient {
   }
 }
 
+function createRepeatingCursorClient(): McpResourcesClient {
+  return {
+    serverInfo: { name: "repeating", version: "test" },
+    async listResources() {
+      return {
+        nextCursor: "repeat",
+        resources: [{
+          name: "resource.txt",
+          uri: "resource://repeating/resource.txt",
+        }],
+      }
+    },
+    async readResource() {
+      return { contents: [{ mimeType: "text/plain", text: "ok", uri: "resource://repeating/resource.txt" }] }
+    },
+  }
+}
+
 describe("mcpResources", () => {
   it("owns the MCP SDK as a private build dependency", async () => {
     const { default: pkg } = await import("../../package.json", { with: { type: "json" } })
@@ -56,6 +74,15 @@ describe("mcpResources", () => {
       "nuxt-com/documentation-pages.json",
       "nuxt-com/blog-posts.json",
     ])
+  })
+
+  it("rejects a repeated pagination cursor", async () => {
+    const source = mcpResources({ server: createRepeatingCursorClient() })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toMatchObject({
+      code: "SOURCE_FAILED",
+      message: "[vitehub] mcpResources server returned the same pagination cursor twice.",
+    })
   })
 
   it("reads MCP resource contents and metadata", async () => {
