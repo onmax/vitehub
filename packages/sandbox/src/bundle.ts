@@ -118,7 +118,7 @@ export async function bundleSandboxDefinition(
           pluginBuild.onLoad({ filter: /.*/, namespace: SHIM_NAMESPACE }, () => ({
             contents: [
               'function hasStandardValidator(value) {',
-              '  return !!value && typeof value === "object" && !!value["~standard"] && typeof value["~standard"].validate === "function"',
+              '  return !!value && typeof value === "object" && Object.hasOwn(value, "~standard") && !!value["~standard"] && typeof value["~standard"].validate === "function"',
               '}',
               '',
               'function createValidationError(cause) {',

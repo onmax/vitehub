@@ -57,7 +57,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function hasStandardValidator<TInput, TOutput>(
   value: unknown,
 ): value is StandardSchemaValidator<TInput, TOutput> {
-  return isObject(value) && '~standard' in value && isObject(value['~standard']) && typeof value['~standard'].validate === 'function'
+  return isObject(value) && Object.hasOwn(value, '~standard') && isObject(value['~standard']) && typeof value['~standard'].validate === 'function'
 }
 
 function isErrorWithHttpMetadata(error: unknown): error is Error & ValidationErrorLike {
