@@ -79,6 +79,16 @@ function isRuntimeObject(value: unknown): value is object {
   return value !== null && Object(value) === value && !isRuntimeFunction(value)
 }
 
+function isConstructorPrototype(prototype: object): boolean {
+  if (!Object.hasOwn(prototype, "constructor")) return false
+  const constructor = (prototype as Record<string, unknown>).constructor
+  return isRuntimeFunction(constructor)
+    && (constructor as { prototype?: unknown }).prototype === prototype
+    // Object constructors have the same native representation across realms.
+    // Exclude their prototypes while allowing classes that extend null.
+    && Function.prototype.toString.call(constructor) !== Function.prototype.toString.call(Object)
+}
+
 function hasCallableMethod(value: object, key: string): boolean {
   if (Object.hasOwn(value, key)) {
     return isRuntimeFunction((value as Record<string, unknown>)[key])
@@ -90,10 +100,7 @@ function hasCallableMethod(value: object, key: string): boolean {
   // Object.create({ ... }) has no own constructor and must not inherit a
   // Source marker from that object (or from any realm's Object.prototype).
   let prototype = Object.getPrototypeOf(value)
-  if (!prototype || Object.getPrototypeOf(prototype) === null || !Object.hasOwn(prototype, "constructor")) return false
-  const constructor = (prototype as Record<string, unknown>).constructor
-  if (!isRuntimeFunction(constructor) || (constructor as { prototype?: unknown }).prototype !== prototype) return false
-  while (prototype && Object.getPrototypeOf(prototype) !== null) {
+  while (prototype && isConstructorPrototype(prototype)) {
     if (Object.hasOwn(prototype, key)) return isRuntimeFunction((value as Record<string, unknown>)[key])
     prototype = Object.getPrototypeOf(prototype)
   }

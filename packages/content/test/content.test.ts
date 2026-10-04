@@ -622,6 +622,53 @@ describe("contentSource", () => {
     await expect(source.getItem("index.md")).resolves.toBe("# Native")
   })
 
+  it("preserves native Sources with null-parent constructor prototypes", async () => {
+    class NullProtoSource extends null {
+      constructor() {
+        return Object.create(new.target.prototype)
+      }
+
+      async keys() {
+        return ["index.md"]
+      }
+
+      async getItem() {
+        return "# Native"
+      }
+
+      async getItemRaw() {
+        return "# Native"
+      }
+    }
+
+    const source = contentSource(new NullProtoSource(), { prefix: "configured" })
+    expect(source.prefix).toBe("configured")
+    await expect(source.keys()).resolves.toEqual(["index.md"])
+    await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
+  it("preserves ViteHub Sources inherited from null-parent constructor prototypes", async () => {
+    class NullProtoSource extends null {
+      constructor() {
+        return Object.create(new.target.prototype)
+      }
+
+      async getKeys() {
+        return ["index.md"]
+      }
+
+      async getItem() {
+        return { content: "# Native", key: "index.md" }
+      }
+    }
+
+    class DerivedSource extends NullProtoSource {}
+
+    const source = contentSource(new DerivedSource() as never)
+    await expect(source.keys()).resolves.toEqual(["index.md"])
+    await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
   it("reads inherited class accessors with the source instance as this", async () => {
     class AccessorSource {
       #content = "# Native"
