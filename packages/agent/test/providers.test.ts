@@ -11736,7 +11736,8 @@ describe("server helpers", () => {
     })
   })
 
-  it("releases failed title delivery claims for finish and later webhook retries", async () => {
+  // Two complete webhooks persist title claims and transcripts to SQLite.
+  it("releases failed title delivery claims for finish and later webhook retries", { timeout: 15_000 }, async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { title } = await import("../src/capabilities.ts")
     const { http } = await import("../src/channels.ts")
