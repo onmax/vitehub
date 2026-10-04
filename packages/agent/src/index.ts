@@ -3459,6 +3459,7 @@ function mergeWorkspaceSources(
   configured: WorkspaceDefinition["sources"] | undefined,
 ): WorkspaceDefinition["sources"] | undefined {
   if (!registered && !configured) return undefined
+  // SAFETY: The null-prototype map copies typed registered sources and receives only typed configured sources below.
   const sources = Object.assign(Object.create(null), registered) as NonNullable<WorkspaceDefinition["sources"]>
   for (const [key, source] of Object.entries(configured || {})) {
     if (Object.hasOwn(sources, key)) {

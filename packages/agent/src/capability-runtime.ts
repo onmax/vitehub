@@ -423,6 +423,7 @@ export function capabilityWorkspaceSources(
   capabilities: readonly AgentCapabilityDefinition[] | undefined,
 ): WorkspaceDefinition["sources"] | undefined {
   const normalized = normalizeCapabilities(capabilities)
+  // SAFETY: The empty null-prototype map receives only typed workspace source inputs below.
   const sources = Object.create(null) as NonNullable<WorkspaceDefinition["sources"]>
   for (const capability of normalized) {
     for (const [key, source] of Object.entries(capability.workspaceSources || {})) {

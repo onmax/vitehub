@@ -403,6 +403,7 @@ function withCapabilityWorkspaceSources(
 ): NormalizedWorkspaceOptions {
   const contributed = capabilityWorkspaceSources(capabilities)
   if (!contributed) return workspace
+  // SAFETY: The null-prototype map copies typed workspace sources and receives only typed capability sources below.
   const sources = Object.assign(Object.create(null), workspace.sources) as NonNullable<NormalizedWorkspaceOptions["sources"]>
   for (const [key, source] of Object.entries(contributed)) {
     if (Object.hasOwn(sources, key)) {
