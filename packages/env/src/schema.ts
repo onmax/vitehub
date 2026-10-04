@@ -44,6 +44,7 @@ export function parseSchema(schema: unknown, value: unknown, label: string): unk
     return result.value
   }
 
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Schema objects are untyped user input; validate the own method before invoking it.
   if (isZodLike(schema) && Object.hasOwn(schema, "safeParse") && typeof schema.safeParse === "function") {
     const result = schema.safeParse(value)
     if (!result.success) {
