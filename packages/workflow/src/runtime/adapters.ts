@@ -1,5 +1,5 @@
 import { deserializeResponse, isSerializedResponse } from "@vite-hub/runtime"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { getCloudflareEnv, resolveWaitUntil } from "@vite-hub/internal/runtime/cloudflare-env"
 
 import { createWorkflowError } from "../errors.ts"
@@ -93,7 +93,8 @@ function normalizeCloudflareStatus(status: unknown): WorkflowRunStatus {
   const value = hasRuntimeType(status, "object") && status && Object.hasOwn(status, "status")
     ? (status as { status?: unknown }).status
     : status
-  return cloudflareStatusMap[String(value || "").toLowerCase()] || "unknown"
+  const normalized = String(value || "").toLowerCase()
+  return Object.hasOwn(cloudflareStatusMap, normalized) ? cloudflareStatusMap[normalized]! : "unknown"
 }
 
 function ownSerializedOutput(metadata: unknown) {

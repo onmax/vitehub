@@ -387,6 +387,53 @@ describe("built-in deployment preset integration", () => {
     }
   }, 30_000)
 
+  it("emits discovered D1 bindings through the Nitro Vite plugin", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-d1-bindings-build-"))
+    try {
+      await mkdir(join(root, "server", "databases", "migrations"), { recursive: true })
+      await mkdir(join(root, "server", "routes"), { recursive: true })
+      await symlink(resolve(import.meta.dirname, "../../../node_modules"), join(root, "node_modules"), "dir")
+      await writeFile(join(root, "index.html"), "<main>ok</main>\n")
+      await writeFile(join(root, "server", "routes", "index.ts"), "export default () => 'ok'\n")
+      await writeFile(join(root, "server", "databases", "migrations", "0001_init.sql"), "create table notes (title text);\n")
+      await writeFile(join(root, "server", "databases", "config.ts"), [
+        "import { defineDatabase } from \"vite-hub/database\"",
+        "import { sqliteTable, text } from \"drizzle-orm/sqlite-core\"",
+        "const notes = sqliteTable(\"notes\", { title: text(\"title\") })",
+        "export default defineDatabase({",
+        "  cloudflare: { binding: \"DB\", databaseId: \"database-id\", databaseName: \"app\" },",
+        "  schema: { notes },",
+        "})",
+        "",
+      ].join("\n"))
+      const { nitro } = await import("nitro/vite" as string) as { nitro: () => unknown }
+      const builder = await createBuilder({
+        logLevel: "silent",
+        nitro: {
+          cloudflare: {
+            wrangler: {
+              d1_databases: [{ binding: "LEGACY", database_id: "legacy-id", database_name: "legacy" }],
+            },
+          },
+        },
+        root,
+        plugins: [vitehub({ database: { driver: "d1" }, preset: "cloudflare" }), nitro() as never],
+      } as Parameters<typeof createBuilder>[0])
+      await builder.buildApp()
+
+      const wrangler: unknown = JSON.parse(await readFile(join(root, ".output", "server", "wrangler.json"), "utf8"))
+      expect(wrangler).toHaveProperty("d1_databases", [
+        { binding: "LEGACY", database_id: "legacy-id", database_name: "legacy" },
+        { binding: "DB", database_id: "database-id", database_name: "app", migrations_dir: ".vitehub/database/migrations/DB" },
+      ])
+      await expect(readFile(join(root, ".output", "server", ".vitehub", "database", "migrations", "DB", "0001_init.sql"), "utf8"))
+        .resolves.toBe("create table notes (title text);\n")
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  }, 120_000)
+
   it("emits each required secret and user Wrangler entry once when Agents are enabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-agent-required-secrets-build-"))
     try {

@@ -284,7 +284,7 @@ const agentProperties: Record<AgentPropertyKey, {
     icon: "i-lucide-workflow",
     label: "runtime",
     title: "Execution runtime",
-    to: "/docs/server-primitives/workflows/",
+    to: "/docs/workflows/",
   },
   workspace: {
     description: "Provides the persistent file tree and selects where the Agent's working state is stored.",
@@ -298,7 +298,7 @@ const agentProperties: Record<AgentPropertyKey, {
     icon: "i-lucide-blocks",
     label: "capabilities",
     title: "Capabilities",
-    to: "/docs/capabilities/official-capabilities/",
+    to: "/docs/agents/capabilities/official/",
   },
   channels: {
     description: "Connects the Agent to triggers and delivery surfaces such as GitHub, Slack, and HTTP.",
@@ -809,7 +809,7 @@ function selectHost(key: string) {
       <div class="editor-pane">
         <div v-if="selectedFile.path.endsWith('.ts')" class="agent-code">
           <div class="agent-code-inner">
-            <p><span class="syntax-keyword">export default</span> <span class="text-highlighted">defineAgent</span>({</p>
+            <p><span><span class="syntax-keyword">export default</span> <span class="text-highlighted">defineAgent</span>({</span></p>
 
             <div
               v-for="propertyKey in selectedAgentConfig.visiblePropertyKeys"
@@ -1438,10 +1438,33 @@ function selectHost(key: string) {
   }
 }
 
+/* Touch targets fill the 2rem code rows instead of the 24px icon size. */
+@media (pointer: coarse) {
+  .property-remove {
+    min-width: 2rem;
+    min-height: 2rem;
+    justify-content: center;
+  }
+
+  .tree-file {
+    min-height: 2.25rem;
+  }
+}
+
 @media (max-width: 639px) {
   .workbench-body {
-    grid-template-columns: 11rem minmax(18rem, 1fr);
-    overflow-x: auto;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .file-tree {
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
+  }
+
+  .agent-code,
+  .editor-code {
+    height: 22rem;
   }
 }
 </style>
