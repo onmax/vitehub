@@ -124,7 +124,7 @@ async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>
   for (const [key, value] of Object.entries(props)) {
     const attribute = key.toLowerCase()
     const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
-      || attribute === "xlink:href" && svgUrlAttributes.has(tag.toLowerCase())
+      || (attribute === "href" || attribute === "xlink:href") && svgUrlAttributes.has(tag.toLowerCase())
     if (typeof value !== "string" || !isUrl) continue
     const binding = source[`:${key}`]
     sanitized[key] = await safeLinkDestination(value, String(binding ?? key), { decodeHtmlEntities: binding === undefined })
