@@ -83,12 +83,14 @@ export async function readWorkspaceFileOwner(store: WorkspaceStore, path: string
   const owner = value && typeof value === "object" ? value as Record<string, unknown> : undefined
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
   if (!owner || !Object.hasOwn(owner, "workspace") || typeof owner.workspace !== "string"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
     || !Object.hasOwn(owner, "source") || typeof owner.source !== "string" || (Object.hasOwn(owner, "digest") && owner.digest !== undefined && typeof owner.digest !== "string")) return undefined
   if (Object.hasOwn(owner, "checkpoint") && owner.checkpoint !== activeCheckpoints.get(workspaceStoreIdentity(store))?.get(normalizeWorkspacePath(path))) {
     const checkpoint = await store.getMeta?.(checkpointMetaKey(path))
     // SAFETY: The object check and own-key guards establish the persistence record shape before values are read.
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
     const checkpointRecord = checkpoint as Record<string, unknown> | undefined
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
     if (!checkpointRecord || typeof checkpointRecord !== "object"
       || !(Object.hasOwn(checkpointRecord, "token") && checkpointRecord.token === owner.checkpoint && Object.hasOwn(checkpointRecord, "committed") && checkpointRecord.committed === true
         || Object.hasOwn(checkpointRecord, "previous") && checkpointRecord.previous === owner.checkpoint)) {
