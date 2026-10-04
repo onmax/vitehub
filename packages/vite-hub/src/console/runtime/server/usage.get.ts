@@ -69,7 +69,7 @@ const usageHandler = async (event: ConsoleRequestEvent): Promise<Record<string, 
   if (statusValue !== null && !status) {
     throw Object.assign(
       viteHubErrorDiagnostics.VITE_HUB_R0072({ message: "Invalid usage status" }),
-      { statusCode: 400 },
+      { statusCode: 400, statusMessage: "Invalid usage status" },
     );
   }
   const search = query.get("search")?.trim() || undefined;
