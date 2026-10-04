@@ -44,6 +44,19 @@ describe("Cloudflare environment context", () => {
     }
   })
 
+  it("does not retain a handler environment after nested cleanup", async () => {
+    const outer = { BUCKET: "outer-bucket" }
+    const handler = { BUCKET: "handler-bucket" }
+    setActiveCloudflareEnv(outer)
+
+    await runWithActiveCloudflareEnv(handler, async () => {
+      clearActiveCloudflareEnv()
+      expect(getActiveCloudflareBinding("BUCKET")).toBeUndefined()
+    })
+
+    expect(getActiveCloudflareBinding("BUCKET")).toBe("outer-bucket")
+  })
+
   it("can read event bindings without inheriting the ambient environment", () => {
     const ambient = { name: "ambient" }
     const eventEnv = { name: "event" }
