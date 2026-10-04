@@ -241,4 +241,22 @@ describe("mcpResources", () => {
     expect(requestSignal?.aborted).toBe(true)
     expect(close).not.toHaveBeenCalled()
   })
+
+  it("rejects a server that repeats a pagination cursor", async () => {
+    const source = mcpResources({
+      server: {
+        async listResources() {
+          return {
+            nextCursor: "same",
+            resources: [],
+          }
+        },
+        async readResource() {
+          return { contents: [] }
+        },
+      },
+    })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/pagination cursor/i)
+  })
 })
