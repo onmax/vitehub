@@ -99,6 +99,7 @@ function normalizeCloudflareStatus(status: unknown): WorkflowRunStatus {
 
 function ownSerializedOutput(metadata: unknown) {
   if (!hasRuntimeType(metadata, "object") || metadata === null || !Object.hasOwn(metadata, "output")) return undefined
+  // SAFETY: The guards establish a non-null object with an own output property, whose value remains unknown.
   const output = (metadata as { output?: unknown }).output
   return isSerializedResponse(output) ? output : undefined
 }
