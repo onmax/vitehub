@@ -1,5 +1,5 @@
 import { join } from "node:path"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 
 import { createGitHubWorkspaceStore } from "@vite-hub/workspace/internal/stores/github"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
@@ -395,8 +395,10 @@ function promptFromBody(body: AgentInvocationStreamBody): string | undefined {
 
 function selectedTrigger(entry: AgentInvocationStreamEntry, body: AgentInvocationStreamBody): ResolvedAgentTriggerDefinition | undefined {
   if (typeof body.trigger === "string" && body.trigger.trim()) {
-    const trigger = entry.triggers[body.trigger]
-    if (!trigger) throw new Response(`Unknown Agent Trigger: ${body.trigger}`, { status: 404 })
+    if (!Object.hasOwn(entry.triggers, body.trigger)) {
+      throw new Response(`Unknown Agent Trigger: ${body.trigger}`, { status: 404 })
+    }
+    const trigger = entry.triggers[body.trigger]!
     return trigger
   }
   return entry.triggers["chat.message"]

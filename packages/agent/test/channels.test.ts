@@ -7,8 +7,7 @@ import { join } from "node:path"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { encodeRouteSegment, resetPublicUrlAgentNames } from "@vite-hub/runtime"
 
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { defineAgent } from "../src/index.ts"
 import { agentInvocationId } from "../src/invocations.ts"
 import { resolveAgentTriggers } from "../src/trigger-runtime.ts"
@@ -1223,7 +1222,10 @@ describe("agent channels", () => {
 
   it("accepts GitHub issue_comment payloads without delivery facts", async () => {
     const { github } = await import("../src/channels.ts")
-    const channel = github({ pullRequest: { reply: false } })
+    const channel = github({
+      app: { fetch: async () => Response.json({}) },
+      pullRequest: { reply: false },
+    })
     const trigger = channel.triggers?.webhook
     if (!trigger) throw new Error("Missing GitHub webhook trigger.")
     const context = {

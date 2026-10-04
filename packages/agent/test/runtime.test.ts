@@ -1,6 +1,5 @@
 import { channelDeliveryHandlers } from "../src/internal/channel-delivery-handlers.ts"
-import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { generateKeyPairSync } from "node:crypto"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
@@ -15208,6 +15207,18 @@ describe("agent message protocol", () => {
         payload: {},
         provider: "vercel",
       }, async () => /portable/)).rejects.toMatchObject({ isRetryable: false })
+    })
+
+    it("rejects provider result markers inherited from a custom prototype", async () => {
+      const { runAgentWorkflowDefinition } = await import("../src/runtime/workflow.ts")
+      const result = Object.assign(Object.create({ output: "inherited provider output" }), { text: "visible text" })
+      // SAFETY: This test fixture intentionally constructs an untrusted provider result with an inherited marker.
+      await expect(runAgentWorkflowDefinition({} as never, {
+        id: "inherited-marker-result",
+        name: "inherited-marker-result",
+        payload: {},
+        provider: "vercel",
+      }, async () => result)).rejects.toMatchObject({ isRetryable: false })
     })
 
     it("serializes Response results before Workflow completion", async () => {

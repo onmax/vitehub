@@ -2,10 +2,9 @@ import { providerCallbackMetadata, withProviderCallbackMetadata } from "./intern
 import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { browserRuntimeEnvironment } from "./internal/browser-runtime.ts"
-import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan } from "./internal/pull-request-checkout.ts"
+import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan, pullRequestRepositories } from "./internal/pull-request-checkout.ts"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
@@ -2952,11 +2951,13 @@ async function* runProvider<
       ...providerMetadataContext(context),
       abortSignal: effectiveSignal,
     }
-    const githubCheckoutPlan = pullRequestCheckoutPlan(context.context)
+    // A run that opts out of the managed checkout still acts on its pull
+    // request's repositories, so keep credentials scoped to them.
+    const githubScope = pullRequestCheckoutPlan(context.context) ?? pullRequestRepositories(context.context)
     const githubEnvironment = auxiliary || !context.runtime.githubIdentity
       ? undefined
       : await waitForProviderOperation(
-          pullRequestCheckoutEnvironment(context.runtime.githubIdentity, githubCheckoutPlan?.repository, effectiveSignal, githubCheckoutPlan?.headRepository),
+          pullRequestCheckoutEnvironment(context.runtime.githubIdentity, githubScope?.repository, effectiveSignal, githubScope?.headRepository),
           effectiveSignal,
         )
     const configuredEnvironmentOverrides = options.env === undefined

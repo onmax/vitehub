@@ -230,6 +230,6 @@ Launch diagnostics redact resolved `box.env` values. When `box.home.files` or `b
 | Workspace | Agent-visible files, Sources, rules, snapshots, and writeback. |
 | Sandbox | Package-project discovery, preparation, invocation, timeout, and lifecycle orchestration. |
 
-Use `@vite-hub/box` directly when application code owns the process lifecycle. Use [`sandbox()`](/docs/capabilities/sandbox) to give a model-backed Agent an allowlisted executable tool.
+Use `@vite-hub/box` directly when application code owns the process lifecycle. Use [`sandbox()`](/docs/sandbox/agent-capability) to give a model-backed Agent an allowlisted executable tool.
 
 Provider status inspection inside an Agent Box is currently unsupported. `agent.status()` reports `readiness: "unsupported"` for boxed provider Drivers. Invocation execution still uses the configured Box.

@@ -49,7 +49,9 @@ useSchemaOrg([
   <UMain class="bg-default text-default">
     <LandingHero />
     <LandingAgentStory />
+    <LandingSharedApi />
     <LandingPrimitives />
+    <LandingNuxtHubMigration />
     <LandingClosing />
   </UMain>
 </template>
