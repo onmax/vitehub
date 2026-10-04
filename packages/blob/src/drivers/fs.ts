@@ -167,9 +167,8 @@ async function listEntries(root: string, prefix?: string) {
   return entries.filter((entry): entry is FsBlobEntry => Boolean(entry))
 }
 
-function foldedList(entries: FsBlobEntry[], options: BlobListOptions): BlobListResult {
+function foldedList(entries: FsBlobEntry[], options: BlobListOptions, start: number): BlobListResult {
   const prefix = options.prefix || ""
-  const start = decodeCursor(options.cursor)
   const limit = options.limit ?? 1000
   const folders = new Set<string>()
   const blobs: BlobObject[] = []
@@ -293,13 +292,13 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       return entry ? toBlobObject(entry) : null
     },
     async list(options: BlobListOptions = {}): Promise<BlobListResult> {
+      const start = decodeCursor(options.cursor)
       try {
         const entries = await listEntries(root, options.prefix)
         if (options.folded) {
-          return foldedList(entries, options)
+          return foldedList(entries, options, start)
         }
 
-        const start = decodeCursor(options.cursor)
         const limit = options.limit ?? 1000
         const page = entries.slice(start, start + limit)
         const consumed = start + page.length

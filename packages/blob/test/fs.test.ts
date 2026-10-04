@@ -58,6 +58,15 @@ describe("fs blob driver", () => {
     await expect(driver.list({ cursor })).rejects.toThrow("Invalid Blob cursor.")
   })
 
+  it.each([false, true])("rejects malformed cursors before traversing a missing base (folded: %s)", async (folded) => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
+    tempDirs.push(base)
+    const driver = createDriver({ base: join(base, "missing"), driver: "fs" })
+
+    await expect(driver.list({ cursor: "MB", folded })).rejects.toThrow("Invalid Blob cursor.")
+    await expect(driver.list({ folded })).resolves.toEqual({ blobs: [], hasMore: false })
+  })
+
   it("returns a cursor for folded listings that stop before the end", async () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-"))
     tempDirs.push(base)
