@@ -8,7 +8,7 @@ import type { Adapter, Files, StoredFile, UploadResult } from "files-sdk"
 
 type FilesCtor = typeof import("files-sdk").Files
 type FilesInstance = Files<Adapter>
-type FoldedCursor = { index: number, providerCursor?: string }
+type FoldedCursor = { index: number, providerCursor?: string, providerCursorHistory?: string[] }
 
 async function loadFiles(): Promise<FilesCtor> {
   return (await importOptionalPeer(() => import("files-sdk"), "files-sdk", "files")).Files
@@ -36,18 +36,20 @@ function decodeFoldedCursor(cursor: string | undefined): FoldedCursor {
   const decoded = Buffer.from(cursor, "base64url").toString("utf8")
   const parsed: unknown = JSON.parse(decoded)
   if (!isPlainObject(parsed)) throw new TypeError("Invalid Blob cursor.")
-  const { index, providerCursor } = parsed
+  const { index, providerCursor, providerCursorHistory } = parsed
   if (
     !isNumber(index)
     || !Number.isInteger(index)
     || index < 0
     || (providerCursor !== undefined && !isString(providerCursor))
+    || (providerCursorHistory !== undefined && (!Array.isArray(providerCursorHistory) || !providerCursorHistory.every(isString)))
   ) {
     throw new TypeError("Invalid Blob cursor.")
   }
   return {
     index,
     providerCursor,
+    providerCursorHistory,
   }
 }
 
@@ -156,7 +158,8 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
         const folders = new Set<string>()
         const blobs: BlobObject[] = []
         let providerCursor = initialCursor.providerCursor
-        const seenProviderCursors = new Set<string>(providerCursor ? [providerCursor] : [])
+        const seenProviderCursors = new Set<string>(initialCursor.providerCursorHistory)
+        if (providerCursor) seenProviderCursors.add(providerCursor)
         let start = initialCursor.index
         let nextCursor: string | undefined
 
@@ -198,12 +201,12 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
           }
           if (blobs.length >= limit) {
             nextCursor = consumed < result.items.length
-              ? encodeFoldedCursor({ index: consumed, providerCursor })
-              : result.cursor ? encodeFoldedCursor({ index: 0, providerCursor: result.cursor }) : undefined
+              ? encodeFoldedCursor({ index: consumed, providerCursor, providerCursorHistory: [...seenProviderCursors] })
+              : result.cursor ? encodeFoldedCursor({ index: 0, providerCursor: result.cursor, providerCursorHistory: [...seenProviderCursors] }) : undefined
             break
           }
           if (consumed < result.items.length) {
-            nextCursor = encodeFoldedCursor({ index: consumed, providerCursor })
+            nextCursor = encodeFoldedCursor({ index: consumed, providerCursor, providerCursorHistory: [...seenProviderCursors] })
             break
           }
           if (!result.cursor) {

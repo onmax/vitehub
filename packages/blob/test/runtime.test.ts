@@ -796,6 +796,40 @@ describe("blob runtime", () => {
     expect(filesSdkMock.list).toHaveBeenCalledTimes(2)
   })
 
+  it("rejects folded files-sdk cycles across public pages", async () => {
+    const item = { etag: "etag", key: "file.txt", lastModified: "2026-01-01T00:00:00.000Z", metadata: {}, size: 5, type: "text/plain" }
+    filesSdkMock.list
+      .mockResolvedValueOnce({ cursor: "A", items: [item] })
+      .mockResolvedValueOnce({ cursor: "B", items: [item] })
+      .mockResolvedValueOnce({ cursor: "A", items: [item] })
+      .mockRejectedValueOnce(new Error("cycle sentinel"))
+    const { createDriver } = await import("../src/drivers/s3.ts")
+    const driver = createDriver({ bucket: "assets", driver: "s3" })
+
+    const first = await driver.list({ folded: true, limit: 1 })
+    const second = await driver.list({ cursor: first.cursor, folded: true, limit: 1 })
+    await expect(driver.list({ cursor: second.cursor, folded: true, limit: 1 })).rejects.toThrow("Blob provider listing returned a repeated pagination cursor.")
+    expect(filesSdkMock.list).toHaveBeenCalledTimes(3)
+  })
+
+  it("preserves cursor history while resuming inside a provider page", async () => {
+    const item = { etag: "etag", key: "file.txt", lastModified: "2026-01-01T00:00:00.000Z", metadata: {}, size: 5, type: "text/plain" }
+    filesSdkMock.list
+      .mockResolvedValueOnce({ cursor: "A", items: [item] })
+      .mockResolvedValueOnce({ cursor: "B", items: [item, item] })
+      .mockResolvedValueOnce({ cursor: "B", items: [item, item] })
+      .mockResolvedValueOnce({ cursor: "A", items: [item] })
+    const { createDriver } = await import("../src/drivers/s3.ts")
+    const driver = createDriver({ bucket: "assets", driver: "s3" })
+
+    const first = await driver.list({ folded: true, limit: 1 })
+    const second = await driver.list({ cursor: first.cursor, folded: true, limit: 1 })
+    const third = await driver.list({ cursor: second.cursor, folded: true, limit: 1 })
+    expect(third.hasMore).toBe(true)
+    await expect(driver.list({ cursor: third.cursor, folded: true, limit: 1 })).rejects.toThrow("Blob provider listing returned a repeated pagination cursor.")
+    expect(filesSdkMock.list).toHaveBeenCalledTimes(4)
+  })
+
   it.each([
     ["invalid encoding", "!"],
     ["invalid JSON", btoa("invalid JSON")],
@@ -805,6 +839,7 @@ describe("blob runtime", () => {
     ["string index", Buffer.from(JSON.stringify({ index: "0" })).toString("base64url")],
     ["negative index", Buffer.from(JSON.stringify({ index: -1 })).toString("base64url")],
     ["fractional index", Buffer.from(JSON.stringify({ index: 0.5 })).toString("base64url")],
+    ["invalid provider cursor history", Buffer.from(JSON.stringify({ index: 0, providerCursorHistory: [1] })).toString("base64url")],
     ["non-string provider cursor", Buffer.from(JSON.stringify({ index: 0, providerCursor: 1 })).toString("base64url")],
   ])("rejects malformed files-sdk cursor with %s before listing", async (_, cursor) => {
     const { createDriver } = await import("../src/drivers/s3.ts")
