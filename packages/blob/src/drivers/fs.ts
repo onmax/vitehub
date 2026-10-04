@@ -42,7 +42,7 @@ function encodeCursor(value: number) {
 }
 
 function decodeCursor(cursor: string | undefined) {
-  if (!cursor) return 0
+  if (cursor === undefined) return 0
   if (!/^[A-Za-z0-9_-]*$/.test(cursor) || cursor.length % 4 === 1) throw new TypeError("Invalid Blob cursor.")
   const decodedBytes = Buffer.from(cursor, "base64url")
   const decoded = decodedBytes.toString("utf8")
