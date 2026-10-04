@@ -43,11 +43,14 @@ export async function validatePayload<T>(payload: unknown, schema: PayloadValida
 function hasSchemaMethod(value: object, key: "parse" | "safeParse"): boolean {
   if (Object.hasOwn(value, key)) return true
   let prototype = Object.getPrototypeOf(value)
-  // Each realm's Object.prototype is a root prototype with a null parent.
-  while (prototype !== null && Object.getPrototypeOf(prototype) !== null) {
+  while (prototype !== null) {
     if (Object.hasOwn(prototype, key)) {
       const constructor = Object.hasOwn(prototype, "constructor") ? prototype.constructor : undefined
-      return typeof constructor === "function" && constructor.prototype === prototype
+      // Native Object constructors have the same source across realms. Custom
+      // constructor prototypes can also have a null parent and remain valid.
+      return typeof constructor === "function"
+        && constructor.prototype === prototype
+        && Function.prototype.toString.call(constructor) !== Function.prototype.toString.call(Object)
     }
     prototype = Object.getPrototypeOf(prototype)
   }

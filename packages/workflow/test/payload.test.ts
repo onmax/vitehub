@@ -69,6 +69,21 @@ describe("workflow payload validation", () => {
     await expect(validatePayload("hello", new ParserSchema())).resolves.toBe("HELLO")
   })
 
+  it.each(["parse", "safeParse"])("accepts null-parent constructor-backed %s schemas", async (method) => {
+    const schema: { parse: (value: unknown) => string } = runInNewContext(`
+      class Schema {
+        ${method}(value) {
+          const data = String(value).toUpperCase()
+          return ${method === "safeParse" ? "{ success: true, data }" : "data"}
+        }
+      }
+      Object.setPrototypeOf(Schema.prototype, null)
+      new Schema()
+    `)
+
+    await expect(validatePayload("hello", schema)).resolves.toBe("HELLO")
+  })
+
   it("accepts parser functions", async () => {
     await expect(validatePayload("hello", value => String(value).length)).resolves.toBe(5)
   })
