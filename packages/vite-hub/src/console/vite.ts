@@ -209,7 +209,7 @@ function configureConsoleNitroRoutes(
   addConsoleRpcHandler(kit.config, consoleRuntimeRoot, baseURL)
   const consoleAssetsBase = consoleMountPath(baseURL, "/_vitehub/assets")
   const publicAssets = Array.isArray(nitro.publicAssets)
-    ? nitro.publicAssets.filter(asset => asset?.dir !== consolePublicRoot && asset?.baseURL !== consoleAssetsBase)
+    ? nitro.publicAssets.filter(asset => asset?.dir !== consolePublicRoot)
     : []
   publicAssets.push({
     baseURL: consoleAssetsBase,

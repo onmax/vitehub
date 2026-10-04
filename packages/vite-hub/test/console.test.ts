@@ -575,6 +575,7 @@ describe("Agent invocation console", () => {
       const configResolvedHandler = "handler" in configResolvedHook ? configResolvedHook.handler : configResolvedHook
       const config: { base: string, nitro?: { handlers: Array<{ handler: string, route: string }>, plugins: string[], publicAssets: Array<{ baseURL: string, dir: string }> }, root: string, vitehubCliDiscovery: true } = { base: "/early/", root, vitehubCliDiscovery: true }
       await Reflect.apply(configHandler, {}, [config, { command: "build", mode: "production" }])
+      config.nitro?.publicAssets.push({ baseURL: "/portal/_vitehub/assets", dir: "/user-owned-assets" })
 
       const resolvedConfig = { ...config, base: "/portal/", logger: { warn: () => undefined } }
       await Reflect.apply(configResolvedHandler, {}, [resolvedConfig])
@@ -590,7 +591,10 @@ describe("Agent invocation console", () => {
         "/portal/_vitehub/channels/replay",
         "/portal/_vitehub/schedules/run",
       ])
-      expect(resolvedConfig.nitro?.publicAssets).toEqual([expect.objectContaining({ baseURL: "/portal/_vitehub/assets" })])
+      expect(resolvedConfig.nitro?.publicAssets).toEqual([
+        { baseURL: "/portal/_vitehub/assets", dir: "/user-owned-assets" },
+        expect.objectContaining({ baseURL: "/portal/_vitehub/assets", dir: expect.stringContaining("public/console") }),
+      ])
     }
     finally {
       await rm(root, { force: true, recursive: true })
