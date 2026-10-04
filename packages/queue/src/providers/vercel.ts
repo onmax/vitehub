@@ -11,7 +11,7 @@ function invalidVercelSendResponse(cause: unknown): never {
   })
 }
 
-function isRuntimeFunction(value: unknown): value is CallableFunction {
+function isRuntimeFunction(value: unknown): boolean {
   if (value === null || value === undefined || Object(value) !== value) return false
   try {
     Function.prototype.toString.call(value)
@@ -73,7 +73,8 @@ async function loadVercelQueueClient(region: string | undefined): Promise<Vercel
       })
     }
 
-    return new (module.QueueClient as unknown as new (options: { region: string }) => VercelQueueSDK)({ region: resolvedRegion })
+    // SAFETY: QueueClient is an own callable export; the Vercel SDK defines its region constructor contract.
+    return new (module.QueueClient as new (options: { region: string }) => VercelQueueSDK)({ region: resolvedRegion })
   }
 
   if (Object.hasOwn(module, "send") && Object.hasOwn(module, "handleCallback") && isRuntimeFunction(module.send) && isRuntimeFunction(module.handleCallback)) {
