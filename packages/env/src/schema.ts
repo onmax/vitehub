@@ -25,7 +25,10 @@ interface SafeParseFailure {
 }
 
 interface ZodLikeSchema {
-  _zod?: { traits?: Set<string> }
+  _zod?: {
+    traits?: Set<string>
+    constr?: { new (...args: never[]): object, prototype: object }
+  }
   parse?: (input: unknown) => unknown
   safeParse?: (input: unknown) => SafeParseFailure | SafeParseSuccess
 }
@@ -73,7 +76,7 @@ function isPromiseLike(value: unknown): value is Promise<unknown> {
 
 function isStandardSchema(schema: unknown): schema is StandardSchemaV1 {
   return isZodLike(schema)
-    && (Object.hasOwn(schema, "~standard") || isZodSchema(schema))
+    && hasSchemaMethod(schema, "~standard")
     && typeof (schema as StandardSchemaV1)["~standard"]?.validate === "function"
 }
 
@@ -81,17 +84,25 @@ function isZodLike(schema: unknown): schema is ZodLikeSchema {
   return typeof schema === "object" && schema !== null
 }
 
-function hasSchemaMethod(schema: ZodLikeSchema, method: "parse" | "safeParse"): boolean {
-  return Object.hasOwn(schema, method) || isZodSchema(schema)
+function hasSchemaMethod(schema: ZodLikeSchema, method: "parse" | "safeParse" | "~standard"): boolean {
+  return Object.hasOwn(schema, method) || isZodSchemaMethod(schema, method)
 }
 
-function isZodSchema(schema: ZodLikeSchema): boolean {
-  // Zod 4 stores its schema identity on the instance and methods on its prototype.
+function isZodSchemaMethod(schema: ZodLikeSchema, method: string): boolean {
+  // Zod 4 records its constructor on the instance. Only accept entry points
+  // owned by that constructor's direct prototype, not unrelated ancestors.
   if (!Object.hasOwn(schema, "_zod")) {
     return false
   }
   const metadata = schema._zod
-  return metadata?.traits instanceof Set && metadata.traits.has("ZodType")
+  const constructor = metadata?.constr
+  return metadata?.traits instanceof Set
+    && metadata.traits.has("ZodType")
+    && Object.hasOwn(metadata, "constr")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check untyped constructor metadata before using its prototype.
+    && typeof constructor === "function"
+    && Object.getPrototypeOf(schema) === constructor.prototype
+    && Object.hasOwn(constructor.prototype, method)
 }
 
 function formatIssues(issues: unknown): string {

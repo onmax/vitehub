@@ -466,7 +466,47 @@ describe("env declarations", () => {
     expect(parseSchema(z.string().transform(value => value.length), "valid", "env.test")).toBe(5)
   })
 
+  it("preserves Zod 4 safeParse and parse fallbacks", () => {
+    for (const method of ["safeParse", "parse"] as const) {
+      const schema = z.string().min(3).transform(value => value.length)
+      Object.defineProperty(schema, "~standard", { value: undefined })
+      if (method === "parse") {
+        Object.defineProperty(schema, "safeParse", { value: undefined })
+      }
+      expect(() => parseSchema(schema, "x", "env.test")).toThrow("Invalid env.test")
+      expect(parseSchema(schema, "valid", "env.test")).toBe(5)
+    }
+  })
+
   it("does not accept an inherited Zod identity", () => {
     expect(parseSchema(Object.create(z.string().min(3)), "x", "env.test")).toBe("x")
+  })
+
+  it("does not execute inherited validators with forged Zod traits", () => {
+    let calls = 0
+    const validators = {
+      safeParse: () => {
+        calls++
+        return { data: "inherited", success: true as const }
+      },
+      parse: () => {
+        calls++
+        return "inherited"
+      },
+      "~standard": {
+        validate: () => {
+          calls++
+          return { value: "inherited" }
+        },
+      },
+    }
+    const metadata = [{ traits: new Set(["ZodType"]) }, z.string()._zod]
+    for (const _zod of metadata) {
+      for (const method of ["safeParse", "parse", "~standard"] as const) {
+        const schema = Object.assign(Object.create({ [method]: validators[method] }), { _zod })
+        expect(parseSchema(schema, "input", "env.test")).toBe("input")
+      }
+    }
+    expect(calls).toBe(0)
   })
 })
