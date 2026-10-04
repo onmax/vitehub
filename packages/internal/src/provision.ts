@@ -126,6 +126,7 @@ interface ParsedProvisionRequestOptions<T> extends ProvisionRequestOptions {
 
 function ownParser<T>(options: ProvisionRequestOptions | ParsedProvisionRequestOptions<T>): ((value: unknown) => T) | undefined {
   if (!Object.hasOwn(options, "parse")) return
+  // SAFETY: The options contract permits parse only as a response parser, and the own-property check excludes inherited parsers.
   return (options as ParsedProvisionRequestOptions<T>).parse
 }
 
