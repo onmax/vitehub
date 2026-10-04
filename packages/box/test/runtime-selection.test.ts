@@ -48,6 +48,25 @@ describe("Box runtime selection", () => {
     );
   });
 
+  it("does not accept inherited runtime capabilities or markers", async () => {
+    const inherited = Object.create({
+      name: "custom",
+      open: async () => undefined,
+      prepare: async () => undefined,
+    });
+    await expect(resolveBox({ runtime: inherited }, {})).rejects.toThrow(/Unknown Box runtime kind/);
+
+    const markerInherited = Object.create({ [Symbol.for("vitehub.box.internal-runtime")]: true });
+    Object.assign(markerInherited, {
+      name: "trusted-host",
+      open: async () => undefined,
+      prepare: async () => undefined,
+    });
+    await expect(resolveBox({ runtime: markerInherited }, {})).rejects.toThrow(
+      'Custom Box runtimes cannot use the reserved name "trusted-host"',
+    );
+  });
+
   it("keeps built-in names closed while allowing custom runtimes", () => {
     const custom = {} as BoxRuntime;
     const definitions = [
