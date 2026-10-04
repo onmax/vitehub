@@ -63,7 +63,7 @@ function createResolvedConfig(store: ResolvedKVModuleOptions["store"], stores?: 
 }
 
 function hasStoresConfig(options: KVModuleOptions | undefined): options is KVStoresConfig {
-  return !!options && "stores" in options && isPlainObject((options as { stores?: unknown }).stores)
+  return !!options && Object.hasOwn(options, "stores") && isPlainObject((options as { stores?: unknown }).stores)
 }
 
 export function normalizeKVOptions(

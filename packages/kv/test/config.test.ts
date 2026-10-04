@@ -218,6 +218,21 @@ describe("normalizeKVOptions", () => {
     })).toThrow("`kv.stores.default` is required when using named KV stores.")
   })
 
+  it("ignores named stores inherited from an untrusted prototype", () => {
+    const options = Object.create({
+      stores: {
+        default: { base: ".inherited", driver: "fs-lite" },
+      },
+    })
+
+    expect(normalizeKVOptions(options, { env: {}, hosting: "" })).toEqual({
+      store: {
+        base: ".vitehub/data/kv",
+        driver: "fs-lite",
+      },
+    })
+  })
+
   it("rejects non-object config", () => {
     expect(() => normalizeKVOptions(true as never, {
       env: {},
