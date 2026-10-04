@@ -58,6 +58,23 @@ describe("Browser Definitions", () => {
     await expect(response.json()).resolves.toMatchObject({ error: { code: "BROWSER_DEFINITION_NOT_FOUND" } })
   })
 
+  it("rejects Browser Definitions whose run handler is inherited", async () => {
+    browserRegistry.inheritedRun = async () => ({
+      default: Object.create({ run: async () => "unexpected" }),
+    })
+
+    const name: string = "inheritedRun"
+    const response = await runBrowser(name)
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toMatchObject({
+      error: {
+        code: "BROWSER_RUNTIME_ERROR",
+        message: '[vitehub:browser] Browser Definition "inheritedRun" must default-export defineBrowser().',
+      },
+    })
+  })
+
   it("lets definitions use rendered content", async () => {
     const quickAction = vi.fn(async () => new Response(
       "<html><meta property=\"og:image\" content=\"https://example.com/card.png\"></html>",
