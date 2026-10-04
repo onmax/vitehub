@@ -54,8 +54,8 @@ const vercelBlobMock = vi.hoisted(() => ({
   })),
 }))
 
-const filesSdkMock = vi.hoisted(() => ({
-  list: vi.fn(async (_options?: unknown) => ({
+const filesSdkMock = vi.hoisted(() => {
+  const defaultPage = {
     items: [
       {
         etag: "\"etag\"",
@@ -66,12 +66,15 @@ const filesSdkMock = vi.hoisted(() => ({
         type: "text/plain",
       },
     ],
-  })),
-  minio: vi.fn(() => ({ provider: "minio" })),
-  r2: vi.fn((options: unknown) => ({ options, provider: "r2" })),
-  s3: vi.fn(() => ({ provider: "s3" })),
-  vercelBlob: vi.fn((options: unknown) => ({ options, provider: "vercel-blob" })),
-}))
+  }
+  return {
+    list: vi.fn(async (_options?: unknown): Promise<typeof defaultPage & { cursor?: string }> => defaultPage),
+    minio: vi.fn(() => ({ provider: "minio" })),
+    r2: vi.fn((options: unknown) => ({ options, provider: "r2" })),
+    s3: vi.fn(() => ({ provider: "s3" })),
+    vercelBlob: vi.fn((options: unknown) => ({ options, provider: "vercel-blob" })),
+  }
+})
 
 vi.mock("@vercel/blob", () => vercelBlobMock)
 
@@ -769,6 +772,27 @@ describe("blob runtime", () => {
     const driver = createDriver({ bucket: "assets", driver: "s3" })
 
     await expect(driver.list({ folded: true })).rejects.toThrow("Blob provider listing returned a repeated pagination cursor.")
+    expect(filesSdkMock.list).toHaveBeenCalledTimes(2)
+  })
+
+  it("rejects a repeated folded files-sdk cursor when the resumed page reaches the limit", async () => {
+    const page = {
+      cursor: "same",
+      items: [{
+        etag: "\"etag\"",
+        key: "hello.txt",
+        lastModified: "2026-01-01T00:00:00.000Z",
+        metadata: {},
+        size: 5,
+        type: "text/plain",
+      }],
+    }
+    filesSdkMock.list.mockResolvedValueOnce(page).mockResolvedValueOnce(page)
+    const { createDriver } = await import("../src/drivers/s3.ts")
+    const driver = createDriver({ bucket: "assets", driver: "s3" })
+    const first = await driver.list({ folded: true, limit: 1 })
+
+    await expect(driver.list({ cursor: first.cursor, folded: true, limit: 1 })).rejects.toThrow("Blob provider listing returned a repeated pagination cursor.")
     expect(filesSdkMock.list).toHaveBeenCalledTimes(2)
   })
 

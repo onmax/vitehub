@@ -193,6 +193,9 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
             if (blobs.length >= limit) break
           }
 
+          if (result.cursor && seenProviderCursors.has(result.cursor)) {
+            throw blobErrorDiagnostics.BLOB_R0017({ message: "Blob provider listing returned a repeated pagination cursor." })
+          }
           if (blobs.length >= limit) {
             nextCursor = consumed < result.items.length
               ? encodeFoldedCursor({ index: consumed, providerCursor })
@@ -206,9 +209,6 @@ export function createFilesSdkDriver<TOptions extends ResolvedBlobStoreConfig>(
           if (!result.cursor) {
             nextCursor = undefined
             break
-          }
-          if (seenProviderCursors.has(result.cursor)) {
-            throw blobErrorDiagnostics.BLOB_R0017({ message: "Blob provider listing returned a repeated pagination cursor." })
           }
           seenProviderCursors.add(result.cursor)
           providerCursor = result.cursor
