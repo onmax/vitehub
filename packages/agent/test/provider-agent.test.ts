@@ -3882,7 +3882,8 @@ cli_auth_credentials_store = "keyring"
           requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
         })
         await client.connect(transport)
-        toolCall = client.callTool({ arguments: { query: "raw" }, name: "lookup" }).finally(() => client.close())
+        toolCall = client.callTool({ arguments: { query: "raw" }, name: "lookup" })
+        await toolCall.finally(() => client.close())
       },
     })
 
