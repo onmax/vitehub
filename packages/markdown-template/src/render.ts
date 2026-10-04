@@ -134,6 +134,7 @@ async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>
     const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
       || (attribute === "href" || attribute === "xlink:href")
         && (svgUrlAttributes.has(tag.toLowerCase()) || tag.toLowerCase() === "img" && svgContext)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark attributes include booleans and numbers; only string URL values need destination validation.
     if (typeof value !== "string" || !isUrl) continue
     const binding = source[`:${key}`]
     sanitized[key] = await safeLinkDestination(value, String(binding ?? key), { decodeHtmlEntities: binding === undefined })
