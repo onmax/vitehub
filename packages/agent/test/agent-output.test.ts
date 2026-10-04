@@ -39,6 +39,18 @@ describe("agent output helpers", () => {
     })
   })
 
+  it("bounds usage record prototype traversal", () => {
+    const handler: ProxyHandler<object> = {
+      getPrototypeOf: () => new Proxy({}, handler),
+    }
+    const usageRecord = new Proxy({}, handler)
+
+    expect(toAgentRunResult({ usageRecord })).toMatchObject({
+      usage: undefined,
+      usageRecord: undefined,
+    })
+  })
+
   it("accepts usage metadata exposed through class getters", () => {
     class UsageRecord {
       get usage() {
