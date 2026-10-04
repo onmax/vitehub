@@ -77,6 +77,26 @@ describe("hubConnections", () => {
     );
   });
 
+  it("mounts the management API under the configured Vite base", async () => {
+    const root = await createTempProject();
+    const config = { base: "/portal/", nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
+    await (hubConnections().config as unknown as ConfigHook)(config, {
+      command: "serve",
+      mode: "development",
+    });
+
+    const nitro = config.nitro as {
+      handlers: Array<{ handler: string; route: string }>;
+    };
+    expect(nitro.handlers.map((handler) => handler.route)).toEqual([
+      "/portal/_vitehub/connections",
+      "/portal/_vitehub/connections/**",
+    ]);
+    await expect(readFile(nitro.handlers[0]!.handler, "utf8")).resolves.toContain(
+      'basePath: "/portal/_vitehub/connections"',
+    );
+  });
+
   it("requires authenticated management configuration in production", async () => {
     const root = await createTempProject();
     const build = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
@@ -102,7 +122,7 @@ describe("hubConnections", () => {
     expect(handler).toContain(
       `import actor from ${JSON.stringify(join(root, "server/connections-auth.ts"))}`,
     );
-    expect(handler).toContain("createConnectionsHandler({ actor })");
+    expect(handler).toContain('createConnectionsHandler({ actor, basePath: "/_vitehub/connections" })');
     expect(handler).toContain("handle(event.req, event)");
     expect(handler).not.toContain("user:local");
   });

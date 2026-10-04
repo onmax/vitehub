@@ -287,6 +287,15 @@ function renderRegistryTypes(definitions: DiscoveredConnectionDefinition[]): str
   ].join("\n");
 }
 
+function connectionMountBase(base: unknown): string {
+  if (typeof base !== "string" || !base.startsWith("/") || base.startsWith("//")) return ""
+  return base.replace(/\/+$/, "")
+}
+
+function connectionManagementRoute(base: unknown): string {
+  return `${connectionMountBase(base)}/_vitehub/connections`
+}
+
 function isConnectionDefinitionFile(
   file: string,
   projectRoot: string,
@@ -434,6 +443,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
           );
         }
         const actorImport = actorModule?.startsWith(".") ? resolve(root, actorModule) : actorModule;
+        const managementRoute = connectionManagementRoute(Reflect.get(config, "base"));
         await writeFileIfChanged(
           handlerFile,
           [
@@ -442,16 +452,16 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
             ...(actorModule ? [`import actor from ${JSON.stringify(actorImport)}`] : []),
             "",
             actorModule
-              ? "const handle = createConnectionsHandler({ actor })"
-              : 'const handle = createConnectionsHandler({ actor: () => "user:local" })',
+              ? `const handle = createConnectionsHandler({ actor, basePath: ${JSON.stringify(managementRoute)} })`
+              : `const handle = createConnectionsHandler({ actor: () => "user:local", basePath: ${JSON.stringify(managementRoute)} })`,
             "",
             "export default (event: { req: Request }) => handle(event.req, event)",
             "",
           ].join("\n"),
         );
         const kit = createNitroServerKit(nitro);
-        kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections" });
-        kit.addHandler({ handler: handlerFile, route: "/_vitehub/connections/**" });
+        kit.addHandler({ handler: handlerFile, route: managementRoute });
+        kit.addHandler({ handler: handlerFile, route: `${managementRoute}/**` });
         Object.assign(nitro, kit.config);
       }
       Reflect.set(config, "nitro", nitro);
