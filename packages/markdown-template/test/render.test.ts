@@ -414,6 +414,8 @@ Unavailable
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<svg><image href="javascript:alert(1)"></image></svg>'))
       .rejects.toThrow("must resolve to a safe destination")
+    await expect(renderMarkdownTemplate('<svg><image xlink:href="javascript:alert(1)"></image></svg>'))
+      .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<svg><use href="data:text/html,<script>alert(1)</script>"></use></svg>'))
       .rejects.toThrow("must resolve to a safe destination")
     await expect(renderMarkdownTemplate('<script src="javascript:alert(1)"></script>'))

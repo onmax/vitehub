@@ -36,7 +36,8 @@ const urlAttributesByTag = new Map([
   ["track", new Set(["src"])],
   ["video", new Set(["poster", "src"])],
 ])
-const svgUrlAttributes = new Set(["a", "animate", "feimage", "image", "use"])
+// Comark normalizes SVG image tags to img nodes.
+const svgUrlAttributes = new Set(["a", "animate", "feimage", "image", "img", "use"])
 
 export async function renderMarkdownTemplate(template: string, options: RenderMarkdownTemplateOptions = {}): Promise<string> {
   return await renderMarkdownTemplateInternal(template, options)
