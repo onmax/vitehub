@@ -1,4 +1,4 @@
-import { hasRuntimeType, isRuntimeObject } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType, isRuntimeObject } from "./runtime-type.ts"
 import type {
   AgentChannelDeliveryEffectIntent,
   AgentChannels,

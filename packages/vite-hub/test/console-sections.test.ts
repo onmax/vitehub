@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest"
 
 import {
   consoleBuiltinSectionIds,
+  consoleSectionDetails,
+  consoleSectionRouteName,
+  isConsoleConnectionsEnabled,
   prioritizeConsoleSectionIds,
   readLastConsoleSection,
   rememberConsoleSection,
@@ -21,8 +24,18 @@ function memoryStorage(initial?: string) {
 }
 
 describe("Console section preferences", () => {
+  it("only advertises Connections when management is mounted", () => {
+    expect(isConsoleConnectionsEnabled({ connections: true }, true)).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: { management: false } }, true)).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: false }, true)).toBe(false)
+    expect(isConsoleConnectionsEnabled({ connections: { management: true } })).toBe(true)
+    expect(isConsoleConnectionsEnabled({ connections: true })).toBe(false)
+    expect(isConsoleConnectionsEnabled({ connections: { management: false } })).toBe(false)
+  })
+
   it("derives enabled primitive sections, including Agent-enabled Workflow", () => {
-    expect(resolveConsoleSectionIds({ agent: true, blob: true, database: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })).toEqual([
+    expect(resolveConsoleSectionIds({ agent: true, blob: true, connections: true, database: true, kv: true, queue: true, rateLimit: true, sandbox: true, schedule: true, workflow: true, workspace: true })).toEqual([
+      "connections",
       "agents",
       "usage",
       "blob",
@@ -35,6 +48,7 @@ describe("Console section preferences", () => {
       "queues",
       "schedules",
     ])
+    expect(resolveConsoleSectionIds({ connections: true })).toEqual(["connections"])
     expect(resolveConsoleSectionIds({ agent: true })).toEqual(["agents", "usage", "workflows"])
     expect(resolveConsoleSectionIds({ agent: true, preset: "netlify" })).toEqual(["agents", "usage"])
     expect(resolveConsoleSectionIds({ agent: true, preset: "netlify", workflow: { provider: "vercel" } })).toEqual([
@@ -46,6 +60,8 @@ describe("Console section preferences", () => {
     expect(resolveConsoleSectionIds({ agent: true, queue: false, schedule: false, workflow: false })).toEqual(["agents", "usage"])
     expect(resolveConsoleSectionIds({})).toEqual([])
     expect(resolveConsoleSectionIds({ env: true })).toEqual(["env"])
+    expect(resolveConsoleSectionIds({ connections: true })).toEqual(["connections"])
+    expect(resolveConsoleSectionIds({ connections: false })).toEqual([])
     expect(resolveConsoleSectionIds({ env: false })).toEqual([])
   })
 
@@ -95,7 +111,12 @@ describe("Console section routes", () => {
     const routedSections = new Set([...client.matchAll(/consoleSection: "([^"]+)"/g)].map(match => match[1]))
 
     expect([...routedSections].sort()).toEqual([...consoleBuiltinSectionIds].sort())
+    for (const section of consoleBuiltinSectionIds) {
+      expect(consoleSectionDetails[section].routeName).toBe(consoleSectionRouteName(section))
+      expect(client).toContain(`name: "${consoleSectionDetails[section].routeName}"`)
+    }
     expect(client).toContain("subscribeConsoleNavigation(sectionsBase, addContributedRoutes)")
     expect(client).toContain("const name = consoleSectionRouteName(section)")
+    expect(client).toContain('return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" }')
   })
 })

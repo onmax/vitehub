@@ -268,13 +268,8 @@ async function loadStaticScheduleDefinition(name: string, registry: ScheduleDefi
   return definition
 }
 
-/**
- * Runs a Static Schedule Definition now, outside its cron.
- * The definition must set `manual: true`. The run id uses the `manual` source, so it never matches a cron run.
- * Resolves with the finished run record, also when the handler fails.
- */
+/** Runs a manually dispatchable static Schedule Definition immediately. */
 export async function runSchedule(name: string, options: RunScheduleOptions = {}): Promise<ScheduleRunRecord> {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
   const definition = typeof name === "string" && name ? await loadStaticScheduleDefinition(name, options.registry) : undefined
   if (!definition) {
     throw createScheduleError("SCHEDULE_DEFINITION_NOT_FOUND")
