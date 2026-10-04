@@ -199,6 +199,34 @@ describe("realtime server handler", () => {
     expect(peer.publish).not.toHaveBeenCalled()
   })
 
+  it("does not publish through an inherited peer marker", async () => {
+    serverMocks.useWorkspace.mockReturnValue(workspaceFacade({
+      exists: vi.fn().mockResolvedValue(false),
+      readFile: vi.fn(),
+      stat: vi.fn(),
+    }))
+    const handler = createRealtimeHandler(realtimeRegistry())
+    const response = await handler.fetch(new Request("https://example.com/api/_vitehub/realtime/docs/page.md", {
+      headers: { upgrade: "websocket" },
+    })) as Response & { crossws: { message(peer: object, message: object): void, open(peer: object): void } }
+    const inheritedPublish = vi.fn()
+    const peer = Object.assign(Object.create({ publish: inheritedPublish }), {
+      close: vi.fn(),
+      send: vi.fn(),
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+    })
+
+    response.crossws.open(peer)
+    const client = new Y.Doc()
+    client.getMap("default").set("value", "changed")
+    const update = encodeSyncUpdate(Y.encodeStateAsUpdate(client))
+    response.crossws.message(peer, { uint8Array: () => update })
+
+    expect(inheritedPublish).not.toHaveBeenCalled()
+    client.destroy()
+  })
+
   it("rate-limits workspace changes from each peer", async () => {
     vi.spyOn(Date, "now").mockReturnValue(100)
     serverMocks.useWorkspace.mockReturnValue(workspaceFacade({
