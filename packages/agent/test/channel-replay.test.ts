@@ -82,6 +82,31 @@ function memoryInvocations() {
 }
 
 describe("replayChannel()", () => {
+  it("rejects a history collection that repeats a pagination cursor", async () => {
+    const history = defineCollection(async () => [emails[0]!, emails[0]!], {
+      cursor: email => email.id,
+      cursorSchema: v.string(),
+      defaultLimit: 1,
+      maxLimit: 1,
+      querySchema: v.object({}),
+    })
+    const channel = defineChannel("mailbox", {
+      history: { collection: history, key: email => email.id },
+      triggers: {
+        received: defineChannelTrigger({
+          input: v.object({ folder: v.string(), id: v.string(), subject: v.string() }),
+          invoke: (_context, email) => ({ input: { prompt: email.subject }, message: { id: email.id } }),
+        }),
+      },
+    })
+    const agent = defineAgent({ channels: { mailbox: channel }, driver: { run: () => "done" }, runtime: false })
+
+    await expect(replayChannel(agent, "mailbox", { force: true })).rejects.toMatchObject({
+      code: "AGENT_R0936",
+      message: '[vitehub] Channel "mailbox" history returned a repeated pagination cursor.',
+    })
+  })
+
   it("pages history through the Channel trigger and skips items it replayed before", async () => {
     const invocations = memoryInvocations()
     const { agent, label, load } = labeller({ invocations })

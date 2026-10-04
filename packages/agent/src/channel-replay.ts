@@ -265,6 +265,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   const result: ReplayChannelResult = { failed: 0, items: [], nextCursor: options.cursor ?? null, processed: 0, skipped: 0 }
   let cursor = options.cursor
   let remaining = options.limit ?? Number.POSITIVE_INFINITY
+  const seenCursors = new Set<string>(cursor ? [cursor] : [])
 
   const replay = { agent, agentName, channel, dryRun: options.dryRun, force: options.force, invocations, runtime, triggerId }
 
@@ -295,6 +296,10 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
       }
       result.nextCursor = page.nextCursor
       if (!page.nextCursor || !page.items.length) break
+      if (seenCursors.has(page.nextCursor)) {
+        throw agentDiagnostics.AGENT_R0936({ message: `[vitehub] Channel "${channel}" history returned a repeated pagination cursor.` })
+      }
+      seenCursors.add(page.nextCursor)
       cursor = page.nextCursor
     }
     return result
