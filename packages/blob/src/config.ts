@@ -197,7 +197,9 @@ function createResolvedConfig(
 }
 
 function hasStoresConfig(options: BlobModuleOptions | undefined): options is BlobStoresConfig {
-  return !!options && "stores" in options && isPlainObject((options as { stores?: unknown }).stores)
+  if (!options || !Object.hasOwn(options, "stores")) return false
+  // SAFETY: The own-property check above establishes that this read cannot come from an inherited prototype.
+  return isPlainObject((options as { stores?: unknown }).stores)
 }
 
 export function hasVercelBlobEnv(env: Record<string, string | undefined>): boolean {
