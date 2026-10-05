@@ -142,42 +142,48 @@ launch: ({ command, providerCommand }) => ({
 
 ### Route model requests through a gateway
 
-Set `gateway` to send the provider's model requests to an LLM proxy or gateway. Import a preset from `vite-hub/agent/gateways`:
+Set `gateway` to send the provider's model requests to an LLM proxy or gateway. Import a preset from `vite-hub/agent/gateways`. Like a Nuxt module, each preset reads its URL and key from the environment, so the code names only the gateway:
 
 ```ts [server/agents/review/agent.ts]
 import { defineAgent } from 'vite-hub/agent'
-import { cliproxy } from 'vite-hub/agent/gateways'
-import { useServerEnv } from '#vitehub/env/server'
+import { cliproxy, cloudflareAccess } from 'vite-hub/agent/gateways'
 
 export default defineAgent({
   driver: {
     kind: 'codex',
     model: 'gpt-5.5',
-    // Reads CLIPROXY_API_KEY. The headers pass a Cloudflare Access service token.
-    gateway: cliproxy({
-      url: 'https://proxy.example.com',
-      headers: {
-        'CF-Access-Client-Id': () => useServerEnv().cfAccess.clientId,
-        'CF-Access-Client-Secret': () => useServerEnv().cfAccess.clientSecret,
-      },
-    }),
+    // Reads CLIPROXY_URL, CLIPROXY_API_KEY, CF_ACCESS_CLIENT_ID, and CF_ACCESS_CLIENT_SECRET.
+    gateway: cliproxy({ headers: cloudflareAccess() }),
   },
 })
 ```
 
+```sh [.env]
+CLIPROXY_URL=https://proxy.example.com
+CLIPROXY_API_KEY=...
+CF_ACCESS_CLIENT_ID=...
+CF_ACCESS_CLIENT_SECRET=...
+```
+
+Pass a value to override its variable, for example `cliproxy({ url: 'https://proxy.example.com', apiKey: () => useServerEnv().proxyKey })`.
+
 Each preset knows the base URL that each Driver expects, so one gateway definition works for Codex and Claude Code:
 
-| Preset | Codex base URL | Claude Code base URL | API key variable |
+| Preset | Codex base URL | Claude Code base URL | Variables |
 | --- | --- | --- | --- |
-| `cliproxy({ url })` | `<url>/v1` | `<url>` | `CLIPROXY_API_KEY` |
-| `litellm({ url })` | `<url>/v1` | `<url>` | `LITELLM_API_KEY` |
-| `ollama({ url? })` | `<url>/v1` | `<url>` | `OLLAMA_API_KEY`, else `ollama` |
+| `cliproxy()` | `<url>/v1` | `<url>` | `CLIPROXY_URL`, `CLIPROXY_API_KEY` |
+| `litellm()` | `<url>/v1` | `<url>` | `LITELLM_URL`, `LITELLM_API_KEY` |
+| `ollama()` | `<url>/v1` | `<url>` | `OLLAMA_URL` (default `http://localhost:11434`), `OLLAMA_API_KEY` (default `ollama`) |
 | `openrouter()` | `https://openrouter.ai/api/v1` | `https://openrouter.ai/api` | `OPENROUTER_API_KEY` |
-| `vercel()` | `https://ai-gateway.vercel.sh/codex/v1` | `https://ai-gateway.vercel.sh/claude-code` | `AI_GATEWAY_API_KEY` |
+| `vercel()` | `https://ai-gateway.vercel.sh/codex/v1` | `https://ai-gateway.vercel.sh/claude-code` | `AI_GATEWAY_API_KEY`, then `VERCEL_OIDC_TOKEN` |
 | `openai()` | `https://api.openai.com/v1` | | `OPENAI_API_KEY` |
 | `anthropic()` | | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` |
 
-`url` is the gateway origin. A trailing `/v1` is removed. Every preset accepts `apiKey` and `headers`. `apiKey` and each header value accept a string, a sealed Server Env value, or an invocation-time resolver. Without `apiKey`, ViteHub reads the preset's variable from the process environment for each invocation. A missing key or an empty header value fails the invocation with `AGENT_R0977` or `AGENT_R0978` before the provider starts. A preset that does not serve the selected Driver fails at definition time with `AGENT_R0976`.
+`cloudflareAccess()` returns the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers for a gateway behind Cloudflare Access. It reads `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`, or takes `{ clientId, clientSecret }`.
+
+ViteHub finds the presets in Agent files and declares their variables in Server Env as `env.server.<preset>.<field>`, for example `env.server.cliproxy.apiKey`. The Console shows them, `useServerEnv()` types them, and an [Env provider](/docs/env/server-api#read-external-env-storage) can supply them. Your own declaration of a field wins. The values are optional: a server that hosts Agents without the gateway still starts. Without `hubEnv()`, presets read the host variables directly.
+
+`url` is the gateway origin. A trailing `/v1` is removed. Every preset accepts `apiKey` and `headers`. `apiKey` and each header value accept a string, a sealed Server Env value, or an invocation-time resolver that may return `undefined`. ViteHub reads values for each invocation. A missing URL, key, or header value fails the invocation with `AGENT_R0980`, `AGENT_R0977`, or `AGENT_R0978` and names the variable to set. A preset that does not serve the selected Driver fails at definition time with `AGENT_R0976`.
 
 Use `defineGateway()` for an endpoint without a preset:
 
@@ -193,6 +199,8 @@ export const gateway = defineGateway({
 ```
 
 `auth` selects how the gateway receives the key. `'bearer'`, the default, sends `Authorization: Bearer <key>`. `'x-api-key'` sends `x-api-key: <key>`.
+
+`apiKeyEnv` reads host variables, not Server Env. Use `apiKey: () => useServerEnv().internal.key` when the key is declared in Server Env. A `baseURL` entry can also be a resolver, so the URL can come from Server Env for each invocation.
 
 ViteHub converts the gateway to each provider's own configuration:
 

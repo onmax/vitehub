@@ -63,7 +63,7 @@ function invalidateAgentDevModules(server: ViteDevServer, ids: readonly string[]
 }
 
 export { readColocatedAgentSkills } from "./vite/colocated-agent-skills.ts"
-export { discoverAgentChannelEnv } from "./channel-env-discovery.ts"
+export { discoverAgentChannelEnv, discoverAgentGatewayEnv } from "./channel-env-discovery.ts"
 export type { AgentChannelEnv } from "./channel-env-discovery.ts"
 
 import type { Plugin, ResolvedConfig, UserConfig, ViteDevServer } from "vite"

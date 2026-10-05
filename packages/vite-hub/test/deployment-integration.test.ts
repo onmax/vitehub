@@ -245,6 +245,36 @@ describe("built-in deployment preset integration", () => {
     }
   })
 
+  it("declares optional Server Env for gateway presets used by Agents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-gateway-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "dev.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { cliproxy, cloudflareAccess } from "vite-hub/agent/gateways"`,
+        `export default defineAgent({ driver: { kind: "codex", gateway: cliproxy({ headers: cloudflareAccess() }) } })`,
+      ].join("\n"))
+      const config = await resolveConfig({
+        root,
+        plugins: [vitehub({ agent: true, preset: "cloudflare" })],
+      } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build")
+      // A gateway key is optional, so a server that also hosts Agents without the gateway still starts.
+      expect((config as typeof config & {
+        nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
+      }).nitro?.cloudflare?.wrangler?.secrets?.required ?? []).toEqual([])
+      const types = await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")
+      expect(types).toContain("\"cliproxy\": {")
+      expect(types).toContain("\"apiKey\"?: import(\"vite-hub/env/secret\").SecretEnv<string>")
+      expect(types).toContain("\"cloudflareAccess\": {")
+      const description = await readFile(join(root, ".vitehub", "env", "description.mjs"), "utf8")
+      expect(description).toContain("env.server.cliproxy.url")
+      expect(description).toContain("env.server.cloudflareAccess.clientSecret")
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("declares Server Env for built-in Channels used by Agents", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-channel-env-"))
     try {
