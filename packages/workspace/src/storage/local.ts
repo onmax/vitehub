@@ -778,6 +778,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
 
   #baseline: WorkspaceSnapshot | undefined
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
+  #metaCache: { ino: number, mtimeMs: number, size: number, value: Map<string, unknown> } | undefined
   #fileMetadataRoot: string
   #metaPath: string
   #ignoreGit: boolean
@@ -1355,14 +1356,29 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async #readMeta(): Promise<Map<string, unknown>> {
+    const info = await stat(this.#metaPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (!info) {
+      this.#metaCache = undefined
+      return new Map()
+    }
+    if (this.#metaCache?.ino === info.ino && this.#metaCache.mtimeMs === info.mtimeMs && this.#metaCache.size === info.size) return this.#metaCache.value
     const content = await readFile(this.#metaPath, "utf8").catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
     })
-    if (!content) return new Map()
+    if (!content) {
+      this.#metaCache = { ino: info.ino, mtimeMs: info.mtimeMs, size: info.size, value: new Map() }
+      return this.#metaCache.value
+    }
     const value: unknown = JSON.parse(content)
-    if (!value || Object(value) !== value || Array.isArray(value)) return new Map()
-    return new Map(Object.entries(Object(value)))
+    const metadata = !value || Object(value) !== value || Array.isArray(value)
+      ? new Map<string, unknown>()
+      : new Map(Object.entries(Object(value)))
+    this.#metaCache = { ino: info.ino, mtimeMs: info.mtimeMs, size: info.size, value: metadata }
+    return metadata
   }
 
   async #writeMeta(metadata: Map<string, unknown>) {
