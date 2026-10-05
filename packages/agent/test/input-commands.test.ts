@@ -849,6 +849,7 @@ describe("inputCommands", () => {
     ["/drop\n/fill", "second"],
     ["first\n/drop\n/fill", "first\nsecond"],
     ["first /drop", "first"],
+    ["first /drop   ", "first"],
     ["first /drop /drop /fill", "first second"],
   ])("removes one separator with an empty string replacement in %j", async (prompt, expected) => {
     const { inputCommands } = await import("../src/capabilities.ts")
