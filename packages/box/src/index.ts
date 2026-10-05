@@ -23,7 +23,7 @@ import type {
   VercelSandboxCreateOptions,
   VercelSandboxInstance,
 } from "./vercel.ts";
-import { isBuiltInBoxRuntime } from "./internal/runtime.ts";
+import { hasDeclaredBoxRuntimeMember, isBuiltInBoxRuntime } from "./internal/runtime.ts";
 import { boxErrorDiagnostics } from "./error-diagnostics.ts"
 
 export type {
@@ -427,7 +427,11 @@ async function resolveBoxRuntime(value: unknown): Promise<BoxRuntime> {
 function isBoxRuntime(value: unknown): value is BoxRuntime {
   if (!value || typeof value !== "object") return false;
   const runtime = value as Partial<BoxRuntime>;
-  return typeof runtime.name === "string"
+  return hasDeclaredBoxRuntimeMember(runtime, "name")
+    && hasDeclaredBoxRuntimeMember(runtime, "open")
+    && hasDeclaredBoxRuntimeMember(runtime, "prepare")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Runtime detection validates the name and callable operations after checking their declaring prototypes.
+    && typeof runtime.name === "string"
     && typeof runtime.open === "function"
     && typeof runtime.prepare === "function";
 }
