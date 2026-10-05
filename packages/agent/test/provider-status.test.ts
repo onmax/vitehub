@@ -359,6 +359,26 @@ process.exit(result.status ?? 1)
 })
 
 describe("invocation preflight", () => {
+  it.each([false, true])("preserves caller signal telemetry with journal cancellation and a provider timeout: %s", async (supplied) => {
+    const { defineAgent, defineCapability, runAgentInline } = await import("../src/index.ts")
+    const { createMemoryAgentInvocationStore, defineAgentInvocations } = await import("../src/server.ts")
+    const { createTraceEventLog } = await import("@vite-hub/runtime")
+    const traceLog = createTraceEventLog()
+    const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
+    const agent = defineAgent({
+      runtime: false,
+      driver: { kind: "codex", model: "test" },
+      invocations,
+      capabilities: [defineCapability({ id: "failing-setup", resolve: () => { throw new Error("setup failed") } })],
+    })
+    await expect(runAgentInline(agent, {
+      runtime: "unknown", traceLog, memo: (_key, create) => create(), waitUntil: task => void task.catch(() => {}),
+    }, { prompt: "hello", timeout: 10_000, ...(supplied ? { abortSignal: new AbortController().signal } : {}) })).rejects.toThrow("setup failed")
+    const observations = traceLog.entries().filter(observation => observation.attributes?.["input.hasAbortSignal"] !== undefined)
+    expect(observations.some(observation => observation.name === "agent.invocation.error")).toBe(true)
+    for (const observation of observations) expect(observation.attributes?.["input.hasAbortSignal"]).toBe(supplied)
+  })
+
   it("rejects unavailable capacity before starting capability preparation", async () => {
     const { defineAgent, defineCapability, runAgentInline } = await import("../src/index.ts")
     const prepare = vi.fn(() => { throw new Error("unexpected runtime installation") })

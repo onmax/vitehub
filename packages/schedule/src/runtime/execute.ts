@@ -238,28 +238,39 @@ export async function executeStaticSchedule(options: ExecuteStaticScheduleOption
   })
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Object(value) === value && !Array.isArray(value)
+}
+
+function isStaticScheduleDefinition(value: unknown): value is ScheduleDefinition {
+  return isObjectRecord(value)
+    && Object.hasOwn(value, "handler")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry handlers cross module and JavaScript realm boundaries; validate callability without realm-sensitive instanceof.
+    && typeof value.handler === "function"
+    && Object.hasOwn(value, "cron")
+}
+
 async function loadStaticScheduleDefinition(name: string, registry: ScheduleDefinitionRegistry | undefined): Promise<ScheduleDefinition | undefined> {
-  let definition: ScheduleRegistryDefinition | undefined
+  let loaded: unknown
   if (registry) {
     const entry = Object.hasOwn(registry, name) ? registry[name] : undefined
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
-    const loaded = typeof entry === "function" ? await entry() : undefined
-    definition = loaded && "handler" in loaded ? loaded : loaded?.default
+    loaded = typeof entry === "function" ? await entry() : undefined
   }
   else {
-    definition = await loadScheduleDefinition(name)
+    loaded = await loadScheduleDefinition(name)
   }
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Require an executable Static Schedule Definition from the loaded module.
-  return definition && typeof definition.handler === "function" && "cron" in definition ? definition : undefined
+  const record = isObjectRecord(loaded) ? loaded : undefined
+  const definition = record && isStaticScheduleDefinition(record)
+    ? record
+    : record && Object.hasOwn(record, "default") && isStaticScheduleDefinition(record.default)
+      ? record.default
+      : undefined
+  return definition
 }
 
-/**
- * Runs a Static Schedule Definition now, outside its cron.
- * The definition must set `manual: true`. The run id uses the `manual` source, so it never matches a cron run.
- * Resolves with the finished run record, also when the handler fails.
- */
+/** Runs a manually dispatchable static Schedule Definition immediately. */
 export async function runSchedule(name: string, options: RunScheduleOptions = {}): Promise<ScheduleRunRecord> {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate untrusted boundary values before use.
   const definition = typeof name === "string" && name ? await loadStaticScheduleDefinition(name, options.registry) : undefined
   if (!definition) {
     throw createScheduleError("SCHEDULE_DEFINITION_NOT_FOUND")

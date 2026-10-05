@@ -1,7 +1,6 @@
 import type { EnvSource, EnvSourceResolver, EnvTypedVariableOptions, EnvValueSchema, EnvVariableDeclaration, EnvVariableOptions } from "../types.ts"
 import { envErrorDiagnostics } from "../error-diagnostics.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 import { envValueTypeName, parseEnvValue, stringValueSchema } from "./values.ts"
 
 type SafeParse = (input: unknown) => { data: unknown, success: true } | { error: Error, success: false }

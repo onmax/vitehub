@@ -1,6 +1,5 @@
 import { defineCapability } from "../capability-runtime.ts"
-import { hasRuntimeType, isRuntimeObject } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./runtime-type.ts"
+import { hasRuntimeType, isRuntimeObject, isRuntimeRecord } from "./runtime-type.ts"
 import { ViteHubError } from "@vite-hub/runtime"
 import { safeAgentTelemetryMetadata } from "./agent-telemetry.ts"
 import { loadAiSdk } from "./ai-sdk-runtime.ts"
