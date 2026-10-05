@@ -137,3 +137,36 @@ test('durable claim fence rejects a released claim before an irreversible action
     assert.equal(await inbox.isClaimCurrent(claim), false)
   } finally { await inbox.close() }
 })
+
+test('stack parents are claimed before older independent work', async () => {
+  let now = 1_000
+  const inbox = new PullRequestInbox({ path: ':memory:', repositories: ['acme/app'], clock: () => now++ })
+  try {
+    const pr = (number: number, head: string, base: string) => ({ number, state: 'open', head: { sha: `${head}-sha`, ref: head }, base: { ref: base }, updated_at: '2026-10-01T00:00:00Z' })
+    await inbox.seed('acme/app', pr(3, 'independent', 'main'))
+    await inbox.seed('acme/app', pr(1, 'parent', 'main'))
+    await inbox.seed('acme/app', pr(2, 'child', 'parent'))
+    const claims = await inbox.claim(3)
+    // The child waits for its parent; the parent goes first although it changed later.
+    assert.deepEqual(claims.map(claim => claim.snapshot.number), [1, 3])
+  } finally { await inbox.close() }
+})
+
+test('startup releases every held lease and keeps recorded waits', async () => {
+  const inbox = await fixture()
+  try {
+    await inbox.seed('vite-hub/vitehub', { number: 43, state: 'open', head: { sha: 'other', ref: 'other' }, base: { ref: 'main' }, updated_at: '2026-09-13T00:00:00Z' })
+    const [first, second] = await inbox.claim(2)
+    await inbox.finish(second!, { text: 'Waiting', wait: { headSha: 'other', reason: 'checks', evidenceKey: 'key' } })
+    const parked = await inbox.claim(1)
+    assert.equal(parked.length, 0)
+    assert.equal(await inbox.releaseLeases(), 1)
+    const released = await inbox.get('vite-hub/vitehub', first!.snapshot.number)
+    assert.equal(released?.lease, null)
+    assert.equal(released?.status, 'ready')
+    assert.equal((await inbox.get('vite-hub/vitehub', second!.snapshot.number))?.status, 'waiting')
+    assert.equal(await inbox.releaseLeases(), 0)
+    // The released PR is claimable at once instead of after its two-hour lease.
+    assert.equal((await inbox.claim(1))[0]?.snapshot.number, first!.snapshot.number)
+  } finally { await inbox.close() }
+})

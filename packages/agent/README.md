@@ -789,10 +789,29 @@ merge. `reviewChecks` lists check names, such as a review bot's check, that keep
 a PR waiting while they run. A comment-only review with an empty body does not
 wake a waiting PR; its inline comments do. `noFindingsReviews` lists body
 prefixes, such as `"> ✅ No new issues found."`, of comment-only reviews that
-report no findings; these do not wake it either. A PR that ends three passes on one head without a
-push waits for new evidence. A stacked PR whose parent merged into the default
+report no findings; these do not wake it either. `ignoreFeedbackAuthors` lists
+logins, such as deployment preview bots, whose comments and reviews never need an
+assessment. Feedback that a pass assessed or answered with a repair push stays
+assessed on later heads, so a direct merge needs a model pass only for new
+feedback. Bot issue comments count by identity, not body. Without required
+checks on the base branch, the newest run of every current-head check must
+finish before a merge.
+
+`deferWhilePending` (default `true`) holds a pass while required checks or
+review checks run, unless a failure or conflict already needs repair; the PR
+wakes once the gates stop. `noProgressBudget` (default `3`, `false` disables it)
+stops a head after that many passes without a push or a recorded wait, until the
+head changes or a person comments. `install` (default `true`) installs
+dependencies on the host before the model starts: it detects pnpm, npm, Yarn or
+Bun from the lockfile and installs frozen, or runs `{ command, args }`. The
+install gets a scrubbed environment and records its result in
+`.git/vitehub-install.json`. Stack parents are claimed first, and a restart
+releases the claims of the previous process. A stacked PR whose parent merged into the default
 branch is retargeted to the default branch. A provider rate limit is retried
-three times; after that, the host admits no PR work for an hour.
+three times; after that, the host admits no PR work for an hour. While the
+built-in host's resource guard pauses model passes for a spent token budget, low
+temporary space or exhausted proxy accounts, the host still merges ready PRs and
+records waits without a model. A token budget of `0` stops every claim.
 
 Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use

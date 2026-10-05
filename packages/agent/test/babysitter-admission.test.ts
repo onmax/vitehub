@@ -37,6 +37,19 @@ describe("Babysitter admission", () => {
     expect(babysitterAdmissionDecision(roomy(), forced)).toMatchObject({ accepting: false, reason: "token-budget-hourly" });
   });
 
+  it("stops every claim for a zero budget and only model passes for spent resources", () => {
+    const zero = (name: string) => babysitterAdmissionDecision(roomy(), readBabysitterAdmissionLimits({ [name]: "0" }));
+    expect(zero("BABYSITTER_HOURLY_INPUT_TOKENS")).toMatchObject({ accepting: false, hostOnly: false, reason: "token-budget-hourly" });
+    expect(zero("BABYSITTER_DAILY_INPUT_TOKENS")).toMatchObject({ accepting: false, hostOnly: false, reason: "token-budget-daily" });
+    const limits = readBabysitterAdmissionLimits({});
+    for (const state of [
+      roomy({ freeTmpBytes: 2 ** 20 }),
+      roomy({ hourlyInputTokens: 15e6 }),
+      roomy({ dailyInputTokens: 200e6 }),
+      roomy({ proxy: { state: "fresh", accounts: 2, usable: 0 } }),
+    ]) expect(babysitterAdmissionDecision(state, limits)).toMatchObject({ accepting: false, hostOnly: true });
+  });
+
   it("skips a pass while the temporary directory is low on space", () => {
     const limits = readBabysitterAdmissionLimits({});
     expect(babysitterAdmissionDecision(roomy(), limits)).toEqual({ accepting: true });

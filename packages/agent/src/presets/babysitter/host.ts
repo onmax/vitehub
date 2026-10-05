@@ -93,8 +93,12 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
         return Response.json(result, { status: 202 });
       });
       // Bring over an inbox file from a hand-wired Babysitter once, before the first claim.
+      // This process owns the inbox scope, so no lease from an earlier process belongs to a running pass.
       void inbox.importLegacyFile(".vitehub/pull-request-inbox.sqlite")
         .catch(error => host.error("babysitter.legacy-import.failed", error))
+        .then(() => inbox.releaseLeases())
+        .then(released => { if (released) host.event("babysitter.leases.released", { released }) },
+          error => host.error("babysitter.leases.release-failed", error))
         .finally(() => host.start());
     },
     async close() {
@@ -118,7 +122,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
           value: guard.accepting ? "Within budget" : "Admission paused",
           detail: guard.detail ?? state.errors?.join("; ") ?? `${state.hourlyInputTokens ?? "?"} of ${limits.hourlyInputTokens} hourly input tokens`,
         }],
-        admission: { accepting: guard.accepting, reason: guard.reason, retryAt: guard.retryAt, detail: guard.detail, lastSkip: await inbox.meta("admission-skipped") },
+        admission: { accepting: guard.accepting, hostOnly: guard.hostOnly, reason: guard.reason, retryAt: guard.retryAt, detail: guard.detail, lastSkip: await inbox.meta("admission-skipped") },
         budget: {
           hourly: { inputTokens: state.hourlyInputTokens, limit: limits.hourlyInputTokens, resetsAt: state.windows.hourEnd },
           daily: { inputTokens: state.dailyInputTokens, limit: limits.dailyInputTokens, resetsAt: state.windows.dayEnd },

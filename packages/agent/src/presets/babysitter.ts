@@ -37,11 +37,34 @@ export interface BabysitterOptions {
    * `"> ✅ No new issues found."`. These reviews do not wake a parked PR. Defaults to none.
    */
   noFindingsReviews: string[];
+  /**
+   * Logins whose comments and reviews never need an assessment, such as deployment preview bots.
+   * Their items do not block a direct merge or wake a waiting PR. Defaults to none.
+   */
+  ignoreFeedbackAuthors: string[];
+  /**
+   * Passes on one head that may end without a push or a recorded wait before the PR stops until its
+   * head changes or a person comments. `false` disables the budget. Defaults to 3.
+   */
+  noProgressBudget: number | false;
+  /**
+   * Wait for running required checks and review checks before a pass, unless a failure or conflict
+   * already needs repair. One pass then handles CI and review results together. Defaults to `true`.
+   */
+  deferWhilePending: boolean;
+  /**
+   * Install dependencies on the host before the provider starts. `true` detects pnpm, npm, Yarn or
+   * Bun from the lockfile and installs it frozen. A command overrides the detection. Defaults to `true`.
+   */
+  install: BabysitterInstall;
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
+
+/** `true` detects the package manager from the lockfile; `false` skips the install. */
+export type BabysitterInstall = boolean | { command: string; args?: string[] };
 
 export type BabysitterPassWake =
   | { kind: "checks"; repository: string; headSha: string }
@@ -161,7 +184,14 @@ type BabysitterDefinition = AgentDefinition<
   AgentInvokerProfile,
   AgentInvocationContextValues,
   BabysitterPassResult
-> & { reviewChecks: string[]; noFindingsReviews: string[] };
+> & {
+  reviewChecks: string[];
+  noFindingsReviews: string[];
+  ignoreFeedbackAuthors: string[];
+  noProgressBudget: number | false;
+  deferWhilePending: boolean;
+  install: BabysitterInstall;
+};
 
 export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
@@ -176,10 +206,17 @@ export const babysitter: BabysitterAgent = defineAgent({
     reviewChecks: [] as string[],
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
     noFindingsReviews: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login list.
+    ignoreFeedbackAuthors: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented budget union.
+    noProgressBudget: 3 as number | false,
+    deferWhilePending: true,
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented install union.
+    install: true as BabysitterInstall,
     concurrency: 1,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, noFindingsReviews, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install, autoMerge, concurrency }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -188,6 +225,19 @@ export const babysitter: BabysitterAgent = defineAgent({
     }
     if (noFindingsReviews.some((prefix) => prefix.length === 0)) {
       throw new TypeError("[vitehub] Babysitter noFindingsReviews cannot contain an empty prefix.");
+    }
+    if (!Array.isArray(ignoreFeedbackAuthors) || ignoreFeedbackAuthors.some(author => !hasRuntimeType(author, "string") || !author.trim())) {
+      throw new TypeError("[vitehub] Babysitter ignoreFeedbackAuthors must list GitHub logins.");
+    }
+    if (noProgressBudget !== false && (!Number.isSafeInteger(noProgressBudget) || noProgressBudget < 1)) {
+      throw new TypeError("[vitehub] Babysitter noProgressBudget must be a positive integer or false.");
+    }
+    if (!hasRuntimeType(deferWhilePending, "boolean")) {
+      throw new TypeError("[vitehub] Babysitter deferWhilePending must be a boolean.");
+    }
+    if (!hasRuntimeType(install, "boolean") && !(isRuntimeRecord(install) && hasRuntimeType(install.command, "string") && install.command.trim()
+      && (install.args === undefined || (Array.isArray(install.args) && install.args.every(arg => hasRuntimeType(arg, "string")))))) {
+      throw new TypeError("[vitehub] Babysitter install must be a boolean or { command, args }.");
     }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);
@@ -204,6 +254,6 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
-    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews }), babysitterHost);
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install }), babysitterHost);
   },
 });

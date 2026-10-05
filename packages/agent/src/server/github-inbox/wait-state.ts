@@ -8,12 +8,13 @@ export const wakeSchema: v.GenericSchema<unknown, PullRequestWake> = v.variant('
   v.object({ kind: v.literal('checks'), repository, headSha: commitSha }),
   v.object({ kind: v.literal('pull-request'), repository, number: v.pipe(v.number(), v.integer(), v.minValue(1)) }),
 ])
-const waitSchema = v.object({ headSha: nonempty, reason: nonempty, evidenceKey: nonempty, knownFailures: v.optional(v.array(v.string())), kind: v.optional(v.picklist(['checks', 'external'])), wake: v.optional(wakeSchema) })
+const waitSchema = v.object({ headSha: nonempty, reason: nonempty, evidenceKey: nonempty, knownFailures: v.optional(v.array(v.string())), kind: v.optional(v.picklist(['checks', 'external'])), defer: v.optional(v.picklist(['checks'])), wake: v.optional(wakeSchema) })
 
 /**
  * Caller-selected structured evidence that must change before another Agent pass.
  * `knownFailures` lists failing checks that the parked pass already saw.
  * An external wait without `wake` resumes on feedback, head or base changes after the named manual action.
+ * `defer: 'checks'` postpones a pass while gates run; it records no assessment and ends when they stop.
  */
-export type PullRequestWait = { headSha: string; reason: string; evidenceKey: string; knownFailures?: string[]; kind?: 'checks' | 'external'; wake?: PullRequestWake }
+export type PullRequestWait = { headSha: string; reason: string; evidenceKey: string; knownFailures?: string[]; kind?: 'checks' | 'external'; defer?: 'checks'; wake?: PullRequestWake }
 export const parseWait = (value: unknown): PullRequestWait => v.parse(waitSchema, value)

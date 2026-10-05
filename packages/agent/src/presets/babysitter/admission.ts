@@ -17,6 +17,12 @@ export interface BabysitterAdmissionLimits {
 /** The answer that `reconcile()` reads before it claims a PR. */
 export interface BabysitterAdmission {
   accepting: boolean;
+  /**
+   * While `accepting` is false, the host may still claim PRs for work without a model pass:
+   * direct merges, deferred waits and reviewed heads. A zero budget is an explicit operator pause
+   * and stops every claim.
+   */
+  hostOnly?: boolean;
   reason?: string;
   /** Epoch milliseconds when the pause ends, if it ends at a known time. */
   retryAt?: number;
@@ -89,20 +95,23 @@ export function summarizeProxyAccounts(status: unknown, provider: string, now: n
 export function babysitterAdmissionDecision(state: BabysitterAdmissionState, limits: BabysitterAdmissionLimits): BabysitterAdmission {
   const { windows, proxy } = state;
   const mib = (bytes: number) => Math.floor(bytes / 1024 / 1024);
+  if (limits.hourlyInputTokens === 0 || limits.dailyInputTokens === 0) {
+    return { accepting: false, hostOnly: false, reason: limits.hourlyInputTokens === 0 ? "token-budget-hourly" : "token-budget-daily", detail: "Admission is paused by a zero token budget" };
+  }
   if (state.freeTmpBytes !== undefined && state.freeTmpBytes < limits.minFreeTmpBytes) {
-    return { accepting: false, reason: "tmp-space-low", detail: `${mib(state.freeTmpBytes)} MiB free in ${state.tmpDir}; passes need ${mib(limits.minFreeTmpBytes)} MiB` };
+    return { accepting: false, hostOnly: true, reason: "tmp-space-low", detail: `${mib(state.freeTmpBytes)} MiB free in ${state.tmpDir}; passes need ${mib(limits.minFreeTmpBytes)} MiB` };
   }
   if (state.dailyInputTokens !== undefined && state.dailyInputTokens >= limits.dailyInputTokens) {
-    return { accepting: false, reason: "token-budget-daily", retryAt: windows.dayEnd, detail: `${state.dailyInputTokens} of ${limits.dailyInputTokens} daily input tokens used` };
+    return { accepting: false, hostOnly: true, reason: "token-budget-daily", retryAt: windows.dayEnd, detail: `${state.dailyInputTokens} of ${limits.dailyInputTokens} daily input tokens used` };
   }
   if (state.hourlyInputTokens !== undefined && state.hourlyInputTokens >= limits.hourlyInputTokens) {
-    return { accepting: false, reason: "token-budget-hourly", retryAt: windows.hourEnd, detail: `${state.hourlyInputTokens} of ${limits.hourlyInputTokens} hourly input tokens used` };
+    return { accepting: false, hostOnly: true, reason: "token-budget-hourly", retryAt: windows.hourEnd, detail: `${state.hourlyInputTokens} of ${limits.hourlyInputTokens} hourly input tokens used` };
   }
   if (proxy?.state === "fresh" && proxy.usable === 0) {
-    return { accepting: false, reason: "proxy-exhausted", detail: `No usable ${limits.proxyProvider} account of ${proxy.accounts}` };
+    return { accepting: false, hostOnly: true, reason: "proxy-exhausted", detail: `No usable ${limits.proxyProvider} account of ${proxy.accounts}` };
   }
   if (proxy?.state === "fresh" && proxy.weeklyUsedPercent !== undefined && proxy.weeklyUsedPercent >= limits.proxyMaxWeeklyPercent) {
-    return { accepting: false, reason: "proxy-weekly-limit", detail: `${limits.proxyProvider} accounts at ${proxy.weeklyUsedPercent}% of their weekly limit; admission stops at ${limits.proxyMaxWeeklyPercent}%` };
+    return { accepting: false, hostOnly: true, reason: "proxy-weekly-limit", detail: `${limits.proxyProvider} accounts at ${proxy.weeklyUsedPercent}% of their weekly limit; admission stops at ${limits.proxyMaxWeeklyPercent}%` };
   }
   return { accepting: true };
 }

@@ -40,29 +40,56 @@ const no = (reason: string): MergeDecision => ({ ready: false, reason });
 const pending = new Set(["queued", "in_progress", "pending", "waiting", "requested", "rerequested", "created"]);
 
 export interface BabysitterMergeEvidence {
-  /** Verified host identities whose repair records cannot be external feedback. */
+  /** Verified host identities. Their comments and reviews are never external feedback. */
   workerAuthors?: ReadonlySet<string>;
+  /** Configured logins, such as deployment preview bots, whose items never need an assessment. */
+  ignoreFeedbackAuthors?: ReadonlySet<string>;
+  /** Body prefixes of feedback that reports no findings. */
+  noFindingsReviews?: readonly string[];
+  /** Fingerprints of feedback that an earlier pass assessed or answered with a repair push. */
+  assessedFeedback?: ReadonlySet<string>;
   /** Configured review integrations that block only while their current-head review is active. */
   pendingReviewChecks?: ReadonlySet<string>;
   /** Host-recorded evidence from an explicit assessment of this exact head and feedback. */
   reviewedEvidenceKey?: string;
 }
 
-function ownRepair(value: GitHubEvidence, policy: Pick<BabysitterMergeEvidence, "workerAuthors">): boolean {
-  const author = value.user?.login ?? value.author?.login ?? "";
-  return policy.workerAuthors?.has(author.toLowerCase()) === true
-    && String(value.body ?? "").startsWith("<!-- vitehub-babysitter-repair:");
+type FeedbackPolicy = Pick<BabysitterMergeEvidence, "workerAuthors" | "ignoreFeedbackAuthors" | "noFindingsReviews">;
+
+function feedbackAuthor(value: GitHubEvidence): string {
+  return String(value.user?.login ?? value.author?.login ?? "").toLowerCase();
 }
 
-function feedback(values: Record<string, GitHubEvidence>, policy: Pick<BabysitterMergeEvidence, "workerAuthors">): unknown[] {
-  return Object.entries(values).filter(([, value]) => !value.deleted && !ownRepair(value, policy))
+function botAuthor(value: GitHubEvidence): boolean {
+  const user = value.user ?? value.author;
+  return String(user?.type ?? user?.__typename ?? "").toLowerCase() === "bot" || feedbackAuthor(value).endsWith("[bot]");
+}
+
+/**
+ * Feedback that never needs a model assessment: deleted items, the worker's own items, configured
+ * authors, items without a body and configured no-findings verdicts. Requested changes always count.
+ */
+function ignoredFeedback(value: GitHubEvidence, policy: FeedbackPolicy): boolean {
+  if (value.deleted) return true;
+  const author = feedbackAuthor(value);
+  if (policy.workerAuthors?.has(author) || policy.ignoreFeedbackAuthors?.has(author)) return true;
+  if (String(value.state).toUpperCase() === "CHANGES_REQUESTED") return false;
+  const body = String(value.body ?? "").trim();
+  return !body || (policy.noFindingsReviews ?? []).some(prefix => body.startsWith(prefix));
+}
+
+type FeedbackItem = { id: string; body: unknown; state: unknown; user: unknown; commit: unknown; path: unknown; line: unknown };
+
+/** Bot issue comments are activity panels that bots edit in place. Without `botBodies`, their identity is the evidence. */
+function feedback(values: Record<string, GitHubEvidence>, policy: FeedbackPolicy, botBodies = true): FeedbackItem[] {
+  return Object.entries(values).filter(([, value]) => !ignoredFeedback(value, policy))
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([id, value]) => ({ id, body: value.body, state: value.state, user: value.user ?? value.author,
-      commit: value.commit_id ?? value.commit?.oid, path: value.path, line: value.line }));
+    .map(([id, value]) => ({ id, body: botBodies || !botAuthor(value) ? value.body : undefined, state: value.state,
+      user: value.user ?? value.author, commit: value.commit_id ?? value.commit?.oid, path: value.path, line: value.line }));
 }
 
 /** Assessment is bound to full feedback bodies and failed check evidence, never prose heuristics. */
-export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<BabysitterMergeEvidence, "workerAuthors"> = {}): string {
+export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: FeedbackPolicy = {}): string {
   const head = snapshot.pr?.head?.sha;
   // doctor-disable-next-line typescript/performance/no-array-filter-map -- Evidence normalization intentionally filters before mapping to retain only current-head failures.
   const failures = [...Object.values(snapshot.checks), ...Object.values(snapshot.statuses)]
@@ -77,13 +104,19 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<Babysitt
         body: comment.body, user: comment.user ?? comment.author, commit: comment.commit_id ?? comment.commit?.oid })) }))
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
   return createHash("sha256").update(JSON.stringify({ head, title: snapshot.pr?.title, body: snapshot.pr?.body,
-    base: snapshot.pr?.base, comments: feedback(snapshot.comments, policy), reviews: feedback(snapshot.reviews, policy),
+    base: snapshot.pr?.base, comments: feedback(snapshot.comments, policy, false), reviews: feedback(snapshot.reviews, policy),
     reviewComments: feedback(snapshot.reviewComments, policy), threads, failures })).digest("hex");
 }
 
-function hasFeedback(values: Record<string, GitHubEvidence>, policy: Pick<BabysitterMergeEvidence, "workerAuthors">): boolean {
-  return Object.values(values).some(value => !value.deleted && !ownRepair(value, policy)
-    && (Boolean(value.body?.trim()) || String(value.state).toUpperCase() === "CHANGES_REQUESTED"));
+/**
+ * Identities of the feedback items that need an assessment. An assessment or a repair push covers
+ * the items it saw, so a later head needs another pass only for feedback that arrived since.
+ */
+export function feedbackFingerprints(snapshot: Snapshot, policy: FeedbackPolicy = {}): string[] {
+  const kinds: Array<[string, FeedbackItem[]]> = [["comment", feedback(snapshot.comments, policy, false)],
+    ["review", feedback(snapshot.reviews, policy)], ["review-comment", feedback(snapshot.reviewComments, policy)]];
+  return kinds.flatMap(([kind, values]) => values.map(value =>
+    createHash("sha256").update(JSON.stringify([kind, value.id, value.body, value.state])).digest("hex").slice(0, 32)));
 }
 
 export function resolveBabysitterMerge(merge: unknown, autoMerge: unknown): ResolvedBabysitterMerge {
@@ -116,11 +149,18 @@ export function snapshotCheckEvidence(snapshot: Snapshot): GitHubCheckEvidence {
     return [{ id: check.id, head_sha: head, name: check.name, app: hasRuntimeType(check.app?.id, "number") ? { id: check.app.id } : null,
       status: String(check.status ?? ""), conclusion: check.conclusion === undefined || check.conclusion === null ? null : String(check.conclusion) }];
   });
+  // A rerun keeps the earlier run in the snapshot. Only the newest run of each check is evidence.
+  const newest = new Map<string, (typeof checkRuns)[number]>();
+  for (const check of checkRuns) {
+    const key = `${check.name}\0${check.app?.id ?? ""}`;
+    const previous = newest.get(key);
+    if (!previous || check.id > previous.id) newest.set(key, check);
+  }
   const statuses = Object.values(snapshot.statuses).flatMap((status, index) => {
     if (status.deleted || status.sha !== head || !hasRuntimeType(status.context, "string")) return [];
     return [{ id: hasRuntimeType(status.id, "number") ? status.id : index, sha: head, context: status.context, state: String(status.state ?? "") }];
   });
-  return { repository: snapshot.repository, branch: snapshot.pr?.base?.ref ?? "", headSha: head, checkRuns, statuses };
+  return { repository: snapshot.repository, branch: snapshot.pr?.base?.ref ?? "", headSha: head, checkRuns: [...newest.values()], statuses };
 }
 
 /**
@@ -141,10 +181,10 @@ export function directMergeReadiness(snapshot: Snapshot, requiredChecks: GitHubR
   }
   const failedChecks = evidence.checkRuns.some(check => failing.has(String(check.conclusion).toLowerCase()))
     || evidence.statuses.some(status => failing.has(status.state.toLowerCase()));
-  const needsAssessment = failedChecks || hasFeedback(snapshot.reviews, assessment) || hasFeedback(snapshot.comments, assessment)
-    || hasFeedback(snapshot.reviewComments, assessment);
-  if (needsAssessment && assessment.reviewedEvidenceKey !== mergeReviewEvidenceKey(snapshot, assessment)) {
-    return no("current-head feedback and optional failures need assessment");
+  const assessed = assessment.assessedFeedback ?? new Set<string>();
+  const unassessed = feedbackFingerprints(snapshot, assessment).filter(id => !assessed.has(id)).length;
+  if ((failedChecks || unassessed) && assessment.reviewedEvidenceKey !== mergeReviewEvidenceKey(snapshot, assessment)) {
+    return no(failedChecks ? "current-head failures need assessment" : `${unassessed} new feedback item${unassessed === 1 ? " needs" : "s need"} assessment`);
   }
   if (!snapshot.threadsHydrated) return no("review threads not loaded");
   if (snapshot.threads.some((thread) => thread.isResolved !== true)) return no("unresolved review threads");

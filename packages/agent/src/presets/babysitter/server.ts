@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
@@ -36,8 +37,8 @@ import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
-import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
-import { createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
+import { directMergeReadiness, feedbackFingerprints, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
+import { createCheckWait, failureKeys, hasPendingChecks, reviewCheckRunning, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 import type { BabysitterAdmission } from "./admission.ts";
 
@@ -104,13 +105,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   // Only trust the host identity when it matches the configured allowlist;
   // unverified names must never suppress activity feedback.
   const activityAuthors = verifiedHostIdentity ? [verifiedHostIdentity] : [];
+  const noProgressBudget = baseAgent.noProgressBudget ?? presetOptions.noProgressBudget ?? 3;
   const pullRequestInbox = new PullRequestInbox({
     ...(options.inboxStorage ? { storage: options.inboxStorage, scope: options.inboxScope ?? options.agentName ?? baseAgent.name ?? "babysitter" } : { path: options.inboxPath }),
     repositories: options.repositories,
     filter: presetOptions.filter,
     activityAuthors,
+    budgets: noProgressBudget === false ? {} : { noProgress: noProgressBudget },
   });
+  const deferWhilePending = baseAgent.deferWhilePending ?? presetOptions.deferWhilePending ?? true;
   const waitPolicy: BabysitterWaitPolicy = {
+    ignoreFeedbackAuthors: new Set((baseAgent.ignoreFeedbackAuthors ?? presetOptions.ignoreFeedbackAuthors ?? []).map(author => author.trim().toLowerCase())),
     workerAuthors: new Set(activityAuthors.flatMap(author => [author.toLowerCase(), `${author.toLowerCase().replace(/\[bot\]$/, "")}[bot]`])),
     pendingReviewChecks: new Set((presetOptions.reviewChecks ?? []).map(name => name.toLowerCase())),
     wakeWhenReady: merge.mode === "direct",
@@ -267,7 +272,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const evaluation = evaluateGitHubRequiredChecks(policy, snapshotCheckEvidence(snapshot));
     const assessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
     const reviewedEvidenceKey = isRuntimeRecord(assessment) && assessment.head === snapshot.pr?.head?.sha && hasRuntimeType(assessment.evidenceKey, "string") ? assessment.evidenceKey : undefined;
-    let decision = directMergeReadiness(snapshot, evaluation.state, { pendingReviewChecks: waitPolicy.pendingReviewChecks, workerAuthors: waitPolicy.workerAuthors, reviewedEvidenceKey });
+    const assessedFeedback = new Set(isRuntimeRecord(assessment) && Array.isArray(assessment.feedback) ? assessment.feedback.filter(item => hasRuntimeType(item, "string")) : []);
+    let decision = directMergeReadiness(snapshot, evaluation.state, { ...waitPolicy, assessedFeedback, reviewedEvidenceKey });
     if (decision.ready && merge.ready) {
       const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state });
       if (ready !== true) decision = { ready: false, reason: ready };
@@ -349,10 +355,96 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
   const providerRetryDelayMs = options.providerRetryDelayMs ?? 10_000;
 
-  async function requiredCheckState(snapshot: Snapshot) {
+  async function requiredCheckEvaluation(snapshot: Snapshot) {
     const base = snapshot.pr?.base?.ref;
-    if (!base) return "unknown" as const;
-    return evaluateGitHubRequiredChecks(await requiredChecks.read(snapshot.repository, base), snapshotCheckEvidence(snapshot)).state;
+    if (!base) return undefined;
+    return evaluateGitHubRequiredChecks(await requiredChecks.read(snapshot.repository, base), snapshotCheckEvidence(snapshot));
+  }
+
+  async function requiredCheckState(snapshot: Snapshot) {
+    return (await requiredCheckEvaluation(snapshot))?.state ?? "unknown";
+  }
+
+  /**
+   * Remembers the feedback that a pass assessed or answered with a repair push. A later head needs
+   * an assessment only for feedback that arrived since.
+   */
+  async function recordAssessment(snapshot: Snapshot, current: { head?: string; evidenceKey?: string } = {}) {
+    const key = `review-assessment:${snapshot.repository}#${snapshot.number}`;
+    const previous = await pullRequestInbox.meta(key);
+    const record = isRuntimeRecord(previous) ? previous : {};
+    const known = Array.isArray(record.feedback) ? record.feedback.filter(item => hasRuntimeType(item, "string")) : [];
+    await pullRequestInbox.setMeta(key, {
+      head: current.head ?? record.head,
+      evidenceKey: current.evidenceKey ?? record.evidenceKey,
+      // Keep the newest identities; a long-lived PR cannot grow this record without bound.
+      feedback: [...new Set([...known, ...feedbackFingerprints(snapshot, waitPolicy)])].slice(-2000),
+    });
+  }
+
+  /** Why a pass waits for running gates, or undefined when it runs now. A failure or conflict always runs now. */
+  async function pendingGateDeferral(snapshot: Snapshot): Promise<string | undefined> {
+    if (!deferWhilePending) return undefined;
+    const pr = snapshot.pr;
+    if (!pr || pr.mergeable === false || pr.mergeable_state === "dirty" || failureKeys(snapshot).length) return undefined;
+    if (reviewCheckRunning(snapshot, waitPolicy)) return "review checks";
+    const evaluation = await requiredCheckEvaluation(snapshot);
+    // A required check that never reported may never run, so only running checks defer a pass.
+    return evaluation?.state === "pending" && !evaluation.missing.length ? "required checks" : undefined;
+  }
+
+  const install = baseAgent.install ?? presetOptions.install ?? true;
+  const installEnvironmentNames = /^(?:PATH|HOME|USER|LOGNAME|LANG|LC_[A-Z]+|TMPDIR|TERM|SHELL|COREPACK_[A-Z_]+|npm_config_[a-z_]+|PNPM_HOME)$/;
+  const exists = (path: string) => access(path).then(() => true, () => false);
+
+  async function installCommand(cwd: string): Promise<string[] | undefined> {
+    if (isRuntimeRecord(install)) return [install.command, ...install.args ?? []];
+    if (await exists(join(cwd, "pnpm-lock.yaml"))) return ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"];
+    if (await exists(join(cwd, "package-lock.json"))) return ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"];
+    if (await exists(join(cwd, "bun.lock")) || await exists(join(cwd, "bun.lockb"))) return ["bun", "install", "--frozen-lockfile"];
+    if (!(await exists(join(cwd, "yarn.lock")))) return undefined;
+    let manager = "";
+    try {
+      const manifest: unknown = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
+      manager = isRuntimeRecord(manifest) && hasRuntimeType(manifest.packageManager, "string") ? manifest.packageManager : "";
+    } catch {}
+    // Yarn 1 has no --immutable; later versions deprecate --frozen-lockfile.
+    return ["yarn", "install", !manager || manager.startsWith("yarn@1.") ? "--frozen-lockfile" : "--immutable"];
+  }
+
+  /**
+   * Installs dependencies on the host before the provider starts, so the model spends no turns on
+   * setup. The install gets a scrubbed environment without host credentials, and its result goes
+   * to `.git/vitehub-install.json` in the provider workspace. A failed install does not stop the pass.
+   */
+  async function installDependencies(cwd: string, signal: AbortSignal, owner: Record<string, unknown>, nodeOptions: string | undefined) {
+    if (install === false) return;
+    const command = await installCommand(cwd);
+    if (!command?.[0]) return;
+    const startedAt = Date.now();
+    const environment = Object.fromEntries([
+      ...Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && installEnvironmentNames.test(entry[0])),
+      ...nodeOptions ? [["NODE_OPTIONS", nodeOptions]] : [],
+      ["CI", "1"],
+    ]);
+    let outcome: { ok: boolean; exitCode?: unknown; output: string };
+    try {
+      const result = await execFileAsync(command[0], command.slice(1), { cwd, env: environment, signal, timeout: 15 * 60_000, maxBuffer: 64 * 1024 * 1024 });
+      outcome = { ok: true, output: String(result.stdout).slice(-2000) };
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) throw error;
+      const failure = isRuntimeRecord(error) ? error : {};
+      outcome = { ok: false, exitCode: failure.code, output: `${String(failure.stdout ?? "").slice(-2000)}\n${String(failure.stderr ?? error).slice(-4000)}` };
+    }
+    const record = { command: command.join(" "), ...outcome, durationMs: Date.now() - startedAt };
+    try {
+      // A linked worktree has a .git file, so ask Git for the directory.
+      const gitDirectory = (await execFileAsync("git", ["rev-parse", "--absolute-git-dir"], { cwd, encoding: "utf8", timeout: 5000, signal })).stdout.trim();
+      await writeFile(join(gitDirectory, "vitehub-install.json"), `${JSON.stringify(record, null, 2)}\n`);
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) throw error;
+    }
+    schedulerEvent("babysitter.install.finished", { ...owner, command: record.command, ok: record.ok, exitCode: record.exitCode, durationMs: record.durationMs });
   }
 
   /** A ready event may wake a direct merge, but must not start a model pass when
@@ -447,6 +539,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return { running: active.size };
   }
 
+  // PRs that a paused admission already checked for host-only work, by generation and revision.
+  // They stay unclaimed until their evidence changes.
+  const hostOnlyChecked = new Map<string, string>();
+  const hostOnlyStamp = (s: Snapshot) => `${s.generation}:${s.revision ?? 0}`;
+
   async function reconcile(
     reason: string,
     { track }: ProcessReconcilerRunContext,
@@ -528,9 +625,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       await pullRequestInbox.pruneDeliveries();
     }
     if (!isAccepting()) return;
-    if (options.admission && active.size < ownerLimit) {
+    let modelAdmission = true;
+    if (options.admission) {
       const admission = await options.admission();
       if (!admission.accepting) {
+        modelAdmission = false;
         // Log the pause once per reason, then every 15 minutes.
         const previous = await pullRequestInbox.meta("admission-skipped");
         const last = isRuntimeRecord(previous) ? previous : {};
@@ -539,13 +638,19 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           await pullRequestInbox.setMeta("admission-skipped", skipped);
           schedulerEvent("babysitter.admission.skipped", { trigger: reason, ...skipped });
         }
-        return;
+        // An explicit pause stops every claim. Other pauses stop only model passes.
+        if (!admission.hostOnly) return;
       }
     }
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
-    // their leases for two hours.
-    const jobs = await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size));
+    // their leases for two hours. Host-only claims merge, defer or park without
+    // a model, so they may exceed the pass limit.
+    const jobs = modelAdmission
+      ? await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size))
+      : await pullRequestInbox.claim(Math.max(0, ownerLimit + 5 - active.size), {
+        skip: s => hostOnlyChecked.get(`${s.repository}#${s.number}`) === hostOnlyStamp(s),
+      });
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {
@@ -652,6 +757,25 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               });
               return;
             }
+          }
+          const deferral = await pendingGateDeferral(inboxClaim.snapshot);
+          if (deferral) {
+            // Running gates finish soon. One later pass then handles their results and the feedback together.
+            await pullRequestInbox.finish(inboxClaim, {
+              text: inboxClaim.snapshot.lastResult || `Waiting for ${deferral} before the next pass.`,
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), defer: "checks" },
+            });
+            outcome = "waiting";
+            schedulerEvent("babysitter.wait.kept", { ...owner, head_sha: inboxClaim.snapshot.pr?.head?.sha, avoided_invocation: true, reason: `deferred:${deferral}` });
+            return;
+          }
+          if (!modelAdmission) {
+            // The PR needs a model pass. Leave it queued unchanged until admission reopens.
+            await pullRequestInbox.release(inboxClaim);
+            const released = await pullRequestInbox.get(repository, number);
+            if (released) hostOnlyChecked.set(`${repository}#${number}`, hostOnlyStamp(released));
+            outcome = "admission-paused";
+            return;
           }
           if (!(await hydrateFailedCiEvidence(pullRequestInbox, inboxClaim, {
             readJson: (path, projection) => readRest(path, projection, passSignal),
@@ -849,6 +973,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                       if (!preparedDirectories.has(context.cwd)) {
                         await prepared.prepareWorkspace(context.cwd);
                         preparedDirectories.add(context.cwd);
+                        const nodeOptions = context.environment.NODE_OPTIONS;
+                        await installDependencies(context.cwd, abortSignal, owner, hasRuntimeType(nodeOptions, "string") ? nodeOptions : undefined);
                       }
                       providerDirectory = context.cwd;
                     }
@@ -911,7 +1037,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           const current = await pullRequestInbox.get(repository, number);
           const assessed = !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
-          if (assessed) await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
+          if (assessed) await recordAssessment(inboxClaim.snapshot, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
+          // A repair push answers every finding the pass saw; the instructions require a fix or an explicit rejection first.
+          else if (pushedHead && disposition === "park") await recordAssessment(inboxClaim.snapshot);
           const terminal = current?.status === "terminal";
           if (terminal) {
             await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });

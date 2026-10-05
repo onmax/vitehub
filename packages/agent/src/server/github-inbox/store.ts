@@ -199,8 +199,8 @@ export class PullRequestInbox {
     await this.init()
     return await this.storage.execute(statement, args)
   }
-  private repositoryFilter(): { sql: string; args: string[] } {
-    return { sql: `repository IN (${this.repositories.map(() => '?').join(',')})`, args: this.repositories }
+  private repositoryFilter(column = 'repository'): { sql: string; args: string[] } {
+    return { sql: `${column} IN (${this.repositories.map(() => '?').join(',')})`, args: this.repositories }
   }
   private async getIn(tx: PullRequestInboxExecutor, repository: string, number: number): Promise<Snapshot | undefined> {
     const [row] = await tx.execute(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, repository, number])
@@ -529,6 +529,11 @@ export class PullRequestInbox {
           && ['queued', 'in_progress', 'pending', 'waiting', 'requested', 'rerequested', 'created'].includes(check.status ?? payload.action ?? '')
           || event === 'status' && payload.state === 'pending'
         const wake = (changed || !s.pr) && !pendingCi
+        // New human feedback is new evidence on the same head. It resets an exhausted no-progress budget.
+        const human = String(payload.sender?.type ?? '').toLowerCase() === 'user' && !this.activityAuthors.has(String(payload.sender?.login ?? '').toLowerCase())
+        if (changed && human && ['issue_comment', 'pull_request_review', 'pull_request_review_comment'].includes(event) && s.progressBudget?.exhausted) {
+          s.progressBudget = { ...s.progressBudget, count: 0, exhausted: false, resetReason: `${event}:${payload.sender?.login ?? 'unknown'}` }
+        }
         if (wake) this.dirty(s, `${event}:${payload.action ?? check?.conclusion ?? payload.state ?? 'updated'}`)
         else if (changed) s.revision = (s.revision ?? 0) + 1
         const exhausted = s.progressBudget?.exhausted && s.progressBudget.head === s.pr?.head?.sha
@@ -549,16 +554,19 @@ export class PullRequestInbox {
       return await finish(numbers.size ? undefined : 'no matching PR head')
     })
   }
-  async claim(limit: number): Promise<Claim[]> {
+  /** Leases up to `limit` eligible PRs. `skip` leaves a candidate unclaimed for this call. */
+  async claim(limit: number, options: { skip?: (snapshot: Snapshot) => boolean } = {}): Promise<Claim[]> {
     if (!this.repositories.length || limit < 1) return []
     return await this.transaction(async tx => {
       const now = this.clock(), claims: Claim[] = [], t = this.tables
-      const repositories = this.repositoryFilter()
-      // Columns select candidates; only these snapshots are parsed.
-      const candidates = await tx.execute(`SELECT repository, number, base_ref FROM ${t.pullRequests}
-        WHERE scope=? AND ${repositories.sql} AND waiting=0 AND status<>'terminal' AND generation>handled AND next_at<=?
-          AND (lease IS NULL OR lease_until<=?) AND progress_blocked=0
-        ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now])
+      const repositories = this.repositoryFilter('p.repository')
+      // Columns select candidates; only these snapshots are parsed. Stack parents come first,
+      // weighted by their open children: merging one unblocks every child based on its branch.
+      const candidates = await tx.execute(`SELECT p.repository AS repository, p.number AS number, p.base_ref AS base_ref FROM ${t.pullRequests} p
+        WHERE p.scope=? AND ${repositories.sql} AND p.waiting=0 AND p.status<>'terminal' AND p.generation>p.handled AND p.next_at<=?
+          AND (p.lease IS NULL OR p.lease_until<=?) AND p.progress_blocked=0
+        ORDER BY (SELECT COUNT(*) FROM ${t.pullRequests} c WHERE c.scope=p.scope AND c.repository=p.repository AND c.state='open' AND c.base_ref=p.head_ref) DESC,
+          p.dirty_at, p.number`, [this.scope, ...repositories.args, now, now])
       for (const candidate of candidates) {
         if (claims.length >= limit) break
         const repository = stringValue(candidate.repository), number = Number(candidate.number)
@@ -568,6 +576,7 @@ export class PullRequestInbox {
         const s = await this.getIn(tx, repository, number)
         if (!s) continue
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
+        if (options.skip?.(s)) continue
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
@@ -730,6 +739,25 @@ export class PullRequestInbox {
       this.dirty(s, 'wait:evidence-changed')
       await this.put(tx, s)
       return true
+    })
+  }
+  /**
+   * Frees every lease in this scope at startup and returns how many were held. Call it only when one
+   * process owns the scope: a pass cannot survive a restart, so its lease only delays the PR.
+   */
+  async releaseLeases(): Promise<number> {
+    return await this.transaction(async tx => {
+      const rows = await tx.execute(`SELECT repository, number FROM ${this.tables.pullRequests} WHERE scope=? AND lease IS NOT NULL`, [this.scope])
+      let released = 0
+      for (const row of rows) {
+        const s = await this.getIn(tx, stringValue(row.repository), Number(row.number))
+        if (!s?.lease) continue
+        s.lease = null; s.leaseUntil = 0
+        if (s.status !== 'terminal') s.status = s.wait ? 'waiting' : 'ready'
+        await this.put(tx, s)
+        released++
+      }
+      return released
     })
   }
   async recoverLeases(): Promise<void> {
