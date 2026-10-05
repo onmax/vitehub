@@ -9,6 +9,7 @@ import { join, resolve } from "node:path"
 
 import { describe, expect, it, vi } from "vitest"
 import { Diagnostic } from "nostics"
+import { z } from "zod"
 import type { StreamEvent } from "../src/messages.ts"
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -3830,6 +3831,64 @@ cli_auth_credentials_store = "keyring"
       },
     }) as never)).resolves.toMatchObject({ text: "" })
     expect(execute).toHaveBeenCalledWith({ query: "vitehub" }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }))
+  })
+
+  it.each(["value", "getter", "proxy", "zod"])("handles schema %s markers through the provider MCP boundary", async (kind) => {
+    const validate = vi.fn(() => ({ value: { query: "inherited" } }))
+    const execute = vi.fn(async (input: unknown) => ({ echoed: input }))
+    const read = vi.fn(() => { throw new Error("Inherited marker must not be read") })
+    const prototype = kind === "getter"
+      ? Object.defineProperty({}, "~standard", { enumerable: true, get: read })
+      : { "~standard": { validate } }
+    const rawSchema = Object.assign(Object.create(prototype), {
+      additionalProperties: false,
+      properties: { query: { type: "string" } },
+      required: ["query"],
+      type: "object",
+    })
+    const inputSchema = kind === "proxy"
+      ? new Proxy(rawSchema, {
+          get(target, key, receiver) {
+            if (key === "~standard") return read()
+            return Reflect.get(target, key, receiver)
+          },
+        })
+      : kind === "zod" ? z.strictObject({ query: z.string() }) : rawSchema
+    const threadId = "thread-tools-inherited-schema"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn(mcp) {
+        const client = new McpClient({ name: "provider-test", version: "1" })
+        const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), {
+          requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
+        })
+        await client.connect(transport)
+        try {
+          expect((await client.listTools()).tools[0]?.inputSchema).toEqual({
+            ...(kind === "zod" ? { $schema: "http://json-schema.org/draft-07/schema#" } : {}),
+            additionalProperties: false,
+            properties: { query: { type: "string" } },
+            required: ["query"],
+            type: "object",
+          })
+          await expect(client.callTool({ arguments: { query: 42 }, name: "search" })).resolves.toMatchObject({ isError: true })
+          expect(execute).not.toHaveBeenCalled()
+          await expect(client.callTool({ arguments: { query: "vitehub" }, name: "search" })).resolves.toMatchObject({
+            content: [{ text: '{"echoed":{"query":"vitehub"}}', type: "text" }],
+          })
+        }
+        finally {
+          await client.close()
+        }
+      },
+    })
+
+    // SAFETY: This fixture supplies the runtime context exercised by the provider adapter.
+    await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId, {
+      tools: { search: { execute, inputSchema, name: "search" } },
+    }) as never)
+    expect(read).not.toHaveBeenCalled()
+    expect(validate).not.toHaveBeenCalled()
+    expect(execute).toHaveBeenCalledExactlyOnceWith({ query: "vitehub" }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }))
   })
 
   it.each(["codex", "claude-code"] as const)("returns diagnostic guidance through %s Capability tools", async (provider) => {
