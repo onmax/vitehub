@@ -51,7 +51,7 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
     consume(input) {
       const timestamp = now()
       prune(timestamp)
-      const key = `${input.name ?? "default"}\0${input.key}`
+      const key = JSON.stringify([input.name ?? "default", input.key])
       const resetAt = Math.floor(timestamp / input.windowMs) * input.windowMs + input.windowMs
       const current = entries.get(key)
       if (!current && entries.size >= maxEntries) {
@@ -80,13 +80,13 @@ export function memoryRateLimitDriver(options: MemoryRateLimitDriverOptions = {}
     peek(input) {
       const timestamp = now()
       prune(timestamp)
-      const key = `${input.name ?? "default"}\0${input.key}`
+      const key = JSON.stringify([input.name ?? "default", input.key])
       const entry = entries.get(key)
       return [null, { resetAt: entry && entry.resetAt > timestamp ? entry.resetAt : undefined, used: entry && entry.resetAt > timestamp ? entry.count : 0 }]
     },
     name: "memory",
     reset(input) {
-      const key = `${input.name ?? "default"}\0${input.key}`
+      const key = JSON.stringify([input.name ?? "default", input.key])
       entries.delete(key)
       return [null]
     },

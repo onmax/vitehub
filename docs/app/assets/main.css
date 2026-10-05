@@ -5,6 +5,7 @@
   --vh-toc-width: 240px;
   --vh-content-width: 796px;
   --vh-docs-width: calc(var(--vh-sidebar-width) + var(--vh-content-width) + var(--vh-toc-width) + 3rem);
+  --vh-landing-width: 84rem;
   --vh-ink: #09090b;
   --vh-paper: #fafafa;
 }
@@ -105,6 +106,12 @@ body {
 
 .docs-content table {
   font-size: 0.925rem;
+}
+
+/* Long identifiers in prose break instead of widening the page on narrow phones. */
+.docs-content :where(p, li) > code {
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 .docs-content :where(h1, h2, h3) {
@@ -276,6 +283,20 @@ body {
 .vitehub-content-search-modal button[aria-label="Close"]::before {
   font-size: 0.75rem;
   content: "ESC";
+}
+
+/* Keep results above the bottom edge when the viewport is short, such as a tablet or phone in landscape. */
+@media (min-width: 641px) {
+  .vitehub-content-search-modal {
+    max-height: min(70vh, calc(100dvh - 248px - 0.5rem));
+  }
+}
+
+@media (min-width: 641px) and (max-height: 37.5rem) {
+  .vitehub-content-search-modal {
+    top: 0.5rem !important;
+    max-height: calc(100dvh - 1rem);
+  }
 }
 
 @media (max-width: 640px) {

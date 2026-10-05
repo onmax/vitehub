@@ -336,6 +336,15 @@ describe("blob config", () => {
     })).toThrow("`blob.serve.store` must reference a configured Blob store: \"media\".")
   })
 
+  it("rejects inherited names when serving from a single Blob store", () => {
+    expect(() => normalizeBlobOptions({
+      driver: "fs",
+      serve: {
+        store: "constructor",
+      },
+    })).toThrow("`blob.serve.store` must reference a configured Blob store: \"constructor\".")
+  })
+
   it("normalizes named stores with a required default store", () => {
     expect(normalizeBlobOptions({
       stores: {
@@ -430,6 +439,21 @@ describe("blob config", () => {
         },
       },
     })).toThrow("`blob.stores.default` is required when using named Blob stores.")
+  })
+
+  it("ignores named stores inherited from an untrusted prototype", () => {
+    const options = Object.create({
+      stores: {
+        default: { base: ".inherited", driver: "fs" },
+      },
+    })
+
+    expect(normalizeBlobOptions(options, { env: {}, hosting: "" })).toEqual({
+      store: {
+        base: ".vitehub/data/blob",
+        driver: "fs",
+      },
+    })
   })
 
   it("rehydrates the Vercel token at runtime", () => {
