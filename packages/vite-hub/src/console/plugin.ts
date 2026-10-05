@@ -13,7 +13,6 @@ import { consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
 import { createConsoleInvocationsIdentity } from "./internal.ts"
 import { resolveConsoleProjectNameFromRoot } from "./project.ts"
 import { describeConsoleContributedSections, describeConsoleRuntimeReaders } from "./contributions.ts"
-import { installConsoleFixtureInvocations } from "./runtime/server/invocations.ts"
 
 function renderRetentionLimit(value: number | false | undefined): string {
   if (value === undefined) return "undefined"
@@ -148,6 +147,8 @@ export async function writeConsoleNitroPlugin(
     await writeFile(file, contents, "utf8")
   }
   if (fixture && snapshot) {
+    // The invocation runtime loads Drizzle and libSQL. Load it only for a Console fixture.
+    const { installConsoleFixtureInvocations } = await import("./runtime/server/invocations.ts")
     installConsoleFixtureInvocations(projectRoot, fixture, snapshot, consoleFixtureRevision(snapshot), runtimeBinding)
   }
   return identity
