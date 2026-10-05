@@ -15,7 +15,7 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
 
 import { agentWithColocatedInstructions, defineAgent, defineCapability, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
-import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
+import { boundedMergeReady, createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
 import { getAgentLayerOptions } from "../src/agent-layers.ts";
 import { github as githubChannel, githubChannelIdentity } from "../src/channels.ts";
 import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -131,13 +131,15 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
     if (path.includes("pulls?state=all&head="))
       return { stdout: (preset.parents ?? []).map((value) => JSON.stringify(value)).join("\n"), stderr: "" };
+    if (path.startsWith("repos/acme/app/pulls?state=open&base="))
+      return { stdout: "", stderr: "" };
     if (path === "repos/acme/app")
       return { stdout: JSON.stringify({ delete_branch_on_merge: false }), stderr: "" };
     const data =
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
         : path.includes("/reviews?")
-          ? [
+          ? preset.merge ? [] : [
               {
                 id: 41,
                 body: "Fix value",
@@ -295,6 +297,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
               delta: JSON.stringify({
                 disposition: "park",
                 text: "Repair checked. Waiting for checks.",
+                ...preset.result,
               }),
               streamKind: "assistant_text",
             },
@@ -341,6 +344,40 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
 }
 
 describe("Babysitter preset runtime", () => {
+  it("bounds stalled readiness hooks and propagates rejection and cancellation", async () => {
+    await expect(boundedMergeReady(() => new Promise(() => {}), new AbortController().signal, 5)).rejects.toThrow("timed out");
+    await expect(boundedMergeReady(() => Promise.reject(new Error("offline")), new AbortController().signal)).rejects.toThrow("offline");
+    const controller = new AbortController();
+    const pending = boundedMergeReady(() => new Promise(() => {}), controller.signal);
+    controller.abort(new Error("stopped"));
+    await expect(pending).rejects.toThrow("stopped");
+  });
+
+  it("retries a reviewed custom gate without another model pass", async () => {
+    let ready = false;
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => ready || "approval pending" }, result: { reviewedHead: "a".repeat(40) } });
+    try {
+      await f.reconcile();
+      const waiting = await f.runtime.inbox.get("acme/app", 12);
+      expect(waiting?.wait?.retryAt).toBeTypeOf("number");
+      expect(await f.runtime.inbox.waitsToEvaluate(true)).toHaveLength(1);
+      ready = true;
+      const now = vi.spyOn(Date, "now").mockReturnValue(waiting!.wait!.retryAt! + 1);
+      try { await f.reconcile(); } finally { now.mockRestore(); }
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("does not retain a merge assessment for an external wait", async () => {
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => "approval pending" }, result: { reviewedHead: "a".repeat(40), wait: { kind: "external", reason: "Needs approval" } } });
+    try {
+      await f.reconcile();
+      expect(await f.runtime.inbox.meta("review-assessment:acme/app#12")).toBeNull();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.kind).toBe("external");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("merges a ready PR directly before any model pass", async () => {
     const f = await fixture(false, false, { merge: "direct" });
     try {
@@ -349,6 +386,21 @@ describe("Babysitter preset runtime", () => {
       expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge", "merge_method=squash", `sha=${"a".repeat(40)}`]));
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("releases the claim when branch safety read %s fails", async (path) => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes(path)) throw new Error("GitHub temporarily unavailable");
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(f.command.mock.calls.some(([args]) => args.includes("PUT"))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 

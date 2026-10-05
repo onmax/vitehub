@@ -37,7 +37,7 @@ import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } fro
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
-import { createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
+import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 
 export interface BabysitterRuntimeOptions {
@@ -64,6 +64,23 @@ export interface BabysitterRuntimeOptions {
   postPushGraceMs?: number;
   /** Delay between provider rate-limit retries. Defaults to 10 seconds. */
   providerRetryDelayMs?: number;
+}
+
+/** Bound policy hooks inside an owner slot, never in the scheduler wait scan. */
+export async function boundedMergeReady(read: () => true | string | Promise<true | string>, signal: AbortSignal, timeoutMs = 10_000) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: () => void = () => {};
+  try {
+    signal.throwIfAborted();
+    return await Promise.race([Promise.resolve().then(read), new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(() => reject(new Error("Merge readiness timed out.")), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+  }
 }
 
 /** Provider quota and rate-limit failures. Cancellation is never a rate limit. */
@@ -266,13 +283,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const reviewedEvidenceKey = isRuntimeRecord(assessment) && assessment.head === snapshot.pr?.head?.sha && hasRuntimeType(assessment.evidenceKey, "string") ? assessment.evidenceKey : undefined;
     let decision = directMergeReadiness(snapshot, evaluation.state, { pendingReviewChecks: waitPolicy.pendingReviewChecks, workerAuthors: waitPolicy.workerAuthors, reviewedEvidenceKey });
     if (decision.ready && merge.ready) {
-      const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state });
+      const head = decision.head;
+      const readyHook = merge.ready;
+      const ready = await boundedMergeReady(() => readyHook({ repository, number, head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state }), signal);
       if (ready !== true) decision = { ready: false, reason: ready };
     }
     if (!decision.ready) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
       return "not-ready";
     }
+    let mergeStarted = false;
     try {
       const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
       const current = liveMergeReadiness(live, decision.head);
@@ -299,6 +319,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "merge attempt already in flight or claim changed" });
         return "blocked";
       }
+      mergeStarted = true;
       // GitHub rejects the merge when the head no longer matches sha.
       const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
       let response: unknown;
@@ -312,6 +333,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return "blocked";
       }
     } catch (error) {
+      if (!mergeStarted) await pullRequestInbox.release(claim);
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       return "blocked";
     }
@@ -352,30 +374,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return evaluateGitHubRequiredChecks(await requiredChecks.read(snapshot.repository, base), snapshotCheckEvidence(snapshot)).state;
   }
 
-  /** A ready event may wake a direct merge, but must not start a model pass when
-   * the user supplied merge predicate still blocks that merge. */
-  async function directMergeWakeAllowed(snapshot: Snapshot, requiredChecks: Awaited<ReturnType<typeof requiredCheckState>>): Promise<boolean> {
-    if (merge.mode !== "direct" || !merge.ready) return true;
-    const head = snapshot.pr?.head?.sha;
-    if (!head) return false;
-    try {
-      return await merge.ready({
-        repository: snapshot.repository,
-        number: snapshot.number,
-        head,
-        snapshot: structuredClone(snapshot),
-        requiredChecks,
-      }) === true;
-    } catch (error) {
-      schedulerEvent("babysitter.direct_merge.skipped", {
-        pullRequest: snapshot.number,
-        repository: snapshot.repository,
-        reason: `merge readiness check failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 160)}`,
-      });
-      return false;
-    }
-  }
-
   const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   async function dependencyEvidence(wake: PullRequestWake): Promise<string> {
     // Dependency reads are host-owned. A parked model never polls unchanged checks.
@@ -384,10 +382,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       if (!isRuntimeRecord(pr)) throw new Error("Missing external pull-request state.");
       return digest({ state: pr.state, mergedAt: pr.merged_at, head: isRuntimeRecord(pr.head) ? pr.head.sha : undefined });
     }
-    const checks = await readRest(`repos/${wake.repository}/commits/${wake.headSha}/check-runs?per_page=100`, ".check_runs[]");
-    const statuses = await readRest(`repos/${wake.repository}/commits/${wake.headSha}/statuses?per_page=100`, ".");
-    return digest({ checks: checks.map(check => isRuntimeRecord(check) ? [check.id, check.status, check.conclusion] : null),
-      statuses: statuses.map(status => isRuntimeRecord(status) ? [status.context, status.state] : null) });
+    return checksDependencyEvidence(wake, readRest);
   }
   async function externalWait(observed: Snapshot, wake: PullRequestWake | undefined, reason: string) {
     if (!wake) return { ...createCheckWait(observed, waitPolicy), kind: "external" as const, reason };
@@ -400,11 +395,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   /** Wakes a parked PR only when its new events need a model pass or a direct merge. */
   async function evaluateWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(true)) {
+      if (snapshot.generation <= snapshot.handled && (snapshot.wait?.retryAt ?? Infinity) > Date.now() && !snapshot.wait?.wake) continue;
       const checks = await requiredCheckState(snapshot);
-      let reasons = wakeReasons(snapshot, checks, waitPolicy);
-      if (reasons.includes("ready-to-merge") && !(await directMergeWakeAllowed(snapshot, checks))) {
-        reasons = reasons.filter(reason => reason !== "ready-to-merge");
-      }
+      const reasons = wakeReasons(snapshot, checks, waitPolicy);
+      if (snapshot.wait?.retryAt !== undefined && snapshot.wait.retryAt <= Date.now()) reasons.push("merge-retry");
       if (snapshot.wait?.wake) {
         const dependencyKey = `dependency:${snapshot.repository}#${snapshot.number}`;
         const nextReadKey = `dependency-next:${snapshot.repository}#${snapshot.number}`;
@@ -625,7 +619,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               && inboxClaim.snapshot.pr?.mergeable_state !== "dirty") {
               await pullRequestInbox.finish(inboxClaim, {
                 text: inboxClaim.snapshot.lastResult || "Reviewed head is unchanged; waiting for merge gates.",
-                wait: createCheckWait(inboxClaim.snapshot, waitPolicy),
+                wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: Date.now() + 120_000 },
               });
               schedulerEvent("babysitter.wait.kept", {
                 ...owner,
@@ -892,7 +886,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           );
 
           const current = await pullRequestInbox.get(repository, number);
-          const assessed = !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
+          const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
           if (assessed) await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
           const terminal = current?.status === "terminal";
@@ -903,6 +897,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await parkOnPushedHead(inboxClaim, resultText, pushedHead);
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && passResult?.wait?.kind === "external") {
             outcome = "waiting";
+            await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, null);
             await pullRequestInbox.finish(inboxClaim, { text: resultText,
               wait: await externalWait(inboxClaim.snapshot, passResult.wait.wake, passResult.wait.reason) });
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && (passResult?.wait?.kind === "checks" && passResult.wait.headSha === pullRequest.headRefOid
@@ -911,21 +906,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             outcome = "waiting";
             // Evidence that changed during the pass makes this wait stale, and the PR stays claimable.
             await pullRequestInbox.finish(inboxClaim, { text: resultText, progress: { kind: "no-progress" },
-              wait: createCheckWait(inboxClaim.snapshot, waitPolicy) });
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else if (assessed) {
             outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: createCheckWait(inboxClaim.snapshot, waitPolicy) });
-            // A durable readiness checkpoint schedules only a host merge check,
-            // and only when all cached gates (including a custom merge predicate)
-            // allow that check. Otherwise the next provider event evaluates the
-            // wait without starting another model pass.
-            const waiting = await pullRequestInbox.get(repository, number);
-            if (waiting && merge.mode === "direct") {
-              const checks = await requiredCheckState(waiting);
-              if (checks === "passed" && await directMergeWakeAllowed(waiting, checks)) {
-                await pullRequestInbox.wake(waiting, `reviewed:${mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)}`);
-              }
-            }
+            await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else {
             // A park that names no external gate still consumed a pass without progress.
             outcome = "retry";

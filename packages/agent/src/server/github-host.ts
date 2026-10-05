@@ -1263,7 +1263,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
               rmSync(`${discard}.meta.json`, { force: true })
             }
           }
-          else await rm(discard, { force: true, recursive: true })
+          else await rm(discard, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
         }
       }
       finally {

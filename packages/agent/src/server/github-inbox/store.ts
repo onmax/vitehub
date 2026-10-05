@@ -705,7 +705,7 @@ export class PullRequestInbox {
     const repositories = this.repositoryFilter()
     const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
       AND waiting=1 AND status<>'terminal' AND lease IS NULL ${includeExternal ? '' : 'AND generation>handled'} ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
-    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && snapshot.wait?.wake)
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && (snapshot.wait?.wake || snapshot.wait?.retryAt !== undefined))
   }
   /** Records that the host evaluated a wait's new events and the wait still holds. */
   async acknowledgeWait(observed: Snapshot): Promise<boolean> {
@@ -812,6 +812,11 @@ export class PullRequestInbox {
   /** Drops delivery payloads after `payloadMs` and delivery IDs after `idMs`. Recent IDs still deduplicate redeliveries. */
   async pruneDeliveries({ payloadMs = 7 * 24 * 60 * 60_000, idMs = 30 * 24 * 60 * 60_000 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
     const now = this.clock()
+    // CI metadata and full logs share the delivery payload retention window.
+    // Entries written before timestamps were introduced are expired too.
+    for (const [key, value] of await this.metaEntries('ci-evidence:v1:')) {
+      if (!isRuntimeRecord(value) || !isRuntimeNumber(value.fetchedAt) || value.fetchedAt < now - payloadMs) await this.deleteMeta(key)
+    }
     await this.transaction(async tx => {
       await tx.execute(`DELETE FROM ${this.tables.deliveries} WHERE scope=? AND received<?`, [this.scope, now - idMs])
       await tx.execute(`UPDATE ${this.tables.deliveries} SET payload=NULL WHERE scope=? AND received<? AND payload IS NOT NULL`, [this.scope, now - payloadMs])

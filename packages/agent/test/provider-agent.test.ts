@@ -1168,13 +1168,24 @@ describe("Provider Agent Driver", () => {
   it("reuses one session store concurrently for equivalent paths", async () => {
     const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
     const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
-    const runtimes = ["first", "second"].map(suffix => runtime(`thread-session-${suffix}`, [
-      event("turn.completed", `thread-session-${suffix}`, { state: "completed" }, { turnId: "turn-1" }),
-    ]))
-
+    let started!: () => void
+    let overlap!: () => void
+    const firstStarted = new Promise<void>(resolve => { started = resolve })
+    const secondStarted = new Promise<void>(resolve => { overlap = resolve })
+    const runtimes = [
+      runtime("thread-session-first", [event("turn.completed", "thread-session-first", { state: "completed" }, { turnId: "turn-1" })], {
+        onStartSession: async () => { started() }, beforeEvent: () => secondStarted,
+      }),
+      runtime("thread-session-second", [event("turn.completed", "thread-session-second", { state: "completed" }, { turnId: "turn-1" })], {
+        onStartSession: async () => { overlap() },
+      }),
+    ]
+    // Start the second call after the first owns its mock runtime, while its turn is still active.
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const first = createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never)
+    await firstStarted
     await Promise.all([
-      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never),
+      first,
       // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
       createProviderAgentAdapter({ provider: "codex", sessionStorePath: resolve(path) }).generate(context("thread-session-second") as never),
     ])
