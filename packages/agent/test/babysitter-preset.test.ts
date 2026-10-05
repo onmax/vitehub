@@ -131,6 +131,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
     if (path.includes("pulls?state=all&head="))
       return { stdout: (preset.parents ?? []).map((value) => JSON.stringify(value)).join("\n"), stderr: "" };
+    if (path === "repos/acme/app")
+      return { stdout: JSON.stringify({ delete_branch_on_merge: false }), stderr: "" };
     const data =
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
