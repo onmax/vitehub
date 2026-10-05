@@ -144,6 +144,7 @@ async function pruneBuildDirectories(store: WorkspaceStore, workspace: string): 
         if (previousUsers) users[path] = previousUsers
         await writeBuildMetadata(store, buildDirectoriesMetaKey(workspace), [...pending])
         await writeBuildMetadata(store, buildDirectoryUsersMetaKey, users)
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Store implementations may throw untyped filesystem errors.
         const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined
         if (code === "ENOTEMPTY") {
           // A concurrent writer won the empty-directory race. Keep the path

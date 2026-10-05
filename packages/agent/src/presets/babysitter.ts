@@ -77,7 +77,10 @@ function parseWait(value: unknown): BabysitterPassWait | undefined {
   if (value.kind === "checks" && validSha(value.headSha)) return { kind: "checks", headSha: value.headSha };
   if (value.kind === "external" && hasRuntimeType(value.reason, "string") && value.reason.trim()) {
     const wake = parseWake(value.wake);
-    return { kind: "external", reason: value.reason.trim(), ...(wake ? { wake } : {}) };
+    const wait = { kind: "external" as const, reason: value.reason.trim() };
+    // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Optional wake metadata is omitted when no dependency can unblock the wait.
+    if (wake) Object.assign(wait, { wake });
+    return wait;
   }
   return undefined;
 }
@@ -99,15 +102,12 @@ export const babysitterPassResultSchema = {
       const wait = parseWait(value.wait);
       const reviewedHead = validSha(value.reviewedHead) ? value.reviewedHead : undefined;
       const waitForChecksHead = validSha(value.waitForChecksHead) ? value.waitForChecksHead : undefined;
-      return {
-        value: {
-          disposition: value.disposition,
-          text,
-          ...(wait ? { wait } : {}),
-          ...(reviewedHead ? { reviewedHead } : {}),
-          ...(waitForChecksHead ? { waitForChecksHead } : {}),
-        },
-      };
+      const normalized: BabysitterPassResult = { disposition: value.disposition, text };
+      // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Optional provider metadata is omitted when invalid or absent.
+      if (wait) normalized.wait = wait;
+      if (reviewedHead) normalized.reviewedHead = reviewedHead;
+      if (waitForChecksHead) normalized.waitForChecksHead = waitForChecksHead;
+      return { value: normalized };
     },
   },
 };

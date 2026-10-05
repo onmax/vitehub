@@ -64,6 +64,7 @@ function feedback(values: Record<string, GitHubEvidence>, policy: Pick<Babysitte
 /** Assessment is bound to full feedback bodies and failed check evidence, never prose heuristics. */
 export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<BabysitterMergeEvidence, "workerAuthors"> = {}): string {
   const head = snapshot.pr?.head?.sha;
+  // doctor-disable-next-line typescript/performance/no-array-filter-map -- Evidence normalization intentionally filters before mapping to retain only current-head failures.
   const failures = [...Object.values(snapshot.checks), ...Object.values(snapshot.statuses)]
     .filter(value => !value.deleted && (value.head_sha ?? value.sha) === head
       && failing.has(String(value.conclusion ?? value.state).toLowerCase()))

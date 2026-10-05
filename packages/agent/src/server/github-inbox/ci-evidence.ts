@@ -22,7 +22,7 @@ const sourceUrl = (repository: string, job: ActionJob) => `https://github.com/${
 /** Bound log context explicitly; the full fetched log remains in the local cache. */
 export function diagnosticExcerpt(log: string, limit = 16_000, failedSteps: string[] = []) {
   const lines = log.split('\n')
-  if (log.length <= limit) return { excerpt: log, complete: true, totalLines: lines.length, includedLineRanges: [[1, lines.length]], partialLines: [] as number[] }
+  if (log.length <= limit) return { excerpt: log, complete: true, totalLines: lines.length, includedLineRanges: [[1, lines.length]], partialLines: [] }
   const wanted = new Set<number>()
   const mark = (line: number) => { for (let n = Math.max(0, line - 4); n <= Math.min(lines.length - 1, line + 5); n++) wanted.add(n) }
   for (let n = 0; n < lines.length; n++) {
@@ -52,12 +52,18 @@ export function diagnosticExcerpt(log: string, limit = 16_000, failedSteps: stri
 function actionLocation(repository: string, check: GitHubEvidence): { runId: number; jobId?: number } | undefined {
   if (check.app?.slug && check.app.slug !== 'github-actions') return undefined
   for (const value of [check.html_url, check.details_url]) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- URL fields are untrusted GitHub evidence and must be checked before parsing.
     if (typeof value !== 'string') continue
     let url: URL
     try { url = new URL(value) } catch { continue }
     if (url.hostname !== 'github.com') continue
     const match = url.pathname.match(/^\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(?:\/job\/(\d+))?\/?$/)
-    if (match && match[1]?.toLowerCase() === repository.toLowerCase()) return { runId: Number(match[2]), ...(match[3] ? { jobId: Number(match[3]) } : {}) }
+    if (match && match[1]?.toLowerCase() === repository.toLowerCase()) {
+      const location = { runId: Number(match[2]) } as { runId: number; jobId?: number }
+      // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Keep optional jobId absent when the URL points at a workflow run.
+      if (match[3]) location.jobId = Number(match[3])
+      return location
+    }
   }
   return undefined
 }
@@ -85,7 +91,9 @@ export async function hydrateFailedCiEvidence(inbox: PullRequestInbox, claim: Cl
           ? await readers.readJson(`repos/${repository}/actions/jobs/${location.jobId}`, '.')
           : await readers.readJson(`repos/${repository}/actions/runs/${location.runId}/jobs?filter=latest&per_page=100`, '.jobs[]')
         const parsedJobs = jobs.map(job => v.parse(jobSchema, job))
-        metadata = { value: { jobs: parsedJobs }, ...(!parsedJobs.length || parsedJobs.some(job => job.status !== 'completed') ? { retryAt: now + 120_000 } : {}) }
+        metadata = { value: { jobs: parsedJobs } }
+        // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Retry metadata is omitted after all jobs complete.
+        if (!parsedJobs.length || parsedJobs.some(job => job.status !== 'completed')) metadata.retryAt = now + 120_000
       } catch {
         metadata = { value: { error: 'GitHub Actions job metadata unavailable; this is an API read failure, not a CI result.' }, retryAt: now + 120_000 }
       }
