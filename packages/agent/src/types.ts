@@ -639,6 +639,12 @@ export type AgentTriggerInvokeResult<CALL_OPTIONS = unknown> =
   | AgentTriggerRunInvokeResult<CALL_OPTIONS>
   | Response
 
+/**
+ * A static secret, a callback, or an object with its own `resolve` method.
+ * Inherited `resolve` methods, including class prototype methods, are rejected.
+ * Use an object literal or a class field such as `resolve = (context) => secret`.
+ * Resolvers must return a string, `false` to disable verification, or `undefined`.
+ */
 export type AgentWebhookSecretToken<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> =
   MaybeResolvable<string | false | undefined, AgentCallbackContext<TRuntimeConfig>>
 

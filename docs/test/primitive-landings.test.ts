@@ -1,0 +1,57 @@
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-landings";
+
+describe("primitive landing routes", () => {
+  it("resolves registered primitives", () => {
+    for (const landing of Object.values(primitiveLandings)) {
+      expect(getPrimitiveLanding(landing.slug)).toBe(landing);
+    }
+  });
+
+  it("leaves unknown and inherited object names to the route fallback", () => {
+    for (const slug of ["missing-primitive", "constructor", "toString", "__proto__"]) {
+      expect(getPrimitiveLanding(slug)).toBeUndefined();
+    }
+  });
+});
+
+describe("primitive landing placeholders", () => {
+  it("marks every stub variant as illustrative and removes invented APIs", () => {
+    for (const landing of Object.values(primitiveLandings).filter((landing) => landing.slug !== "agents")) {
+      expect(landing.description).not.toContain("working project");
+      for (const variant of landing.variants) {
+        expect(variant.illustrative).toBe(true);
+        const source = variant.files.map((file) => file.content).join("\n");
+        expect(source).toContain("Illustrative pseudocode");
+        expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\//);
+      }
+    }
+  });
+
+  it("displays the placeholder notice above the selected files", async () => {
+    const source = await readFile(
+      new URL("../app/components/PrimitiveProjectGroup.vue", import.meta.url),
+      "utf8",
+    );
+    expect(source).toContain('v-if="currentVariant?.illustrative"');
+    expect(source).toContain("Illustrative pseudocode. This layout is not an executable starter.");
+  });
+});
+
+describe("Agents landing", () => {
+  it("provides real Agent definitions and enables the host integration in every tab", () => {
+    const landing = getPrimitiveLanding("agents")!;
+    expect(landing.variants.map((variant) => variant.framework)).toEqual(["vite", "nitro", "nuxt"]);
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).not.toBe(true);
+      const agent = variant.files.find((file) => file.path === "server/agents/greeting.ts")!;
+      expect(agent.content).toContain('import { defineAgent } from "vite-hub/agent"');
+      expect(agent.content).toContain("run({ prompt })");
+      const config = variant.files.find((file) => file.path.endsWith(".config.ts"))!;
+      expect(config.content).toContain('preset: "node", agent: true');
+      expect(variant.files.map((file) => file.content).join("\n")).not.toMatch(/definePrimitive|vite-hub\/agents|vite-hub\/vite/);
+      expect(variant.files.some((file) => file.path.includes("agentss"))).toBe(false);
+    }
+  });
+});
