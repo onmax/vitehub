@@ -1,4 +1,3 @@
-import { landingPrimitives } from "~/components/landing/content";
 import { AgentsLanding } from "./agents";
 import { WorkspaceLanding } from "./workspace";
 import { SandboxLanding } from "./sandbox";
@@ -46,4 +45,3 @@ export function getPrimitiveLanding(slug: string): PrimitiveLanding | undefined 
   return primitiveLandings[slug];
 }
 
-void landingPrimitives;
