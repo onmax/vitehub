@@ -577,6 +577,7 @@ describe("vitehub", () => {
 
   it("keeps coherent defaults and opt-in integrations", () => {
     expect(pluginNames(vitehub({ preset: "node" }))).toEqual([
+      "vite-hub/doctor",
       "@vite-hub/markdown-template/vite",
       "vite-hub/deployment-preset",
       "vite-hub/deployment-output",
@@ -606,6 +607,7 @@ describe("vitehub", () => {
       workflow: true,
       workspace: true,
     }))).toEqual([
+      "vite-hub/doctor",
       "@vite-hub/markdown-template/vite",
       "vite-hub/agent-channel-env",
       "vite-hub/deployment-preset",

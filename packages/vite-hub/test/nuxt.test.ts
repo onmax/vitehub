@@ -120,10 +120,12 @@ function createNuxt(dev = false, plugins: PluginOption[] = []) {
   const nitroConfigHooks: Array<(config: Record<string, unknown>) => Promise<void>> = []
   const pageHooks: Array<(pages: Array<{ file: string, name: string, path: string }>) => void> = []
   const iconHooks: Array<(icons: Set<string>) => void> = []
+  const doctorExtensionHooks: Array<(entries: string[]) => void> = []
   const nuxt = {
     callHook: vi.fn(async (_name: "restart") => {}),
-    hook(name: "builder:watch" | "close" | "icon:clientBundleIcons" | "nitro:config" | "pages:extend" | "vite:serverCreated", callback: (() => Promise<void>) | ((config: Record<string, unknown>) => Promise<void>) | ((icons: Set<string>) => void) | ((pages: Array<{ file: string, name: string, path: string }>) => void)) {
-      if (name === "icon:clientBundleIcons") iconHooks.push(callback as (icons: Set<string>) => void)
+    hook(name: "builder:watch" | "close" | "doctor:extendExtensions" | "icon:clientBundleIcons" | "nitro:config" | "pages:extend" | "vite:serverCreated", callback: (() => Promise<void>) | ((config: Record<string, unknown>) => Promise<void>) | ((entries: string[]) => void) | ((icons: Set<string>) => void) | ((pages: Array<{ file: string, name: string, path: string }>) => void)) {
+      if (name === "doctor:extendExtensions") doctorExtensionHooks.push(callback as (entries: string[]) => void)
+      else if (name === "icon:clientBundleIcons") iconHooks.push(callback as (icons: Set<string>) => void)
       else if (name === "nitro:config") nitroConfigHooks.push(callback as (config: Record<string, unknown>) => Promise<void>)
       else if (name === "builder:watch") builderWatchHooks.push(callback as (event: string, path: string) => Promise<void>)
       else if (name === "vite:serverCreated") viteServerCreatedHooks.push(callback as (typeof viteServerCreatedHooks)[number])
@@ -178,6 +180,11 @@ function createNuxt(dev = false, plugins: PluginOption[] = []) {
     },
     runIconHook(icons: Set<string>) {
       for (const hook of iconHooks) hook(icons)
+    },
+    runDoctorExtensionsHook() {
+      const entries: string[] = []
+      for (const hook of doctorExtensionHooks) hook(entries)
+      return entries
     },
   }
 }
@@ -327,6 +334,15 @@ describe("ViteHub Nuxt integration", () => {
     expect(entries).toContainEqual(expect.objectContaining({ owner: "vite-hub", path: "/tmp/nuxt-nitro-root/custom-output/deployment.json" }))
     expect(entries).toContainEqual(expect.objectContaining({ owner: "vite-hub", path: preset === "cloudflare" ? "/tmp/nuxt-nitro-root/custom-output/server/wrangler.json" : "/tmp/nuxt-nitro-root/custom-output/config.json" }))
     expect(nuxt.options.vite.plugins).not.toContainEqual(expect.objectContaining({ name: "vite-hub/deployment-output" }))
+  })
+
+  it("registers the ViteHub Doctor Extension entry for vite-doctor/nuxt", async () => {
+    const { nuxt, runDoctorExtensionsHook } = createNuxt()
+    await viteHubNuxtModule({ preset: "node" }, nuxt)
+    const entries = runDoctorExtensionsHook()
+    expect(entries).toEqual([fileURLToPath(new URL("../src/doctor", import.meta.url))])
+    const { default: extension } = await import(`${entries[0]}.ts`)
+    expect(extension).toMatchObject({ name: "vite-hub" })
   })
 
   it("keeps ViteHub discovery rooted at the Nuxt project", async () => {

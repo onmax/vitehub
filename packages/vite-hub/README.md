@@ -93,6 +93,8 @@ A successful build proves that ViteHub discovered the configured definitions and
 
 Generated files are for inspection and deployment. Application code must not import `.vitehub/**`, provider output directories, Vite virtual module IDs, or `vite-hub/_internal/*`. Use the public paths in the [import reference](https://vitehub.dev/docs/reference/import-paths).
 
+`vitehub()` and `vite-hub/nuxt` register ViteHub rules with [Vite Doctor](https://github.com/onmax/vite-doctor) when the app runs it. The rules report internal imports, server-only imports in client code, and unchecked KV and Blob results. Read [Doctor rules](https://vitehub.dev/docs/reference/doctor-rules).
+
 ## Configure TypeScript
 
 Extend `vite-hub/tsconfig` to load ViteHub's generated declarations without adding `.vitehub` to your application `include`. This config requires TypeScript 5.5 or newer.
