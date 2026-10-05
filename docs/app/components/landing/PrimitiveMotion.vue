@@ -1,12 +1,12 @@
 <script setup lang="ts">
 const props = withDefaults(defineProps<{
   name: string;
-  /** Run one pass. Pause it when the scene is off screen. */
+  /** Keep the scene running. Consumers may pause it while it is off screen. */
   play?: boolean;
   /** Start position in the loop, from 0 to 1, so neighboring scenes do not move in step. */
   offset?: number;
 }>(), {
-  play: false,
+  play: true,
   offset: 0,
 });
 
@@ -375,7 +375,7 @@ const id = useId();
 .a {
   animation-duration: var(--cycle);
   animation-delay: var(--scene-delay);
-  animation-iteration-count: 1;
+  animation-iteration-count: infinite;
   animation-fill-mode: both;
   animation-timing-function: var(--ease-move);
 }

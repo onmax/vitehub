@@ -226,6 +226,28 @@ describe("cloudflare queue runtime", () => {
     expect(report.mock.calls[0]?.[1]).toMatchObject({ queue: "image-expiry", retryable: true })
   })
 
+  it.each([
+    ["inherited", Object.create({ retry: { delaySeconds: 30 } })],
+    ["callable", Object.assign(() => undefined, { retry: { delaySeconds: 30 } })],
+    ["array", Object.assign([], { retry: { delaySeconds: 30 } })],
+  ])("ignores %s Cloudflare retry directives", async (_kind, action) => {
+    const retry = vi.fn()
+    const onError = vi.fn(() => action)
+    const batchHandler = createCloudflareQueueBatchHandler({
+      onError,
+      onMessage: async () => { throw new Error("boom") },
+    })
+
+    await batchHandler({
+      ackAll: vi.fn(),
+      messages: [{ ack: vi.fn(), attempts: 1, body: "fail", id: "1", retry }],
+      queue: "queue--666f6f",
+      retryAll: vi.fn(),
+    })
+
+    expect(retry).toHaveBeenCalledWith()
+  })
+
   it("maps Cloudflare send failures without exposing provider payloads", async () => {
     const cause = new Error("Bearer secret-token failed at https://queue.example/private")
     const binding = {
@@ -758,6 +780,23 @@ describe("vercel provider", () => {
       message: "[vitehub] Vercel queue provider returned an invalid send response.",
     })
     expect(JSON.stringify(error)).not.toMatch(/providerSecret|missing-message-id|cause/)
+  })
+
+  it("rejects inherited Vercel SDK exports", async () => {
+    const inherited = {
+      QueueClient: class {
+        send = async () => ({ messageId: "inherited" })
+        handleCallback = () => async () => new Response("inherited")
+      },
+    }
+    Object.defineProperty(globalThis, "__vitehubVercelQueue", {
+      configurable: true,
+      value: Object.create(inherited),
+    })
+
+    await expect(createVercelQueueClient({ provider: "vercel", region: "iad1", topic: "topic--77656c636f6d65" })).rejects.toMatchObject({
+      code: "VERCEL_QUEUE_SDK_INVALID",
+    })
   })
 
   it("redacts Vercel SDK load failures while retaining the internal cause", async () => {
