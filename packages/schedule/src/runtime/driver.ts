@@ -78,7 +78,10 @@ function isObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isScheduleRegistryDefinition(value: unknown): value is ScheduleRegistryDefinition {
-  return isObject(value) && Object.hasOwn(value, "handler") && value.handler instanceof Function
+  return isObject(value)
+    && Object.hasOwn(value, "handler")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry handlers cross module and JavaScript realm boundaries; validate callability without realm-sensitive instanceof.
+    && typeof value.handler === "function"
 }
 
 function unwrapDefinition(loaded: ScheduleRegistryDefinition | { default?: ScheduleRegistryDefinition }): ScheduleRegistryDefinition | undefined {
