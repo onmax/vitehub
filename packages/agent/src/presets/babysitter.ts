@@ -165,7 +165,10 @@ export const babysitter: BabysitterAgent = defineAgent({
       channels: { github: babysitterIntake },
       driver: {
         kind: driver,
-        permissions: "allow-edits",
+        // Babysitter passes are unattended. Host-bound repair capabilities such
+        // as pushRepair and review-thread updates must run without an approval
+        // prompt that has no interactive user to answer it.
+        permissions: "allow-all",
         instructions: {
           template: babysitterInstructions,
         },

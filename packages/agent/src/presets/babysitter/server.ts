@@ -705,7 +705,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 capabilities: workerCapabilities as never,
                 driver: {
                   ...workerDriver,
-                  permissions: "allow-edits",
+                  // The process host runs without an interactive approval
+                  // consumer. Keep host-bound repair tools usable in passes.
+                  permissions: "allow-all",
                   env: async (context) => {
                     const environment =
                       workerDriver.env === undefined
