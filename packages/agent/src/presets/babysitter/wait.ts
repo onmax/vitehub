@@ -1,8 +1,7 @@
 import { createHash } from "node:crypto";
 import type { GitHubEvidence, PullRequestWait, Snapshot } from "../../server/github-inbox.ts";
 import type { GitHubRequiredCheckState } from "../../server/github-required-checks.ts";
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../../internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const pending = new Set(["queued", "in_progress", "pending", "waiting", "requested", "rerequested", "created"]);
@@ -112,6 +111,9 @@ export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckStat
   if (wait.headSha !== s.pr.head?.sha) return [];
   const reasons: string[] = [];
   if (wait.evidenceKey !== repairContextKey(s, policy)) reasons.push("feedback-changed");
+  // A reproduced external blocker keeps existing conflicts, threads and unrelated CI parked.
+  // Maintainer feedback or PR intent/base changes still resume the work.
+  if (wait.kind === "external" || wait.wake) return reasons;
   if (s.pr.mergeable === false || s.pr.mergeable_state === "dirty") reasons.push("merge-conflict");
   if (s.threads.some(thread => thread.isResolved !== true)) reasons.push("unresolved-thread");
   const known = new Set(wait.knownFailures ?? []);
@@ -127,12 +129,23 @@ export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckStat
   return [];
 }
 
-const externalWait = [
-  /(?:exact[- ]base|unrelated|external|pending|in progress|waiting for|no (?:independent )?repair|cannot (?:start|run)|dependencies.*unavailable)/i,
-  /\b(?:ci|checks?|tests?|reviews?)\b[^.!?\n]{0,100}\b(?:queued|running)\b|\bwait for (?:[a-z]+\s+){0,3}webhooks?\b/i,
-];
+/** Infer a check wait only from pending current-head provider evidence. */
+export function hasPendingChecks(snapshot: Snapshot, policy: BabysitterWaitPolicy): boolean {
+  return currentCheckSignals(snapshot).some(signal => pending.has(String(signal.status ?? signal.state)));
+}
 
-/** A park that names an external gate, such as pending checks or a reproduced blocker. */
-export function isExternalWaitResult(text: string): boolean {
-  return externalWait.some(pattern => pattern.test(text));
+/** The reader paginates and projects individual records from every REST page. */
+export async function checksDependencyEvidence(wake: { repository: string; headSha: string }, read: (path: string, projection: string) => Promise<unknown[]>) {
+  const checks = await read(`repos/${wake.repository}/commits/${wake.headSha}/check-runs?per_page=100`, ".check_runs[]");
+  const statuses = await read(`repos/${wake.repository}/commits/${wake.headSha}/statuses?per_page=100`, ".[]");
+  return hash({
+    checks: checks.map(check => {
+      if (!isRuntimeRecord(check)) throw new Error("Invalid dependency check evidence.");
+      return JSON.stringify([check.id, check.status, check.conclusion]);
+    }).sort(),
+    statuses: statuses.map(status => {
+      if (!isRuntimeRecord(status)) throw new Error("Invalid dependency status evidence.");
+      return JSON.stringify([status.id, status.context, status.state]);
+    }).sort(),
+  });
 }
