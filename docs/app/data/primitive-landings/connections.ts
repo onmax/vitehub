@@ -7,5 +7,5 @@ export const ConnectionsLanding = {
   description: "Keep account credentials and provider APIs behind one typed server contract.",
   tagline: "Connect provider accounts without spreading secrets through your app.",
   accent: "secondary",
-  supported: ["Vite" , "Nitro" , "Nuxt"],
+  supported: ["Vite", "Nitro"],
 } satisfies PrimitiveLanding;

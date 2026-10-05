@@ -2,7 +2,7 @@
 
 `@vite-hub/rate-limit` gives server code one atomic consume-and-decide operation for fixed-window request budgets. It keeps policy separate from the driver that stores and updates each counter.
 
-Install this owner package when you need a direct Rate Limiter, a custom driver, or the standalone Vite integration. If your application already uses the `vite-hub` framework distribution, enable Rate Limit there and import from `vite-hub/rate-limit` instead. See the [Rate Limit guide](https://vitehub.dev/docs/server-primitives/rate-limit) for that application setup.
+Install this owner package when you need a direct Rate Limiter, a custom driver, or the standalone Vite integration. If your application already uses the `vite-hub` framework distribution, enable Rate Limit there and import from `vite-hub/rate-limit` instead. See the [Rate Limit guide](https://vitehub.dev/docs/rate-limit) for that application setup.
 
 ## Install the owner package
 
@@ -128,7 +128,7 @@ For managed guards, `peekRateLimit(id, key)` and `resetRateLimit(id, key)` use t
 
 ## Go deeper
 
-- [Rate Limit guide](https://vitehub.dev/docs/server-primitives/rate-limit)
-- [Rate Limit Capability for Agents](https://vitehub.dev/docs/capabilities/rate-limit)
+- [Rate Limit guide](https://vitehub.dev/docs/rate-limit)
+- [Rate Limit Capability for Agents](https://vitehub.dev/docs/rate-limit/agent-capability)
 - [Runtime and host support](https://vitehub.dev/docs/frameworks-hosts/support-matrix)
 - [Public import paths](https://vitehub.dev/docs/reference/import-paths)
