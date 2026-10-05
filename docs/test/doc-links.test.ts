@@ -186,6 +186,16 @@ https://vitehub.dev/docs/bare-autolink
     expect(validateDocumentationLinks({ repoRoot })).toMatchObject({ errors: [] });
   });
 
+  it("recognizes the module-provided sitemap without accepting missing routes", () => {
+    const repoRoot = fixture({
+      "docs/app/error.vue": '<template><NuxtLink to="/sitemap.xml" /><NuxtLink to="/missing.xml" /></template>',
+    });
+
+    expect(validateDocumentationLinks({ repoRoot })).toMatchObject({
+      errors: [expect.stringContaining('route "/missing.xml" does not exist')],
+    });
+  });
+
   it("validates static links rendered by Vue application files", () => {
     const repoRoot = fixture({
       "docs/app/pages/index.vue": "<template />",
