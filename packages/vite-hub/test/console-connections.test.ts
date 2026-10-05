@@ -188,6 +188,30 @@ describe("Connections actor", () => {
     }
   })
 
+  it.each([
+    { command: "serve" as const, connections: true, enabled: true },
+    { command: "build" as const, connections: true, enabled: false },
+    { command: "build" as const, connections: { management: true }, enabled: true },
+  ])("advertises Connections only with a mounted handler ($command, $enabled)", async ({ command, connections, enabled }) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-console-connections-sections-"))
+    try {
+      const plugin = consoleVitePlugin({
+        console: command === "serve" ? { access: "auth" } : { exposure: "host-managed" },
+        connections,
+        sections: ["env", "connections"],
+      })
+      const hook = plugin.config
+      if (!hook) throw new TypeError("Expected Console config hook.")
+      await Reflect.apply("handler" in hook ? hook.handler : hook, {}, [{ root }, { command, mode: command === "serve" ? "development" : "production" }])
+      const generated = await readFile(join(root, ".vitehub/nitro/console/plugin.mjs"), "utf8")
+      expect(generated.includes('"connections"')).toBe(enabled)
+      expect(generated).toContain('"env"')
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
   it("aliases the actor module only when the Connections section is enabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-connections-alias-"))
     try {

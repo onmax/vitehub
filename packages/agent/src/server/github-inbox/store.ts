@@ -21,9 +21,10 @@ export type Snapshot = {
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
+  ciEvidence?: Record<string, unknown>[]
   threads: GitHubReviewThread[]; threadsHydrated?: boolean; reasons: string[]; lastResult?: string
 }
-export type SnapshotPatch = Partial<Pick<Snapshot, 'pr' | 'comments' | 'reviews' | 'reviewComments' | 'checks' | 'statuses' | 'threads' | 'hydrated' | 'refresh' | 'feedbackRefresh' | 'threadsHydrated'>>
+export type SnapshotPatch = Partial<Pick<Snapshot, 'pr' | 'comments' | 'reviews' | 'reviewComments' | 'checks' | 'statuses' | 'threads' | 'hydrated' | 'refresh' | 'feedbackRefresh' | 'threadsHydrated' | 'ciEvidence'>>
 export interface GitHubInboxDeliveryResult { accepted: true; duplicate?: boolean; queued: number[]; updated: number[]; ignored?: boolean; reason?: string }
 export interface GitHubInboxSummary {
   repository: string; number: number; head?: string; generation: number; handled: number; status: Snapshot['status']; reasons: string[]
@@ -58,6 +59,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
     throw new TypeError('Invalid inbox snapshot')
   }
+  if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
   if (input.wait !== undefined) parseWait(input.wait)
   if (input.progressBudget !== undefined) parseProgressBudget(input.progressBudget)
   const parseMap = (map: unknown): Record<string, GitHubEvidence> => {
@@ -376,6 +378,7 @@ export class PullRequestInbox {
     if (newHead && pr.head?.sha !== s.wait?.headSha || pr.state === 'closed') delete s.wait
     s.pr = { ...previous, ...pr }
     if (newHead) {
+      delete s.ciEvidence
       s.checks = Object.fromEntries(Object.entries(s.checks).filter(([, check]) => check.head_sha === pr.head?.sha))
       s.statuses = Object.fromEntries(Object.entries(s.statuses).filter(([, status]) => status.sha === pr.head?.sha))
       s.hydrated = false; s.feedbackRefresh = true
@@ -697,12 +700,12 @@ export class PullRequestInbox {
     }
   }
   /** Waiting PRs that received events since the host last evaluated their wait. */
-  async waitsToEvaluate(): Promise<Snapshot[]> {
+  async waitsToEvaluate(includeExternal = false): Promise<Snapshot[]> {
     if (!this.repositories.length) return []
     const repositories = this.repositoryFilter()
     const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
-      AND waiting=1 AND status<>'terminal' AND lease IS NULL AND generation>handled ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
-    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
+      AND waiting=1 AND status<>'terminal' AND lease IS NULL ${includeExternal ? '' : 'AND generation>handled'} ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && snapshot.wait?.wake)
   }
   /** Records that the host evaluated a wait's new events and the wait still holds. */
   async acknowledgeWait(observed: Snapshot): Promise<boolean> {
@@ -809,6 +812,11 @@ export class PullRequestInbox {
   /** Drops delivery payloads after `payloadMs` and delivery IDs after `idMs`. Recent IDs still deduplicate redeliveries. */
   async pruneDeliveries({ payloadMs = 7 * 24 * 60 * 60_000, idMs = 30 * 24 * 60 * 60_000 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
     const now = this.clock()
+    // CI metadata and full logs share the delivery payload retention window.
+    // Entries written before timestamps were introduced are expired too.
+    for (const [key, value] of await this.metaEntries('ci-evidence:v1:')) {
+      if (!isRuntimeRecord(value) || !isRuntimeNumber(value.fetchedAt) || value.fetchedAt < now - payloadMs) await this.deleteMeta(key)
+    }
     await this.transaction(async tx => {
       await tx.execute(`DELETE FROM ${this.tables.deliveries} WHERE scope=? AND received<?`, [this.scope, now - idMs])
       await tx.execute(`UPDATE ${this.tables.deliveries} SET payload=NULL WHERE scope=? AND received<? AND payload IS NOT NULL`, [this.scope, now - payloadMs])

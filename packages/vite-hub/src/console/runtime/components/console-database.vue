@@ -314,6 +314,7 @@ onBeforeUnmount(() => {
   <ConsoleFrame>
     <UDashboardSidebar
       id="console-navigation"
+      class="vitehub-console__nav"
       v-model:open="sidebarOpen"
       :default-size="16"
       :collapsed-size="4"
@@ -328,12 +329,12 @@ onBeforeUnmount(() => {
       </template>
 
       <template #default="{ collapsed }">
-        <div class="flex shrink-0 items-center gap-1 px-[0.875rem] pb-2 pt-1">
+        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
           <UDashboardSearchButton
             :collapsed="collapsed"
             block
-            class="vitehub-console__search min-w-0 flex-1 rounded-md border border-default bg-transparent px-2 ring-0 hover:bg-elevated/60"
-            label="Search console"
+            class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
+            label="Search"
           />
         </div>
 

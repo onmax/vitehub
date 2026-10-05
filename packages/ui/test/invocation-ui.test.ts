@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "ai";
 import { AgentInvocationList } from "../src/components/agent-invocation-list.ts";
 import { AgentInvocation, AgentInvocationInspector, workspaceArtifactPath } from "../src/components/agent-invocation.ts";
+import { invocationTimeline } from "../src/components/agent-invocation-timeline.ts";
 import { AgentMessageParts } from "../src/components/agent-message-parts.ts";
 import { AgentCapabilityInspector } from "../src/components/agent-capability-inspector.ts";
 import { AgentToolList } from "../src/components/agent-tool-list.ts";
@@ -1900,8 +1901,7 @@ describe("Agent Invocation UI", () => {
     const row = mount(AgentInvocationInspector, { props: { invocation } })
       .get(".vh-invocation-timeline__row");
     expect(row.text()).toContain("+1m 59s · 1s");
-    expect(row.get(".vh-invocation-timeline__track span").attributes("style"))
-      .toContain("left: 98.5%");
+    expect(invocationTimeline(invocation)).toMatchObject([{ durationMs: 1_000, offsetMs: 118_999 }]);
   });
 
   it.each([
