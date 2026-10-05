@@ -176,8 +176,16 @@ export function createGitHubPullRequestOperations(
     const pullRequest = current.pullRequest
     if (pullRequest.isDraft) return { status: "blocked", reason: "draft" }
     if (!current.autoMergeAllowed) return { status: "blocked", reason: "repository-disabled" }
-    const rules = await github.command(["api", "--paginate", "--slurp", `/repos/${repository}/rules/branches/${encodeURIComponent(pullRequest.baseRefName)}?per_page=100`], commandOptions)
-    const activeRules = v.parse(v.array(v.object({ type: v.string(), parameters: v.optional(v.unknown()) })), JSON.parse(rules.stdout).flat())
+    // The hosted gh CLI does not provide `--slurp`; emit one JSON rule per line.
+    const rules = await github.command([
+      "api", "--paginate",
+      `/repos/${repository}/rules/branches/${encodeURIComponent(pullRequest.baseRefName)}?per_page=100`,
+      "--jq", ".[] | @json",
+    ], commandOptions)
+    const activeRules = v.parse(
+      v.array(v.object({ type: v.string(), parameters: v.optional(v.unknown()) })),
+      rules.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)),
+    )
     const requiredChecks = activeRules.some(rule => (rule.type === "required_status_checks"
       && v.safeParse(v.object({ required_status_checks: v.pipe(v.array(v.unknown()), v.minLength(1)) }), rule.parameters).success)
       || (rule.type === "workflows"

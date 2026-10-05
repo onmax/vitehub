@@ -35,7 +35,7 @@ function fixture(options: Partial<GitHubPullRequestOperationsOptions> = {}) {
   const command = vi.fn(async (args: string[]) => {
     if (args[1]?.includes("/actions/runs/")) return { stdout: JSON.stringify(state.run), stderr: "" }
     if (args[0] === "run") return { stdout: state.logs, stderr: "" }
-    if (args.some(arg => arg.includes("/rules/branches/"))) return { stdout: JSON.stringify([state.rules, ...state.additionalRulePages]), stderr: "" }
+    if (args.some(arg => arg.includes("/rules/branches/"))) return { stdout: [...state.rules, ...state.additionalRulePages.flat()].map(rule => JSON.stringify(rule)).join("\n"), stderr: "" }
     if (args[1] !== "graphql") return { stdout: "{}", stderr: "" }
     const query = args.find(arg => arg.startsWith("query="))!
     let data: unknown
@@ -110,7 +110,7 @@ describe("native auto-merge", () => {
     f.state.rules = [{ type: "required_signatures" }]
     expect(await f.operations.requestAutoMerge()).toEqual({ status: "enabled" })
     expect(f.command).toHaveBeenCalledWith(
-      ["api", "--paginate", "--slurp", "/repos/acme/app/rules/branches/main?per_page=100"],
+      ["api", "--paginate", "/repos/acme/app/rules/branches/main?per_page=100", "--jq", ".[] | @json"],
       expect.anything(),
     )
   })
