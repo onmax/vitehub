@@ -2,12 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   babysitterAdmissionDecision,
   babysitterBudgetWindows,
+  createBabysitterAdmission,
   readBabysitterAdmissionLimits,
   readInvocationInputTokens,
+  sumInvocationInputTokens,
   summarizeProxyAccounts,
   type BabysitterAdmissionState,
 } from "../src/presets/babysitter/admission.ts";
@@ -70,24 +72,67 @@ describe("Babysitter admission", () => {
     expect(summarizeProxyAccounts({ accounts: [account(100, { limitReached: true })] }, "codex", now, limits.proxyStatusMaxAgeMs).state).toBe("stale");
   });
 
-  it("counts each invocation once at its cumulative maximum", async () => {
+  // Rows relative to `now` (19:13 local): one from yesterday, one earlier today, three this hour.
+  async function invocationStore() {
     const directory = await mkdtemp(join(tmpdir(), "vitehub-babysitter-admission-"));
-    try {
-      const file = join(directory, "invocations.sqlite");
-      const db = new DatabaseSync(file);
-      db.exec("CREATE TABLE vitehub_agent_invocations (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, updated_at TEXT NOT NULL, record TEXT NOT NULL)");
-      const insert = db.prepare("INSERT INTO vitehub_agent_invocations (id, status, updated_at, record) VALUES (?, ?, ?, ?)");
-      const record = (...tokens: number[]) => JSON.stringify({ observations: [{ attributes: {} }, ...tokens.map(value => ({ attributes: { "usage.inputTokens": value } }))] });
-      insert.run("old", "completed", "2026-10-05T16:59:00.000Z", record(900_000));
-      insert.run("a", "completed", "2026-10-05T17:10:00.000Z", record(27_241, 55_163, 85_835));
-      insert.run("b", "running", "2026-10-05T17:20:00.000Z", record(40_000));
-      insert.run("c", "completed", "2026-10-05T17:21:00.000Z", record());
-      db.close();
-      expect(await readInvocationInputTokens(file, Date.parse("2026-10-05T17:00:00.000Z"))).toBe(125_835);
-      expect(await readInvocationInputTokens(file, Date.parse("2026-10-05T00:00:00.000Z"))).toBe(1_025_835);
-      expect(await readInvocationInputTokens(file, Date.parse("2026-10-06T00:00:00.000Z"))).toBe(0);
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    directories.push(directory);
+    const file = join(directory, "invocations.sqlite");
+    const { hourStart, dayStart } = babysitterBudgetWindows(now);
+    const at = (time: number) => new Date(time).toISOString();
+    const record = (...tokens: number[]) => JSON.stringify({ observations: [{ attributes: {} }, ...tokens.map(value => ({ attributes: { "usage.inputTokens": value } }))] });
+    const db = new DatabaseSync(file);
+    db.exec("CREATE TABLE vitehub_agent_invocations (sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, updated_at TEXT NOT NULL, record TEXT NOT NULL)");
+    const insert = db.prepare("INSERT INTO vitehub_agent_invocations (id, status, updated_at, record) VALUES (?, ?, ?, ?)");
+    insert.run("old", "completed", at(dayStart - 60_000), record(900_000));
+    insert.run("a", "completed", at(hourStart - 30 * 60_000), record(100_000, 200_000));
+    insert.run("b", "completed", at(hourStart + 5 * 60_000), record(27_241, 55_163, 85_835));
+    insert.run("c", "running", at(hourStart + 10 * 60_000), record(40_000));
+    insert.run("d", "completed", at(hourStart + 11 * 60_000), record());
+    db.close();
+    // The running pass reports a larger cumulative total.
+    const grow = (time: number) => {
+      const writer = new DatabaseSync(file);
+      writer.prepare("UPDATE vitehub_agent_invocations SET updated_at = ?, record = ? WHERE id = ?").run(at(time), record(40_000, 70_000), "c");
+      writer.close();
+    };
+    return { directory, file, grow, hourStart, dayStart };
+  }
+  const directories: string[] = [];
+  afterEach(async () => {
+    await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  });
+
+  it("reads each invocation once at its cumulative maximum and refreshes only recent rows", async () => {
+    const store = await invocationStore();
+    const rows = await readInvocationInputTokens(store.file, store.dayStart);
+    expect(rows.map(row => row.id).sort()).toEqual(["a", "b", "c", "d"]);
+    expect(rows.find(row => row.id === "c")).toEqual({ id: "c", updatedAt: store.hourStart + 10 * 60_000, tokens: 40_000 });
+    const usage = new Map(rows.map(row => [row.id, row]));
+    expect(sumInvocationInputTokens(usage, store.hourStart)).toBe(125_835);
+    expect(sumInvocationInputTokens(usage, store.dayStart)).toBe(325_835);
+    store.grow(now - 30_000);
+    const fresh = await readInvocationInputTokens(store.file, now - 90_000);
+    expect(fresh.map(row => row.id)).toEqual(["c"]);
+    for (const row of fresh) usage.set(row.id, row);
+    expect(sumInvocationInputTokens(usage, store.hourStart)).toBe(155_835);
+  });
+
+  it("refreshes token usage incrementally and keeps the last totals when a read fails", async () => {
+    const store = await invocationStore();
+    const check = createBabysitterAdmission({
+      invocationsFile: store.file,
+      limits: readBabysitterAdmissionLimits({ BABYSITTER_PROXY_STATUS_FILE: join(store.directory, "missing.json") }),
+    });
+    const first = await check(now);
+    expect([first.state.hourlyInputTokens, first.state.dailyInputTokens]).toEqual([125_835, 325_835]);
+    store.grow(now + 30_000);
+    // Reads run at most once a minute.
+    expect((await check(now + 30_000)).state.hourlyInputTokens).toBe(125_835);
+    expect((await check(now + 60_000)).state.hourlyInputTokens).toBe(155_835);
+    await rm(store.file);
+    const failed = await check(now + 120_000);
+    expect([failed.state.hourlyInputTokens, failed.state.dailyInputTokens]).toEqual([155_835, 355_835]);
+    expect(failed.state.errors).toEqual([expect.stringMatching(/^tokens: /)]);
+    expect(failed.state.proxy).toEqual({ state: "unknown" });
   });
 });
