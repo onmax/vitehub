@@ -31,22 +31,28 @@ export function diagnosticExcerpt(log: string, limit = 16_000, failedSteps: stri
       || failedSteps.some(step => step && line.includes(step))) mark(n)
   }
   if (!wanted.size) for (let n = Math.max(0, lines.length - 80); n < lines.length; n++) wanted.add(n)
-  const chunks: string[] = [], included: number[] = [], partialLines: number[] = []
+  const selected = new Map<number, string>(), included: number[] = [], partialLines: number[] = []
   let remaining = Math.max(0, limit)
-  for (const n of [...wanted].sort((a, b) => a - b)) {
-    const prefix = chunks.length ? '\n' : ''
+  // Failure diagnostics are commonly emitted at the end of a job. Select the
+  // newest diagnostic windows first, then restore source order for the excerpt.
+  // This keeps a late assertion or exit-code line when an early warning-heavy
+  // section would otherwise consume the entire budget.
+  for (const n of [...wanted].sort((a, b) => b - a)) {
+    const prefix = selected.size ? '\n' : ''
     if (remaining <= prefix.length) break
     const line = lines[n]!, content = line.slice(0, remaining - prefix.length)
-    chunks.push(prefix + content); included.push(n + 1); remaining -= prefix.length + content.length
+    selected.set(n + 1, content); included.push(n + 1); remaining -= prefix.length + content.length
     if (content.length < line.length) { partialLines.push(n + 1); break }
   }
+  included.sort((a, b) => a - b)
+  const chunks = included.map(lineNumber => selected.get(lineNumber)!)
   const includedLineRanges: number[][] = []
   for (const n of included) {
     const last = includedLineRanges.at(-1)
     if (last && last[1] === n - 1) last[1] = n
     else includedLineRanges.push([n, n])
   }
-  return { excerpt: chunks.join(''), complete: false, totalLines: lines.length, includedLineRanges, partialLines }
+  return { excerpt: chunks.join('\n'), complete: false, totalLines: lines.length, includedLineRanges, partialLines }
 }
 
 function actionLocation(repository: string, check: GitHubEvidence): { runId: number; jobId?: number } | undefined {

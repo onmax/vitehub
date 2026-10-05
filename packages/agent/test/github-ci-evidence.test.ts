@@ -69,6 +69,14 @@ it('diagnostic excerpts disclose every omitted or partial line and respect budge
  assert.equal(partial.excerpt.length, 100); assert.deepEqual(partial.partialLines, [1])
  assert.equal(diagnosticExcerpt('large log', 0).excerpt, '')
 })
+it('diagnostic excerpts retain a failure tail after a noisy log prefix', () => {
+ const noise = Array.from({ length: 3000 }, (_, n) => `runner output ${n} ${'x'.repeat(60)}`)
+ const result = diagnosticExcerpt([...noise, 'AssertionError: expected 2 to be 3', 'Error: Process completed with exit code 1.'].join('\n'), 1600)
+ assert.ok(result.excerpt.length <= 1600)
+ assert.match(result.excerpt, /AssertionError: expected 2 to be 3/)
+ assert.match(result.excerpt, /exit code 1\.$/)
+ assert.ok(result.includedLineRanges.at(-1)![0] > 2900)
+})
 it('whole snapshot excerpt budget caps at 48k while complete logs remain cached', async () => {
  const checks = [11,12,13,14].map(id => check({ id, html_url: `https://github.com/${repository}/actions/runs/1/job/${id}` }))
  const { inbox, claim } = await fixture(checks)

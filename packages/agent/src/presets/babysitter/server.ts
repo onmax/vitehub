@@ -352,6 +352,30 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return evaluateGitHubRequiredChecks(await requiredChecks.read(snapshot.repository, base), snapshotCheckEvidence(snapshot)).state;
   }
 
+  /** A ready event may wake a direct merge, but must not start a model pass when
+   * the user supplied merge predicate still blocks that merge. */
+  async function directMergeWakeAllowed(snapshot: Snapshot, requiredChecks: Awaited<ReturnType<typeof requiredCheckState>>): Promise<boolean> {
+    if (merge.mode !== "direct" || !merge.ready) return true;
+    const head = snapshot.pr?.head?.sha;
+    if (!head) return false;
+    try {
+      return await merge.ready({
+        repository: snapshot.repository,
+        number: snapshot.number,
+        head,
+        snapshot: structuredClone(snapshot),
+        requiredChecks,
+      }) === true;
+    } catch (error) {
+      schedulerEvent("babysitter.direct_merge.skipped", {
+        pullRequest: snapshot.number,
+        repository: snapshot.repository,
+        reason: `merge readiness check failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 160)}`,
+      });
+      return false;
+    }
+  }
+
   const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   async function dependencyEvidence(wake: PullRequestWake): Promise<string> {
     // Dependency reads are host-owned. A parked model never polls unchanged checks.
@@ -376,7 +400,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   /** Wakes a parked PR only when its new events need a model pass or a direct merge. */
   async function evaluateWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(true)) {
-      const reasons = wakeReasons(snapshot, await requiredCheckState(snapshot), waitPolicy);
+      const checks = await requiredCheckState(snapshot);
+      let reasons = wakeReasons(snapshot, checks, waitPolicy);
+      if (reasons.includes("ready-to-merge") && !(await directMergeWakeAllowed(snapshot, checks))) {
+        reasons = reasons.filter(reason => reason !== "ready-to-merge");
+      }
       if (snapshot.wait?.wake) {
         const dependencyKey = `dependency:${snapshot.repository}#${snapshot.number}`;
         const nextReadKey = `dependency-next:${snapshot.repository}#${snapshot.number}`;
@@ -584,6 +612,29 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           if (merge.mode === "direct") {
             const mergeResult = await mergeReadyPullRequest(inboxClaim, owner, passSignal);
             if (mergeResult !== "not-ready") return;
+            // A previous pass explicitly reviewed this unchanged head. If the
+            // merge gates are still closed, keep waiting instead of invoking
+            // the model again. New feedback, conflicts, or a new failure alter
+            // the evidence key and invalidate this checkpoint.
+            const assessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
+            if (isRuntimeRecord(assessment)
+              && assessment.head === inboxClaim.snapshot.pr?.head?.sha
+              && assessment.evidenceKey === mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)
+              && inboxClaim.snapshot.threads.every(thread => thread.isResolved === true)
+              && inboxClaim.snapshot.pr?.mergeable !== false
+              && inboxClaim.snapshot.pr?.mergeable_state !== "dirty") {
+              await pullRequestInbox.finish(inboxClaim, {
+                text: inboxClaim.snapshot.lastResult || "Reviewed head is unchanged; waiting for merge gates.",
+                wait: createCheckWait(inboxClaim.snapshot, waitPolicy),
+              });
+              schedulerEvent("babysitter.wait.kept", {
+                ...owner,
+                head_sha: inboxClaim.snapshot.pr?.head?.sha,
+                avoided_invocation: true,
+                reason: "reviewed-head-unchanged",
+              });
+              return;
+            }
           }
           if (!(await hydrateFailedCiEvidence(pullRequestInbox, inboxClaim, {
             readJson: (path, projection) => readRest(path, projection, passSignal),
@@ -864,9 +915,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           } else if (assessed) {
             outcome = "waiting";
             await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: createCheckWait(inboxClaim.snapshot, waitPolicy) });
-            // A durable readiness checkpoint schedules only a host merge check, not another model pass.
+            // A durable readiness checkpoint schedules only a host merge check,
+            // and only when all cached gates (including a custom merge predicate)
+            // allow that check. Otherwise the next provider event evaluates the
+            // wait without starting another model pass.
             const waiting = await pullRequestInbox.get(repository, number);
-            if (waiting && merge.mode === "direct") await pullRequestInbox.wake(waiting, `reviewed:${mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)}`);
+            if (waiting && merge.mode === "direct") {
+              const checks = await requiredCheckState(waiting);
+              if (checks === "passed" && await directMergeWakeAllowed(waiting, checks)) {
+                await pullRequestInbox.wake(waiting, `reviewed:${mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)}`);
+              }
+            }
           } else {
             // A park that names no external gate still consumed a pass without progress.
             outcome = "retry";
