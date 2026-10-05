@@ -59,7 +59,7 @@ function actionLocation(repository: string, check: GitHubEvidence): { runId: num
     if (url.hostname !== 'github.com') continue
     const match = url.pathname.match(/^\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(?:\/job\/(\d+))?\/?$/)
     if (match && match[1]?.toLowerCase() === repository.toLowerCase()) {
-      const location = { runId: Number(match[2]) } as { runId: number; jobId?: number }
+      const location: { runId: number; jobId?: number } = { runId: Number(match[2]) }
       // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Keep optional jobId absent when the URL points at a workflow run.
       if (match[3]) location.jobId = Number(match[3])
       return location
