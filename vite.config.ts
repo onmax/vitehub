@@ -62,7 +62,8 @@ export default defineConfig({
       },
       "knip:catalog": {
         cache: false,
-        command: "vp exec knip --include catalog --no-progress --reporter compact",
+        command:
+          "vp run -t @vite-hub/sandbox#build && vp run -t @vite-hub/queue#build && vp exec knip --include catalog --no-progress --reporter compact",
       },
       "kv:e2e": {
         cache: false,
@@ -119,8 +120,7 @@ export default defineConfig({
       ...rootTestTasks,
       typecheck: {
         cache: false,
-        command:
-          "vp run build && vp run --filter vitehub-docs --ignore-depends-on typecheck && node test/run-package-task.mjs typecheck",
+        command: "node test/typecheck.mjs",
       },
       verify: {
         cache: false,

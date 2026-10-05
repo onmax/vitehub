@@ -3,8 +3,7 @@ import { supportsSkillPersistence } from "./internal/skill-persistence.ts"
 import { markCapabilityInspection } from "./internal/capability-inspection.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { hostObservability, isHostObservabilityCapability } from "./internal/observability-host.ts"
-import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
@@ -424,10 +423,11 @@ export function capabilityWorkspaceSources(
   capabilities: readonly AgentCapabilityDefinition[] | undefined,
 ): WorkspaceDefinition["sources"] | undefined {
   const normalized = normalizeCapabilities(capabilities)
-  const sources: NonNullable<WorkspaceDefinition["sources"]> = {}
+  // SAFETY: The empty null-prototype map receives only typed workspace source inputs below.
+  const sources = Object.create(null) as NonNullable<WorkspaceDefinition["sources"]>
   for (const capability of normalized) {
     for (const [key, source] of Object.entries(capability.workspaceSources || {})) {
-      if (key in sources) {
+      if (Object.hasOwn(sources, key)) {
         throw agentDiagnostics.AGENT_R0323({ message: `[vitehub] Duplicate workspace source "${key}" contributed by capabilities.` })
       }
       sources[key] = source

@@ -7,5 +7,5 @@ export const WorkflowLanding = {
   description: "Turn a sequence of server steps into durable work that can pause, resume, and be inspected.",
   tagline: "Steps that keep their place when the world interrupts them.",
   accent: "primary",
-  supported: ["Vite" , "Nitro" , "Nuxt"],
+  supported: ["Vite", "Nitro", "Nuxt"],
 } satisfies PrimitiveLanding;

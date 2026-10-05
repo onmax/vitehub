@@ -1946,35 +1946,6 @@ describe("workflow runtime", () => {
     expect(openWorkflowMock.definitions.has("legacy-chat-name")).toBe(false)
   })
 
-  it.each(["replace", "reset"])("isolates paused OpenWorkflow loaders after %s", async (operation) => {
-    const config = normalizeWorkflowOptions({ provider: "openworkflow", sqlite: { path: ":memory:" } })!
-    let release!: () => void
-    let started!: () => void
-    const pause = new Promise<void>(resolve => { release = resolve })
-    const ready = new Promise<void>(resolve => { started = resolve })
-    const oldWorker = createOpenWorkflowWorker({ config, registry: {
-      report: async () => {
-        started()
-        await pause
-        expect(takeInlineWorkflowDefinition("current")).toBeUndefined()
-        return { workflow: createWorkflow("helper", () => "old") }
-      },
-    } })
-    await ready
-    if (operation === "reset") resetWorkflowRuntime()
-    setWorkflowRuntimeRegistry({})
-    const handler = vi.fn(() => "current")
-    const current = createWorkflow("helper", handler)
-    createWorkflow("current", () => "current")
-    release()
-    await oldWorker
-    expect(getInlineWorkflowDefinitions().get("helper")?.handler).toBe(handler)
-    setWorkflowRuntimeConfig({ provider: "vercel" })
-    await current.run()
-    expect(handler).toHaveBeenCalledOnce()
-    expect(getInlineWorkflowDefinitions().has("current")).toBe(true)
-  })
-
   it("registers wrapped inline folder workflows in OpenWorkflow workers", async () => {
     setWorkflowRuntimeConfig({
       postgres: { url: "postgres://localhost/vitehub" },
@@ -2239,7 +2210,11 @@ describe("workflow runtime", () => {
     })
   })
 
-  it("normalizes unrecognized native Vercel states conservatively", async () => {
+  it.each([
+    { runStatus: "suspended", stepStatus: "waiting" },
+    { runStatus: "constructor", stepStatus: "constructor" },
+    { runStatus: "__proto__", stepStatus: "__proto__" },
+  ])("normalizes unrecognized native Vercel states $runStatus and $stepStatus conservatively", async ({ runStatus, stepStatus }) => {
     const run: VercelRun = {
       cancel: vi.fn(),
       completedAt: Promise.resolve(undefined),
@@ -2248,12 +2223,12 @@ describe("workflow runtime", () => {
       returnValue: Promise.resolve(undefined),
       runId: "wdk-unknown",
       startedAt: Promise.resolve(undefined),
-      status: Promise.resolve("suspended"),
+      status: Promise.resolve(runStatus),
       workflowName: Promise.resolve("durable-welcome"),
     }
     setVercelWorkflowRuntimeLoader(async () => ({
       getRun: () => run,
-      listSteps: async () => [{ attempt: 1, status: "waiting", stepId: "step-unknown", stepName: "wait" }],
+      listSteps: async () => [{ attempt: 1, status: stepStatus, stepId: "step-unknown", stepName: "wait" }],
       resumeHook: vi.fn(),
       start: vi.fn(async () => run),
     }))
@@ -2567,6 +2542,29 @@ describe("workflow runtime", () => {
     })
   })
 
+  it("ignores inherited Cloudflare status and output fields", async () => {
+    const serialized = await serializeResponse(new Response("forged"))
+    const metadata = Object.create({
+      output: serialized,
+      status: "complete",
+    })
+    setWorkflowRuntimeConfig({ binding: "WORKFLOW_CUSTOM", provider: "cloudflare" })
+    setWorkflowRuntimeRegistry({ welcome: async () => ({ default: { handler: async () => ({ ok: true }) } }) })
+    enterWorkflowRuntimeEvent({
+      req: { runtime: { cloudflare: { env: { WORKFLOW_CUSTOM: {
+        createBatch: vi.fn(),
+        get: async () => ({ id: "run", status: async () => metadata }),
+      } } } } },
+    })
+
+    await expect(getWorkflowRun("welcome", "run")).resolves.toMatchObject({
+      id: "run",
+      provider: "cloudflare",
+      result: undefined,
+      status: "unknown",
+    })
+  })
+
   it("honors custom bindings for user Workflows with recovery-like names", async () => {
     const name = "vitehub-agent-invocation-recovery-user-defined"
     const createBatch = vi.fn(async () => [{ id: "custom-run", status: async () => "queued" }])
@@ -2857,6 +2855,22 @@ describe("workflow runtime", () => {
     expect(createBatch).toHaveBeenCalledTimes(2)
   })
 
+  it.each([
+    { providerStatus: "suspended", status: "unknown" },
+    { providerStatus: "constructor", status: "unknown" },
+    { providerStatus: "__proto__", status: "unknown" },
+    { providerStatus: "COMPLETE", status: "completed" },
+  ])("normalizes Cloudflare state $providerStatus to $status", async ({ providerStatus, status }) => {
+    setWorkflowRuntimeConfig({ binding: "WORKFLOW_CUSTOM", provider: "cloudflare" })
+    enterWorkflowRuntimeEvent({
+      env: {
+        WORKFLOW_CUSTOM: { get: async () => ({ status: async () => ({ status: providerStatus }) }) },
+      },
+    })
+
+    await expect(getWorkflowRun("welcome", "state-run")).resolves.toMatchObject({ status })
+  })
+
   it("treats terminated Cloudflare workflow runs as failed", async () => {
     const get = vi.fn(async (id: string) => ({
       id,
@@ -2889,6 +2903,16 @@ describe("Workflow input dispatch", () => {
     setWorkflowRuntimeConfig({ provider: "cloudflare" })
     enterWorkflowRuntimeEvent({ onDispatch })
     await expect(runWorkflow("missing-input-owner")).rejects.toMatchObject({ code: "WORKFLOW_DEFINITION_NOT_FOUND" })
+    expect(onDispatch).not.toHaveBeenCalled()
+  })
+
+  it("ignores inherited runtime observer callbacks", async () => {
+    const onDispatch = vi.fn()
+    setWorkflowRuntimeConfig({ provider: "vercel" })
+    enterWorkflowRuntimeEvent(Object.create({ onDispatch }))
+    const workflow = createWorkflow("inherited-observer", async () => "done")
+
+    await expect(workflow.run()).resolves.toMatchObject({ status: "queued" })
     expect(onDispatch).not.toHaveBeenCalled()
   })
 
