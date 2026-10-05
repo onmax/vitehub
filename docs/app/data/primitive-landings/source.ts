@@ -55,7 +55,7 @@ export const SourceLanding = {
         {
           path: "nuxt.config.ts",
           language: "typescript",
-          content: 'export default defineNuxtConfig({\n  modules: ["vite-hub/nuxt"]\n})',
+          content: 'export default defineNuxtConfig({\n  modules: ["vite-hub/nuxt"],\n  vitehub: { preset: "node" }\n})',
         },
         {
           path: "server/api/docs.get.ts",
