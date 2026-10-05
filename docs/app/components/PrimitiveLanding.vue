@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { PrimitiveLanding } from "~/data/primitive-landings/types";
-import { landingPrimitives } from "./landing/content";
+import { primitiveLandings } from "~/data/primitive-landings";
 
 const props = defineProps<{ landing: PrimitiveLanding }>();
 const framework = useState<"vite" | "nitro" | "nuxt">("primitive-framework", () => "vite");
@@ -23,9 +23,9 @@ useSeoMeta({
           <template #content>
             <div class="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-default bg-default sm:grid-cols-3">
               <NuxtLink
-                v-for="primitive in landingPrimitives"
-                :key="primitive.id"
-                :to="primitive.to.replace('/docs/server-primitives/', '/')"
+                v-for="primitive in Object.values(primitiveLandings)"
+                :key="primitive.slug"
+                :to="`/${primitive.slug}`"
                 class="bg-elevated p-3 transition-colors duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-accented focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-primary"
                 @click="selectorOpen = false"
               >
