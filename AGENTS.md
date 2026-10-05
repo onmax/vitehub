@@ -35,7 +35,7 @@ Avoid clever code. The best API is the one an Agent would guess. Prefer inferred
 
 ## Make everything inspectable
 
-Every runtime feature must be inspectable through code, the CLI, or the Console. The Console will be the central place for production debugging. Keep authority explicit through Capabilities, Workspace access, and Sources. Never hide durability, isolation, security, or production readiness.
+Every runtime feature must be inspectable through code or the CLI. The Console must not be the only inspection path. The Console will be the central place for production debugging. Keep authority explicit through Capabilities, Workspace access, and Sources. Never hide durability, isolation, security, or production readiness.
 
 ## Prove it where developers feel it
 
