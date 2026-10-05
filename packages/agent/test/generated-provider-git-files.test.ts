@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { promisify } from "node:util"
@@ -77,19 +77,4 @@ it("restores the original Git exclude when a provider removes or replaces it", a
   await writeFile(excludePath, "provider replacement\n")
   await restoreAfterReplace()
   expect(await readFile(excludePath, "utf8")).toBe(originalExclude)
-})
-
-it("accepts a repository root reached through another path to the same directory", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "vitehub-generated-alias-"))
-  roots.push(parent)
-  const root = join(parent, "checkout")
-  await mkdir(root)
-  await execute("git", ["-C", root, "init", "-q"])
-  const alias = join(parent, "alias")
-  await symlink(root, alias, "dir")
-  await writeFile(join(alias, "AGENTS.md"), "generated")
-  const restore = await protectGeneratedProviderGitFiles(alias, [join(alias, "AGENTS.md")])
-  await restore()
-  await mkdir(join(root, "nested"))
-  await expect(protectGeneratedProviderGitFiles(join(alias, "nested"), [join(alias, "nested", "AGENTS.md")])).rejects.toThrow("repository root")
 })

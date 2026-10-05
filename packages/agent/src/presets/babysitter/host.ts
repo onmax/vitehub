@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
@@ -14,6 +14,28 @@ export function envString(value: unknown): string | undefined {
   const plain = isRuntimeRecord(value) && hasRuntimeType(value.unseal, "function") ? value.unseal() : value;
   if (hasRuntimeType(plain, "number")) return String(plain);
   return hasRuntimeType(plain, "string") && plain.trim() ? plain.trim() : undefined;
+}
+
+/**
+ * Remove the persistent checkout pool created by older Babysitter releases.
+ *
+ * Current GitHub hosts use a disposable checkout for each pass. The old pool
+ * retained merged and closed PR workspaces, including installed dependencies,
+ * under `.vitehub/checkouts`; remove that reserved directory as one unit.
+ */
+export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise<number> {
+  const root = join(dataDir, "checkouts");
+  const info = await lstat(root).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!info) return 0;
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`[vitehub] Refusing to clean unsafe Babysitter checkout pool: ${root}`);
+  }
+  const entries = await readdir(root, { withFileTypes: true });
+  await rm(root, { force: true, recursive: true });
+  return entries.length;
 }
 
 /** GitHub App settings from `env.server.github` or the GITHUB_APP_* variables. */
@@ -45,10 +67,13 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
   const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
   const repositories = babysitterRepositories(agent.options.filter);
+  // Process hosts live at `.vitehub/agents/<name>`; the legacy pool lived at
+  // the sibling `.vitehub/checkouts` directory.
+  await cleanupLegacyBabysitterCheckouts(join(context.dataDir, "..", ".."));
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
-  const github = createGitHubHost({ credentials: credentials.credentials, identity, checkouts: { root: join(context.dataDir, "checkouts") } });
+  const github = createGitHubHost({ credentials: credentials.credentials, identity });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
   const host = await createProcessAgentHost({
     name: context.agentName,
