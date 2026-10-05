@@ -191,6 +191,7 @@ export default defineNuxtConfig({
         "simple-icons:cloudflare",
         "simple-icons:discord",
         "simple-icons:vercel",
+        "vscode-icons:file-type-toml",
         "vscode-icons:file-type-typescript",
       ],
     },

@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest"
+import { z } from "zod"
 
 import { env } from "../src/index.ts"
 import { defaultStringSchema } from "../src/core/declarations.ts"
-import { createRuntimeRegistry, createSourceContext, resolveEnvSource, validateEnvConfigShape } from "../src/core/resolve.ts"
+import { createRuntimeRegistry, createSourceContext, resolveBuildConfig, resolveEnvSource, validateEnvConfigShape } from "../src/core/resolve.ts"
 import { parseSchema } from "../src/schema.ts"
 
 describe("env declarations", () => {
+  it("rejects sparse build arrays whose values only exist on the prototype", async () => {
+    const sparse: string[] = []
+    sparse.length = 1
+    Object.setPrototypeOf(sparse, { 0: "inherited" })
+
+    await expect(resolveBuildConfig({ values: sparse }, {
+      context: createSourceContext({ env: {}, mode: "runtime", rootDir: process.cwd() }),
+      exposure: "compile-time replacement",
+      section: "env.define",
+      timing: "test",
+    })).rejects.toThrow("[vitehub] Env declaration is invalid.")
+  })
+
   it("defaults env variable declarations to required runtime strings", () => {
     expect(env()).toMatchObject({
       kind: "env-variable",
@@ -413,11 +427,86 @@ describe("env declarations", () => {
     })).toThrow("[vitehub] Env declaration is invalid.")
   })
 
+  it("does not execute inherited schema methods", () => {
+    let calls = 0
+    const inherited = {
+      safeParse: () => {
+        calls++
+        return { data: "inherited", success: true as const }
+      },
+      parse: () => {
+        calls++
+        return "inherited"
+      },
+      "~standard": {
+        validate: () => {
+          calls++
+          return { value: "inherited" }
+        },
+      },
+    }
+
+    expect(parseSchema(Object.create(inherited), "input", "env.test")).toBe("input")
+    expect(calls).toBe(0)
+  })
+
   it("accepts standard-schema results with empty issues", () => {
     expect(parseSchema({
       "~standard": {
         validate: () => ({ issues: [], value: "ok" }),
       },
     }, "ok", "env.test")).toBe("ok")
+  })
+
+  it("validates and transforms normal Zod 4 schemas", () => {
+    const schema = z.string().min(3)
+    expect(Object.hasOwn(schema, "safeParse")).toBe(false)
+    expect(() => parseSchema(schema, "x", "env.test")).toThrow("Invalid env.test")
+    expect(parseSchema(schema, "valid", "env.test")).toBe("valid")
+    expect(parseSchema(z.string().transform(value => value.length), "valid", "env.test")).toBe(5)
+  })
+
+  it("preserves Zod 4 safeParse and parse fallbacks", () => {
+    for (const method of ["safeParse", "parse"] as const) {
+      const schema = z.string().min(3).transform(value => value.length)
+      Object.defineProperty(schema, "~standard", { value: undefined })
+      if (method === "parse") {
+        Object.defineProperty(schema, "safeParse", { value: undefined })
+      }
+      expect(() => parseSchema(schema, "x", "env.test")).toThrow("Invalid env.test")
+      expect(parseSchema(schema, "valid", "env.test")).toBe(5)
+    }
+  })
+
+  it("does not accept an inherited Zod identity", () => {
+    expect(parseSchema(Object.create(z.string().min(3)), "x", "env.test")).toBe("x")
+  })
+
+  it("does not execute inherited validators with forged Zod traits", () => {
+    let calls = 0
+    const validators = {
+      safeParse: () => {
+        calls++
+        return { data: "inherited", success: true as const }
+      },
+      parse: () => {
+        calls++
+        return "inherited"
+      },
+      "~standard": {
+        validate: () => {
+          calls++
+          return { value: "inherited" }
+        },
+      },
+    }
+    const metadata = [{ traits: new Set(["ZodType"]) }, z.string()._zod]
+    for (const _zod of metadata) {
+      for (const method of ["safeParse", "parse", "~standard"] as const) {
+        const schema = Object.assign(Object.create({ [method]: validators[method] }), { _zod })
+        expect(parseSchema(schema, "input", "env.test")).toBe("input")
+      }
+    }
+    expect(calls).toBe(0)
   })
 })

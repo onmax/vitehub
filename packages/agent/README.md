@@ -108,7 +108,7 @@ Set `defineAgent({ intercept })` to finish an Invocation before the Driver runs.
 
 ## Custom Capability tools
 
-Custom Capability tools infer their handler input from inline Standard Schema validators. Schema transforms and optional outputs keep their types. A mismatched handler is a type error. Raw JSON Schema needs an explicit handler input type. Use `defineCapability<Config>()({...})` when you set the runtime config type. See the [custom Capability guide](https://vitehub.dev/docs/capabilities/custom-capabilities).
+Custom Capability tools infer their handler input from inline Standard Schema validators. Schema transforms and optional outputs keep their types. A mismatched handler is a type error. Raw JSON Schema needs an explicit handler input type. Use `defineCapability<Config>()({...})` when you set the runtime config type. See the [custom Capability guide](https://vitehub.dev/docs/agents/capabilities/custom).
 
 Tools can declare `title`, a short past-tense label such as `Searched meals`, and `icon`, an Iconify name such as `i-lucide-utensils`. Tool events use `title` when the driver gives none. `inspectAgentTools()` records them as `label` and `icon`, and metadata-only journals keep both. The model does not receive them. Built-in `db`, `kv`, and `blob` tools and Workspace `materialize_sources` declare both.
 
@@ -154,6 +154,8 @@ When all selected Workspace Sources materialize successfully before the provider
 
 Process hosts can call `failInterruptedAgentInvocations(store, { recover })` at startup. `recover` must identify records owned by the stopped process host. Exclude durable Workflows and other provider-owned work because their active records may not hold a store claim while suspended. Recovery first respects an existing claim, waits up to `recoveryTimeoutMs`, and asks `recover` again before taking over the stopped host's claim. The timeout defaults to `claimLeaseMs`.
 
+Journaled Invocations require a successful cancellation-state read before execution starts. A missing record, failed read, or timed-out read rejects the Invocation. A custom `run` Driver also requires durable dispatch-state metadata before it starts. Observation and terminal-write failures do not replace the Driver result.
+
 Hosts can persist external delivery evidence with `await invocations.appendObservation(invocationId, event, { id: deliveryId })`. The stable observation ID makes retries idempotent. The store assigns the sequence atomically, including for completed, failed, or cancelled Invocations, without changing lifecycle state or taking the running Agent's claim. The configured content policy still applies. Appends return the persisted record, return `undefined` when the Invocation does not exist, and throw if storage fails or the observation capacity prevents an append. Retain the same ID when retrying an ambiguous storage failure. Use one store instance per SQLite connection so its write queue serializes concurrent append calls.
 
 `permissions` accepts `"ask"`, `"allow-edits"`, or `"allow-all"` and defaults to `"ask"`. Set `"allow-all"` explicitly when provider actions should run without approval. Approval decisions use the existing Agent message approval part, and structured provider questions accept a `data-agent-input` part with `{ requestId, answers }` through invocation input mode `"respond"`. Provider-backed invocations accept live input through invocation input mode `"steer"` when the provider adds the input to its active turn. Put Agent-owned Skills under `server/agents/<name>/skills/`; use `skills()` for Workspace-backed or external Source Skills.
@@ -193,7 +195,7 @@ export const agentCapacity = createProcessAgentCapacity({
 
 Import the same `agentCapacity` object into each Agent Definition that should share one process-local budget. Linux hosts use cgroup v2 memory limits, memory events, and pressure stall information when available; other hosts use Node's available-memory signal without CPU-pressure admission. Sampling failures or samples exceeding `sampleTimeoutMs` (one second by default) use `fallbackConcurrency`, which defaults to one. Custom samplers should pass `context.signal` to abortable I/O. Tune `memory.perInvocationBytes`, `memory.reserveBytes`, and the CPU or memory pressure thresholds when workload measurements justify different admission behavior.
 
-Long-lived Node process hosts can import `createGitHubHost()` from `@vite-hub/agent/server/github` to resolve GitHub App or fallback credentials, admit GraphQL work against a shared rate-limit reserve, and run against an exact pull-request head in a temporary checkout. The process-specific entry keeps Node Git and filesystem dependencies out of the portable `@vite-hub/agent/server` entry. `withPullRequestCheckout()` uses Git over HTTPS, fetches the source branch directly, verifies the requested head, and removes the checkout after success, failure, cancellation, or timeout. Checkout and push operations need Git but do not need the GitHub CLI. Generic `command()` operations still use the GitHub CLI. Include `headRepository` and `headRef` to make an ordinary `git push` target the pull request's source branch. The callback keeps base repository access for reads from `origin`; use its `push()` after long-running work so the host resolves fresh source repository credentials before pushing. Push checks that the repair descends from the last verified head and uses a lease to reject a changed source branch. It returns the pushed SHA and advances the lease for later pushes in the same callback. Pass the Agent Invocation's abort signal and use the callback signal for work inside the checkout:
+Long-lived Node process hosts can import `createGitHubHost()` from `@vite-hub/agent/server/github` to resolve GitHub App or fallback credentials, admit GraphQL work against a shared rate-limit reserve, and run against an exact pull-request head in a temporary checkout. The process-specific entry keeps Node Git and filesystem dependencies out of the portable `@vite-hub/agent/server` entry. `withPullRequestCheckout()` uses Git over HTTPS, fetches the source branch directly, verifies the requested head, and removes the checkout after success, failure, cancellation, or timeout, unless `checkouts` keeps it for reuse. Checkout and push operations need Git but do not need the GitHub CLI. Generic `command()` operations still use the GitHub CLI. Include `headRepository` and `headRef` to make an ordinary `git push` target the pull request's source branch. The callback keeps base repository access for reads from `origin`; use its `push()` after long-running work so the host resolves fresh source repository credentials before pushing. Push checks that the repair descends from the last verified head and uses a lease to reject a changed source branch. It returns the pushed SHA and advances the lease for later pushes in the same callback. Pass the Agent Invocation's abort signal and use the callback signal for work inside the checkout:
 
 ```ts
 await github.withPullRequestCheckout(pullRequest, async ({ env, path, push, signal }) => {
@@ -201,6 +203,8 @@ await github.withPullRequestCheckout(pullRequest, async ({ env, path, push, sign
   await push()
 }, { signal: invocation.abortSignal, timeout: 60_000 })
 ```
+
+Set `checkouts: { root }` on `createGitHubHost()` to reuse pull request checkouts on Linux. Other Node hosts use fresh temporary checkouts and leave the configured pool untouched because safe restoration requires Linux directory descriptors. The host keeps a pool of checkouts under `root` for each pull request and adopts the directories that a previous process left there. Reuse within one process keeps ignored files, such as dependencies, build output, and caches. Adoption after a restart clears ignored files because directory names cannot prove pull request ownership. It removes Git hooks, `index.lock`, `.vitehub`, and `<checkout>.meta.json`, recreates Git metadata while retaining only the object database, fetches and forcibly checks out the new head, and runs `git clean -ffd`. Git checkout runs with hooks disabled. A checkout returns to the pool only after the host verifies its head; otherwise the host removes it. Reuse removes initialized submodules and their ignored files, matching a fresh clone. Initialize submodules again in the callback when needed. Use one `root` for each process, and do not share it between processes. Without `checkouts`, each call uses a temporary directory that the host removes.
 
 For a provider that materializes a separate working directory, call `checkout.prepareWorkspace(cwd)` from the provider launch hook, then `checkout.push(cwd)` from the host after reviewing the result. The host imports the exact commit without credentials and pushes it from the original trusted clone, so provider Git configuration cannot control the authenticated push. Preparation copies the independent PR clone's Git history and push destination, removes old target metadata and saved credential/header configuration, and leaves the original clone unchanged. The standalone `prepareGitHubPullRequestWorkspace(checkoutPath, cwd, { signal })` export performs the same preparation. These helpers apply only to prepared GitHub PR checkouts; other workspace types do not receive Git metadata. Keep host credentials out of the provider environment when push authority belongs to the host.
 
@@ -362,6 +366,10 @@ Learn more at [vitehub.dev](https://vitehub.dev).
 ## Invocation summaries
 
 `defineAgentInvocations()` returns `getSummary(id)` for metadata reads without observations. Every store must implement this method. Use `get(id)` for the full record or `get(id, { observationNames: ["agent.invocation.finish"] })` to read only observations with those exact names. An empty list returns no observations. The built-in SQL stores filter observation payloads inside the database. Custom stores can apply the same option to avoid loading unrelated payloads; the Invocations wrapper also filters their returned records. Both methods return `undefined` when the Invocation does not exist.
+
+## Invocation cancel
+
+`invocations.cancel(id)` records `cancelRequestedAt` on a pending or running Invocation and returns an `AgentInvocationCancelResult`. A run in the same process aborts its Invocation abort signal at once. The `requested` outcome confirms a recorded or locally sent request, not that execution stopped. If the journal record is missing but a local run received the request, the result still reports `requested` with `delivery: "local"` and any Driver warning. Before setup, active runs check the flag; a rejected or missing read, or a check that exceeds one second, fails startup with `AGENT_R0973`. After startup, active runs read the flag every 10 seconds, including after a lost lease stops claim renewal. Orphaned records remain pending or running until an execution owner recovers and observes the request. Cancellation does not take over expired leases or recover orphaned work. Read the final journal status to confirm cancellation. Model-backed and provider-backed Drivers stop on cancel. Cancellation before Driver dispatch stops startup without a warning. `cancelWarningPending` and its `cancelWarningOwnerId` are persisted when a custom Driver record is created and identifies dispatch that is not yet verified; warning writes retry after dispatch. A remote caller waits up to five seconds to verify a pending state, then throws `AGENT_R0974` if verification fails, while keeping the recorded request. A custom `run` Driver that has started receives the aborted signal but ViteHub cannot stop it, so the result reports `notEnforcedBy: "run"` and the record stays `running`. A terminal journal does not prove every stale local Driver stopped; cancelling it still signals local runs and returns durable or local `notEnforcedBy` warnings without changing the terminal record. Durable warnings describe Driver enforcement and do not prove work is still active. Custom stores keep the new fields through `applyAgentInvocationStoreUpdate()`. `vitehub agent invocations cancel <id>` sends the same request into the Nitro runtime of a Vite + Nitro Development Server, so it reaches the application's own journal and abort handles. Nuxt and plain Vite return `501`. See [Agent Invocations](../../docs/content/docs/agents/invocations.md#cancel-an-invocation).
 
 ## GitHub pull request Workspaces
 
@@ -664,6 +672,8 @@ The generated `/api/_vitehub/ready` route supports GET and HEAD, returning 503 u
 Set `transcripts: { retention: "forever" }` in `createLibsqlAgentState()` to preserve Chat transcript rows before startup expiry cleanup and ignore future transcript TTLs. Other state still expires normally. This cannot recover rows already deleted.
 
 
+Webhook `secretToken` accepts a string, `false`, `undefined`, a callback, or an object with its own `resolve` method. Resolver objects must define `resolve` directly, for example `{ resolve: () => "secret" }`. A class can use a `resolve` field. Inherited methods, including class prototype methods, are rejected. Resolvers must return a string, `false` to disable verification, or `undefined`. Other resolved values fail webhook verification.
+
 For an existing external webhook URL, Nitro hosts can route an alias directly to an Agent Channel:
 
 ```ts
@@ -684,7 +694,7 @@ Capability definitions can declare `inspection: { label, view? }`. Lifecycle hoo
 
 MCP records server discovery and tool provenance. Title records generation settings, progress, and its result. The Console's Capabilities tab reads these snapshots without invoking either capability. Other capabilities use the default tools/configuration view. Set the Invocation journal's `configuration` to `"content"` to retain inspection state and views independently of other trace content. Metadata-only capture keeps labels. Existing redaction and observation bounds apply.
 
-See [custom capability inspection](https://vitehub.dev/docs/capabilities/custom-capabilities#contribute-an-inspection-view) for the catalog and a complete example.
+See [custom capability inspection](https://vitehub.dev/docs/agents/capabilities/custom#contribute-an-inspection-view) for the catalog and a complete example.
 
 
 ### Instruction templates
@@ -809,6 +819,10 @@ A delivery without a configured webhook secret is rejected. Only the commit
 author and committer identity pass to the worker; credentials do not. On its
 first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
 earlier hand-wired Babysitter once.
+
+On Linux, the built-in host keeps GitHub checkouts under `checkouts` in its process data directory.
+Each pull request reuses its own checkout, including ignored dependencies and build output.
+Other Node hosts use fresh temporary checkouts for each pass.
 
 Each pass uses a disposable provider workspace with edit permission. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,
