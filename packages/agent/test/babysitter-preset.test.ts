@@ -131,11 +131,15 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
     if (path.includes("pulls?state=all&head="))
       return { stdout: (preset.parents ?? []).map((value) => JSON.stringify(value)).join("\n"), stderr: "" };
+    if (path.startsWith("repos/acme/app/pulls?state=open&base="))
+      return { stdout: "", stderr: "" };
+    if (path === "repos/acme/app")
+      return { stdout: JSON.stringify({ delete_branch_on_merge: false }), stderr: "" };
     const data =
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
         : path.includes("/reviews?")
-          ? [
+          ? preset.merge ? [] : [
               {
                 id: 41,
                 body: "Fix value",
@@ -347,6 +351,21 @@ describe("Babysitter preset runtime", () => {
       expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge", "merge_method=squash", `sha=${"a".repeat(40)}`]));
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("releases the claim when branch safety read %s fails", async (path) => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes(path)) throw new Error("GitHub temporarily unavailable");
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(f.command.mock.calls.some(([args]) => args.includes("PUT"))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 
