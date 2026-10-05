@@ -42,5 +42,5 @@ export const primitiveLandings: Record<string, PrimitiveLanding> = Object.fromEn
 ].map((landing) => [landing.slug, landing]));
 
 export function getPrimitiveLanding(slug: string): PrimitiveLanding | undefined {
-  return primitiveLandings[slug];
+  return Object.hasOwn(primitiveLandings, slug) ? primitiveLandings[slug] : undefined;
 }

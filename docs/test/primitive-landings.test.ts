@@ -1,6 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { primitiveLandings } from "../app/data/primitive-landings";
+import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-landings";
+
+describe("primitive landing routes", () => {
+  it("resolves registered primitives", () => {
+    for (const landing of Object.values(primitiveLandings)) {
+      expect(getPrimitiveLanding(landing.slug)).toBe(landing);
+    }
+  });
+
+  it("leaves unknown and inherited object names to the route fallback", () => {
+    for (const slug of ["missing-primitive", "constructor", "toString", "__proto__"]) {
+      expect(getPrimitiveLanding(slug)).toBeUndefined();
+    }
+  });
+});
 
 describe("primitive landing placeholders", () => {
   it("marks every stub variant as illustrative and removes invented APIs", () => {
