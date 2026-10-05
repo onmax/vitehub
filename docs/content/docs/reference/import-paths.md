@@ -180,7 +180,7 @@ for libraries, focused integrations, and advanced composition.
 | `@vite-hub/rate-limit/drivers/cloudflare` | Rate Limit Package | Direct access to a Cloudflare Rate Limiting binding. |
 | `@vite-hub/realtime` | Realtime Package | Realtime Definitions and portable collaboration types. |
 | `@vite-hub/realtime/server` and `@vite-hub/realtime/vue` | Realtime Package | Manual server integration and Vue collaborative editing. |
-| `@vite-hub/ui` and `@vite-hub/ui/headless` | UI Package | AI SDK-native Vue components and headless message scrolling. |
+| `@vite-hub/ui`, `@vite-hub/ui/agent-*`, and `@vite-hub/ui/headless` | UI Package | AI SDK-native Vue components and headless message scrolling. |
 | `@vite-hub/sandbox` | Sandbox Package | Sandbox Definition and Sandbox Run helpers. |
 | `@vite-hub/schedule/runtime` | Schedule Package | Runtime schedule helpers. |
 | `@vite-hub/schedule/runtime/kv` | Schedule Package | Explicit storage adapter; requires the optional `@vite-hub/kv` peer. |
