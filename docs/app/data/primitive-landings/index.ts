@@ -1,21 +1,49 @@
 import { landingPrimitives } from "~/components/landing/content";
-import { stubLanding } from "./stub";
+import { AgentsLanding } from "./agents";
+import { WorkspaceLanding } from "./workspace";
+import { SandboxLanding } from "./sandbox";
+import { ConnectionsLanding } from "./connections";
+import { WorkflowsLanding } from "./workflows";
+import { KvLanding } from "./kv";
+import { DatabasesLanding } from "./databases";
+import { QueueLanding } from "./queue";
+import { ScheduleLanding } from "./schedule";
+import { BlobLanding } from "./blob";
+import { AuthLanding } from "./auth";
+import { BrowserLanding } from "./browser";
+import { ShellLanding } from "./shell";
+import { SourceLanding } from "./source";
+import { ContentLanding } from "./content";
+import { EmailLanding } from "./email";
+import { EnvLanding } from "./env";
+import { RateLimitsLanding } from "./rate-limits";
+import { RealtimeLanding } from "./realtime";
 import type { PrimitiveLanding } from "./types";
 
-const routeNames: Record<string, string> = {
-  agent: "agents",
-  workflow: "workflows",
-  database: "databases",
-  rate-limit: "rate-limits",
-};
-
-export const primitiveLandings: Record<string, PrimitiveLanding> = Object.fromEntries(
-  landingPrimitives.map((primitive) => {
-    const slug = routeNames[primitive.id] ?? primitive.id;
-    return [slug, stubLanding(slug, primitive.name, primitive.to)];
-  }),
-);
+export const primitiveLandings: Record<string, PrimitiveLanding> = Object.fromEntries([
+  AgentsLanding,
+  WorkspaceLanding,
+  SandboxLanding,
+  ConnectionsLanding,
+  WorkflowsLanding,
+  KvLanding,
+  DatabasesLanding,
+  QueueLanding,
+  ScheduleLanding,
+  BlobLanding,
+  AuthLanding,
+  BrowserLanding,
+  ShellLanding,
+  SourceLanding,
+  ContentLanding,
+  EmailLanding,
+  EnvLanding,
+  RateLimitsLanding,
+  RealtimeLanding,
+].map((landing) => [landing.slug, landing]));
 
 export function getPrimitiveLanding(slug: string): PrimitiveLanding | undefined {
   return primitiveLandings[slug];
 }
+
+void landingPrimitives;
