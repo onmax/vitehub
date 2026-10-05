@@ -39,7 +39,10 @@ useSeoMeta({
       </div>
     </header>
 
-    <section class="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-8 sm:py-20 lg:grid-cols-[.8fr_1.2fr] lg:items-center lg:gap-16 lg:px-12 lg:py-24">
+    <section
+      class="mx-auto grid max-w-7xl gap-10 px-4 py-14 sm:px-8 sm:py-20 lg:items-center lg:gap-16 lg:px-12 lg:py-24"
+      :class="{ 'lg:grid-cols-[.8fr_1.2fr]': landing.variants.length > 0 }"
+    >
       <div>
         <p class="font-mono text-xs uppercase tracking-[0.18em] text-primary">{{ landing.eyebrow }}</p>
         <h1 class="mt-5 max-w-xl text-5xl font-semibold leading-[.95] tracking-[-0.07em] text-highlighted text-balance sm:text-6xl">ViteHub {{ landing.name }}</h1>
