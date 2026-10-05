@@ -135,22 +135,54 @@ const mcpEffectBoundary = createEffectBoundary({
 function isMcpResourcesClient(value: unknown): value is McpResourcesClient {
   return typeof value === "object"
     && value !== null
-    && typeof (value as { listResources?: unknown }).listResources === "function"
-    && typeof (value as { readResource?: unknown }).readResource === "function"
+    && hasDeclaredFunction(value, "listResources")
+    && hasDeclaredFunction(value, "readResource")
 }
 
 function isMcpResourcesClientConfig(value: unknown): value is McpResourcesClientConfig {
   return typeof value === "object"
     && value !== null
-    && "transport" in value
+    && hasDeclaredProperty(value, "transport")
+    && (isMcpTransport(Reflect.get(value, "transport")) || isMcpTransportConfig(Reflect.get(value, "transport")))
 }
 
 function isMcpTransport(value: unknown): value is McpResourcesTransport {
   return typeof value === "object"
     && value !== null
-    && typeof (value as { close?: unknown }).close === "function"
-    && typeof (value as { send?: unknown }).send === "function"
-    && typeof (value as { start?: unknown }).start === "function"
+    && hasDeclaredFunction(value, "close")
+    && hasDeclaredFunction(value, "send")
+    && hasDeclaredFunction(value, "start")
+}
+
+function isMcpTransportConfig(value: unknown): value is Exclude<McpResourcesTransportConfig, McpResourcesTransport> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Transport configs cross the MCP configuration boundary and require object validation.
+  return typeof value === "object"
+    && value !== null
+    && Object.hasOwn(value, "url")
+    && (!Reflect.has(value, "type") || (Object.hasOwn(value, "type") && (Reflect.get(value, "type") === "http" || Reflect.get(value, "type") === "sse")))
+}
+
+function hasDeclaredProperty(value: unknown, key: PropertyKey): value is object {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability lookup requires an object before inspecting its own fields and prototypes.
+  if (typeof value !== "object" || value === null) return false
+  if (Object.hasOwn(value, key)) return true
+  let prototype = Object.getPrototypeOf(value)
+  while (prototype && prototype !== Object.prototype) {
+    if (Object.hasOwn(prototype, key)) {
+      const constructor = Object.hasOwn(prototype, "constructor") ? prototype.constructor : undefined
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Only class constructors can declare inherited MCP capabilities; plain functions can forge prototype links.
+      return typeof constructor === "function"
+        && constructor.prototype === prototype
+        && /^class\b/.test(Function.prototype.toString.call(constructor))
+    }
+    prototype = Object.getPrototypeOf(prototype)
+  }
+  return false
+}
+
+function hasDeclaredFunction(value: unknown, key: PropertyKey): boolean {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- MCP methods must be callable before they cross the client or transport boundary.
+  return hasDeclaredProperty(value, key) && typeof Reflect.get(value, key) === "function"
 }
 
 async function createMcpTransport(config: McpResourcesTransportConfig): Promise<Transport> {
@@ -289,8 +321,15 @@ function shouldInclude(path: string, options: Pick<McpResourcesSourceOptions, "i
 
 async function listAllResources(client: McpResourcesClient, request: McpResourcesRequestOptions | undefined) {
   const resources: McpResourceDescriptor[] = []
+  const seenCursors = new Set<string>()
   let cursor: string | undefined
   do {
+    if (cursor !== undefined) {
+      if (seenCursors.has(cursor)) {
+        throw sourceError(`[vitehub] MCP Resources server repeated pagination cursor ${JSON.stringify(cursor)}.`)
+      }
+      seenCursors.add(cursor)
+    }
     const page = await client.listResources(cursor ? { cursor } : undefined, request)
     resources.push(...page.resources)
     cursor = page.nextCursor
@@ -333,8 +372,12 @@ async function createEntries<TKey extends string>(
 }
 
 function decodeBase64(value: string) {
-  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(value, "base64"))
-  const binary = atob(value)
+  const normalized = value.replace(/[\t\n\f\r ]/g, "")
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized) || normalized.length % 4 === 1 || /=[A-Za-z0-9+/]/.test(normalized)) {
+    throw sourceError("[vitehub] MCP resource returned invalid base64 content.")
+  }
+  if (globalThis.Buffer) return new Uint8Array(globalThis.Buffer.from(normalized, "base64"))
+  const binary = atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="))
   const bytes = new Uint8Array(binary.length)
   for (let index = 0; index < binary.length; index++) {
     bytes[index] = binary.charCodeAt(index)
@@ -343,8 +386,10 @@ function decodeBase64(value: string) {
 }
 
 function contentToSourceContent(content: McpResourceContent): SourceContent {
-  if ("text" in content && typeof content.text === "string") return content.text
-  if ("blob" in content && typeof content.blob === "string") return decodeBase64(content.blob)
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Remote MCP text content must be an own string field before decoding.
+  if (Object.hasOwn(content, "text") && "text" in content && typeof content.text === "string") return content.text
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Remote MCP binary content must be an own string field before base64 decoding.
+  if (Object.hasOwn(content, "blob") && "blob" in content && typeof content.blob === "string") return decodeBase64(content.blob)
   return ""
 }
 
@@ -376,7 +421,7 @@ function createResourceItem<TKey extends string>(
 }
 
 export function mcpResources<const TKey extends string = string>(options: McpResourcesSourceOptions<TKey>): FileSource<TKey> {
-  if (!options || typeof options !== "object" || !options.server) {
+  if (!options || typeof options !== "object" || !hasDeclaredProperty(options, "server") || !options.server) {
     throw sourceErrorDiagnostics.SOURCE_R0022({ message: "[vitehub] mcpResources({ server }) requires an MCP server." })
   }
 

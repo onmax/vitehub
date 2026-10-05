@@ -7,5 +7,5 @@ export const RealtimeLanding = {
   description: "Share live document state through a host independent primitive for collaborative interfaces.",
   tagline: "Live state for interfaces that move together.",
   accent: "secondary",
-  supported: ["Vite" , "Nitro" , "Nuxt"],
+  supported: ["Vite", "Nitro", "Nuxt"],
 } satisfies PrimitiveLanding;

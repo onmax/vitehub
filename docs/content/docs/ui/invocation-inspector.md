@@ -25,7 +25,7 @@ icon: i-ph-sidebar-simple-light
 
 - **Outcome:** the status, the total time, the title, the context, and the Agent name and version. A terminal error appears here.
 - **Run summary:** messages, steps, tool calls, total time, file changes, tokens, and cost. Token partitions appear when `usage` has them.
-- **Timeline:** the timed activities of the run. Select one to emit `selectActivity`.
+- **Timeline:** the timed steps of the run, rendered by [`AgentInvocationTimeline`](/docs/ui/timeline). Select one to emit `selectActivity`.
 - **Agent setup:** the model, runtime, Workspace, Sources, Channels, Capabilities, tools, and instructions. Capability metadata and instructions expand in place.
 - **Identifiers:** copy buttons for the trace ID and the Invocation ID.
 
@@ -113,5 +113,6 @@ Include instruction content only when the current viewer may inspect it. The com
 ## Related
 
 - [Invocation](/docs/ui/invocation) renders the thread that `selectActivity` points to.
+- [Timeline](/docs/ui/timeline) is the embedded step list.
 - [Capability inspector](/docs/ui/capability-inspector) shows Capability views in a separate panel.
 - [Tool list](/docs/ui/tool-list) renders the tool contracts.
