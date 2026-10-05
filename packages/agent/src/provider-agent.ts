@@ -1275,11 +1275,18 @@ const providerStatusCacheMs = 30_000
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
+/** A gateway replaces Codex sign-in, so its adapter never prepares a credential home. */
+function withoutReplacedCredentials<TOptions extends ProviderAgentAdapterOptions<never, never>>(options: TOptions): TOptions {
+  if (options.gateway === undefined || (options.credentials === undefined && options.credentialProfile === undefined)) return options
+  return { ...options, credentialProfile: undefined, credentials: undefined }
+}
+
 export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeConfig>(
-  options: ProviderAgentAdapterOptions<TRuntimeConfig>,
+  configuredOptions: ProviderAgentAdapterOptions<TRuntimeConfig>,
   context: AgentProviderCredentialContext<TRuntimeConfig>,
   inspectionOptions: { checkRequirements?: boolean } = {},
 ): Promise<AgentProviderStatus> {
+  const options = withoutReplacedCredentials(configuredOptions)
   const signal = context.abortSignal
   const checkRequirements = inspectionOptions.checkRequirements !== false
   // The toolchain exists only after an invocation prepares its checkout.
@@ -3676,7 +3683,8 @@ async function generateProvider<CALL_OPTIONS, TRuntimeConfig extends AgentRuntim
 export function createProviderAgentAdapter<
   CALL_OPTIONS = unknown,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
->(options: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>): AgentAdapter<CALL_OPTIONS, TRuntimeConfig> {
+>(configuredOptions: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>): AgentAdapter<CALL_OPTIONS, TRuntimeConfig> {
+  const options = withoutReplacedCredentials(configuredOptions)
   const resumeCursors = new Map<string, unknown>()
   const sessionLocks = new Map<string, Promise<void>>()
   const cwdLocks = new Map<string, Promise<void>>()

@@ -460,6 +460,23 @@ describe("Provider Agent Driver", () => {
     expect(launchArgs).not.toContain("proxy-key")
   })
 
+  it("does not prepare Codex credentials that a gateway replaces", async () => {
+    const threadId = "thread-gateway-credentials"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const credentials = vi.fn(() => "{}")
+    await createProviderAgentAdapter({
+      credentialProfile: "replaced",
+      credentials,
+      gateway: cliproxy({ url: "https://proxy.example", apiKey: "proxy-key" }),
+      provider: "codex",
+    }).generate(context(threadId) as never)
+
+    expect(credentials).not.toHaveBeenCalled()
+    const options = createProviderRuntime.mock.lastCall?.[0]
+    expect(options?.settings).not.toHaveProperty("homePath")
+    expect(String(options?.settings?.launchArgs)).not.toContain("cli_auth_credentials_store")
+  })
+
   it("routes Claude Code through driver.gateway", async () => {
     const threadId = "thread-claude-gateway"
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
