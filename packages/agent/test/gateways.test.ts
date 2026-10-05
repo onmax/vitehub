@@ -101,6 +101,15 @@ describe("gateway resolution", () => {
     expect((await resolveAgentDriverGateway(ollama(), "claude-code", context)).environment.ANTHROPIC_AUTH_TOKEN).toBe("ollama")
   })
 
+  it("fails an explicit undefined key instead of using the preset variable", async () => {
+    vi.stubEnv("AI_GATEWAY_API_KEY", "ambient-key")
+    const optionalKey: string | undefined = undefined
+    await expect(resolveAgentDriverGateway(vercel({ apiKey: optionalKey }), "codex", context)).rejects.toThrow('Gateway "vercel" apiKey resolved to an empty value')
+    await expect(resolveAgentDriverGateway(ollama({ apiKey: optionalKey }), "codex", context)).rejects.toThrow('Gateway "ollama" apiKey resolved to an empty value')
+    const header = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: { "CF-Access-Client-Id": optionalKey } })
+    await expect(resolveAgentDriverGateway(header, "codex", context)).rejects.toThrow('header "CF-Access-Client-Id" resolved to an empty value')
+  })
+
   it("rejects empty header values instead of letting Codex drop them", async () => {
     const gateway = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: { "CF-Access-Client-Id": () => undefined } })
     await expect(resolveAgentDriverGateway(gateway, "codex", context)).rejects.toThrow('header "CF-Access-Client-Id" resolved to an empty value')
@@ -144,6 +153,9 @@ describe("gateway Server Env", () => {
       .toBe("CF-Access-Client-Id: client-id\nCF-Access-Client-Secret: client-secret")
     vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "")
     await expect(resolveAgentDriverGateway(gateway, "codex", context)).rejects.toThrow("Set CF_ACCESS_CLIENT_SECRET, or pass cloudflareAccess({ clientSecret })")
+    vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "env-secret")
+    const unset = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: cloudflareAccess({ clientSecret: undefined }) })
+    await expect(resolveAgentDriverGateway(unset, "codex", context)).rejects.toThrow('header "CF-Access-Client-Secret" resolved to an empty value')
     const explicit = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: cloudflareAccess({ clientId: "id", clientSecret: { unseal: () => "secret" } }) })
     expect((await resolveAgentDriverGateway(explicit, "codex", context)).environment).toMatchObject({ VITEHUB_GATEWAY_HEADER_0: "id", VITEHUB_GATEWAY_HEADER_1: "secret" })
   })
@@ -189,6 +201,17 @@ describe("driver.gateway", () => {
     expect(metadata?.provider).toMatchObject({ gateway: "cliproxy" })
     expect(metadata?.provider).not.toHaveProperty("credentials")
     expect(metadata?.executionAuthority.credentials).toBe("provisioned")
+  })
+
+  it("skips credential-only rules for credentials that a gateway replaces", () => {
+    const parent = defineAgent({ name: "stable", driver: { kind: "codex", credentials: () => "{}", credentialProfile: "stable" } })
+    expect(() => defineAgent({
+      extends: parent,
+      name: "dev",
+      driver: { gateway: cliproxy({ url: "https://proxy.example", apiKey: "k" }), providerSettings: { shadowHomePath: "/tmp/codex" }, env: { CODEX_HOME: "/tmp/codex" } },
+    })).not.toThrow()
+    const child = defineAgent({ extends: defineAgent({ name: "stable", driver: { kind: "codex", credentials: () => "{}" } }), name: "dev", driver: { gateway: cliproxy({ url: "https://proxy.example", apiKey: "k" }), sessionStorePath: ".vitehub/sessions.db" } })
+    expect(createAgentInspectionMetadata(child).config?.driver.provider).toMatchObject({ gateway: "cliproxy", sessionStore: "sqlite" })
   })
 
   it("rejects a gateway that does not serve the Driver", () => {

@@ -172,6 +172,8 @@ describe("vitehub box", () => {
 
     agentStatus.status = { ...agentStatus.status, authenticated: undefined };
     expect(await feature("check").run([], context(env).context)).toBe(1);
+    // A gateway has no provider account, so a started provider passes with unknown authentication.
+    expect(await feature("check").run([], context({ ...env, CLIPROXY_URL: "https://proxy.example", CLIPROXY_API_KEY: "key" }).context)).toBe(0);
     agentStatus.status = { ...agentStatus.status, authenticated: true, installed: false };
     expect(await feature("check").run(["--driver", "claude-code"], context(env).context)).toBe(1);
     expect(agentStatus.definitions.at(-1)).not.toHaveProperty("driver.credentials");

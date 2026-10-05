@@ -255,29 +255,33 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   if (provider !== "codex" && codexOptions.length) {
     throw agentDiagnostics.AGENT_R0477({ message: `[vitehub] defineAgent({ driver: { kind: "${provider}" } }) does not support Codex option${codexOptions.length === 1 ? "" : "s"}: ${codexOptions.join(", ")}.` })
   }
-  if (value.credentials !== undefined
-    && !isRuntimeString(value.credentials)
-    && !isRuntimeFunction(value.credentials)
-    // SAFETY: The assertion only exposes `unseal` so isRuntimeFunction can validate it.
-    && !(value.credentials && isRuntimeFunction((value.credentials as { unseal?: unknown }).unseal))
-    // SAFETY: The assertion only exposes `resolve` so isRuntimeFunction can validate it.
-    && !(value.credentials && isRuntimeFunction((value.credentials as { resolve?: unknown }).resolve))) {
+  const gateway = value.gateway === undefined ? undefined : normalizeAgentDriverGateway(value.gateway)
+  if (gateway) assertAgentDriverGatewaySupports(gateway, provider)
+  // A gateway replaces Codex sign-in. Layers cannot unset inherited credentials, so the gateway wins
+  // and credential-only rules no longer apply.
+  const credentials = gateway ? undefined : value.credentials
+  const credentialProfile = gateway ? undefined : value.credentialProfile
+  if (credentials !== undefined
+    && !isRuntimeString(credentials)
+    && !isRuntimeFunction(credentials)
+    && !isRuntimeFunction(Reflect.get(Object(credentials), "unseal"))
+    && !isRuntimeFunction(Reflect.get(Object(credentials), "resolve"))) {
     throw agentDiagnostics.AGENT_R0478({ message: "[vitehub] defineAgent({ driver.credentials }) must be a string, sealed Server Env value, or resolver." })
   }
-  if (value.credentialProfile !== undefined && (!isRuntimeString(value.credentialProfile) || !value.credentialProfile.trim())) {
+  if (credentialProfile !== undefined && (!isRuntimeString(credentialProfile) || !credentialProfile.trim())) {
     throw agentDiagnostics.AGENT_R0479({ message: "[vitehub] defineAgent({ driver.credentialProfile }) must be a non-empty string." })
   }
-  if (isRuntimeString(value.credentialProfile) && (value.credentialProfile.length > 128 || !/^[a-z0-9][a-z0-9._-]*$/.test(value.credentialProfile))) {
+  if (isRuntimeString(credentialProfile) && (credentialProfile.length > 128 || !/^[a-z0-9][a-z0-9._-]*$/.test(credentialProfile))) {
     throw agentDiagnostics.AGENT_R0480({ message: "[vitehub] defineAgent({ driver.credentialProfile }) must start with a lowercase letter or number and contain only lowercase letters, numbers, dots, underscores, or hyphens." })
   }
-  if (isRuntimeString(value.credentialProfile)
-    && (value.credentialProfile.endsWith(".") || /^(?:aux|con|nul|prn|com[1-9]|lpt[1-9])(?:\.|$)/.test(value.credentialProfile))) {
+  if (isRuntimeString(credentialProfile)
+    && (credentialProfile.endsWith(".") || /^(?:aux|con|nul|prn|com[1-9]|lpt[1-9])(?:\.|$)/.test(credentialProfile))) {
     throw agentDiagnostics.AGENT_R0481({ message: "[vitehub] defineAgent({ driver.credentialProfile }) must not use a Windows-equivalent path name." })
   }
-  if (value.credentialProfile !== undefined && value.credentials === undefined) {
+  if (credentialProfile !== undefined && credentials === undefined) {
     throw agentDiagnostics.AGENT_R0482({ message: "[vitehub] defineAgent({ driver.credentialProfile }) requires driver.credentials." })
   }
-  if (value.credentials !== undefined && value.credentialProfile === undefined && value.sessionStorePath !== undefined) {
+  if (credentials !== undefined && credentialProfile === undefined && value.sessionStorePath !== undefined) {
     throw agentDiagnostics.AGENT_R0483({ message: "[vitehub] defineAgent({ driver.sessionStorePath }) requires driver.credentialProfile when driver.credentials is configured." })
   }
   if (value.reasoningEffort !== undefined
@@ -291,10 +295,10 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   if ((value.reasoningEffort !== undefined || value.reasoningSummary !== undefined) && value.model === undefined) {
     throw agentDiagnostics.AGENT_R0486({ message: "[vitehub] defineAgent({ driver.reasoningEffort, driver.reasoningSummary }) requires driver.model." })
   }
-  if (value.credentials !== undefined && isPlainRecord(value.providerSettings) && value.providerSettings.shadowHomePath !== undefined) {
+  if (credentials !== undefined && isPlainRecord(value.providerSettings) && value.providerSettings.shadowHomePath !== undefined) {
     throw agentDiagnostics.AGENT_R0487({ message: "[vitehub] defineAgent({ driver.credentials }) owns the Codex shadow home and cannot be combined with providerSettings.shadowHomePath." })
   }
-  if (value.credentials !== undefined && isPlainRecord(value.env) && value.env.CODEX_HOME !== undefined) {
+  if (credentials !== undefined && isPlainRecord(value.env) && value.env.CODEX_HOME !== undefined) {
     throw agentDiagnostics.AGENT_R0488({ message: "[vitehub] defineAgent({ driver.credentials }) owns CODEX_HOME and cannot be combined with driver.env.CODEX_HOME." })
   }
   if ((value.reasoningEffort !== undefined || value.reasoningSummary !== undefined)
@@ -306,8 +310,6 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
     throw agentDiagnostics.AGENT_R0938({ message: "[vitehub] defineAgent({ driver.cwd }) must be a non-empty directory path or resolver." })
   }
   const execution = normalizeProviderExecution(value.execution)
-  const gateway = value.gateway === undefined ? undefined : normalizeAgentDriverGateway(value.gateway)
-  if (gateway) assertAgentDriverGatewaySupports(gateway, provider)
   const configuredEnv = value.env
   if (gateway && isPlainRecord(configuredEnv)) {
     const owned = provider === "codex" ? ["T3CODE_CODEX_LAUNCH_ARGS"] : ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"]
@@ -318,11 +320,10 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   }
   return {
     capacity: normalizeAgentDriverCapacity(value.capacity),
-    // A gateway replaces Codex sign-in. Layers cannot unset inherited credentials, so the gateway wins.
     // SAFETY: credentialProfile is either absent or validated as a non-empty string above.
-    credentialProfile: gateway ? undefined : value.credentialProfile as string | undefined,
+    credentialProfile: credentialProfile as string | undefined,
     // SAFETY: The credential input shape is validated above.
-    credentials: gateway ? undefined : value.credentials as AgentProviderCredentialResolver | undefined,
+    credentials: credentials as AgentProviderCredentialResolver | undefined,
     // SAFETY: cwd is either absent, a non-empty string, or a function or resolver validated above. Its resolved value is validated at invocation time.
     cwd: value.cwd as AgentProviderWorkingDirectoryResolver | undefined,
     env: normalizeProviderEnvironment(value.env),

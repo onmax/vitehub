@@ -76,7 +76,9 @@ function hostedBaseURL(gateway: "cliproxy" | "litellm" | "ollama", url: string |
 
 function preset(gateway: AgentDriverGateway, options: AgentGatewayPresetOptions | undefined): AgentDriverGateway {
   const value: AgentDriverGateway = { ...gateway }
-  if (options?.apiKey !== undefined) value.apiKey = options.apiKey
+  // A present apiKey replaces the preset variable even when it is undefined, so the invocation fails
+  // instead of using another account from the environment.
+  if (options && Object.hasOwn(options, "apiKey")) value.apiKey = options.apiKey
   if (options?.headers !== undefined) value.headers = options.headers
   return defineGateway(value)
 }
@@ -97,9 +99,10 @@ export function cloudflareAccess(options: CloudflareAccessOptions = {}): Record<
       throw agentDiagnostics.AGENT_R0978({ message: `[vitehub] Gateway header "${header}" needs a value. Set ${names}, or pass cloudflareAccess({ ${field} }).` })
     }) as AgentDriverGatewaySecret
   }
+  // A present option replaces its variable even when it is undefined, so the invocation fails instead.
   return {
-    "CF-Access-Client-Id": options.clientId ?? fromEnv("clientId", "CF-Access-Client-Id"),
-    "CF-Access-Client-Secret": options.clientSecret ?? fromEnv("clientSecret", "CF-Access-Client-Secret"),
+    "CF-Access-Client-Id": Object.hasOwn(options, "clientId") ? options.clientId : fromEnv("clientId", "CF-Access-Client-Id"),
+    "CF-Access-Client-Secret": Object.hasOwn(options, "clientSecret") ? options.clientSecret : fromEnv("clientSecret", "CF-Access-Client-Secret"),
   }
 }
 
