@@ -444,17 +444,11 @@ async function makeHostFileExecutable(host: WorkspaceSessionHost, root: string, 
     throw workspaceError(`[vitehub] Failed to preserve executable Workspace file: ${path}. ${result.stderr || "chmod failed"}`)
 }
 
-interface HostFileDigest {
-  digest: string
-  size: number
+async function snapshotHost(host: WorkspaceSessionHost, root: string, name?: string, abortSignal?: AbortSignal) {
+  return (await captureHostState(host, root, name, abortSignal)).snapshot
 }
 
-// `written` holds digests of regular files that this Session just wrote. Their bytes are not read back.
-async function snapshotHost(host: WorkspaceSessionHost, root: string, name?: string, abortSignal?: AbortSignal, written?: ReadonlyMap<string, HostFileDigest>) {
-  return (await captureHostState(host, root, name, abortSignal, written)).snapshot
-}
-
-async function captureHostState(host: WorkspaceSessionHost, root: string, name?: string, abortSignal?: AbortSignal, written?: ReadonlyMap<string, HostFileDigest>) {
+async function captureHostState(host: WorkspaceSessionHost, root: string, name?: string, abortSignal?: AbortSignal) {
   abortSignal?.throwIfAborted()
   if (await isHostPath(host, root, "-L", abortSignal))
     throw workspaceError(`[vitehub] Workspace host root must be a directory: ${root}.`)
@@ -462,16 +456,14 @@ async function captureHostState(host: WorkspaceSessionHost, root: string, name?:
     return { contents: new Map<string, Uint8Array | string>(), snapshot: await createSnapshotFromEntries([], name) }
   }
   const entries = await listHostEntries(host, root, "", true, undefined, false, [], abortSignal)
-  return await captureHostEntriesState(host, root, entries, name, abortSignal, written)
+  return await captureHostEntriesState(host, root, entries, name, abortSignal)
 }
 
-async function captureHostEntriesState(host: WorkspaceSessionHost, root: string, entries: WorkspaceEntry[], name?: string, abortSignal?: AbortSignal, written?: ReadonlyMap<string, HostFileDigest>) {
+async function captureHostEntriesState(host: WorkspaceSessionHost, root: string, entries: WorkspaceEntry[], name?: string, abortSignal?: AbortSignal) {
   const contents = new Map<string, Uint8Array | string>()
   const files = await mapHostInspections(host, entries, async (entry, batch) => {
     abortSignal?.throwIfAborted()
     if (entry.type !== "file") return entry
-    const known = isGitSymlinkEntry(entry) ? undefined : written?.get(entry.path)
-    if (known && (entry.size === undefined || entry.size === known.size)) return { ...entry, digest: known.digest, size: known.size }
     const content = isGitSymlinkEntry(entry)
       ? await readHostSymlinkTarget(host, root, toHostPath(root, entry.path), abortSignal, batch)
       : await inspectHost(host, async () => {
@@ -848,8 +840,6 @@ async function materializeWorkspace(
     await host.files.mkdir(toHostPath(root, entry.path), { recursive: true, signal: abortSignal })
     abortSignal?.throwIfAborted()
   }
-  // The baseline snapshot reuses digests of the bytes written here instead of reading every file back.
-  const writtenFiles: Map<string, HostFileDigest> | undefined = captureSnapshot && options?.writeBack !== false ? new Map() : undefined
   await withWorkspaceProgress(options?.onProgress, {
     data: {
       bytes: entries.reduce((total, entry) => total + (entry.size || 0), 0),
@@ -876,7 +866,6 @@ async function materializeWorkspace(
         const content = contentToBytes(await workspace.readFile(entry.path, { encoding: "binary" }))
         await host.files.write(target, content, { signal: abortSignal })
         if (entry.metadata?.gitMode === "100755") await makeHostFileExecutable(host, root, target, abortSignal)
-        if (writtenFiles) writtenFiles.set(entry.path, { digest: await sha256(content), size: content.byteLength })
       }
       abortSignal?.throwIfAborted()
     }, abortSignal)
@@ -884,10 +873,12 @@ async function materializeWorkspace(
   if (revision && await materializer?.currentRevision({ abortSignal: options?.abortSignal }) !== revision.revision) {
     throw workspaceConflict(`[vitehub] Workspace revision changed while this Session materialized: ${revision.revision}.`)
   }
+  // Setup callbacks and host writes can change bytes, even without changing their size.
+  // Capture the opening baseline from the host after setup has completed.
   const snapshot = captureSnapshot
     ? options?.writeBack === false
       ? await createSnapshotFromEntries(entries, "host-open")
-      : await snapshotHost(host, root, "host-open", abortSignal, writtenFiles)
+      : await snapshotHost(host, root, "host-open", abortSignal)
     : undefined
   return { revision: revision?.revision, snapshot }
 }

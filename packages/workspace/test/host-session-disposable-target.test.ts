@@ -165,7 +165,42 @@ describe("hosted Workspace Sessions on a disposable target", () => {
 })
 
 describe("hosted Workspace Session baselines", () => {
-  it("reuses digests of copied files instead of reading them back", async () => {
+  it.each([
+    { omitSize: false, content: "# Edit\n" },
+    { omitSize: true, content: "# Edit\n" },
+    { omitSize: true, content: "# Longer setup edit\n" },
+  ])("captures setup edits before opening (omitSize=$omitSize, content=$content)", async ({ omitSize, content }) => {
+    const docs = await docsWorkspace()
+    const host = localHost()
+    const root = await target()
+    if (omitSize) {
+      const list = host.files.list
+      host.files.list = async (path, options) => (await list(path, options)).map(entry => {
+        const { size: _size, ...withoutSize } = entry
+        return withoutSize
+      })
+    }
+
+    const session = await docs.startSession({
+      host,
+      target: root,
+      async onProgress(event) {
+        if (event.id === "workspace.prepare.read-files" && event.status === "completed")
+          await writeFile(join(root, "README.md"), content)
+      },
+    })
+
+    await expect(session.diff()).resolves.toMatchObject({ entries: [] })
+    await session.commit()
+    await expect(docs.readFile("README.md")).resolves.toBe("# Docs\n")
+    await writeFile(join(root, "README.md"), "# Session edit\n")
+    await expect(session.diff()).resolves.toMatchObject({ entries: [{ path: "README.md", type: "modified" }] })
+    await session.commit()
+    await expect(docs.readFile("README.md")).resolves.toBe("# Session edit\n")
+    await session.close()
+  })
+
+  it("captures copied files and detects later Session edits", async () => {
     const docs = await docsWorkspace()
     const host = localHost()
     const read = vi.spyOn(host.files, "read")
@@ -173,7 +208,7 @@ describe("hosted Workspace Session baselines", () => {
 
     const session = await docs.startSession({ host, target: root })
 
-    expect(read).not.toHaveBeenCalled()
+    expect(read).toHaveBeenCalledTimes(3)
     await expect(session.diff()).resolves.toMatchObject({ entries: [] })
     await writeFile(join(root, "src/index.ts"), "export const changed = true\n")
     await expect(session.diff()).resolves.toMatchObject({ entries: [{ path: "src/index.ts", type: "modified" }] })
