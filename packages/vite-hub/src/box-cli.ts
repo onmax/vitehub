@@ -193,8 +193,8 @@ fi
     `${JSON.stringify({ event: "box.check", driver, readiness, installed, authenticated, reason })}\n`,
   );
   // A completed account probe proves that the transport and provider protocol work. Quota and sign-in state are reported, not failed.
-  // A gateway has no provider account, so authentication stays unknown and a started provider is the result.
-  return installed === true && (authenticated !== undefined || gateway !== undefined) ? 0 : 1;
+  // A gateway has no provider account, so authentication stays unknown. The probe must still finish without a provider error.
+  return installed === true && (authenticated !== undefined || (gateway !== undefined && readiness !== "unavailable")) ? 0 : 1;
 }
 
 /** Commands that run inside a Box runner container, without the project config. */
