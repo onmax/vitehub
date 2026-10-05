@@ -11,6 +11,7 @@ import { consoleSectionDetails } from "../sections";
 
 const props = defineProps<{
   active?: ConsoleSectionId;
+  authOnly?: boolean;
   exclude?: ConsoleSectionId[];
   sectionsBase: string;
 }>();
@@ -125,7 +126,7 @@ onMounted(() => {
 
 <template>
   <div class="flex w-full min-w-0 flex-wrap items-center gap-0.5">
-    <nav class="contents" aria-label="Console primitives">
+    <nav v-if="!authOnly" class="contents" aria-label="Console primitives">
       <UTooltip v-for="item in items" :key="item.id" :text="item.label">
         <UButton
           :aria-label="`Open ${item.label}`"

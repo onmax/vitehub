@@ -1,5 +1,5 @@
 import { deserializeResponse, isSerializedResponse } from "@vite-hub/runtime"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { getCloudflareEnv, resolveWaitUntil } from "@vite-hub/internal/runtime/cloudflare-env"
 
 import { createWorkflowError } from "../errors.ts"
@@ -39,19 +39,28 @@ interface WorkflowRuntimeAdapter {
 
 function resolveDispatchObserver(event: unknown): (() => void) | undefined {
   if (!event || !hasRuntimeType(event, "object")) return undefined
-  const candidate = "onDispatch" in event ? event.onDispatch : undefined
+  const candidate = Object.hasOwn(event, "onDispatch")
+    ? Reflect.get(event, "onDispatch")
+    : undefined
   // SAFETY: The runtime event member is callable and takes no provider data.
   return hasRuntimeType(candidate, "function") ? candidate as () => void : undefined
 }
 
 function resolveSettlementObserver(event: unknown): ((promise: PromiseLike<unknown>) => void) | undefined {
   if (!event || !hasRuntimeType(event, "object")) return undefined
-  const candidate = "settled" in event ? event.settled : undefined
+  const candidate = Object.hasOwn(event, "settled")
+    ? Reflect.get(event, "settled")
+    : undefined
   // SAFETY: hasRuntimeType establishes that the runtime event member is callable.
   if (hasRuntimeType(candidate, "function")) return candidate as (promise: PromiseLike<unknown>) => void
-  const context = "context" in event ? event.context : undefined
+  const context = Object.hasOwn(event, "context")
+    ? Reflect.get(event, "context")
+    : undefined
   if (!context || !hasRuntimeType(context, "object")) return undefined
-  const nested = "settled" in context ? context.settled : undefined
+  const contextObject = Object(context)
+  const nested = Object.hasOwn(contextObject, "settled")
+    ? Reflect.get(contextObject, "settled")
+    : undefined
   // SAFETY: hasRuntimeType establishes that the nested runtime event member is callable.
   return hasRuntimeType(nested, "function") ? nested as (promise: PromiseLike<unknown>) => void : undefined
 }
@@ -90,8 +99,18 @@ const cloudflareStatusMap: Record<string, WorkflowRunStatus> = {
 
 function normalizeCloudflareStatus(status: unknown): WorkflowRunStatus {
   // SAFETY: Workflow provider normalization establishes the asserted run contract.
-  const value = hasRuntimeType(status, "object") && status ? (status as { status?: unknown }).status : status
-  return cloudflareStatusMap[String(value || "").toLowerCase()] || "unknown"
+  const value = hasRuntimeType(status, "object") && status && Object.hasOwn(status, "status")
+    ? (status as { status?: unknown }).status
+    : status
+  const normalized = String(value || "").toLowerCase()
+  return Object.hasOwn(cloudflareStatusMap, normalized) ? cloudflareStatusMap[normalized]! : "unknown"
+}
+
+function ownSerializedOutput(metadata: unknown) {
+  if (!hasRuntimeType(metadata, "object") || metadata === null || !Object.hasOwn(metadata, "output")) return undefined
+  // SAFETY: The guards establish a non-null object with an own output property, whose value remains unknown.
+  const output = (metadata as { output?: unknown }).output
+  return isSerializedResponse(output) ? output : undefined
 }
 
 function hasUnknownWorkflowAcknowledgement(error: unknown): boolean {
@@ -111,13 +130,12 @@ function createCloudflareAdapter(config: ResolvedWorkflowOptions): WorkflowRunti
       if (binding) {
         const instance = await runWorkflowProviderOperation("cloudflare", "get", () => binding.get(id))
         const metadata = await runWorkflowProviderOperation("cloudflare", "status", () => instance.status())
+        const output = ownSerializedOutput(metadata)
         return {
           id,
           metadata,
           provider: "cloudflare",
-          result: metadata && hasRuntimeType(metadata, "object") && "output" in metadata && isSerializedResponse(metadata.output)
-            ? deserializeResponse(metadata.output)
-            : undefined,
+          result: output ? deserializeResponse(output) : undefined,
           status: normalizeCloudflareStatus(metadata),
         }
       }
