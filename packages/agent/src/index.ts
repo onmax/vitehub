@@ -2223,6 +2223,7 @@ function defineBaseAgent<
             cwd: driver.cwd,
             env: driver.env,
             execution: driver.execution,
+            gateway: driver.gateway,
             instructions: driver.instructions,
             launch: driver.launch,
             model: driver.model,

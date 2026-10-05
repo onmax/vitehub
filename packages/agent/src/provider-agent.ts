@@ -1,6 +1,7 @@
 import { providerCallbackMetadata, withProviderCallbackMetadata } from "./internal/provider-callback-metadata.ts"
 import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
+import { resolveAgentDriverGateway, withAgentDriverGatewayEnvironment } from "./internal/agent-gateway.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { browserRuntimeEnvironment } from "./internal/browser-runtime.ts"
@@ -57,6 +58,7 @@ import type {
   AgentProviderCredentialContext,
   AgentProviderStatus,
   AgentProviderCredentialResolver,
+  AgentDriverGateway,
   AgentProviderEnvironment,
   AgentProviderEnvironmentResolver,
   AgentProviderLaunchCommand,
@@ -102,6 +104,8 @@ export interface ProviderAgentAdapterOptions<
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: { attachments?: { maxBytes?: number } }
+  /** LLM proxy or gateway for model requests. It replaces `credentials`. */
+  gateway?: AgentDriverGateway
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   launch?: AgentProviderLaunchResolver<TRuntimeConfig>
   model?: string
@@ -461,15 +465,11 @@ const providerHostEnvironmentKeys = [
   "XDG_DATA_HOME",
 ] as const
 
-function providerEnvironment(env: Record<string, string | undefined> | undefined, provider?: "claude-code" | "codex"): NodeJS.ProcessEnv {
+function providerEnvironment(env: Record<string, string | undefined> | undefined): NodeJS.ProcessEnv {
   const host = Object.fromEntries(providerHostEnvironmentKeys.flatMap(key => {
     return hasRuntimeType(process.env[key], "string") ? [[key, process.env[key]]] : []
   }))
-  const proxyBaseUrl = env && Object.hasOwn(env, "CLIPROXY_BASE_URL") ? env.CLIPROXY_BASE_URL : process.env.CLIPROXY_BASE_URL
-  const proxy = provider === "codex" && proxyBaseUrl?.trim()
-    ? { CLIPROXY_BASE_URL: proxyBaseUrl, CLIPROXY_API_KEY: process.env.CLIPROXY_API_KEY }
-    : {}
-  return Object.fromEntries(Object.entries({ ...host, ...proxy, ...env }).filter((entry): entry is [string, string] => hasRuntimeType(entry[1], "string")))
+  return Object.fromEntries(Object.entries({ ...host, ...env }).filter((entry): entry is [string, string] => hasRuntimeType(entry[1], "string")))
 }
 
 function withPathPrefix(env: NodeJS.ProcessEnv, prefix: readonly string[] | undefined): NodeJS.ProcessEnv {
@@ -543,7 +543,7 @@ function parsedProviderLaunchDiagnostic(value: unknown): ProviderLaunchDiagnosti
 }
 
 function providerSecretEnvironmentKeys(environment: AgentProviderEnvironment | undefined, requiredEnvironment: readonly string[]): string[] {
-  return [...new Set([...Object.keys(environment || {}), ...requiredEnvironment, "CLIPROXY_API_KEY"])].filter(key => key !== "VITEHUB_BROWSER_ACTIVE")
+  return [...new Set([...Object.keys(environment || {}), ...requiredEnvironment])].filter(key => key !== "VITEHUB_BROWSER_ACTIVE")
 }
 
 function providerLauncherSource(
@@ -1304,19 +1304,22 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     // Environment resolvers can select a different account on each inspection. Do not reuse a
     // result until that environment has a stable credential scope.
     const statusScope = home ? home.scope : ""
-    const cacheable = options.credentials !== undefined || options.env === undefined
+    const cacheable = options.gateway === undefined && (options.credentials !== undefined || options.env === undefined)
     const statusKey = cacheable && statusScope !== undefined ? `${statusScope}:${requirements.length > 0}` : undefined
     if (statusKey !== undefined) {
       const cached = providerStatusCache.get(options)?.get(statusKey)
       if (cached && Date.now() - Date.parse(cached.checkedAt) < providerStatusCacheMs) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
     }
-    const overrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
+    const configuredOverrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
     signal?.throwIfAborted()
+    const gateway = options.gateway === undefined ? undefined : await waitForProviderOperation(resolveAgentDriverGateway(options.gateway, options.provider, context), signal)
+    signal?.throwIfAborted()
+    const overrides = withAgentDriverGatewayEnvironment(gateway, configuredOverrides)
     if (home && overrides?.CODEX_HOME !== undefined) throw agentDiagnostics.AGENT_R0906({ message: "[vitehub] driver.credentials owns CODEX_HOME." })
     const environment = providerEnvironment({
       ...(options.provider === "codex" && !home ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
       ...overrides,
-    }, options.provider)
+    })
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
     let requirementCapture: ProviderRequirementCapture | undefined
@@ -1324,7 +1327,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
       const command = hasRuntimeType(binary, "string") && binary.trim() ? binary : options.provider === "codex" ? "codex" : "claude"
       const launch = normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
-        ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
+        ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: [...(home ? ["CODEX_HOME"] : []), ...Object.keys(gateway?.environment || {})],
       }), signal))
       signal?.throwIfAborted()
       if (requirements.length) requirementCapture = {
@@ -1337,7 +1340,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         : launch
       binaryPath = (await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)).path
     }
-    const launchArgs = [options.providerSettings?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
+    const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
     let missingCommands = options.launch === undefined
       ? await missingProviderCommands(requirements, environment, root || process.cwd(), signal)
@@ -2966,10 +2969,13 @@ async function* runProvider<
           Promise.resolve(resolveRuntimeValue(options.env, resolverContext)),
           effectiveSignal,
         ))
-    // driver.env can override the Agent GitHub environment.
-    const providerEnvironmentOverrides = githubEnvironment
+    const gateway = options.gateway === undefined
+      ? undefined
+      : await waitForProviderOperation(resolveAgentDriverGateway(options.gateway, options.provider, resolverContext), effectiveSignal)
+    // driver.env can override the Agent GitHub environment. The gateway owns its own variables.
+    const providerEnvironmentOverrides = withAgentDriverGatewayEnvironment(gateway, githubEnvironment
       ? { ...githubEnvironment, ...configuredEnvironmentOverrides }
-      : configuredEnvironmentOverrides
+      : configuredEnvironmentOverrides, { auxiliary })
     if (codexCredentialHome && providerEnvironmentOverrides?.CODEX_HOME !== undefined) {
       throw agentDiagnostics.AGENT_R0713({ message: "[vitehub] driver.credentials owns CODEX_HOME and cannot be combined with resolved driver.env.CODEX_HOME." })
     }
@@ -3027,7 +3033,7 @@ async function* runProvider<
       ...(capabilityEnvironment?.PATH || toolchainPath.length
         ? { PATH: `${[capabilityEnvironment?.PATH, ...toolchainPath].filter(Boolean).join(delimiter)}${delimiter}${providerEnvironmentOverrides?.PATH || process.env.PATH || ""}` }
         : {}),
-    }, options.provider)
+    })
     let providerLauncher: string | undefined
     if (options.launch !== undefined) {
       if (!hasRuntimeType(providerCommand, "string")) {
@@ -3037,6 +3043,7 @@ async function* runProvider<
         "VITEHUB_BROWSER_ACTIVE",
         ...(codexCredentialHome ? ["CODEX_HOME"] : []),
         ...(Object.keys(context.tools || {}).length ? ["T3_MCP_BEARER_TOKEN"] : []),
+        ...Object.keys(gateway?.environment || {}),
       ])
       providerLaunchSecretEnvironmentKeys = providerSecretEnvironmentKeys(providerEnvironmentOverrides, requiredEnvironment)
       const launchContext: AgentProviderLaunchContext<TRuntimeConfig> = {
@@ -3104,6 +3111,7 @@ async function* runProvider<
       ...(claudePromptFile ? [`--append-system-prompt-file ${JSON.stringify(claudePromptFile)}`] : []),
       auxiliaryEnvironmentLaunchArgs,
       generatedLaunchArgs,
+      gateway?.launchArgs,
       // Login profiles reset PATH and hide the invocation's managed browser CLI.
       ...(options.provider === "codex" && capabilityEnvironment?.PATH ? ['-c "allow_login_shell=false"'] : []),
       ...(codexCredentialHome ? ['-c "cli_auth_credentials_store=\\"file\\""'] : []),

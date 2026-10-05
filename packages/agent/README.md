@@ -116,7 +116,7 @@ Tools can declare `title`, a short past-tense label such as `Searched meals`, an
 
 Use `driver: "codex"` or `driver: "claude-code"` for the defaults, including approval-required provider actions. A tagged Driver config exposes shared model, environment, instruction, permission, output, and capacity options, plus Codex credential and reasoning options.
 
-For a Codex configuration that uses CLIProxy, set `CLIPROXY_BASE_URL` and `CLIPROXY_API_KEY` in the host environment. ViteHub forwards them to Codex invocation and inspection processes when the endpoint is non-empty. Claude Code and Workspace commands do not inherit these values. `driver.env` overrides host values; set `CLIPROXY_BASE_URL: undefined` there to disable host proxy forwarding for one Agent. Your Codex configuration or launcher must select the proxy endpoint.
+Set `driver.gateway` to route Codex or Claude Code model requests through an LLM proxy or gateway. Presets in `@vite-hub/agent/gateways` cover CLIProxyAPI, LiteLLM, Ollama, OpenRouter, Vercel AI Gateway, OpenAI, and Anthropic; `defineGateway()` covers other endpoints. ViteHub writes the Codex model provider configuration or the Claude Code `ANTHROPIC_*` variables, and passes the key and headers in the provider environment. Ambient variables such as `CLIPROXY_API_KEY` or `OPENAI_API_KEY` are not forwarded. See [Agent Drivers](../../docs/content/docs/agents/agent-drivers.md#route-model-requests-through-a-gateway).
 
 ```ts
 // server/agents/codex/agent.ts

@@ -72,32 +72,30 @@ function feature(name: "serve" | "check") {
 }
 
 describe("vitehub box", () => {
-  it.each(["codex", "claude-code"])("uses supplied proxy settings only for %s", async (driver) => {
-    vi.stubEnv("CLIPROXY_BASE_URL", "https://ambient.example/v1");
+  it.each(["codex", "claude-code"])("uses supplied CLIProxyAPI settings for %s", async (driver) => {
+    vi.stubEnv("CLIPROXY_URL", "https://ambient.example");
     vi.stubEnv("CLIPROXY_API_KEY", "ambient-key");
     const env = {
-      CLIPROXY_BASE_URL: "https://supplied.example/v1",
+      CLIPROXY_URL: "https://supplied.example/v1",
       CLIPROXY_API_KEY: "supplied-key",
       CRABBOX_SSH_KEY: "/ssh/id_ed25519",
       CRABBOX_STATIC_USER: "agent",
     };
     await feature("check").run(["--driver", driver], context(env).context);
-    if (driver === "codex") {
-      expect(agentStatus.definitions.at(-1)).toMatchObject({
-        driver: {
-          env: { CLIPROXY_BASE_URL: env.CLIPROXY_BASE_URL, CLIPROXY_API_KEY: env.CLIPROXY_API_KEY },
+    expect(agentStatus.definitions.at(-1)).toMatchObject({
+      driver: {
+        gateway: {
+          name: "cliproxy",
+          apiKey: "supplied-key",
+          baseURL: { codex: "https://supplied.example/v1", "claude-code": "https://supplied.example" },
         },
-      });
-      await feature("check").run(
-        [],
-        context({ ...env, CLIPROXY_BASE_URL: undefined, CLIPROXY_API_KEY: undefined }).context,
-      );
-      expect(agentStatus.definitions.at(-1)).toMatchObject({
-        driver: { env: { CLIPROXY_BASE_URL: undefined, CLIPROXY_API_KEY: undefined } },
-      });
-    } else {
-      expect(agentStatus.definitions.at(-1)).not.toHaveProperty("driver.env");
-    }
+      },
+    });
+    await feature("check").run(
+      ["--driver", driver],
+      context({ ...env, CLIPROXY_URL: undefined, CLIPROXY_API_KEY: undefined }).context,
+    );
+    expect(agentStatus.definitions.at(-1)).not.toHaveProperty("driver.gateway");
   });
 
   it("serves SSH commands from env fallbacks and stops on SIGTERM", async () => {

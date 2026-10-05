@@ -2,6 +2,7 @@ import { isPlainObject, isPlainRecord } from "@vite-hub/internal/object"
 import { getCloudflareEnv, runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
 import { inheritSharedAgentCapacityOptions } from "./agent-capacity.ts"
 import { askJev, askState } from "./ask-runtime.ts"
+import { assertAgentDriverGatewaySupports, normalizeAgentDriverGateway } from "./agent-gateway.ts"
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeString } from "./runtime-value.ts"
 
 import type {
@@ -9,6 +10,7 @@ import type {
   AgentAskQuestionsResolver,
   AgentAttachmentExecutionOptions,
   AgentDriverAdaptiveCapacityOptions,
+  AgentDriverGateway,
   AgentDriverCapacityOptions,
   AgentInvokerProfile,
   AgentModelExecutionOptions,
@@ -47,6 +49,7 @@ export type NormalizedAgentDriver<
     cwd?: AgentProviderWorkingDirectoryResolver<TRuntimeConfig>
     env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
     execution?: { attachments?: AgentAttachmentExecutionOptions }
+    gateway?: AgentDriverGateway
     instructions?: AgentAdapterInstructions<TRuntimeConfig>
     kind: "provider"
     launch?: AgentProviderLaunchResolver<TRuntimeConfig>
@@ -149,7 +152,7 @@ function normalizeAgentDriverCapacity(value: unknown): AgentDriverCapacityOption
 }
 
 const modelDriverKeys = new Set(["capacity", "execution", "instructions", "maxRetries", "model", "output"])
-const providerDriverKeys = new Set(["capacity", "credentialProfile", "credentials", "cwd", "env", "execution", "instructions", "kind", "launch", "model", "output", "permissions", "providerSettings", "reasoningEffort", "reasoningSummary", "requirements", "sessionStorePath", "toolchain"])
+const providerDriverKeys = new Set(["capacity", "credentialProfile", "credentials", "cwd", "env", "execution", "gateway", "instructions", "kind", "launch", "model", "output", "permissions", "providerSettings", "reasoningEffort", "reasoningSummary", "requirements", "sessionStorePath", "toolchain"])
 const runDriverKeys = new Set(["capacity", "output", "run"])
 const askDriverKeys = new Set(["ask", "capacity"])
 
@@ -303,16 +306,27 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
     throw agentDiagnostics.AGENT_R0938({ message: "[vitehub] defineAgent({ driver.cwd }) must be a non-empty directory path or resolver." })
   }
   const execution = normalizeProviderExecution(value.execution)
+  const gateway = value.gateway === undefined ? undefined : normalizeAgentDriverGateway(value.gateway)
+  if (gateway) assertAgentDriverGatewaySupports(gateway, provider)
+  if (gateway && isPlainRecord(value.env)) {
+    const owned = provider === "codex" ? ["T3CODE_CODEX_LAUNCH_ARGS"] : ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"]
+    const conflicts = owned.filter(key => value.env && (value.env as Record<string, unknown>)[key] !== undefined)
+    if (conflicts.length) {
+      throw agentDiagnostics.AGENT_R0979({ message: `[vitehub] defineAgent({ driver.gateway }) sets ${conflicts.join(", ")}. Remove ${conflicts.length === 1 ? "it" : "them"} from driver.env.` })
+    }
+  }
   return {
     capacity: normalizeAgentDriverCapacity(value.capacity),
+    // A gateway replaces Codex sign-in. Layers cannot unset inherited credentials, so the gateway wins.
     // SAFETY: credentialProfile is either absent or validated as a non-empty string above.
-    credentialProfile: value.credentialProfile as string | undefined,
+    credentialProfile: gateway ? undefined : value.credentialProfile as string | undefined,
     // SAFETY: The credential input shape is validated above.
-    credentials: value.credentials as AgentProviderCredentialResolver | undefined,
+    credentials: gateway ? undefined : value.credentials as AgentProviderCredentialResolver | undefined,
     // SAFETY: cwd is either absent, a non-empty string, or a function or resolver validated above. Its resolved value is validated at invocation time.
     cwd: value.cwd as AgentProviderWorkingDirectoryResolver | undefined,
     env: normalizeProviderEnvironment(value.env),
     execution,
+    gateway,
     // SAFETY: normalizeProviderDriver receives the typed AgentSettings driver after validating its provider-owned fields.
     instructions: value.instructions as AgentAdapterInstructions | undefined,
     kind: "provider",

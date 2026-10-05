@@ -1493,6 +1493,12 @@ export interface AgentProviderDriverOptions<
   execution?: {
     attachments?: AgentAttachmentExecutionOptions
   }
+  /**
+   * Send model requests to an LLM proxy or gateway, such as `cliproxy({ url })` from `@vite-hub/agent/gateways`.
+   * ViteHub writes the provider configuration and passes the key and headers in the provider environment.
+   * A gateway replaces Codex `credentials`.
+   */
+  gateway?: AgentDriverGateway
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   launch?: AgentProviderLaunchResolver<TRuntimeConfig>
   model?: string
@@ -1575,6 +1581,29 @@ export type AgentProviderCredentialResolver<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > = MaybeResolvable<AgentProviderCredentialValue, AgentProviderCredentialContext<TRuntimeConfig>>
 
+/**
+ * An HTTP endpoint that receives the model requests of a provider Driver, such as an LLM proxy or gateway.
+ * Build one with a preset from `@vite-hub/agent/gateways` or with `defineGateway()`.
+ */
+export interface AgentDriverGateway {
+  /** Name shown in Agent inspection and diagnostics. */
+  name: string
+  /**
+   * Base URL for each Driver. Codex sends OpenAI Responses requests to `<url>/responses`.
+   * Claude Code sends Anthropic Messages requests to `<url>/v1/messages`.
+   * A Driver without an entry cannot use this gateway.
+   */
+  baseURL: Partial<Record<BuiltInAgentDriverName, string>>
+  /** API key. When it is not set, ViteHub reads the first non-empty variable in `apiKeyEnv`. */
+  apiKey?: AgentProviderCredentialResolver
+  /** Process environment variables that supply the API key, in lookup order. */
+  apiKeyEnv?: readonly string[]
+  /** How the gateway receives the API key. `"bearer"` (default) sends `Authorization: Bearer`. `"x-api-key"` sends `x-api-key`. */
+  auth?: "bearer" | "x-api-key"
+  /** Extra request headers, such as Cloudflare Access service-token headers. Values are treated as secrets. */
+  headers?: Record<string, AgentProviderCredentialResolver>
+}
+
 type KnownCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 /** A non-empty reasoning effort advertised by the selected Codex model. */
 export type CodexReasoningEffort = KnownCodexReasoningEffort | (string & Record<never, never>)
@@ -1615,6 +1644,7 @@ export interface AgentModelDriver<
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   kind?: never
+  gateway?: never
   launch?: never
   maxRetries?: number
   model: AgentModelResolver<TRuntimeConfig>
@@ -1645,6 +1675,7 @@ export interface AgentRunDriver<
   execution?: never
   instructions?: never
   kind?: never
+  gateway?: never
   launch?: never
   model?: never
   output?: SingleAttemptAgentOutputDefinition<TOutput>
@@ -1692,6 +1723,7 @@ export interface AgentAskDriver<
   execution?: never
   instructions?: never
   kind?: never
+  gateway?: never
   launch?: never
   model?: never
   permissionMode?: never
@@ -2574,6 +2606,8 @@ export interface AgentInspectionProviderMetadata {
   /** Present when driver.cwd runs the provider in an existing directory. The path is not exposed. */
   cwd?: "dynamic" | "static"
   environment?: "dynamic" | "static"
+  /** Name of the gateway that receives model requests. */
+  gateway?: string
   launch?: "dynamic" | "static"
   model?: string
   permissions: AgentProviderPermissions
