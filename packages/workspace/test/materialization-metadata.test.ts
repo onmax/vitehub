@@ -532,3 +532,27 @@ it.each(["refresh", "removal"])("cleans verified pending files on a metadata-dro
   await materializeWorkspaceSources(operation === "refresh" ? changed : { ...changed, sources: {} }, store)
   await expect(store.readFile("docs/removed.txt")).resolves.toBeUndefined()
 })
+
+it("keeps inline binary source fingerprints compact without losing cache invalidation", async () => {
+  const content = new Uint8Array(512 * 1024).fill(255)
+  const definition = {
+    name: "binary-source-fingerprint",
+    sources: {
+      skill: { content, materialize: "startup" as const, mount: "", workspacePath: ".agents/skills/coding/SKILL.md" },
+    },
+  }
+  const [source] = normalizeWorkspaceSources(definition.sources)
+  expect(JSON.stringify(source.source.fingerprint).length).toBeLessThan(512)
+
+  const store = createMemoryWorkspaceStore()
+  await materializeWorkspaceSources(definition, store)
+  await expect(hasCurrentSourceSnapshot(store, definition.name, source)).resolves.toBe(true)
+  const file = await store.readFile(".agents/skills/coding/SKILL.md")
+  expect(file?.content).toEqual(content)
+
+  content[0] = 0
+  await expect(hasCurrentSourceSnapshot(store, definition.name, source)).resolves.toBe(false)
+  await materializeWorkspaceSources(definition, store)
+  await expect(hasCurrentSourceSnapshot(store, definition.name, source)).resolves.toBe(true)
+  expect((await store.readFile(".agents/skills/coding/SKILL.md"))?.content).toEqual(content)
+})
