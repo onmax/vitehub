@@ -5046,6 +5046,44 @@ describe("Agent Invocations", () => {
     }
   })
 
+  it("applies the SQLite count limit only on sampled prunes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vitehub-agent-invocations-sampled-retention-"))
+    const client = createClient({ url: `file:${join(directory, "invocations.sqlite")}` })
+    // 200 records sample the count limit on 1 in 2 prunes.
+    const store = createLibsqlAgentInvocationStore({ client, maxAgeMs: false, maxRecords: 200 })
+    const timestamp = new Date().toISOString()
+    const terminalCount = async () => Number((await client.execute(`SELECT count(*) AS count FROM vitehub_agent_invocations
+      WHERE status IN ('completed', 'failed', 'cancelled')`)).rows[0]?.count)
+    const random = vi.spyOn(Math, "random")
+    try {
+      await store.list()
+      await client.execute({
+        args: [timestamp],
+        sql: `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 201)
+          INSERT INTO vitehub_agent_invocations (id, status, agent_name, search, summary, updated_at, record)
+          SELECT 'seed-' || i, 'completed', 'seed', '', '{}', ?, '{}' FROM n`,
+      })
+      const pending = (id: string) => ({ createdAt: timestamp, id, observations: [], status: "pending" as const, traceId: `${id}-trace`, updatedAt: timestamp })
+
+      random.mockReturnValue(0.99)
+      await store.create(pending("unsampled"))
+      await store.update("unsampled", { status: "completed", timestamp })
+      expect(await terminalCount()).toBe(202)
+
+      random.mockReturnValue(0.4)
+      await store.create(pending("sampled"))
+      expect(await terminalCount()).toBe(200)
+      await expect(store.get("unsampled")).resolves.toMatchObject({ status: "completed" })
+      const oldest = await client.execute("SELECT id FROM vitehub_agent_invocations WHERE id IN ('seed-1', 'seed-2', 'seed-3')")
+      expect(oldest.rows.map(row => row.id)).toEqual(["seed-3"])
+    }
+    finally {
+      random.mockRestore()
+      client.close()
+      await rm(directory, { force: true, recursive: true })
+    }
+  })
+
   it("recreates a duplicate SQLite invocation when retention prunes the old record", async () => {
     const directory = await mkdtemp(join(tmpdir(), "vitehub-agent-invocations-duplicate-retention-"))
     const client = createClient({ url: `file:${join(directory, "invocations.sqlite")}` })

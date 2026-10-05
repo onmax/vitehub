@@ -2,6 +2,7 @@ import { createClient } from "@libsql/client"
 
 import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { applyAgentInvocationStoreUpdate } from "../invocations.ts"
+import { countRetentionDue } from "./retention.ts"
 import { searchableAgentInvocationText } from "./search.ts"
 import { filteredObservationRecord } from "./observation-projection.ts"
 import { sqlTrimWhitespace } from "./sql-whitespace.ts"
@@ -22,7 +23,7 @@ export interface LibsqlAgentInvocationStoreOptions {
   client?: Client
   /** Maximum age of terminal invocation records. Defaults to 30 days. Set to false to disable age-based retention. */
   maxAgeMs?: false | number
-  /** Maximum number of terminal invocation records. Defaults to 10,000. Set to false to disable count-based retention. */
+  /** Maximum number of terminal invocation records. Defaults to 10,000. Set to false to disable count-based retention. Writes apply it on about 1 in `ceil(maxRecords / 100)` prunes, so the count can exceed it by about 1%. */
   maxRecords?: false | number
   tablePrefix?: string
   url?: string
@@ -466,37 +467,34 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     const row = result.rows[0]
     return row ? deserializeSummary(row.summary, row.sequence) : undefined
   }
-  const pruneStatements = (now = Date.now()) => {
-    const filters: string[] = []
-    const args: Array<number | string> = []
+  // Each statement uses one index. An OR across updated_at and sequence makes SQLite read every terminal row.
+  // A rowid scan from the newest record stops after maxRecords terminal rows. The status index would sort every terminal row first.
+  // The count limit runs first, so both limits select from the same terminal records.
+  const pruneStatements = (count: boolean, now = Date.now()) => {
     const terminalPlaceholders = terminalStatuses.map(() => "?").join(", ")
-    if (maxAgeMs !== false) {
-      filters.push("updated_at < ?")
-      args.push(new Date(now - maxAgeMs).toISOString())
-    }
-    if (maxRecords !== false) {
-      filters.push(`sequence NOT IN (
-        SELECT sequence FROM ${table} WHERE status IN (${terminalPlaceholders}) ORDER BY sequence DESC LIMIT ?
-      )`)
-      args.push(...terminalStatuses, maxRecords)
-    }
-    if (!filters.length) return []
-    const deleteInvocations = {
-      args: [...terminalStatuses, ...args],
-      sql: `DELETE FROM ${table} WHERE status IN (${terminalPlaceholders}) AND (${filters.join(" OR ")})`,
-    }
+    const deleteInvocations = [
+      ...(count && maxRecords !== false
+        ? [{
+            args: [...terminalStatuses, ...terminalStatuses, maxRecords - 1],
+            sql: `DELETE FROM ${table} WHERE status IN (${terminalPlaceholders}) AND sequence < (
+              SELECT sequence FROM ${table} NOT INDEXED WHERE status IN (${terminalPlaceholders}) ORDER BY sequence DESC LIMIT 1 OFFSET ?
+            )`,
+          }]
+        : []),
+      ...(maxAgeMs !== false
+        ? [{
+            args: [...terminalStatuses, new Date(now - maxAgeMs).toISOString()],
+            sql: `DELETE FROM ${table} WHERE status IN (${terminalPlaceholders}) AND updated_at < ?`,
+          }]
+        : []),
+    ]
+    if (!deleteInvocations.length) return []
     const deleteClaims = `DELETE FROM ${table}_claims
       WHERE NOT EXISTS (SELECT 1 FROM ${table} WHERE ${table}.id = ${table}_claims.id)`
-    return [deleteInvocations, deleteClaims]
+    return [...deleteInvocations, deleteClaims]
   }
-  const prune = async (executor?: Pick<Client, "execute">) => {
-    const statements = pruneStatements()
-    if (!statements.length) return
-    if (executor) {
-      for (const statement of statements) await executor.execute(statement)
-      return
-    }
-    await client.batch(statements, "write")
+  const prune = async (executor: Pick<Client, "execute">) => {
+    for (const statement of pruneStatements(countRetentionDue(maxRecords))) await executor.execute(statement)
   }
   return {
     async claim(id, claimId, leaseMs, options) {
@@ -519,7 +517,8 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
         await initialize()
         return await retrySqliteBusy(async () => {
           const retentionNow = Date.now()
-          const prePrune = pruneStatements(retentionNow)
+          const count = countRetentionDue(maxRecords)
+          const prePrune = pruneStatements(count, retentionNow)
           const insertIndex = prePrune.length
           const statements = [
             ...prePrune,
@@ -529,7 +528,7 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
             }
           ]
           if (input.status === "completed" || input.status === "failed" || input.status === "cancelled") {
-            statements.push(...pruneStatements(retentionNow))
+            statements.push(...pruneStatements(count, retentionNow))
           }
           statements.push({
             args: [input.id],

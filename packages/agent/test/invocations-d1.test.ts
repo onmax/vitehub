@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { bindAgentInvocations, defineAgentInvocations } from "../src/invocations.ts"
 import { createD1AgentInvocationStore, d1AgentInvocationSchema } from "../src/invocations/d1.ts"
 
-import type { AgentInvocationD1Database, D1AgentInvocationStoreOptions } from "../src/invocations/d1.ts"
+import type { AgentInvocationD1Database, AgentInvocationD1Result, AgentInvocationD1Statement, D1AgentInvocationStoreOptions } from "../src/invocations/d1.ts"
 import type { AgentInvocationStoreCreateInput } from "../src/invocations.ts"
 
 const timestamp = new Date().toISOString()
@@ -360,6 +360,60 @@ describe("D1 Agent Invocation store", () => {
     expect(saved).toMatchObject({ status: "completed", observationsTruncated: true })
     expect(saved?.observations).toEqual([accepted])
   }, 20_000)
+
+  it("bounds the rows that retention reads in a full journal", async () => {
+    const d1 = await miniflare.getD1Database("DB")
+    type Statement = ReturnType<typeof d1.prepare>
+    let rowsRead = 0
+    const read = <T>(result: AgentInvocationD1Result<T>) => {
+      rowsRead += Number(Reflect.get(result.meta, "rows_read"))
+      return result
+    }
+    const statements = new WeakMap<AgentInvocationD1Statement, Statement>()
+    const wrap = (statement: Statement): AgentInvocationD1Statement => {
+      const wrapped: AgentInvocationD1Statement = {
+        bind: (...values) => wrap(statement.bind(...values)),
+        all: async <T>() => read(await statement.all<T>()),
+      }
+      statements.set(wrapped, statement)
+      return wrapped
+    }
+    const measured: AgentInvocationD1Database = {
+      prepare: query => wrap(d1.prepare(query)),
+      batch: async <T>(batch: AgentInvocationD1Statement[]) => (await d1.batch<T>(batch.map(statement => statements.get(statement)!))).map(read),
+    }
+    const readsOf = async (operation: () => unknown) => {
+      rowsRead = 0
+      await operation()
+      return rowsRead
+    }
+    const table = `${tablePrefix}invocations`
+    const day = 24 * 60 * 60 * 1000
+    const terminalCount = async () => (await d1.prepare(`SELECT count(*) AS count FROM ${table} WHERE status IN ('completed', 'failed', 'cancelled')`).first<{ count: number }>())?.count
+    // 20 expired terminal records, 50 running records, and 10,050 recent terminal records.
+    await d1.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10120)
+      INSERT INTO ${table} (id, status, agent_name, search, summary, updated_at, record)
+      SELECT 'seed-' || i, CASE WHEN i % 200 = 0 THEN 'running' WHEN i % 3 = 0 THEN 'failed' ELSE 'completed' END, 'seed', '', '{}',
+        CASE WHEN i <= 20 THEN ? ELSE ? END, '{}' FROM n`).bind(new Date(Date.now() - 40 * day).toISOString(), timestamp).run()
+    const journal = store({ database: measured })
+    const random = vi.spyOn(Math, "random")
+    try {
+      // Most writes run only the age limit, which reads the expired rows it deletes.
+      random.mockReturnValue(0.99)
+      expect(await readsOf(() => journal.create(invocation("run")))).toBeLessThan(200)
+      expect(await terminalCount()).toBe(10_050)
+      expect(await readsOf(() => journal.update("run", { status: "completed", timestamp }))).toBeLessThan(100)
+      expect(await terminalCount()).toBe(10_051)
+
+      // The sampled count limit reads about maxRecords rows and keeps the newest 10,000 terminal records.
+      random.mockReturnValue(0)
+      expect(await readsOf(() => journal.create(invocation("sampled")))).toBeLessThan(10_500)
+      expect(await terminalCount()).toBe(10_000)
+      expect(await journal.get("run")).toMatchObject({ status: "completed" })
+      expect(await d1.prepare(`SELECT count(*) AS count FROM ${table} WHERE status IN ('pending', 'running')`).first("count")).toBe(51)
+    }
+    finally { random.mockRestore() }
+  }, 30_000)
 
   it("validates table identifiers, retention, paging and leases", async () => {
     expect(() => d1AgentInvocationSchema({ tablePrefix: "unsafe;" })).toThrow(/identifier/)

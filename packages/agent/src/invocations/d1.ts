@@ -1,5 +1,6 @@
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { applyAgentInvocationStoreUpdate, byteBoundedObservations, isAppendedObservation, observationLimits } from "../invocations.ts"
+import { countRetentionDue } from "./retention.ts"
 import { searchableAgentInvocationText } from "./search.ts"
 import { filteredObservationRecord } from "./observation-projection.ts"
 import { sqlTrimWhitespace } from "./sql-whitespace.ts"
@@ -29,7 +30,7 @@ export interface D1AgentInvocationStoreOptions {
   database: AgentInvocationD1Database | (() => AgentInvocationD1Database | Promise<AgentInvocationD1Database>)
   /** Maximum age of terminal records. Defaults to 30 days; false disables this limit. */
   maxAgeMs?: false | number
-  /** Maximum count of terminal records. Defaults to 10,000; false disables this limit. */
+  /** Maximum count of terminal records. Defaults to 10,000; false disables this limit. Writes apply it on about 1 in `ceil(maxRecords / 100)` prunes, so the count can exceed it by about 1%. */
   maxRecords?: false | number
   tablePrefix?: string
 }
@@ -144,30 +145,28 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
   const maxRecords = retention(options.maxRecords, 10_000)
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The public option accepts a D1 binding or a request-scoped factory; callability selects the factory member.
   const database = async () => typeof options.database === "function" ? await options.database() : options.database
-  const prune = (db: AgentInvocationD1Database) => {
-    const filters: string[] = []
-    const values: (string | number)[] = []
-    if (maxAgeMs !== false) {
-      filters.push("updated_at < ?")
-      values.push(new Date(Date.now() - maxAgeMs).toISOString())
-    }
-    if (maxRecords !== false) {
-      filters.push(`sequence NOT IN (SELECT sequence FROM ${table} WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT ?)`)
-      values.push(maxRecords)
-    }
-    return filters.length
-      ? [db.prepare(`DELETE FROM ${table} WHERE status IN (${terminal}) AND (${filters.join(" OR ")})`).bind(...values)]
-      : []
-  }
+  // Each statement uses one index. An OR across updated_at and sequence makes SQLite read every terminal row.
+  // A rowid scan from the newest record stops after maxRecords terminal rows. The status index would sort every terminal row first.
+  // The count limit runs first, so both limits select from the same terminal records.
+  const prune = (db: AgentInvocationD1Database, count: boolean) => [
+    ...(count && maxRecords !== false
+      ? [db.prepare(`DELETE FROM ${table} WHERE status IN (${terminal}) AND sequence < (SELECT sequence FROM ${table} NOT INDEXED WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT 1 OFFSET ?)`).bind(maxRecords - 1)]
+      : []),
+    ...(maxAgeMs !== false
+      ? [db.prepare(`DELETE FROM ${table} WHERE status IN (${terminal}) AND updated_at < ?`).bind(new Date(Date.now() - maxAgeMs).toISOString())]
+      : []),
+  ]
   return {
     async create(input) {
       const { stored, values } = fitRecord(input)
       const db = await database()
-      const before = prune(db)
+      const count = countRetentionDue(maxRecords)
+      // Retention before the insert lets a retried ID replace its expired record.
+      const before = prune(db, count)
       const results = await db.batch<RecordRow>([
         ...before,
         db.prepare(`INSERT OR IGNORE INTO ${table} (id, status, agent_name, search, summary, updated_at, record) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(stored.id, ...values),
-        ...prune(db),
+        ...(input.status === "completed" || input.status === "failed" || input.status === "cancelled" ? prune(db, count) : []),
         db.prepare(`SELECT sequence, record, revision FROM ${table} WHERE id = ?`).bind(input.id),
       ])
       const row = results.at(-1)?.results[0]
@@ -210,6 +209,7 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
       const claimFilter = claimId === undefined ? "" : " AND claim_id = ?"
       const identity = claimId === undefined ? [id] : [id, claimId]
       let sequence: number | undefined
+      const count = countRetentionDue(maxRecords)
       // D1 has no interactive transactions. Retry the full update when another writer changes the revision.
       for (let attempt = 0; attempt < 32; attempt++) {
         const selected = await db.prepare(`SELECT sequence, record, revision FROM ${table} WHERE id = ?${claimFilter}`).bind(...identity).all<RecordRow>()
@@ -222,7 +222,7 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
         const result = await db.batch<RecordRow>([
           db.prepare(`UPDATE ${table} SET status = ?, agent_name = ?, search = ?, summary = ?, updated_at = ?, record = ?, revision = revision + 1
             WHERE id = ?${claimFilter} AND sequence = ? AND revision = ? RETURNING sequence, record, revision`).bind(...values, ...identity, row.sequence, row.revision),
-          ...(updated.status === "completed" || updated.status === "failed" || updated.status === "cancelled" ? prune(db) : []),
+          ...(updated.status === "completed" || updated.status === "failed" || updated.status === "cancelled" ? prune(db, count) : []),
         ])
         if (result[0]?.results[0]) return record(result[0].results[0])
       }
