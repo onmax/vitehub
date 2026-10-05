@@ -34,7 +34,8 @@ function packageFile(framework: "vite" | "nitro" | "nuxt"): PrimitiveProjectFile
       dependencies: {
         "vite-hub": "^0.0.4",
         "comark-content": "0.4.1",
-        ...(framework === "nuxt" ? { nuxt: "^4.5.2" } : { nitro: "3.0.260903-beta" }),
+        ...(framework === "nuxt" ? { nuxt: "^4.5.2" } : {}),
+        ...(framework === "vite" || framework === "nitro" ? { nitro: "3.0.260903-beta" } : {}),
         ...(framework === "vite" ? { vite: "^8.2.2" } : {}),
       },
     }, null, 2),
@@ -59,12 +60,13 @@ export const ContentLanding = {
         {
           path: "vite.config.ts",
           language: "typescript",
-          content: `import { nitro } from "nitro/vite"
+          content: `import { defineConfig } from "vite"
+import { nitro } from "nitro/vite"
 import { vitehub } from "vite-hub"
 
-export default {
-  plugins: [vitehub({ preset: "node" }), nitro()],
-}`,
+export default defineConfig({
+  plugins: [vitehub({ preset: "node" }), nitro() as never],
+})`,
         },
         ...contentFiles,
       ],
