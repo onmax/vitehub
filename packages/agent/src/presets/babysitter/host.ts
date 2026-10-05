@@ -1,4 +1,6 @@
-import { lstat, mkdtemp, readFile, readdir, rename, rmdir, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { lstat, mkdtemp, readFile, readdir, rename, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
@@ -25,7 +27,7 @@ export function envString(value: unknown): string | undefined {
  */
 export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise<number> {
   const root = join(dataDir, "checkouts");
-  const info = await lstat(root).catch((error: NodeJS.ErrnoException) => {
+  const info = await lstat(root, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return undefined;
     throw error;
   });
@@ -43,14 +45,33 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
     await rmdir(quarantine);
     throw error;
   }
-  const claimedInfo = await lstat(claimed);
+  const claimedInfo = await lstat(claimed, { bigint: true });
   if (!claimedInfo.isDirectory() || claimedInfo.dev !== info.dev || claimedInfo.ino !== info.ino) {
     // Preserve an unexpected entry for inspection; do not overwrite a new pool
     // in an attempt to restore it.
     throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
   }
   const entries = await readdir(claimed, { withFileTypes: true });
-  await rm(claimed, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+  // A child process pins its cwd before checking its identity. Relative paths
+  // stay bound to that directory even if another process renames it. Never
+  // recursively remove the claimed pathname, including during retries.
+  await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", `
+    import { lstat, readdir, rm } from "node:fs/promises";
+    const info = await lstat(".", { bigint: true });
+    if (String(info.dev) !== process.argv[1] || String(info.ino) !== process.argv[2]) {
+      throw new Error("Refusing to clean replaced Babysitter checkout pool");
+    }
+    for (const entry of await readdir(".")) {
+      await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+    }
+  `, String(info.dev), String(info.ino)], { cwd: claimed });
+  const remaining = await lstat(claimed, { bigint: true });
+  if (remaining.dev !== info.dev || remaining.ino !== info.ino) {
+    throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
+  }
+  // These removals are deliberately non-recursive: a replacement with contents
+  // must survive even if the visible name changes again after this check.
+  await rmdir(claimed);
   await rmdir(quarantine);
   return entries.length;
 }

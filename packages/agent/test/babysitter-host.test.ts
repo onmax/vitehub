@@ -2,12 +2,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import * as fs from "node:fs/promises";
 import { createBabysitterProcessHost, cleanupLegacyBabysitterCheckouts } from "../src/presets/babysitter/host.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...original, rename: vi.fn(original.rename) };
+  return { ...original, rename: vi.fn(original.rename), readdir: vi.fn(original.readdir) };
 });
 
 const roots: string[] = [];
@@ -95,4 +96,53 @@ it("does not delete a new pool created after claiming the old pool", async () =>
   });
   await expect(cleanupLegacyBabysitterCheckouts(dataDir)).resolves.toBe(0);
   expect(await readFile(join(pool, "keep"), "utf8")).toBe("replacement");
+});
+
+it("preserves a claimed pathname replaced after its identity check", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vitehub-babysitter-claimed-race-"));
+  roots.push(dataDir);
+  await mkdir(join(dataDir, "checkouts"));
+  const original = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  let replacement = "";
+  vi.mocked(fs.readdir).mockImplementationOnce(async (path, options) => {
+    const entries = await original.readdir(path, options);
+    replacement = String(path);
+    await original.rename(path, join(dataDir, "original"));
+    await mkdir(replacement);
+    await writeFile(join(replacement, "keep"), "replacement");
+    return entries;
+  });
+
+  await expect(cleanupLegacyBabysitterCheckouts(dataDir)).rejects.toThrow("replaced Babysitter checkout pool");
+  expect(await readFile(join(replacement, "keep"), "utf8")).toBe("replacement");
+});
+
+it("keeps deletion bound to the worker cwd if its pathname changes during enumeration", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vitehub-babysitter-worker-race-"));
+  roots.push(dataDir);
+  await mkdir(join(dataDir, "checkouts", "old-checkout"), { recursive: true });
+  await writeFile(join(dataDir, "checkouts", "old-checkout", "remove"), "old");
+  const hook = join(dataDir, "swap.mjs");
+  await writeFile(hook, `
+    import fs from "node:fs/promises";
+    import { syncBuiltinESMExports } from "node:module";
+    const readdir = fs.readdir;
+    fs.readdir = async (...args) => {
+      const entries = await readdir(...args);
+      if (args[0] === ".") {
+        const claimed = process.cwd();
+        await fs.rename(claimed, claimed + "-original");
+        await fs.mkdir(claimed);
+        await fs.writeFile(claimed + "/keep", "replacement");
+      }
+      return entries;
+    };
+    syncBuiltinESMExports();
+  `);
+  vi.stubEnv("NODE_OPTIONS", `--import=${pathToFileURL(hook).href}`);
+
+  await expect(cleanupLegacyBabysitterCheckouts(dataDir)).rejects.toThrow("replaced Babysitter checkout pool");
+  const quarantine = (await fs.readdir(dataDir)).find(name => name.startsWith(".checkouts-cleanup-"))!;
+  expect(await readFile(join(dataDir, quarantine, "checkouts", "keep"), "utf8")).toBe("replacement");
+  expect(await fs.readdir(join(dataDir, quarantine, "checkouts-original"))).toEqual([]);
 });
