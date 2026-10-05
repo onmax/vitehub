@@ -2,7 +2,7 @@ import { resolveRuntimeValue } from "@vite-hub/runtime"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { codexConfigArg } from "./codex-launch-args.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
-import type { AgentDriverGateway, AgentProviderCredentialContext, AgentProviderCredentialResolver, BuiltInAgentDriverName } from "../types.ts"
+import type { AgentDriverGateway, AgentDriverGatewaySecret, AgentProviderCredentialContext, BuiltInAgentDriverName } from "../types.ts"
 
 const gatewayKeys = new Set(["apiKey", "apiKeyEnv", "auth", "baseURL", "headers", "name"])
 const headerName = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/
@@ -50,7 +50,8 @@ export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway 
   if (value.apiKeyEnv !== undefined && (!Array.isArray(value.apiKeyEnv) || !value.apiKeyEnv.every(item => hasRuntimeType(item, "string") && environmentName.test(item)))) {
     invalid(`Gateway "${name}" apiKeyEnv must be a list of environment variable names.`)
   }
-  if (value.apiKey === undefined && !value.apiKeyEnv?.length) invalid(`Gateway "${name}" needs apiKey or apiKeyEnv.`)
+  const apiKeyEnv = Array.isArray(value.apiKeyEnv) ? value.apiKeyEnv.filter((item): item is string => hasRuntimeType(item, "string")) : undefined
+  if (value.apiKey === undefined && !apiKeyEnv?.length) invalid(`Gateway "${name}" needs apiKey or apiKeyEnv.`)
   let headers: AgentDriverGateway["headers"]
   if (value.headers !== undefined) {
     if (!isRuntimeRecord(value.headers) || Array.isArray(value.headers)) invalid(`Gateway "${name}" headers must be an object.`)
@@ -68,7 +69,7 @@ export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway 
     baseURL: Object.freeze(baseURL),
     // SAFETY: isSecretInput validated the credential input shape above.
     ...(value.apiKey === undefined ? {} : { apiKey: value.apiKey as AgentDriverGateway["apiKey"] }),
-    ...(value.apiKeyEnv === undefined ? {} : { apiKeyEnv: Object.freeze([...value.apiKeyEnv as string[]]) }),
+    ...(apiKeyEnv === undefined ? {} : { apiKeyEnv: Object.freeze(apiKeyEnv) }),
     ...(value.auth === undefined ? {} : { auth: value.auth }),
     ...(headers === undefined ? {} : { headers: Object.freeze(headers) }),
   })
@@ -81,7 +82,7 @@ export function assertAgentDriverGatewaySupports(gateway: AgentDriverGateway, dr
   }
 }
 
-async function resolveSecret(value: AgentProviderCredentialResolver, context: AgentProviderCredentialContext): Promise<string | undefined> {
+async function resolveSecret(value: AgentDriverGatewaySecret, context: AgentProviderCredentialContext): Promise<string | undefined> {
   const resolved: unknown = await resolveRuntimeValue(value, context)
   const unseal = isRuntimeRecord(resolved) ? resolved.unseal : undefined
   const secret = hasRuntimeType(unseal, "function") ? Reflect.apply(unseal, resolved, []) : resolved

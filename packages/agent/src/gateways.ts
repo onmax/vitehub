@@ -1,15 +1,16 @@
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { normalizeAgentDriverGateway } from "./internal/agent-gateway.ts"
-import type { AgentDriverGateway, AgentProviderCredentialResolver } from "./types.ts"
+import { hasRuntimeType } from "./internal/runtime-type.ts"
+import type { AgentDriverGateway, AgentDriverGatewaySecret } from "./types.ts"
 
-export type { AgentDriverGateway } from "./types.ts"
+export type { AgentDriverGateway, AgentDriverGatewaySecret } from "./types.ts"
 
 /** Options shared by every gateway preset. */
 export interface AgentGatewayPresetOptions {
   /** API key. When it is not set, the preset reads its documented environment variable. */
-  apiKey?: AgentProviderCredentialResolver
+  apiKey?: AgentDriverGatewaySecret
   /** Extra request headers, such as Cloudflare Access service-token headers. */
-  headers?: Record<string, AgentProviderCredentialResolver>
+  headers?: Record<string, AgentDriverGatewaySecret>
 }
 
 /** Options for a gateway that you host. */
@@ -19,7 +20,7 @@ export interface AgentHostedGatewayOptions extends AgentGatewayPresetOptions {
 }
 
 function origin(url: string, label: string): string {
-  if (typeof url !== "string" || !url.trim()) throw agentDiagnostics.AGENT_R0975({ message: `[vitehub] ${label}({ url }) must be a non-empty URL.` })
+  if (!hasRuntimeType(url, "string") || !url.trim()) throw agentDiagnostics.AGENT_R0975({ message: `[vitehub] ${label}({ url }) must be a non-empty URL.` })
   return url.trim().replace(/\/+$/, "").replace(/\/v1$/, "")
 }
 

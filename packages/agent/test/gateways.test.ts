@@ -99,7 +99,7 @@ describe("gateway resolution", () => {
   })
 
   it("rejects empty header values instead of letting Codex drop them", async () => {
-    const gateway = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: { "CF-Access-Client-Id": () => undefined as never } })
+    const gateway = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: { "CF-Access-Client-Id": () => undefined } })
     await expect(resolveAgentDriverGateway(gateway, "codex", context)).rejects.toThrow('header "CF-Access-Client-Id" resolved to an empty value')
   })
 })

@@ -308,9 +308,10 @@ function normalizeProviderDriver(provider: "claude-code" | "codex", value: Recor
   const execution = normalizeProviderExecution(value.execution)
   const gateway = value.gateway === undefined ? undefined : normalizeAgentDriverGateway(value.gateway)
   if (gateway) assertAgentDriverGatewaySupports(gateway, provider)
-  if (gateway && isPlainRecord(value.env)) {
+  const configuredEnv = value.env
+  if (gateway && isPlainRecord(configuredEnv)) {
     const owned = provider === "codex" ? ["T3CODE_CODEX_LAUNCH_ARGS"] : ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"]
-    const conflicts = owned.filter(key => value.env && (value.env as Record<string, unknown>)[key] !== undefined)
+    const conflicts = owned.filter(key => configuredEnv[key] !== undefined)
     if (conflicts.length) {
       throw agentDiagnostics.AGENT_R0979({ message: `[vitehub] defineAgent({ driver.gateway }) sets ${conflicts.join(", ")}. Remove ${conflicts.length === 1 ? "it" : "them"} from driver.env.` })
     }
