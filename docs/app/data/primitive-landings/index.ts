@@ -44,4 +44,3 @@ export const primitiveLandings: Record<string, PrimitiveLanding> = Object.fromEn
 export function getPrimitiveLanding(slug: string): PrimitiveLanding | undefined {
   return primitiveLandings[slug];
 }
-
