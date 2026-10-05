@@ -1331,7 +1331,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
 
   async setMeta(key: string, value: unknown): Promise<void> {
     await this.#pathLock(this.root, ".vitehub/metadata", async () => {
-      const metadata = await this.#readMeta()
+      const metadata = new Map(await this.#readMeta())
       metadata.set(key, value)
       await this.#writeMeta(metadata)
     })
