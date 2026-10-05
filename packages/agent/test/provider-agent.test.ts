@@ -5475,6 +5475,11 @@ cli_auth_credentials_store = "keyring"
     expect(session.diff).not.toHaveBeenCalled()
     expect(session.commit).not.toHaveBeenCalled()
     expect(workspace.startSession).toHaveBeenCalledWith(expect.objectContaining({ writeBack: false }))
+    // The Driver owns and removes its temporary root, so the Session must not restore it on close.
+    expect(workspace.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      disposableTarget: true,
+      target: expect.stringMatching(/\/vitehub-provider-[^/]+$/),
+    }))
     expect(workspace.startSession).toHaveBeenCalledWith(expect.not.objectContaining({ materializeSources: false }))
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     expect(readAgentWorkspaceDiff(runContext.context as never)).toBeUndefined()
