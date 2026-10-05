@@ -460,6 +460,47 @@ describe("Provider Agent Driver", () => {
     expect(launchArgs).not.toContain("proxy-key")
   })
 
+  it.each(["codex", "claude-code"] as const)("resolves %s gateway secrets with invocation purpose", async (provider) => {
+    const threadId = "thread-gateway-purpose"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const apiKey = vi.fn(({ purpose }: AgentProviderCredentialContext) => purpose === "invocation" ? "proxy-key" : undefined)
+    const header = vi.fn(({ purpose }: AgentProviderCredentialContext) => purpose === "invocation" ? "client-id" : undefined)
+    await createProviderAgentAdapter({
+      gateway: cliproxy({ url: "https://proxy.example", apiKey, headers: { "X-Client": header } }),
+      provider,
+    }).generate(context(threadId) as never)
+
+    expect(apiKey).toHaveBeenCalledWith(expect.objectContaining({ purpose: "invocation" }))
+    expect(header).toHaveBeenCalledWith(expect.objectContaining({ purpose: "invocation" }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject(provider === "codex"
+      ? { VITEHUB_GATEWAY_API_KEY: "proxy-key", VITEHUB_GATEWAY_HEADER_0: "client-id" }
+      : { ANTHROPIC_AUTH_TOKEN: "proxy-key", ANTHROPIC_CUSTOM_HEADERS: "X-Client: client-id" })
+  })
+
+  it.each(["codex", "claude-code"] as const)("preserves gateway transport in every %s usage record", async (provider) => {
+    const threadId = "thread-gateway-usage"
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { totalProcessedTokens: 10 } }),
+      event("thread.token-usage.updated", threadId, { usage: { totalProcessedTokens: 12 } }, { itemId: "response-1" }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 2, outputTokens: 1, totalProcessedTokens: 15 } }, { itemId: "response-2" }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 1, totalProcessedTokens: 15 } }, { itemId: "response-2" }),
+      event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" }),
+    ])
+    const events = await collect(await createProviderAgentAdapter({
+      gateway: cliproxy({ url: "https://proxy.example", apiKey: "proxy-key" }),
+      provider,
+    }).stream!(context(threadId) as never)) as StreamEvent[]
+    const records = events.filter(item => item.type === "usage")
+    expect(records).toHaveLength(1)
+    for (const item of records) {
+      expect(item.usageRecord).toMatchObject({ provider, transport: "gateway" })
+      if (provider === "codex") {
+        expect(item.usageRecord?.calls?.length).toBeGreaterThan(0)
+        for (const call of item.usageRecord?.calls || []) expect(call).toMatchObject({ provider, transport: "gateway" })
+      }
+    }
+  })
+
   it("does not prepare Codex credentials that a gateway replaces", async () => {
     const threadId = "thread-gateway-credentials"
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])

@@ -2149,6 +2149,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
   model?: string
   provider: "claude-code" | "codex"
   resumed: boolean
+  transport?: "gateway"
 }): StreamEvent {
   const usage = event.payload.usage
   const usedTokens = usage.usedTokens ?? usage.lastUsedTokens
@@ -2194,7 +2195,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
       options.accumulator.partitionComplete = false
       options.accumulator.identityAmbiguous = true
     }
-    const snapshot = { ...(options.model ? { model: options.model } : {}), provider: options.provider, raw: usage }
+    const snapshot = { ...(options.model ? { model: options.model } : {}), provider: options.provider, ...(options.transport ? { transport: options.transport } : {}), raw: usage }
     if (options.accumulator.lastUsageEvent && options.accumulator.lastResponseIdentity === undefined && options.accumulator.previousTotalProcessedTokens === undefined) {
       options.accumulator.calls[options.accumulator.calls.length - 1] = snapshot
     }
@@ -2223,6 +2224,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
     options.accumulator.calls.push({
       ...(options.model ? { model: options.model } : {}),
       provider: options.provider,
+      ...(options.transport ? { transport: options.transport } : {}),
       raw: usage,
     })
   }
@@ -2237,6 +2239,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
     const call = {
       ...(options.model ? { model: options.model } : {}),
       provider: options.provider,
+      ...(options.transport ? { transport: options.transport } : {}),
       raw: usage,
       usage: {
         details: {
@@ -2324,6 +2327,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
       ...usageRecordExtras,
       ...(options.model ? { model: options.model } : {}),
       provider: options.provider,
+      ...(options.transport ? { transport: options.transport } : {}),
       ...(usage.durationMs === undefined ? {} : { latency: { durationMs: usage.durationMs } }),
       raw: usage,
       usage: {
@@ -2460,6 +2464,7 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
   model?: string
   provider: "claude-code" | "codex"
   resumed: boolean
+  transport?: "gateway"
   toolTitles: Map<string, string>
 }): StreamEvent[] {
   switch (event.type) {
@@ -2960,6 +2965,7 @@ async function* runProvider<
     const resolverContext: AgentProviderCredentialContext<TRuntimeConfig> = {
       ...providerMetadataContext(context),
       abortSignal: effectiveSignal,
+      purpose: "invocation",
     }
     // A run that opts out of the managed checkout still acts on its pull
     // request's repositories, so keep credentials scoped to them.
@@ -3317,6 +3323,7 @@ async function* runProvider<
         model: options.model,
         provider: options.provider,
         resumed,
+        transport: gateway ? "gateway" : undefined,
         toolTitles,
       })
       if (current.value.type === "item.completed" && current.value.itemId) messagePhases.delete(current.value.itemId)
