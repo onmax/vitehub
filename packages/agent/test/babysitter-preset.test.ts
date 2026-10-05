@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; admission?: () => Promise<{ accepting: boolean; reason?: string; retryAt?: number; detail?: string }> } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -204,6 +204,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     },
   };
   const errors = vi.fn();
+  const events = vi.fn();
   const agent = agentWithColocatedInstructions(defineAgent({
     ...(discovered ? {} : { name: "babysitter" }),
     preset: "babysitter",
@@ -233,6 +234,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     concurrency: 1,
     activityAuthors: ["vitehub-agent"],
     error: errors,
+    event: events,
+    ...(preset.admission ? { admission: preset.admission } : {}),
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
@@ -328,6 +331,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     push,
     prepare,
     command,
+    events,
     choose: (value: typeof operation, args: Record<string, unknown> = {}) => {
       operation = value;
       operationArguments = args;
@@ -500,6 +504,27 @@ describe("Babysitter preset runtime", () => {
       createProviderRuntime.mockClear();
       await f.reconcile().catch(() => {});
       expect(createProviderRuntime).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("leaves PRs queued while admission is refused and logs each pause reason once", async () => {
+    let decision: { accepting: boolean; reason?: string; retryAt?: number; detail?: string } = { accepting: false, reason: "tmp-space-low", detail: "100 MiB free" };
+    const f = await fixture(false, false, { admission: async () => decision });
+    const skips = () => f.events.mock.calls.filter(([name]) => name === "babysitter.admission.skipped");
+    try {
+      await f.reconcile();
+      await f.reconcile();
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(skips()).toHaveLength(1);
+      expect(await f.runtime.inbox.meta("admission-skipped")).toMatchObject({ reason: "tmp-space-low", detail: "100 MiB free" });
+      decision = { accepting: false, reason: "token-budget-hourly", retryAt: Date.now() + 60_000 };
+      await f.reconcile();
+      expect(skips()).toHaveLength(2);
+      expect(skips()[1]![1]).toMatchObject({ trigger: "test", reason: "token-budget-hourly" });
+      decision = { accepting: true };
+      await f.reconcile();
+      expect(createProviderRuntime).toHaveBeenCalled();
     } finally { await f.runtime.inbox.close(); }
   });
 

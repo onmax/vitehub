@@ -39,6 +39,7 @@ import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } f
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
 import { createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
+import type { BabysitterAdmission } from "./admission.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -64,6 +65,8 @@ export interface BabysitterRuntimeOptions {
   postPushGraceMs?: number;
   /** Delay between provider rate-limit retries. Defaults to 10 seconds. */
   providerRetryDelayMs?: number;
+  /** Checks shared host and provider resources before each claim. A refusal leaves PRs queued. */
+  admission?: () => Promise<BabysitterAdmission>;
 }
 
 /** Provider quota and rate-limit failures. Cancellation is never a rate limit. */
@@ -525,6 +528,20 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       await pullRequestInbox.pruneDeliveries();
     }
     if (!isAccepting()) return;
+    if (options.admission && active.size < ownerLimit) {
+      const admission = await options.admission();
+      if (!admission.accepting) {
+        // Log the pause once per reason, then every 15 minutes.
+        const previous = await pullRequestInbox.meta("admission-skipped");
+        const last = isRuntimeRecord(previous) ? previous : {};
+        if (last.reason !== admission.reason || Date.now() - Number(last.at ?? 0) >= 15 * 60_000) {
+          const skipped = { at: Date.now(), reason: admission.reason, detail: admission.detail, retryAt: admission.retryAt, active_owners: active.size };
+          await pullRequestInbox.setMeta("admission-skipped", skipped);
+          schedulerEvent("babysitter.admission.skipped", { trigger: reason, ...skipped });
+        }
+        return;
+      }
+    }
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.

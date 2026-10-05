@@ -7,7 +7,9 @@ import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts"
 import { registerAgentProcessHostIntake, type AgentProcessHostContext, type AgentProcessHostInstance } from "../../agent-process-host.ts";
 import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
+import { getAgentLayerOptions } from "../../agent-layers.ts";
 import { createBabysitterRuntime } from "./server.ts";
+import { createBabysitterAdmission, readBabysitterAdmissionLimits } from "./admission.ts";
 
 /** Reads a plain or sealed Server Env value. */
 export function envString(value: unknown): string | undefined {
@@ -50,6 +52,11 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const identity = await credentials.identity();
   const github = createGitHubHost({ credentials: credentials.credentials, identity, checkouts: { root: join(context.dataDir, "checkouts") } });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
+  const driver = getAgentLayerOptions(agent)?.driver;
+  const admission = createBabysitterAdmission({
+    invocationsFile: join(context.dataDir, "invocations.sqlite"),
+    limits: readBabysitterAdmissionLimits(process.env, isRuntimeRecord(driver) && driver.kind === "claude-code" ? "claude" : "codex"),
+  });
   const host = await createProcessAgentHost({
     name: context.agentName,
     dataDir: context.dataDir,
@@ -75,6 +82,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     event: host.event,
     error: host.error,
     wake: () => host.wake(),
+    admission,
   });
   const inbox = runtime.inbox;
   return {
@@ -99,11 +107,32 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     async health() {
       const health = await host.health();
       const queue = await inbox.summary();
-      return { ...health, repositories, queue: {
-        working: queue.filter(item => item.status === "working").length,
-        ready: queue.filter(item => item.status === "ready" && item.dirty).length,
-        waiting: queue.filter(item => item.status === "waiting").length,
-      } };
+      const guard = await admission();
+      const { state, limits } = guard;
+      return {
+        ...health,
+        status: guard.accepting ? health.status : "degraded",
+        diagnostics: [...health.diagnostics, {
+          label: "Shared resources",
+          status: guard.accepting && !state.errors ? "ok" : "warning",
+          value: guard.accepting ? "Within budget" : "Admission paused",
+          detail: guard.detail ?? state.errors?.join("; ") ?? `${state.hourlyInputTokens ?? "?"} of ${limits.hourlyInputTokens} hourly input tokens`,
+        }],
+        admission: { accepting: guard.accepting, reason: guard.reason, retryAt: guard.retryAt, detail: guard.detail, lastSkip: await inbox.meta("admission-skipped") },
+        budget: {
+          hourly: { inputTokens: state.hourlyInputTokens, limit: limits.hourlyInputTokens, resetsAt: state.windows.hourEnd },
+          daily: { inputTokens: state.dailyInputTokens, limit: limits.dailyInputTokens, resetsAt: state.windows.dayEnd },
+          tmp: { dir: state.tmpDir, freeBytes: state.freeTmpBytes, minFreeBytes: limits.minFreeTmpBytes },
+          proxy: { provider: limits.proxyProvider, maxWeeklyPercent: limits.proxyMaxWeeklyPercent, ...state.proxy },
+          errors: state.errors,
+        },
+        repositories,
+        queue: {
+          working: queue.filter(item => item.status === "working").length,
+          ready: queue.filter(item => item.status === "ready" && item.dirty).length,
+          waiting: queue.filter(item => item.status === "waiting").length,
+        },
+      };
     },
   };
 }
