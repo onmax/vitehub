@@ -2,10 +2,9 @@ import { providerCallbackMetadata, withProviderCallbackMetadata } from "./intern
 import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { browserRuntimeEnvironment } from "./internal/browser-runtime.ts"
-import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan } from "./internal/pull-request-checkout.ts"
+import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan, pullRequestRepositories } from "./internal/pull-request-checkout.ts"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
@@ -29,7 +28,7 @@ import { defaultAgentProviderPermissions } from "./internal/agent-driver.ts"
 import { resolveInstalledProviderExecutable } from "./internal/provider-runtime-packages.ts"
 import { updateAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { inspectAgentTools } from "./tool-inspection.ts"
-import { agentToolJsonSchema } from "./tool-schema.ts"
+import { agentToolJsonSchema, hasAgentToolStandardSchema } from "./tool-schema.ts"
 import { agentOutputInstructions } from "./internal/agent-structured-output.ts"
 import { registerAgentInvocationInputHandler } from "./internal/agent-invocation-control.ts"
 import { ownedAgentInvocationControlId } from "./internal/agent-invocation-response-owner.ts"
@@ -347,6 +346,7 @@ const imageExtensions: Record<string, string> = {
 const providerRuntimeMode: Record<AgentProviderPermissions, RuntimeMode> = {
   "allow-all": "full-access",
   "allow-edits": "auto-accept-edits",
+  "allow-edits-unattended": "auto-accept-edits",
   ask: "approval-required",
 }
 
@@ -1493,7 +1493,7 @@ function toolJsonSchema(schema: AgentToolSchema | undefined): Record<string, unk
 
 async function validateToolInput(tool: AgentToolDefinition, input: unknown): Promise<unknown> {
   if (!tool.inputSchema) return input
-  if ("~standard" in tool.inputSchema) {
+  if (hasAgentToolStandardSchema(tool.inputSchema)) {
     const standard = tool.inputSchema["~standard"]
     if (!standard) throw agentDiagnostics.AGENT_R0696({ message: `[vitehub] Invalid schema for Agent tool "${tool.name}".` })
     const result = await standard.validate(input)
@@ -1502,7 +1502,7 @@ async function validateToolInput(tool: AgentToolDefinition, input: unknown): Pro
   }
   const { Validator } = await import("@cfworker/json-schema")
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
-  const result = new Validator(tool.inputSchema as never, "7").validate(input)
+  const result = new Validator({ ...tool.inputSchema } as never, "7").validate(input)
   if (!result.valid) throw agentDiagnostics.AGENT_R0698({ message: `[vitehub] Invalid input for Agent tool "${tool.name}": ${result.errors.map(error => error.error).join("; ")}` })
   return input
 }
@@ -2952,11 +2952,13 @@ async function* runProvider<
       ...providerMetadataContext(context),
       abortSignal: effectiveSignal,
     }
-    const githubCheckoutPlan = pullRequestCheckoutPlan(context.context)
+    // A run that opts out of the managed checkout still acts on its pull
+    // request's repositories, so keep credentials scoped to them.
+    const githubScope = pullRequestCheckoutPlan(context.context) ?? pullRequestRepositories(context.context)
     const githubEnvironment = auxiliary || !context.runtime.githubIdentity
       ? undefined
       : await waitForProviderOperation(
-          pullRequestCheckoutEnvironment(context.runtime.githubIdentity, githubCheckoutPlan?.repository, effectiveSignal, githubCheckoutPlan?.headRepository),
+          pullRequestCheckoutEnvironment(context.runtime.githubIdentity, githubScope?.repository, effectiveSignal, githubScope?.headRepository),
           effectiveSignal,
         )
     const configuredEnvironmentOverrides = options.env === undefined
@@ -3168,6 +3170,8 @@ async function* runProvider<
       model: options.model,
       resumeCursor,
       runtimeMode: providerRuntimeMode[options.permissions ?? defaultAgentProviderPermissions],
+      // Deny native permission escalation without removing the edit-mode boundary.
+      ...(options.permissions === "allow-edits-unattended" ? { approvalPolicy: "never" as const } : {}),
       threadId,
     }), effectiveSignal, session => finalizeDeferredRuntime(session.threadId), deferRuntimeCleanup, () => finalizeDeferredRuntime())
     if (session.resumeCursor !== undefined) pendingResumeCursor = session.resumeCursor

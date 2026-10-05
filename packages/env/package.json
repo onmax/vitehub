@@ -92,6 +92,7 @@
     "valibot": "catalog:runtime"
   },
   "devDependencies": {
+    "zod": "catalog:runtime",
     "@vite-hub/internal": "workspace:*",
     "publint": "catalog:tooling",
     "typescript": "catalog:tooling",

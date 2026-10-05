@@ -127,7 +127,10 @@ function readProperty(value: unknown, key: string) {
 
 function decodeCursor(cursor: string | undefined): FoldedCursor {
   if (!cursor) return { directoriesConsumed: false, index: 0 }
-  const parsed: unknown = JSON.parse(decodeBase64(cursor))
+  if (!/^[A-Za-z0-9_-]*$/.test(cursor) || cursor.length % 4 === 1) throw new TypeError("Invalid Blob cursor.")
+  const decoded = decodeBase64(cursor)
+  if (encodeBase64Url(decoded) !== cursor) throw new TypeError("Invalid Blob cursor.")
+  const parsed: unknown = JSON.parse(decoded)
   const directoriesConsumed = readProperty(parsed, "directoriesConsumed")
   const index = readProperty(parsed, "index")
   const providerCursor = readProperty(parsed, "providerCursor")
@@ -406,6 +409,7 @@ export function createDriver(options: NetlifyBlobsStoreConfig): BlobDriverAdapte
       let hasMore = false
       let nextCursor: FoldedCursor | undefined
       let providerCursor = cursor.providerCursor
+      const seenProviderCursors = new Set<string>(providerCursor ? [providerCursor] : [])
       let startIndex = cursor.index
       let directoriesConsumed = cursor.directoriesConsumed
       while (true) {
@@ -434,6 +438,10 @@ export function createDriver(options: NetlifyBlobsStoreConfig): BlobDriverAdapte
         }
         if (hasMore) break
         if (!page.next_cursor) break
+        if (seenProviderCursors.has(page.next_cursor)) {
+          throw blobErrorDiagnostics.BLOB_R0017({ message: "Netlify Blobs listing returned a repeated pagination cursor." })
+        }
+        seenProviderCursors.add(page.next_cursor)
         providerCursor = page.next_cursor
         startIndex = 0
         directoriesConsumed = false
