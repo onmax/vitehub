@@ -13,6 +13,8 @@ import {
   materializesCompleteSource,
   materializeWorkspaceSources,
   readCurrentSourceSnapshot,
+  readSourceSnapshotPaths,
+  reconcileRemovedStartupSources,
   readResolvedSourceFile,
   searchMaterializedStore,
   statVirtualSourcePath,
@@ -116,6 +118,8 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   const descriptorSources = allSources.filter(source => source.requestDescriptor)
   const writePolicy = createWorkspaceWritePolicy(definition)
   const prepareBySource = new Map<string, Promise<void>>()
+  const priorPathsBySource = new Map<string, Promise<string[]>>()
+  let removedSourceReconciliation: Promise<void> | undefined
   const sourceContexts = new Map<string, ReturnType<typeof createSourceContext>>()
   let materializationByDefinition = materializationByStore.get(store)
   if (!materializationByDefinition) {
@@ -207,16 +211,37 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     return Boolean(source.livePaths && source.materialize !== "startup")
   }
 
-  function getLazySourcesForPath(path: string) {
-    const normalized = normalizeWorkspacePath(path)
-    return sources.filter(source => {
-      if (!sourceMountIntersectsPath(source, normalized)) return false
-      if (source.source.name !== "file" || !source.probeKeys?.length) return true
-      return source.probeKeys.some(key => {
-        const filePath = normalizeWorkspacePath(`${source.mountPath}/${key}`)
-        return !normalized || normalized === filePath || filePath.startsWith(`${normalized}/`)
+  async function getLazySourcesForPath(path: string) {
+    if (!removedSourceReconciliation && sources.some(source => !source.mountPath && source.materialize === "startup" && source.source.name === "file" && source.probeKeys?.length)) {
+      removedSourceReconciliation = reconcileRemovedStartupSources(definition.name, store, allSources.filter(source => source.materialize === "startup")).catch(error => {
+        removedSourceReconciliation = undefined
+        throw error
       })
-    })
+    }
+    await removedSourceReconciliation
+    const normalized = normalizeWorkspacePath(path)
+    const intersects = (filePath: string) => !normalized || normalized === filePath || filePath.startsWith(`${normalized}/`)
+    const matched = []
+    for (const source of sources) {
+      if (source.mountPath || source.materialize !== "startup" || source.source.name !== "file" || !source.probeKeys?.length) {
+        if (sourceMountIntersectsPath(source, normalized)) matched.push(source)
+        continue
+      }
+      if (source.probeKeys.some(key => intersects(normalizeWorkspacePath(key)))) {
+        matched.push(source)
+        continue
+      }
+      let priorPaths = priorPathsBySource.get(source.key)
+      if (!priorPaths) {
+        priorPaths = readSourceSnapshotPaths(store, definition.name, source.key).catch(error => {
+          priorPathsBySource.delete(source.key)
+          throw error
+        })
+        priorPathsBySource.set(source.key, priorPaths)
+      }
+      if ((await priorPaths).some(intersects)) matched.push(source)
+    }
+    return matched
   }
 
   async function ensurePrepared(sourceKey: string) {
@@ -379,7 +404,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   async function listSourceAware(path = "", options: ListOptions = {}) {
     const normalized = normalizeWorkspacePath(path)
     if (!isDescriptorPath(normalized)) {
-      for (const source of getLazySourcesForPath(normalized)) {
+      for (const source of await getLazySourcesForPath(normalized)) {
         if (source.materialize !== "startup" || isExcludedWorkspacePath(source.mountPath, options.exclude)) continue
         await ensurePrepared(source.key)
         if (!usesLiveProvider(source)) await ensureMaterialized(source.key)
@@ -394,7 +419,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       return [...result.values()].sort((left, right) => left.path.localeCompare(right.path))
     }
 
-    for (const source of getLazySourcesForPath(path)) {
+    for (const source of await getLazySourcesForPath(path)) {
       if (isExcludedWorkspacePath(source.mountPath, options.exclude)) continue
       await ensurePrepared(source.key)
       if (usesLiveProvider(source)) {

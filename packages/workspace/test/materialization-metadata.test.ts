@@ -567,7 +567,7 @@ it("does not inspect unrelated root-mounted inline Sources when listing a direct
     },
   }
   await materializeWorkspaceSources(definition, store)
-  await store.writeFile("portal/index.ts", { content: "export {}" })
+  await store.writeFile("portal/index.ts", { path: "portal/index.ts", content: "export {}" })
   const stat = vi.spyOn(store, "stat")
   const view = createWorkspaceSourceView(definition, store, { reuseStartupSnapshots: true })
 
@@ -576,4 +576,27 @@ it("does not inspect unrelated root-mounted inline Sources when listing a direct
 
   expect((await view.list(".agents/skills/coding", { recursive: true })).map(({ path }) => path)).toEqual([skillPath])
   expect(stat.mock.calls.map(([path]) => path)).toContain(skillPath)
+})
+
+it.each([false, true])("reconciles moved inline Source paths and preserves user edits=%s", async (edited) => {
+  const store = createMemoryWorkspaceStore()
+  const definition = (workspacePath: string) => ({
+    name: "moved-inline-source",
+    sources: { skill: { content: "instructions", workspacePath, mount: "", materialize: "startup" as const } },
+  })
+  await materializeWorkspaceSources(definition("old/SKILL.md"), store)
+  if (edited) await store.writeFile("old/SKILL.md", { path: "old/SKILL.md", content: "user edit" })
+  const view = createWorkspaceSourceView(definition("new/SKILL.md"), store, { reuseStartupSnapshots: true })
+
+  expect((await view.list("old", { recursive: true })).map(({ path }) => path)).toEqual(edited ? ["old/SKILL.md"] : [])
+  expect((await store.readFile("new/SKILL.md"))?.content).toEqual("instructions")
+})
+
+it("retires an inline Source removed during a path and key change before a targeted listing", async () => {
+  const store = createMemoryWorkspaceStore()
+  const source = (workspacePath: string) => ({ content: "instructions", workspacePath, mount: "", materialize: "startup" as const })
+  await materializeWorkspaceSources({ name: "renamed-inline-source", sources: { old: source("old/SKILL.md") } }, store)
+  const view = createWorkspaceSourceView({ name: "renamed-inline-source", sources: { current: source("new/SKILL.md") } }, store, { reuseStartupSnapshots: true })
+
+  expect((await view.list("old", { recursive: true })).map(({ path }) => path)).toEqual([])
 })
