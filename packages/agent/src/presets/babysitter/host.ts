@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { lstat, mkdtemp, readFile, readdir, rename, rmdir } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
@@ -39,12 +39,7 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
   // pool at the original path must never become a recursive cleanup target.
   const quarantine = await mkdtemp(join(dataDir, ".checkouts-cleanup-"));
   const claimed = join(quarantine, "checkouts");
-  try {
-    await rename(root, claimed);
-  } catch (error) {
-    await rmdir(quarantine);
-    throw error;
-  }
+  await rename(root, claimed);
   const claimedInfo = await lstat(claimed, { bigint: true });
   if (!claimedInfo.isDirectory() || claimedInfo.dev !== info.dev || claimedInfo.ino !== info.ino) {
     // Preserve an unexpected entry for inspection; do not overwrite a new pool
@@ -65,14 +60,14 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
       await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
     }
   `, String(info.dev), String(info.ino)], { cwd: claimed });
+  // Verify that the visible entry still names the claimed inode, but never
+  // remove it by pathname: a concurrent replacement after this check could
+  // otherwise be deleted by `rmdir()`. Retain the two empty directories after
+  // migration; later startups find no legacy pool and create no new quarantine.
   const remaining = await lstat(claimed, { bigint: true });
   if (remaining.dev !== info.dev || remaining.ino !== info.ino) {
     throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
   }
-  // These removals are deliberately non-recursive: a replacement with contents
-  // must survive even if the visible name changes again after this check.
-  await rmdir(claimed);
-  await rmdir(quarantine);
   return entries.length;
 }
 

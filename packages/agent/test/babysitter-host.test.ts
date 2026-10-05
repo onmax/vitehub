@@ -8,7 +8,7 @@ import { createBabysitterProcessHost, cleanupLegacyBabysitterCheckouts } from ".
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...original, rename: vi.fn(original.rename), readdir: vi.fn(original.readdir) };
+  return { ...original, rename: vi.fn(original.rename), readdir: vi.fn(original.readdir), lstat: vi.fn(original.lstat) };
 });
 
 const roots: string[] = [];
@@ -30,6 +30,9 @@ it("removes the complete legacy checkout pool, including metadata sidecars", asy
   await expect(cleanupLegacyBabysitterCheckouts(dataDir)).resolves.toBe(3);
   await expect(stat(pool)).rejects.toMatchObject({ code: "ENOENT" });
   await expect(cleanupLegacyBabysitterCheckouts(dataDir)).resolves.toBe(0);
+  const quarantines = await fs.readdir(dataDir);
+  expect(quarantines).toHaveLength(1);
+  expect(await fs.readdir(join(dataDir, quarantines[0]!, "checkouts"))).toEqual([]);
 });
 
 it("refuses to remove a replaced or symlinked checkout root", async () => {
@@ -145,4 +148,27 @@ it("keeps deletion bound to the worker cwd if its pathname changes during enumer
   const quarantine = (await fs.readdir(dataDir)).find(name => name.startsWith(".checkouts-cleanup-"))!;
   expect(await readFile(join(dataDir, quarantine, "checkouts", "keep"), "utf8")).toBe("replacement");
   expect(await fs.readdir(join(dataDir, quarantine, "checkouts-original"))).toEqual([]);
+});
+
+it("preserves an empty replacement introduced after the final identity check", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vitehub-babysitter-final-race-"));
+  roots.push(dataDir);
+  await mkdir(join(dataDir, "checkouts"));
+  const original = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  let checks = 0;
+  let replacement = "";
+  vi.mocked(fs.lstat).mockImplementation(async (path, options) => {
+    const info = await original.lstat(path, options);
+    if (++checks === 3) {
+      replacement = String(path);
+      await original.rename(path, join(dataDir, "original"));
+      await mkdir(replacement);
+    }
+    return info;
+  });
+
+  await expect(cleanupLegacyBabysitterCheckouts(dataDir)).resolves.toBe(0);
+  expect(checks).toBe(3);
+  expect((await stat(replacement)).isDirectory()).toBe(true);
+  expect(await fs.readdir(replacement)).toEqual([]);
 });
