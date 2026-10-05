@@ -160,10 +160,13 @@ export function createD1AgentInvocationStore(options: D1AgentInvocationStoreOpti
   }
   // Each selection uses one index. An OR across updated_at and sequence makes SQLite read every terminal row.
   const ageSelection = (updatedBefore: string) => ({ values: [updatedBefore], where: `status IN (${terminal}) AND updated_at < ?` })
-  // A rowid scan from the newest record stops after maxRecords terminal rows. The status index would sort every terminal row first.
+  // Merge the three ordered status-index scans, stopping at maxRecords without reading active rows.
   const countSelection = (limit: number) => ({
     values: [limit - 1],
-    where: `status IN (${terminal}) AND sequence < (SELECT sequence FROM ${table} NOT INDEXED WHERE status IN (${terminal}) ORDER BY sequence DESC LIMIT 1 OFFSET ?)`,
+    where: `status IN (${terminal}) AND sequence < (SELECT sequence FROM ${table} WHERE status = 'completed'
+      UNION ALL SELECT sequence FROM ${table} WHERE status = 'failed'
+      UNION ALL SELECT sequence FROM ${table} WHERE status = 'cancelled'
+      ORDER BY sequence DESC LIMIT 1 OFFSET ?)`,
   })
   // The count limit runs first, so both limits select from the same terminal records.
   const pruneSelections = (count: boolean, updatedBefore?: string) => {

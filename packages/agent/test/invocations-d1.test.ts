@@ -505,6 +505,10 @@ describe("D1 Agent Invocation store", () => {
       INSERT INTO ${table} (id, status, agent_name, search, summary, updated_at, record)
       SELECT 'seed-' || i, CASE WHEN i % 200 = 0 THEN 'running' WHEN i % 3 = 0 THEN 'failed' ELSE 'completed' END, 'seed', '', '{}',
         CASE WHEN i <= 20 THEN ? ELSE ? END, '{}' FROM n`).bind(new Date(Date.now() - 40 * day).toISOString(), timestamp).run()
+    // Newer active records must not add reads to the terminal cutoff scan.
+    await d1.prepare(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+      INSERT INTO ${table} (id, status, agent_name, search, summary, updated_at, record)
+      SELECT 'active-' || i, CASE WHEN i % 2 = 0 THEN 'running' ELSE 'pending' END, 'seed', '', '{}', ?, '{}' FROM n`).bind(timestamp).run()
     const journal = store({ database: measured })
     const invocations = defineAgentInvocations({ store: journal })
     const random = vi.spyOn(Math, "random")
@@ -521,13 +525,21 @@ describe("D1 Agent Invocation store", () => {
       expect(await readsOf(() => journal.create(invocation("sampled")))).toBeLessThan(10_500)
       expect(await terminalCount()).toBe(10_000)
       expect(await journal.get("run")).toMatchObject({ status: "completed" })
-      expect(await d1.prepare(`SELECT count(*) AS count FROM ${table} WHERE status IN ('pending', 'running')`).first("count")).toBe(51)
+      expect(await d1.prepare(`SELECT count(*) AS count FROM ${table} WHERE status IN ('pending', 'running')`).first("count")).toBe(20_051)
 
       await journal.create(invocation("overflow", { status: "completed" }))
       expect(await terminalCount()).toBe(10_000)
       expect(await readsOf(() => invocations.prune({ dryRun: true }))).toBeLessThan(10_500)
       expect(await readsOf(() => invocations.prune())).toBeLessThan(10_500)
       expect(await readsOf(() => invocations.prune({ olderThanMs: 30 * day }))).toBeLessThan(100)
+
+      // A missing cutoff must stop at the last terminal row, even in an active-heavy journal.
+      await d1.prepare(`DELETE FROM ${table} WHERE status IN ('completed', 'failed', 'cancelled') AND id != 'run'`).run()
+      expect(await terminalCount()).toBe(1)
+      expect(await readsOf(() => journal.create(invocation("below-limit")))).toBeLessThan(100)
+      expect(await readsOf(() => invocations.prune({ dryRun: true }))).toBeLessThan(100)
+      expect(await readsOf(() => invocations.prune())).toBeLessThan(100)
+      expect(await journal.get("run")).toMatchObject({ status: "completed" })
     }
     finally { random.mockRestore() }
   }, 30_000)

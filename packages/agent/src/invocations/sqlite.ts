@@ -540,11 +540,12 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     args: [...terminalStatuses, updatedBefore],
     where: `status IN (${terminalPlaceholders}) AND updated_at < ?`,
   })
-  // A rowid scan from the newest record stops after maxRecords terminal rows. The status index would sort every terminal row first.
+  // Merge the three ordered status-index scans, stopping at maxRecords without reading active rows.
   const countSelection = (limit: number) => ({
     args: [...terminalStatuses, ...terminalStatuses, limit - 1],
     where: `status IN (${terminalPlaceholders}) AND sequence < (
-      SELECT sequence FROM ${table} NOT INDEXED WHERE status IN (${terminalPlaceholders}) ORDER BY sequence DESC LIMIT 1 OFFSET ?
+      ${terminalStatuses.map(() => `SELECT sequence FROM ${table} WHERE status = ?`).join(" UNION ALL ")}
+      ORDER BY sequence DESC LIMIT 1 OFFSET ?
     )`,
   })
   // Selects terminal records by an explicit cutoff, or by configured retention when no cutoff is given.

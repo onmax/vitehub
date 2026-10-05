@@ -5593,7 +5593,7 @@ describe("Agent Invocations", () => {
         args: [timestamp],
         sql: `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 201)
           INSERT INTO vitehub_agent_invocations (id, status, agent_name, search, summary, updated_at, record)
-          SELECT 'seed-' || i, 'completed', 'seed', '', '{}', ?, '{}' FROM n`,
+          SELECT 'seed-' || i, CASE i % 3 WHEN 0 THEN 'completed' WHEN 1 THEN 'failed' ELSE 'cancelled' END, 'seed', '', '{}', ?, '{}' FROM n`,
       })
       const pending = (id: string) => ({ createdAt: timestamp, id, observations: [], status: "pending" as const, traceId: `${id}-trace`, updatedAt: timestamp })
 
