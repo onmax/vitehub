@@ -40,7 +40,7 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `ignoreFeedbackAuthors` | `[]` | Logins, such as deployment preview bots, whose comments and reviews never need an assessment. They do not block a direct merge or wake a waiting PR. |
 | `deferWhilePending` | `true` | Wait for running required checks and review checks before a pass, so one pass handles CI and review results together. A failure or a conflict starts the pass at once. |
 | `noProgressBudget` | `3` | Passes on one head that can end without a push or a recorded wait. Then the PR waits until its head changes or a person comments. `false` disables the budget. |
-| `install` | `true` | Install dependencies on the host before the model starts. `true` detects pnpm, npm, Yarn or Bun from the lockfile and installs it frozen; `{ command, args }` overrides it; `false` skips it. |
+| `install` | `true` | Install dependencies on the host before the model starts. `true` detects pnpm, npm, Yarn or Bun from the lockfile and installs it frozen; `{ command, args }` overrides it; `{ cache: { directory, entries } }` configures the pnpm cache; `false` skips it. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
 
 ## Configure GitHub
@@ -85,3 +85,7 @@ Feedback that a pass assessed, or answered with a repair push, stays assessed on
 A pull request that ends `noProgressBudget` passes on one head without progress waits until its head changes or a person comments. Stack parents are claimed before other work, and a restart releases the claims of the previous process. A stacked pull request whose parent merged into the default branch is moved to the default branch.
 
 The host installs dependencies in each pass workspace before the model starts. The install gets only `PATH`, `HOME`, locale, package manager and `NODE_OPTIONS` variables, never the provider or GitHub credentials, and runs the repository's lifecycle scripts. The result is in `.git/vitehub-install.json` for the model.
+
+On Linux, a detected pnpm install reuses the `node_modules` trees of an earlier pass with the same lockfile, workspace file, root `package.json`, `.npmrc`, patches and Node version. The host hardlinks the trees into the workspace, as pnpm links its own store, and verifies them with a frozen offline install; a failed check gets a clean install. Passes that need the same trees wait for the first install. The cache directory must be on the same filesystem as the pass workspaces. It defaults to `BABYSITTER_INSTALL_CACHE` or `vitehub-install-cache` in the temporary directory, and keeps `BABYSITTER_INSTALL_CACHE_ENTRIES` or 8 entries. Set `install: { cache: false }` to disable it.
+
+When the process temporary directory is inside the service's working directory, the host removes pass workspaces left by an earlier process at startup.

@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
 import type { AgentInput, AgentCallbackContext } from "../../index.ts";
@@ -40,6 +41,26 @@ export function babysitterRepositories(filter: unknown): string[] {
   const repositories = Array.isArray(allow) ? allow.filter((value): value is string => hasRuntimeType(value, "string") && /^[\w.-]+\/[\w.-]+$/.test(value)) : [];
   if (!repositories.length) throw new Error('[vitehub] Set options.filter.repository.allow to the "owner/name" repositories that the Babysitter serves.');
   return repositories.map(repository => repository.toLowerCase());
+}
+
+const passWorkspace = /^(?:vitehub-provider-(?:launch-)?[A-Za-z0-9]{6}|vitehub-baseline-[A-Za-z0-9]{6}|vitehub-[\w.-]+-pr-\d+-[A-Za-z0-9]{6}(?:\.meta\.json)?|t3-provider-runtime-[A-Za-z0-9]{6})$/;
+
+/**
+ * Removes pass workspaces that an interrupted process left in `root`. It sweeps only a temporary
+ * directory inside the service's working directory, which no other process shares, and keeps
+ * anything this process created.
+ */
+export async function sweepBabysitterWorkspaces(root = tmpdir(), startedAt = performance.timeOrigin, cwd = process.cwd()): Promise<number> {
+  if (!resolve(root).startsWith(`${resolve(cwd)}${sep}`)) return 0;
+  let removed = 0;
+  for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!passWorkspace.test(entry.name)) continue;
+    const path = join(root, entry.name);
+    const info = await lstat(path).catch(() => undefined);
+    if (!info || info.mtimeMs >= startedAt) continue;
+    await rm(path, { force: true, recursive: true, maxRetries: 3 }).then(() => removed++, () => {});
+  }
+  return removed;
 }
 
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
@@ -85,6 +106,8 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     admission,
   });
   const inbox = runtime.inbox;
+  // No pass runs yet, so workspaces from an earlier process are garbage.
+  const swept = await sweepBabysitterWorkspaces();
   return {
     start() {
       registerAgentProcessHostIntake(context.agentName, async ({ deliveryId, event, payload }) => {
@@ -99,7 +122,10 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
         .then(() => inbox.releaseLeases())
         .then(released => { if (released) host.event("babysitter.leases.released", { released }) },
           error => host.error("babysitter.leases.release-failed", error))
-        .finally(() => host.start());
+        .finally(() => {
+          if (swept) host.event("babysitter.workspaces.swept", { removed: swept });
+          host.start();
+        });
     },
     async close() {
       registerAgentProcessHostIntake(context.agentName, undefined);

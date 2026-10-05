@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
@@ -41,6 +41,7 @@ import { directMergeReadiness, feedbackFingerprints, liveMergeReadiness, resolve
 import { createCheckWait, failureKeys, hasPendingChecks, reviewCheckRunning, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 import type { BabysitterAdmission } from "./admission.ts";
+import { createBabysitterInstaller } from "./install.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -393,50 +394,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return evaluation?.state === "pending" && !evaluation.missing.length ? "required checks" : undefined;
   }
 
-  const install = baseAgent.install ?? presetOptions.install ?? true;
-  const installEnvironmentNames = /^(?:PATH|HOME|USER|LOGNAME|LANG|LC_[A-Z]+|TMPDIR|TERM|SHELL|COREPACK_[A-Z_]+|npm_config_[a-z_]+|PNPM_HOME)$/;
-  const exists = (path: string) => access(path).then(() => true, () => false);
-
-  async function installCommand(cwd: string): Promise<string[] | undefined> {
-    if (isRuntimeRecord(install)) return [install.command, ...install.args ?? []];
-    if (await exists(join(cwd, "pnpm-lock.yaml"))) return ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"];
-    if (await exists(join(cwd, "package-lock.json"))) return ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"];
-    if (await exists(join(cwd, "bun.lock")) || await exists(join(cwd, "bun.lockb"))) return ["bun", "install", "--frozen-lockfile"];
-    if (!(await exists(join(cwd, "yarn.lock")))) return undefined;
-    let manager = "";
-    try {
-      const manifest: unknown = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
-      manager = isRuntimeRecord(manifest) && hasRuntimeType(manifest.packageManager, "string") ? manifest.packageManager : "";
-    } catch {}
-    // Yarn 1 has no --immutable; later versions deprecate --frozen-lockfile.
-    return ["yarn", "install", !manager || manager.startsWith("yarn@1.") ? "--frozen-lockfile" : "--immutable"];
-  }
+  const installer = createBabysitterInstaller(baseAgent.install ?? presetOptions.install ?? true);
 
   /**
    * Installs dependencies on the host before the provider starts, so the model spends no turns on
-   * setup. The install gets a scrubbed environment without host credentials, and its result goes
-   * to `.git/vitehub-install.json` in the provider workspace. A failed install does not stop the pass.
+   * setup. The result goes to `.git/vitehub-install.json` in the provider workspace. A failed
+   * install does not stop the pass.
    */
   async function installDependencies(cwd: string, signal: AbortSignal, owner: Record<string, unknown>, nodeOptions: string | undefined) {
-    if (install === false) return;
-    const command = await installCommand(cwd);
-    if (!command?.[0]) return;
-    const startedAt = Date.now();
-    const environment = Object.fromEntries([
-      ...Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && installEnvironmentNames.test(entry[0])),
-      ...nodeOptions ? [["NODE_OPTIONS", nodeOptions]] : [],
-      ["CI", "1"],
-    ]);
-    let outcome: { ok: boolean; exitCode?: unknown; output: string };
-    try {
-      const result = await execFileAsync(command[0], command.slice(1), { cwd, env: environment, signal, timeout: 15 * 60_000, maxBuffer: 64 * 1024 * 1024 });
-      outcome = { ok: true, output: String(result.stdout).slice(-2000) };
-    } catch (error) {
-      if (isAbortError(error) || signal.aborted) throw error;
-      const failure = isRuntimeRecord(error) ? error : {};
-      outcome = { ok: false, exitCode: failure.code, output: `${String(failure.stdout ?? "").slice(-2000)}\n${String(failure.stderr ?? error).slice(-4000)}` };
-    }
-    const record = { command: command.join(" "), ...outcome, durationMs: Date.now() - startedAt };
+    const record = await installer(cwd, signal, nodeOptions);
+    if (!record) return;
     try {
       // A linked worktree has a .git file, so ask Git for the directory.
       const gitDirectory = (await execFileAsync("git", ["rev-parse", "--absolute-git-dir"], { cwd, encoding: "utf8", timeout: 5000, signal })).stdout.trim();
@@ -444,7 +411,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
     }
-    schedulerEvent("babysitter.install.finished", { ...owner, command: record.command, ok: record.ok, exitCode: record.exitCode, durationMs: record.durationMs });
+    const { output: _output, ...timing } = record;
+    schedulerEvent("babysitter.install.finished", { ...owner, ...timing });
   }
 
   /** A ready event may wake a direct merge, but must not start a model pass when

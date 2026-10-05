@@ -804,8 +804,14 @@ stops a head after that many passes without a push or a recorded wait, until the
 head changes or a person comments. `install` (default `true`) installs
 dependencies on the host before the model starts: it detects pnpm, npm, Yarn or
 Bun from the lockfile and installs frozen, or runs `{ command, args }`. The
-install gets a scrubbed environment and records its result in
-`.git/vitehub-install.json`. Stack parents are claimed first, and a restart
+install gets a scrubbed environment and records its result and timing in
+`.git/vitehub-install.json`. On Linux, a detected pnpm install reuses the
+hardlinked `node_modules` trees of an earlier pass with the same install inputs,
+verifies them offline, and runs one install per lockfile at a time.
+`install: { cache: { directory, entries } }` configures the cache, and
+`cache: false` disables it. At startup, the built-in host removes pass
+workspaces from an earlier process when its temporary directory is inside the
+service directory. Stack parents are claimed first, and a restart
 releases the claims of the previous process. A stacked PR whose parent merged into the default
 branch is retargeted to the default branch. A provider rate limit is retried
 three times; after that, the host admits no PR work for an hour. While the

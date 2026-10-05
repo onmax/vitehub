@@ -54,7 +54,8 @@ export interface BabysitterOptions {
   deferWhilePending: boolean;
   /**
    * Install dependencies on the host before the provider starts. `true` detects pnpm, npm, Yarn or
-   * Bun from the lockfile and installs it frozen. A command overrides the detection. Defaults to `true`.
+   * Bun from the lockfile and installs it frozen. A command overrides the detection. A detected pnpm
+   * install reuses the trees of earlier passes. Defaults to `true`.
    */
   install: BabysitterInstall;
   /** PRs repaired at the same time. Defaults to 1. */
@@ -63,8 +64,22 @@ export interface BabysitterOptions {
   autoMerge: boolean;
 }
 
-/** `true` detects the package manager from the lockfile; `false` skips the install. */
-export type BabysitterInstall = boolean | { command: string; args?: string[] };
+/**
+ * Dependency install before each pass. `true` detects the package manager from the lockfile;
+ * `false` skips the install.
+ */
+export type BabysitterInstall = boolean | {
+  /** Install command. Defaults to the package manager detected from the lockfile. */
+  command?: string;
+  args?: string[];
+  /**
+   * Reuse the node_modules trees of a detected pnpm install across passes with the same lockfile,
+   * by hardlinking them on Linux. `directory` defaults to `BABYSITTER_INSTALL_CACHE` or
+   * `<tmpdir>/vitehub-install-cache` and must share a filesystem with the pass workspaces.
+   * `entries` defaults to `BABYSITTER_INSTALL_CACHE_ENTRIES` or 8. `false` disables the cache.
+   */
+  cache?: false | { directory?: string; entries?: number };
+};
 
 export type BabysitterPassWake =
   | { kind: "checks"; repository: string; headSha: string }
@@ -134,6 +149,18 @@ export const babysitterPassResultSchema = {
     },
   },
 };
+
+function validInstall(install: unknown): boolean {
+  if (hasRuntimeType(install, "boolean")) return true;
+  if (!isRuntimeRecord(install)) return false;
+  const { command, args, cache } = install;
+  if (command !== undefined && !(hasRuntimeType(command, "string") && command.trim())) return false;
+  if (args !== undefined && (command === undefined || !Array.isArray(args) || !args.every(arg => hasRuntimeType(arg, "string")))) return false;
+  if (cache === undefined || cache === false) return true;
+  if (!isRuntimeRecord(cache)) return false;
+  return (cache.directory === undefined || (hasRuntimeType(cache.directory, "string") && cache.directory.trim() !== ""))
+    && (cache.entries === undefined || (Number.isSafeInteger(cache.entries) && Number(cache.entries) >= 1));
+}
 
 const babysitterHost: AgentProcessHostContribution = {
   async create(context) {
@@ -235,9 +262,8 @@ export const babysitter: BabysitterAgent = defineAgent({
     if (!hasRuntimeType(deferWhilePending, "boolean")) {
       throw new TypeError("[vitehub] Babysitter deferWhilePending must be a boolean.");
     }
-    if (!hasRuntimeType(install, "boolean") && !(isRuntimeRecord(install) && hasRuntimeType(install.command, "string") && install.command.trim()
-      && (install.args === undefined || (Array.isArray(install.args) && install.args.every(arg => hasRuntimeType(arg, "string")))))) {
-      throw new TypeError("[vitehub] Babysitter install must be a boolean or { command, args }.");
+    if (!validInstall(install)) {
+      throw new TypeError("[vitehub] Babysitter install must be a boolean or { command, args, cache }.");
     }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);

@@ -453,7 +453,12 @@ describe("Babysitter preset runtime", () => {
       expect(() => defineAgent({ extends: babysitter, options: { noProgressBudget } })).toThrow(/noProgressBudget must be a positive integer or false/);
     }
     expect(() => defineAgent({ extends: babysitter, options: { deferWhilePending: "yes" as unknown as boolean } })).toThrow(/deferWhilePending must be a boolean/);
-    expect(() => defineAgent({ extends: babysitter, options: { install: { command: "" } } })).toThrow(/install must be a boolean or \{ command, args \}/);
+    expect(() => defineAgent({ extends: babysitter, options: { install: { command: "" } } })).toThrow(/install must be a boolean or \{ command, args, cache \}/);
+    expect(() => defineAgent({ extends: babysitter, options: { install: { args: ["install"] } } })).toThrow(/install must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { install: { cache: { entries: 0 } } } })).toThrow(/install must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { install: { cache: { directory: "" } } } })).toThrow(/install must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { install: { cache: { directory: "/var/cache/vitehub", entries: 4 } } } })).not.toThrow();
+    expect(() => defineAgent({ extends: babysitter, options: { install: { cache: false } } })).not.toThrow();
     expect(() => defineAgent({ extends: babysitter, options: { install: { command: "pnpm", args: ["install", 1 as unknown as string] } } })).toThrow(/install must be/);
     expect(() => defineAgent({ extends: babysitter, options: { ignoreFeedbackAuthors: ["vercel[bot]"], noProgressBudget: false, deferWhilePending: false, install: { command: "pnpm", args: ["install"] } } })).not.toThrow();
   });
