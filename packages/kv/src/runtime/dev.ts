@@ -2,7 +2,6 @@
 
 import * as v from "valibot"
 
-import { kv as kvConfig } from "#vitehub/kv/config"
 import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 // The package import keeps the Nitro module graph on the storage that `hubKv()` selects, for example the generated
@@ -15,6 +14,27 @@ import { isKVDevOperation, kvDevDefaultListLimit, kvDevHeader, kvDevHeaderValue,
 
 import type { KVDevRequestBody } from "../dev.ts"
 import type { KVDriver, KVResult, KVStorage, ResolvedKVModuleOptions } from "../types.ts"
+
+function isMissingKVConfig(error: unknown): boolean {
+  const code = error instanceof Error && "code" in error ? error.code : undefined
+  const message = error instanceof Error ? error.message : ""
+  if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") {
+    return /^Cannot find (?:package|module) ["']#vitehub\/kv\/config["']/.test(message)
+  }
+  if (code === "ERR_PACKAGE_IMPORT_NOT_DEFINED") {
+    return /^Package import specifier ["']#vitehub\/kv\/config["'] is not defined/.test(message)
+  }
+  return false
+}
+
+let kvConfig: false | ResolvedKVModuleOptions = false
+try {
+  const config = await import("#vitehub/kv/config")
+  kvConfig = config.kv
+}
+catch (error) {
+  if (!isMissingKVConfig(error)) throw error
+}
 
 /** Store names and drivers that the KV configuration of this runtime defines. `default` is first. */
 export interface KVDevStore {
