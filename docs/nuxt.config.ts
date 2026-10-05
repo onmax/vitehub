@@ -245,7 +245,7 @@ export default defineNuxtConfig({
     payloadExtraction: false,
     defaults: {
       nuxtLink: {
-        trailingSlash: "append",
+        trailingSlash: "remove",
       },
     },
   },
