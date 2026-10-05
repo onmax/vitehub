@@ -33,6 +33,9 @@ watch(currentVariant, (variant) => {
         </button>
       </div>
     </div>
+    <p v-if="currentVariant?.illustrative" class="border-b border-default px-4 py-3 text-xs text-muted">
+      Illustrative pseudocode. This layout is not an executable starter. Follow the guide for setup and API examples.
+    </p>
     <div v-if="currentVariant" class="grid min-h-80 md:grid-cols-[12rem_minmax(0,1fr)]">
       <nav class="border-b border-default p-2 md:border-b-0 md:border-r" aria-label="Project files">
         <button

@@ -9,6 +9,7 @@ export interface PrimitiveProjectFile {
 export interface PrimitiveProjectVariant {
   framework: PrimitiveFramework;
   label: string;
+  illustrative?: boolean;
   files: PrimitiveProjectFile[];
 }
 

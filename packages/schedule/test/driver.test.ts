@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm"
+
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { schedules } from "../src/runtime/client.ts"
@@ -157,6 +159,49 @@ describe("Runtime Schedule Wake Driver", () => {
 
     expect(reconciled).toHaveLength(1)
     expect(reconciled[0]).toMatchObject({ cron: "0 9 * * *", target: "daily-report" })
+  })
+
+  it("reconciles and executes static definitions with cross-realm handlers", async () => {
+    const calls: string[] = []
+    const handler = runInNewContext('() => calls.push("cross-realm")', { calls }) as () => void
+    let context: RuntimeScheduleWakeDriverContext | undefined
+    let reconciled: RuntimeScheduleRecord[] = []
+    await installScheduleRuntime({
+      createDriver(driverContext) {
+        context = driverContext
+        return { async reconcile(records) { reconciled = [...records] } }
+      },
+      registry: {},
+      runtimeScheduleStore: createMemoryRuntimeScheduleStore(),
+      scheduleRunStore: createMemoryScheduleRunStore(),
+      staticRegistry: { report: async () => ({ cron: "0 9 * * *", handler }) },
+    })
+
+    expect(reconciled).toHaveLength(1)
+    await context!.wake({ scheduleId: reconciled[0]!.id, scheduledAt: new Date("2026-07-11T09:00:00.000Z") })
+    expect(calls).toEqual(["cross-realm"])
+  })
+
+  it("rejects Static Schedule definitions with an inherited cron property", async () => {
+    const inherited = { cron: "0 9 * * *" }
+    const definition = Object.assign(Object.create(inherited), { handler: vi.fn() })
+    let reconciled: RuntimeScheduleRecord[] = []
+
+    await installScheduleRuntime({
+      createDriver: () => ({
+        async reconcile(records) {
+          reconciled = [...records]
+        },
+      }),
+      registry: {},
+      runtimeScheduleStore: createMemoryRuntimeScheduleStore(),
+      scheduleRunStore: createMemoryScheduleRunStore(),
+      staticRegistry: {
+        "inherited-cron": async () => definition,
+      },
+    })
+
+    expect(reconciled).toEqual([])
   })
 
   it("keeps Static Schedule driver identities distinct from persisted ids", async () => {

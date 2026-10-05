@@ -72,7 +72,7 @@ export async function searchDocs() {
 - `@vite-hub/shell/providers/cloudflare` adapts a Cloudflare execution client and reports the boundary that client can prove.
 - A custom `ShellExecutionProvider` declares its boundary and implements execution for another host.
 
-Shell policy can bound calls, processes, output size, and timeouts. A declared boundary describes the provider contract; it is not proof of operating-system isolation. Use [Sandbox](https://vitehub.dev/docs/server-primitives/sandbox) when work needs provider-managed isolation.
+Shell policy can bound calls, processes, output size, and timeouts. A declared boundary describes the provider contract; it is not proof of operating-system isolation. Use [Sandbox](https://vitehub.dev/docs/sandbox) when work needs provider-managed isolation.
 
 The Just Bash `commands` list also applies to controlled `curl` requests. A Source network grant permits access to its declared target, but `curl` must still be included when you configure a command list.
 
@@ -84,4 +84,4 @@ The provider copies the command list at creation. Later changes to the supplied 
 
 Built on [just-bash](https://www.npmjs.com/package/just-bash) for the built-in shell provider and [sh-syntax](https://www.npmjs.com/package/sh-syntax) for command analysis.
 
-Read the complete [Shell guide](https://vitehub.dev/docs/server-primitives/shell), the [Workspace shell Capability](https://vitehub.dev/docs/capabilities/workspace-shell), and the [official Capabilities guide](https://vitehub.dev/docs/capabilities/official-capabilities).
+Read the complete [Shell guide](https://vitehub.dev/docs/shell), the [Workspace shell Capability](https://vitehub.dev/docs/workspace/agent-capability), and the [official Capabilities guide](https://vitehub.dev/docs/agents/capabilities/official).

@@ -62,6 +62,8 @@ Use `src/database.ts` or `server/databases/config.ts` for one default database. 
 
 Application code calls `useDatabase()` with the discovered name. Use `default` for a Default Database.
 
+When the Nitro Vite plugin builds with a Cloudflare preset, the Vite integration merges each resolved D1 binding into `nitro.cloudflare.wrangler.d1_databases` and copies the Definition's migration SQL to `.output/server/.vitehub/database/migrations/<binding>`. A Definition's binding replaces a Nitro binding with the same name.
+
 ## Remote D1 development
 
 Set `cloudflare.http` on a Database Definition to query remote D1 during local development. `true` uses Cloudflare's API with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; an object selects an authenticated D1-compatible proxy.
