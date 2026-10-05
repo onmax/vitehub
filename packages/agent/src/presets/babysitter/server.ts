@@ -768,7 +768,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 capabilities: workerCapabilities as never,
                 driver: {
                   ...workerDriver,
-                  permissions: "allow-edits",
+                  // Match the preset: unattended passes cannot escalate native
+                  // permissions. Repair tools remain authorized by the host.
+                  permissions: "allow-edits-unattended",
                   env: async (context) => {
                     const environment =
                       workerDriver.env === undefined
