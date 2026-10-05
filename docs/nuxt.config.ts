@@ -12,6 +12,10 @@ export default defineNuxtConfig({
   schemaOrg: {
     defaults: false,
   },
+  agentDiscovery: {
+    // Pages with a Markdown twin. On Cloudflare these also run the Worker before static assets.
+    routes: ["/", "/docs", "/docs/**", "/blog/**", "/about", "/contact", "/privacy"],
+  },
   llms: {
     contentRawMarkdown: false,
     domain: "https://vitehub.dev",
