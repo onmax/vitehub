@@ -376,7 +376,8 @@ function requiredCloudflareSecretNames(registry: EnvRuntimeRegistry): string[] {
     const entry = cloneRecord(value)
     const source = cloneRecord(entry.source)
     if (source.kind === "env" && typeof source.name === "string") {
-      const sources = Array.isArray(source.names) ? source.names : [source.name]
+      // Wrangler lists exact names, so use the conventional name. The canonical VITEHUB_ name also satisfies it at runtime.
+      const sources = (Array.isArray(source.names) ? source.names : [source.name]).filter(name => name !== source.canonical || name === source.name)
       if (
         entry.required === true
         && entry.secret === true

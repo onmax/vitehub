@@ -101,7 +101,7 @@ export async function resolveBuildConfig(
   input: {
     context: EnvSourceContext
     exposure: "compile-time replacement"
-    prefix?: string
+    prefix?: string | false
     section: "env.define"
     timing: string
   },
@@ -123,7 +123,7 @@ export async function resolveEnvEntries(
   input: {
     context: EnvSourceContext
     exposure: "build public" | "compile-time replacement" | "public runtime transport" | "server only"
-    prefix?: string
+    prefix?: string | false
     section: "env.define" | "env.public" | "env.server"
     timing: string
   },
@@ -186,8 +186,33 @@ export async function resolveEnvEntries(
   return { diagnostics, entries }
 }
 
-export function createRuntimeRegistry(declarations: EnvRuntimeConfigOptions | undefined, options: { path?: string, prefix?: string } = {}): EnvRuntimeRegistry {
-  return buildRegistry(declarations, options.path ?? "env", options.prefix)
+export function createRuntimeRegistry(declarations: EnvRuntimeConfigOptions | undefined, options: { path?: string, prefix?: string | false } = {}): EnvRuntimeRegistry {
+  const registry = buildRegistry(declarations, options.path ?? "env", options.prefix)
+  assertUniqueCanonicalNames(registry, options.path ?? "env")
+  return registry
+}
+
+// A key such as "nested.token" or "api-key" has no unambiguous upper snake case name.
+const canonicalKey = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+
+function assertUniqueCanonicalNames(registry: EnvRuntimeRegistry, path: string): void {
+  const owners = new Map<string, string>()
+  const visit = (value: unknown, valuePath: string): void => {
+    if (!isPlainRecord(value)) return
+    const source = value.source
+    if (isPlainRecord(source) && source.kind === "env") {
+      if (typeof source.canonical !== "string") return
+      const owner = owners.get(source.canonical)
+      if (owner !== undefined) {
+        throw invalidEnvDeclaration(valuePath, `${valuePath} and ${owner} share the canonical variable name ${source.canonical}. Rename one, or set hubEnv({ prefix: false }).`)
+      }
+      owners.set(source.canonical, valuePath)
+      return
+    }
+    if (value.kind === "literal" || isPlainRecord(source)) return
+    for (const [key, child] of Object.entries(value)) visit(child, `${valuePath}.${key}`)
+  }
+  visit(registry, path)
 }
 
 async function resolveBuildConfigValue(
@@ -196,7 +221,7 @@ async function resolveBuildConfigValue(
   input: {
     context: EnvSourceContext
     exposure: "compile-time replacement"
-    prefix?: string
+    prefix?: string | false
     timing: string
   },
 ): Promise<{ diagnostics: EnvDiagnosticEntry[], value: unknown }> {
@@ -268,7 +293,7 @@ function parseDeclarationDefault(declaration: EnvVariableDeclaration, path: stri
     : declaration.default
 }
 
-function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: string, prefix?: string): EnvRuntimeRegistry {
+function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: string, prefix?: string | false): EnvRuntimeRegistry {
   if (typeof declarations === "undefined") {
     return {}
   }
@@ -284,12 +309,12 @@ function buildRegistry(declarations: EnvRuntimeConfigOptions | undefined, path: 
       if (!isPlainRecord(value)) {
         throw invalidEnvDeclaration(valuePath, `Invalid runtime declaration at ${valuePath}. Use env(), a serializable static value, or a nested object.`)
       }
-      return [key, buildRegistry(value as EnvRuntimeConfigOptions, valuePath, prefix)]
+      return [key, buildRegistry(value as EnvRuntimeConfigOptions, valuePath, canonicalKey.test(key) ? prefix : false)]
     }
     if (value.mode !== "runtime") {
       throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} must use mode: "runtime".`)
     }
-    const source = resolveEnvSource(value, valuePath, prefix)
+    const source = resolveEnvSource(value, valuePath, canonicalKey.test(key) ? prefix : false)
     if (source.kind !== "env" && source.kind !== "provider") {
       throw invalidEnvDeclaration(valuePath, `Runtime declaration ${valuePath} must use env.source() or env.provider().`)
     }
@@ -326,8 +351,29 @@ function parseRuntimeDefault(schema: EnvValueSchema, value: unknown, path: strin
   return result.data
 }
 
-export function resolveEnvSource(declaration: EnvVariableDeclaration, path: string, prefix = ""): EnvSource {
-  return declaration.source ?? inferEnvSource(path, prefix)
+/** The default prefix of canonical variable names. */
+export const defaultEnvPrefix = "VITEHUB_"
+
+/**
+ * The canonical variable name of a declaration path: the prefix plus the path in upper snake case.
+ * `env.server.cliproxy.apiKey` becomes `VITEHUB_CLIPROXY_API_KEY`. `false` disables canonical names.
+ */
+export function canonicalEnvName(path: string, prefix: string | false = defaultEnvPrefix): string | undefined {
+  return prefix === false ? undefined : `${prefix}${pathToEnvName(path)}`
+}
+
+/**
+ * Resolve the source of a declaration. An env source reads the canonical name first, then its
+ * conventional names: the explicit `env.source()` names, or the unprefixed path name.
+ */
+export function resolveEnvSource(declaration: EnvVariableDeclaration, path: string, prefix: string | false = defaultEnvPrefix): EnvSource {
+  const source = declaration.source ?? inferEnvSource(path)
+  const canonical = canonicalEnvName(path, prefix)
+  if (source.kind !== "env" || canonical === undefined) return source
+  const names = [...new Set([canonical, ...(source.names ?? [source.name])])]
+  return names.length === 1
+    ? { ...source, canonical }
+    : { ...source, canonical, label: `env:${names.join("|")}`, names }
 }
 
 function inferTypeName(value: unknown): string {
@@ -416,8 +462,8 @@ function assertEnvVariableDeclaration(path: string, declaration: unknown): asser
   }
 }
 
-function inferEnvSource(path: string, prefix: string): EnvSource {
-  const name = `${prefix}${pathToEnvName(path)}`
+function inferEnvSource(path: string): EnvSource {
+  const name = pathToEnvName(path)
   return {
     kind: "env",
     label: `env:${name}`,

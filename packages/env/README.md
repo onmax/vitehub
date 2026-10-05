@@ -241,7 +241,7 @@ Read the complete [Env guide](https://vitehub.dev/docs/env), the [host support m
 
 ### Declaration inventory
 
-`describeServerEnv()` from `#vitehub/env/server` returns declaration metadata without reading host values or calling providers. It includes the declaration path, source kind, provider alias, secret and required flags, default presence, and the parsed value type. Values, defaults, host variable names and provider storage keys are omitted. Use `inspectServerEnv()` only when a status check that loads providers is intended. Its entries add the provider alias, required flag, and `available`, `defaulted`, `missing`, `invalid`, or `error` status, and never include values. `isBlockingServerEnvEntry(entry)` from `@vite-hub/env` returns `true` when the entry makes `loadServerEnv()` fail.
+`describeServerEnv()` from `#vitehub/env/server` returns declaration metadata without reading host values or calling providers. It includes the declaration path, the canonical variable name of env declarations, source kind, provider alias, secret and required flags, default presence, and the parsed value type. Values, defaults, conventional host variable names and provider storage keys are omitted. Use `inspectServerEnv()` only when a status check that loads providers is intended. Its entries add the provider alias, required flag, and `available`, `defaulted`, `missing`, `invalid`, or `error` status, and never include values. Env entries also report `via: "canonical" | "conventional"` and `conflict: true` when the canonical and a conventional name hold different values. `isBlockingServerEnvEntry(entry)` from `@vite-hub/env` returns `true` when the entry makes `loadServerEnv()` fail.
 
 `hubEnv()` contributes two CLI commands:
 

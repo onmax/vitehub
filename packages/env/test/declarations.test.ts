@@ -77,33 +77,45 @@ describe("env declarations", () => {
     })).toThrow("cannot use both optional and required")
   })
 
-  it("infers env sources from config paths and prefixes", () => {
+  it("reads the canonical name before the inferred path name", () => {
     expect(resolveEnvSource(env(), "env.telegram.botToken")).toMatchObject({
+      canonical: "VITEHUB_TELEGRAM_BOT_TOKEN",
       kind: "env",
-      label: "env:TELEGRAM_BOT_TOKEN",
+      label: "env:VITEHUB_TELEGRAM_BOT_TOKEN|TELEGRAM_BOT_TOKEN",
       name: "TELEGRAM_BOT_TOKEN",
+      names: ["VITEHUB_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"],
     })
-    expect(resolveEnvSource(env(), "env.define.__APP_VERSION__", "VITEHUB_")).toMatchObject({
-      kind: "env",
-      label: "env:VITEHUB_DEFINE_APP_VERSION",
-      name: "VITEHUB_DEFINE_APP_VERSION",
+    expect(resolveEnvSource(env(), "env.define.__APP_VERSION__", "APP_")).toMatchObject({
+      canonical: "APP_DEFINE_APP_VERSION",
+      name: "DEFINE_APP_VERSION",
+      names: ["APP_DEFINE_APP_VERSION", "DEFINE_APP_VERSION"],
     })
+    const disabled = resolveEnvSource(env(), "env.telegram.botToken", false)
+    expect(disabled).toMatchObject({ label: "env:TELEGRAM_BOT_TOKEN", name: "TELEGRAM_BOT_TOKEN" })
+    expect(disabled).not.toHaveProperty("canonical")
+    expect(disabled).not.toHaveProperty("names")
   })
 
-  it("keeps explicit env source overrides", () => {
+  it("reads the canonical name before explicit env sources", () => {
     expect(resolveEnvSource(env({ source: env.source("CUSTOM_NAME") }), "env.telegram.botToken")).toMatchObject({
+      canonical: "VITEHUB_TELEGRAM_BOT_TOKEN",
       kind: "env",
-      label: "env:CUSTOM_NAME",
       name: "CUSTOM_NAME",
+      names: ["VITEHUB_TELEGRAM_BOT_TOKEN", "CUSTOM_NAME"],
     })
+    expect(resolveEnvSource(env({ source: env.source("VITEHUB_TELEGRAM_BOT_TOKEN") }), "env.telegram.botToken")).toMatchObject({
+      canonical: "VITEHUB_TELEGRAM_BOT_TOKEN",
+      name: "VITEHUB_TELEGRAM_BOT_TOKEN",
+    })
+    expect(resolveEnvSource(env({ source: env.gitSha() }), "env.release")).not.toHaveProperty("canonical")
   })
 
   it("supports ordered env source aliases", () => {
     expect(resolveEnvSource(env({ source: env.source(["OPENWORKFLOW_POSTGRES_URL", "DATABASE_URL"]) }), "env.openWorkflow.postgresUrl")).toMatchObject({
       kind: "env",
-      label: "env:OPENWORKFLOW_POSTGRES_URL|DATABASE_URL",
+      label: "env:VITEHUB_OPEN_WORKFLOW_POSTGRES_URL|OPENWORKFLOW_POSTGRES_URL|DATABASE_URL",
       name: "OPENWORKFLOW_POSTGRES_URL",
-      names: ["OPENWORKFLOW_POSTGRES_URL", "DATABASE_URL"],
+      names: ["VITEHUB_OPEN_WORKFLOW_POSTGRES_URL", "OPENWORKFLOW_POSTGRES_URL", "DATABASE_URL"],
     })
     expect(() => env.source([])).toThrow("one or more non-empty")
   })
@@ -214,7 +226,7 @@ describe("env declarations", () => {
       telegram: {
         botToken: env({ secret: true }),
       },
-    }, { prefix: "VITEHUB_" })).toMatchObject({
+    })).toMatchObject({
       teams: {
         appType: {
           kind: "literal",
@@ -224,12 +236,24 @@ describe("env declarations", () => {
       telegram: {
         botToken: {
           source: {
-            label: "env:VITEHUB_TELEGRAM_BOT_TOKEN",
-            name: "VITEHUB_TELEGRAM_BOT_TOKEN",
+            canonical: "VITEHUB_TELEGRAM_BOT_TOKEN",
+            name: "TELEGRAM_BOT_TOKEN",
+            names: ["VITEHUB_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"],
           },
         },
       },
     })
+  })
+
+  it("rejects declarations that share a canonical name and skips keys without one", () => {
+    expect(() => createRuntimeRegistry({
+      apiKey: env(),
+      api_key: env(),
+    })).toThrow("[vitehub] Env declaration is invalid.")
+    const registry = createRuntimeRegistry({ "nested.token": env(), nested: { token: env() } })
+    expect(registry).toMatchObject({ nested: { token: { source: { canonical: "VITEHUB_NESTED_TOKEN" } } } })
+    expect((registry as Record<string, { source: Record<string, unknown> }>)["nested.token"]!.source).not.toHaveProperty("canonical")
+    expect(createRuntimeRegistry({ apiKey: env(), api_key: env() }, { prefix: false })).toMatchObject({ apiKey: { source: { name: "API_KEY" } } })
   })
 
   it("accepts default string schemas after config cloning", () => {

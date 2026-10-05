@@ -13,10 +13,10 @@ describe("Server Env declaration inventory", () => {
     })
     const description = describeServerEnv(registry)
     expect(description.entries).toEqual([
-      { path: "env.server.host", source: "env", secret: true, required: true, hasDefault: true, type: "string" },
+      { path: "env.server.host", canonicalName: "VITEHUB_HOST", source: "env", secret: true, required: true, hasDefault: true, type: "string" },
       { path: "env.server.nested.token", source: "provider", provider: "vault", secret: true, required: true, hasDefault: false, type: "string" },
       { path: "env.server.label", source: "literal", secret: false, required: false, hasDefault: false },
-      { path: "env.server.optional", source: "env", secret: false, required: false, hasDefault: false, type: "string" },
+      { path: "env.server.optional", canonicalName: "VITEHUB_OPTIONAL", source: "env", secret: false, required: false, hasDefault: false, type: "string" },
     ])
     const serialized = JSON.stringify(description)
     for (const value of ["PRIVATE_HOST_NAME", "private-default", "private/storage/path", "private-literal"]) expect(serialized).not.toContain(value)
@@ -41,6 +41,24 @@ describe("Server Env declaration inventory", () => {
       { masked: false, path: "env.server.nested.token", required: true, source: "env", status: "missing" },
       { masked: false, required: true, source: "env", status: "available" },
     ])
+  })
+
+  it("reports which kind of name supplied a value and flags conflicting names", async () => {
+    const { inspectServerEnv } = await import("../src/server.ts")
+    const registry = createRuntimeRegistry({
+      apiKey: env({ secret: true, source: env.source("VENDOR_API_KEY") }),
+      region: env(),
+      url: env(),
+    })
+    const inspection = await inspectServerEnv(registry, {
+      env: { VITEHUB_API_KEY: "canonical-secret", VENDOR_API_KEY: "vendor-secret", VITEHUB_REGION: "eu", REGION: "eu", URL: "https://example.test" },
+    })
+    expect(inspection.entries).toEqual([
+      { masked: true, path: "env.server.apiKey", required: true, source: "env", status: "available", via: "canonical", conflict: true },
+      { masked: false, path: "env.server.region", required: true, source: "env", status: "available", via: "canonical" },
+      { masked: false, path: "env.server.url", required: true, source: "env", status: "available", via: "conventional" },
+    ])
+    expect(JSON.stringify(inspection)).not.toContain("secret")
   })
 })
 

@@ -538,7 +538,7 @@ describe("built-in deployment preset integration", () => {
     }
   }, 300_000)
 
-  it("emits prefixed secrets from a standalone Env plugin through Nitro", async () => {
+  it("emits conventional secret names from a standalone Env plugin with a custom prefix through Nitro", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-prefixed-standalone-secrets-build-"))
     try {
       await mkdir(join(root, "server", "routes"), { recursive: true })
@@ -555,7 +555,8 @@ describe("built-in deployment preset integration", () => {
       await builder.buildApp()
 
       const wrangler: unknown = JSON.parse(await readFile(join(root, ".output", "server", "wrangler.json"), "utf8"))
-      expect(wrangler).toMatchObject({ secrets: { required: ["APP_TOKEN"] } })
+      // APP_TOKEN is the canonical name and also satisfies the secret at runtime. Wrangler lists the conventional name.
+      expect(wrangler).toMatchObject({ secrets: { required: ["TOKEN"] } })
     }
     finally {
       await rm(root, { force: true, recursive: true })
