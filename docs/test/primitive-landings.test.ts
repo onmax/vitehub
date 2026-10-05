@@ -29,6 +29,36 @@ describe("primitive landing placeholders", () => {
     }
   });
 
+  it("keeps every Auth variant executable and host-enabled", () => {
+    const auth = primitiveLandings.auth;
+    expect(auth.variants.map((variant) => variant.framework)).toEqual(["vite", "nitro", "nuxt"]);
+
+    for (const variant of auth.variants) {
+      expect(variant.illustrative).not.toBe(true);
+      const definition = variant.files.find((file) => file.path === "server/auth.ts");
+      expect(definition?.content).toContain('import { defineAuth } from "vite-hub/auth"');
+      expect(definition?.content).toContain("export default defineAuth(");
+
+      const config = variant.files.find((file) =>
+        variant.framework === "nuxt" ? file.path === "nuxt.config.ts" : file.path === "vite.config.ts",
+      );
+      expect(config).toBeDefined();
+      if (variant.framework === "nuxt") {
+        expect(config?.content).toContain('import viteHubNuxt from "vite-hub/nuxt"');
+        expect(config?.content).toMatch(/modules:\s*\[\[viteHubNuxt,\s*\{[^}]*auth:\s*true/);
+      } else {
+        expect(config?.content).toContain('import { vitehub } from "vite-hub"');
+        expect(config?.content).toMatch(/plugins:\s*\[\s*vitehub\(\{[^}]*auth:\s*true/);
+        if (variant.framework === "nitro") {
+          expect(config?.content).toContain('import { nitro } from "nitro/vite"');
+          expect(config?.content).toContain("nitro()");
+        }
+      }
+      const source = variant.files.map((file) => file.content).join("\n");
+      expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|Illustrative pseudocode/);
+    }
+  });
+
   it("displays the placeholder notice above the selected files", async () => {
     const source = await readFile(
       new URL("../app/components/PrimitiveProjectGroup.vue", import.meta.url),
