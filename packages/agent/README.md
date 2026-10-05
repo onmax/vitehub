@@ -158,7 +158,7 @@ Journaled Invocations require a successful cancellation-state read before execut
 
 Hosts can persist external delivery evidence with `await invocations.appendObservation(invocationId, event, { id: deliveryId })`. The stable observation ID makes retries idempotent. The store assigns the sequence atomically, including for completed, failed, or cancelled Invocations, without changing lifecycle state or taking the running Agent's claim. The configured content policy still applies. Appends return the persisted record, return `undefined` when the Invocation does not exist, and throw if storage fails or the observation capacity prevents an append. Retain the same ID when retrying an ambiguous storage failure. Use one store instance per SQLite connection so its write queue serializes concurrent append calls.
 
-`permissions` accepts `"ask"`, `"allow-edits"`, or `"allow-all"` and defaults to `"ask"`. Set `"allow-all"` explicitly when provider actions should run without approval. Approval decisions use the existing Agent message approval part, and structured provider questions accept a `data-agent-input` part with `{ requestId, answers }` through invocation input mode `"respond"`. Provider-backed invocations accept live input through invocation input mode `"steer"` when the provider adds the input to its active turn. Put Agent-owned Skills under `server/agents/<name>/skills/`; use `skills()` for Workspace-backed or external Source Skills.
+`permissions` accepts `"ask"`, `"allow-edits"`, `"allow-edits-unattended"`, or `"allow-all"` and defaults to `"ask"`. `"allow-edits-unattended"` keeps the provider edit mode and denies native permission escalation without prompting. Host-bound MCP tools keep their separate authorization. Set `"allow-all"` explicitly when provider actions should run without approval. Approval decisions use the existing Agent message approval part, and structured provider questions accept a `data-agent-input` part with `{ requestId, answers }` through invocation input mode `"respond"`. Provider-backed invocations accept live input through invocation input mode `"steer"` when the provider adds the input to its active turn. Put Agent-owned Skills under `server/agents/<name>/skills/`; use `skills()` for Workspace-backed or external Source Skills.
 
 ## Driver capacity
 
@@ -824,7 +824,9 @@ On Linux, the built-in host keeps GitHub checkouts under `checkouts` in its proc
 Each pull request reuses its own checkout, including ignored dependencies and build output.
 Other Node hosts use fresh temporary checkouts for each pass.
 
-Each pass uses a disposable provider workspace with edit permission. GitHub tokens
+Each pass uses a disposable provider workspace with unattended edit permission.
+Native permission escalation is denied without prompting; the provider does not run
+in full-access mode. GitHub tokens
 stay on the host. Tools provide PR-bound log reads, repair pushes, comments,
 metadata updates and thread resolution. Unless `merge` is `"auto"`, the worker
 has no merge tool and the host rejects auto-merge operations. With `"auto"`, it
