@@ -14053,7 +14053,9 @@ describe("server helpers", () => {
         telegram: testTelegram(telegram, {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
-          messages: { loading: { text: "Loading…" }, state },
+          // The durable handoff refreshes typing until this timeout, 28 seconds
+          // by default. The test awaits that waitUntil task.
+          messages: { loading: { text: "Loading…" }, state, timeout: 1_000 },
         }),
       },
       driver: { run: () => "Durable answer" },
