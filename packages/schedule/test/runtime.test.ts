@@ -1,3 +1,5 @@
+import { runInNewContext } from "node:vm"
+
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { deserializeResponse, serializeResponse, ViteHubError } from "@vite-hub/runtime"
@@ -905,6 +907,43 @@ describe("Manual Schedule runs", () => {
     })
 
     await expect(runSchedule("sync")).resolves.toMatchObject({ status: "succeeded" })
+  })
+
+  it("runs cross-realm handlers from installed and supplied registries", async () => {
+    const calls: string[] = []
+    const handler = runInNewContext('() => calls.push("cross-realm")', { calls }) as () => void
+    const definition = { cron: "0 9 * * *", handler, options: { manual: true } }
+    const registry = { report: async () => ({ default: definition }) }
+    expect(handler).not.toBeInstanceOf(Function)
+    setScheduleRuntimeRegistry(registry)
+
+    await runSchedule("report")
+    await runSchedule("report", { registry })
+    expect(calls).toEqual(["cross-realm", "cross-realm"])
+  })
+
+  it("rejects inherited definitions from the installed runtime registry", async () => {
+    const inherited = {
+      default: defineSchedule("0 9 * * *", () => {}, { manual: true }),
+    }
+    setScheduleRuntimeRegistry({
+      inherited: async () => Object.create(inherited),
+    })
+
+    await expect(runSchedule("inherited")).rejects.toMatchObject({ code: "SCHEDULE_DEFINITION_NOT_FOUND" })
+    expect(await schedules.listRuns()).toEqual([])
+  })
+
+  it("rejects inherited manual schedule definitions", async () => {
+    const inherited = {
+      default: defineSchedule("0 9 * * *", () => {}, { manual: true }),
+    }
+    const registry = {
+      inherited: async () => Object.create(inherited),
+    }
+
+    await expect(runSchedule("inherited", { registry })).rejects.toMatchObject({ code: "SCHEDULE_DEFINITION_NOT_FOUND" })
+    expect(await schedules.listRuns()).toEqual([])
   })
 
   it("rejects definitions that do not allow manual runs", async () => {
