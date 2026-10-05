@@ -108,6 +108,29 @@ export function pullRequestCheckoutPlan(context: ContextStore): PullRequestCheck
   return plan
 }
 
+/**
+ * Repositories a GitHub pull request run acts on, even when it opts out of the
+ * managed checkout. Babysitter supplies flat repository fields for its prepared
+ * checkout. Credentials stay scoped so multi-installation GitHub Apps can resolve access.
+ */
+export function pullRequestRepositories(context: ContextStore): { headRepository?: string, repository: string } | undefined {
+  const raw = context?.get("pullRequest")
+  const pullRequest = isRecord(raw) && isRecord(raw.pullRequest) ? raw.pullRequest : isRecord(raw) ? raw : undefined
+  const provider = isRecord(raw) ? raw.provider : undefined
+  if (isRuntimeString(provider) && provider !== "github") return
+  const source = isRecord(pullRequest?.source) ? pullRequest.source : undefined
+  const head = isRecord(pullRequest?.head) ? pullRequest.head : undefined
+  const repositoryRecord = isRecord(raw) && isRecord(raw.repository) ? raw.repository : undefined
+  const repository = safeRepository(source?.repo)
+    || safeRepository(isRecord(raw) ? raw.repository : undefined)
+    || safeRepository(repositoryRecord?.fullName)
+    || safeRepository(context?.get("pullRequestRepository"))
+  if (!repository) return
+  const headRepository = safeRepository(head?.repo)
+    || safeRepository(context?.get("pullRequestSourceRepository"))
+  return headRepository && headRepository.toLowerCase() !== repository.toLowerCase() ? { headRepository, repository } : { repository }
+}
+
 /** Resolve base access and add environment-only credentials for a fork push remote. */
 export async function pullRequestCheckoutEnvironment(
   github: AgentGitHub | undefined,

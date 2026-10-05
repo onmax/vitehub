@@ -4,7 +4,7 @@ import { createHash, createSign } from "node:crypto"
 import { AgentHttpError } from "./http-error.ts"
 import { CHAT_FINISH_EXTENSION_CONTEXT_KEY } from "./chat-trigger.ts"
 import { defineCapability, trustGitHubPullRequestWorkspaceCapability } from "./capability-runtime.ts"
-import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { asUnknownBoundary, hasRuntimeType } from "./internal/runtime-type.ts"
 import { isAsyncIterable } from "./internal/stream-result.ts"
 import {
   deliveryArtifactAttachments,

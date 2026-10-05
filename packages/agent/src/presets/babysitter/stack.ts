@@ -1,5 +1,4 @@
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../../internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import type { GitHubPullRequestRecord } from "../../server/github-inbox.ts";
 
 const field = (value: unknown, ...path: string[]): unknown => {

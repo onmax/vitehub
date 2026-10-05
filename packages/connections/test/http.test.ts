@@ -65,6 +65,15 @@ describe("createConnectionsHandler", () => {
     expect((await handler(post({ action: "inspect", name: "team//mail" }))).status).toBe(400);
   });
 
+  it("rejects malformed encoded connection names with a client error", async () => {
+    const handler = createConnectionsHandler({ actor: () => "user:owner", runtime: () => createTestRuntime().runtime });
+
+    const response = await handler(new Request(`${origin}/_vitehub/connections/connect/%E0%A4%A`));
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("Connection name is invalid");
+  });
+
   it("runs JSON actions for same-origin requests", async () => {
     const test = createTestRuntime();
     const handler = createConnectionsHandler({

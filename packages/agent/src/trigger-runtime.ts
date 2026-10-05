@@ -4,8 +4,8 @@ import {
   normalizeCapabilities,
 } from "./capability-runtime.ts"
 import { AgentHttpError } from "./http-error.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
+import { isRuntimeFunction, isRuntimeString } from "./internal/runtime-value.ts"
 
 import type {
   AgentCallbackContext,
@@ -39,7 +39,7 @@ import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 
-function isTriggerInputSchema<TInput>(input: string | StandardSchemaV1<unknown, TInput> | undefined): input is StandardSchemaV1<unknown, TInput> {
+export function isTriggerInputSchema<TInput>(input: string | StandardSchemaV1<unknown, TInput> | undefined): input is StandardSchemaV1<unknown, TInput> {
   if (!isRuntimeRecord(input) && !hasRuntimeType(input, "function")) return false
   if (!Object.hasOwn(input, "~standard")) {
     let prototype = Object.getPrototypeOf(input)
@@ -317,6 +317,20 @@ async function resolveMaybe<T, TContext extends AgentCallbackContext>(
   return value as T
 }
 
+async function resolveWebhookSecret(
+  value: unknown,
+  context: AgentCallbackContext,
+): Promise<unknown> {
+  if (value === undefined) return undefined
+  if (isRuntimeFunction(value)) {
+    return await value(context)
+  }
+  if (isRecord(value) && Object.hasOwn(value, "resolve") && isRuntimeFunction(value.resolve)) {
+    return await value.resolve(context)
+  }
+  return value
+}
+
 async function sha256(value: string): Promise<Uint8Array> {
   const bytes = new TextEncoder().encode(value)
   return new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes))
@@ -394,7 +408,10 @@ async function verifyRequiredWebhookHeaders<TRuntimeConfig extends AgentRuntimeC
   context: AgentCallbackContext<TRuntimeConfig>,
 ): Promise<AgentWebhookVerificationResult> {
   for (const registration of registrations) {
-    const secretToken = await resolveMaybe(registration.secretToken, context)
+    const secretToken = await resolveWebhookSecret(registration.secretToken, context)
+    if (secretToken !== undefined && secretToken !== false && !isRuntimeString(secretToken)) {
+      throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" resolved secretToken to an invalid value.`)
+    }
     if (!registration.secretHeader) {
       if (secretToken === false) return { registration, verified: true }
       if (secretToken) {
@@ -445,7 +462,10 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
   }
 
   for (const { headerValue, registration } of targeted) {
-    const secretToken = await resolveMaybe(registration.secretToken, verificationContext)
+    const secretToken = await resolveWebhookSecret(registration.secretToken, verificationContext)
+    if (secretToken !== undefined && secretToken !== false && !isRuntimeString(secretToken)) {
+      throw webhookVerificationError(`[vitehub] Webhook registration "${registration.id || registration.provider}" resolved secretToken to an invalid value.`)
+    }
     if (secretToken === false) {
       return { registration, verified: true }
     }
