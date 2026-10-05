@@ -8,7 +8,7 @@
   },
   "scripts": {
     "clean": "rm -rf .nuxt .output node_modules/.cache .generated",
-    "postinstall": "vp run -t @vite-hub/agent#build && vp run -t @vite-hub/ui#build && nuxi prepare",
+    "postinstall": "vp run --cache --filter @vite-hub/agent... --filter @vite-hub/ui... build && nuxi prepare",
     "pretest": "nuxi prepare",
     "dev": "nuxi dev",
     "build": "node scripts/build.mjs",
