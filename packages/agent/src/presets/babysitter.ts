@@ -68,7 +68,7 @@ const validSha = (value: unknown): value is string => hasRuntimeType(value, "str
 function parseWake(value: unknown): BabysitterPassWake | undefined {
   if (!isRuntimeRecord(value) || !hasRuntimeType(value.kind, "string") || !hasRuntimeType(value.repository, "string")) return undefined;
   if (value.kind === "checks" && validSha(value.headSha)) return { kind: "checks", repository: value.repository, headSha: value.headSha };
-  if (value.kind === "pull-request" && Number.isSafeInteger(value.number) && value.number > 0) return { kind: "pull-request", repository: value.repository, number: value.number };
+  if (value.kind === "pull-request" && hasRuntimeType(value.number, "number") && Number.isSafeInteger(value.number) && value.number > 0) return { kind: "pull-request", repository: value.repository, number: value.number };
   return undefined;
 }
 
