@@ -378,28 +378,30 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
     })
   }
   const backfillSearch = async () => {
-    let backfillSequence = 0
     while (true) {
-      const missingSearch = await client.execute({
-        args: [searchVersion, backfillSequence, backfillPageSize],
-        sql: `SELECT sequence, record FROM ${table}
-          WHERE (search IS NULL OR search_version < ?) AND sequence > ? ORDER BY sequence LIMIT ?`,
-      })
-      if (!missingSearch.rows.length) break
-      const appended = await client.execute({
-        args: [JSON.stringify(missingSearch.rows.map(row => numberValue(row.sequence)))],
-        sql: `SELECT invocation_sequence, position, observation FROM ${observationTable}
-          WHERE invocation_sequence IN (SELECT value FROM json_each(?)) ORDER BY position`,
-      })
-      const appendedRows = new Map<number, Row[]>()
-      for (const row of appended.rows) {
-        const sequence = numberValue(row.invocation_sequence)
-        const group = appendedRows.get(sequence)
-        if (group) group.push(row)
-        else appendedRows.set(sequence, [row])
-      }
-      const searchUpdates = missingSearch.rows.flatMap((row) => {
-        backfillSequence = Math.max(backfillSequence, numberValue(row.sequence))
+      let backfillSequence = 0
+      let projected = false
+      while (true) {
+        const missingSearch = await client.execute({
+          args: [searchVersion, backfillSequence, backfillPageSize],
+          sql: `SELECT sequence, record FROM ${table}
+            WHERE (search IS NULL OR search_version < ?) AND sequence > ? ORDER BY sequence LIMIT ?`,
+        })
+        if (!missingSearch.rows.length) break
+        const appended = await client.execute({
+          args: [JSON.stringify(missingSearch.rows.map(row => numberValue(row.sequence)))],
+          sql: `SELECT invocation_sequence, position, observation FROM ${observationTable}
+            WHERE invocation_sequence IN (SELECT value FROM json_each(?)) ORDER BY position`,
+        })
+        const appendedRows = new Map<number, Row[]>()
+        for (const row of appended.rows) {
+          const sequence = numberValue(row.invocation_sequence)
+          const group = appendedRows.get(sequence)
+          if (group) group.push(row)
+          else appendedRows.set(sequence, [row])
+        }
+        const searchUpdates = missingSearch.rows.flatMap((row) => {
+          backfillSequence = Math.max(backfillSequence, numberValue(row.sequence))
           const rows = appendedRows.get(numberValue(row.sequence)) ?? []
           const stored = deserialize(row.record, row.sequence)
           const record = stored && withObservationRows(stored, rows)
@@ -417,12 +419,20 @@ export function createLibsqlAgentInvocationStore(options: LibsqlAgentInvocationS
                   `${rows.length}:${rows.length ? numberValue(rows.at(-1)!.position) : 0}`,
                 ],
                 sql: `UPDATE ${table} SET search = ?, search_version = ?
-                  WHERE sequence = ? AND search_version < ? AND record = ?
+                  WHERE sequence = ? AND (search IS NULL OR search_version < ?) AND record = ?
                     AND (SELECT count(*) || ':' || COALESCE(max(position), 0) FROM ${observationTable} WHERE invocation_sequence = ?) = ?`,
               }]
             : []
-      })
-      if (searchUpdates.length) await client.batch(searchUpdates, "write")
+        })
+        if (searchUpdates.length) {
+          await client.batch(searchUpdates, "write")
+          projected = true
+        }
+      }
+      // Revisit earlier rows, including guarded updates that lost a race and rows
+      // invalidated by another writer after their page completed. Invalid records
+      // are skipped without keeping the backfill alive.
+      if (!projected) break
     }
   }
   const ensureSearchBackfill = () => {

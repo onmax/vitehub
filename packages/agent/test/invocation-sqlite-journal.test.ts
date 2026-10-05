@@ -97,6 +97,48 @@ describe("SQLite invocation journal", () => {
     await rm(directory, { force: true, recursive: true })
   })
 
+  it.each(["observation read", "later page"])("revisits stale search rows after a raced %s", async (race) => {
+    const writer = createLibsqlAgentInvocationStore({ client, maxAgeMs: false, maxRecords: false })
+    await writer.create(invocation("run"))
+    await writer.list({ search: "initial" })
+    await writer.update("run", { observation: step(1), timestamp: at(1) })
+    if (race === "later page") {
+      for (let index = 0; index < 100; index++) await writer.create(invocation(`other-${index}`))
+      await client.execute("UPDATE vitehub_agent_invocations SET search_version = 0")
+    }
+    let raced = false
+    let observationReads = 0
+    const readerClient = new Proxy(client, {
+      get(target, property) {
+        const value = Reflect.get(target, property)
+        if (property !== "execute") return hasRuntimeType(value, "function") ? value.bind(target) : value
+        return async (statement: InStatement) => {
+          const result = await target.execute(statement)
+          const sql = statementSql(statement)
+          if (sql.includes("SELECT invocation_sequence, position, observation")) observationReads++
+          const atRace = observationReads === (race === "observation read" ? 1 : 2)
+          if (!raced && atRace) {
+            raced = true
+            await writer.update("run", { observation: step(2, { "message.content": "raced-search-needle" }), timestamp: at(2) })
+          }
+          return result
+        }
+      },
+    })
+    const reader = createLibsqlAgentInvocationStore({ client: readerClient, maxAgeMs: false, maxRecords: false })
+    const result = await reader.list({ search: "raced-search-needle" })
+    expect(raced).toBe(true)
+    expect(result.invocations.map(record => record.id)).toEqual(["run"])
+  })
+
+  it("backfills null search text even when its version is current", async () => {
+    const store = createLibsqlAgentInvocationStore({ client, maxAgeMs: false, maxRecords: false })
+    await store.create(invocation("null-search"))
+    await store.list({ search: "null-search" })
+    await client.execute("UPDATE vitehub_agent_invocations SET search = NULL")
+    expect((await store.list({ search: "null-search" })).invocations.map(record => record.id)).toEqual(["null-search"])
+  })
+
   it("uses WAL with synchronous NORMAL for local database files", async () => {
     const recording = recordingClient(client)
     const store = createLibsqlAgentInvocationStore({ client: recording.client, maxAgeMs: false, maxRecords: false })
