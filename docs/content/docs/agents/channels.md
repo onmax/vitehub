@@ -293,6 +293,8 @@ Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent in
 
 Persisted inline webhook executions have a 15-minute default deadline. Set `messages.timeout` in milliseconds to change it, for example `30 * 60_000`. A timeout on the persisted Invocation input takes precedence. The deadline includes workspace preparation and cancels the Invocation when it expires.
 
+Queued GitHub reconciliation reloads the PR head, comments, and files before the Driver starts, so each Invocation uses the current PR state. Use the default `concurrencyLimit: 1` for tasks that write to the same PR branch.
+
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 
 When a declared GitHub Source uses the same repository and the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. Different repositories, overlapping parent or child mounts, and Sources contributed by other Capabilities still produce a conflict.

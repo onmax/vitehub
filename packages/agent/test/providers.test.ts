@@ -9181,6 +9181,69 @@ describe("server helpers", () => {
     }
   })
 
+  it("refreshes a queued GitHub PR head after the preceding invocation pushes", async () => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-github-queued-head-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    let head = "a".repeat(40)
+    let releaseFirst!: () => void
+    const first = new Promise<void>(resolve => { releaseFirst = resolve })
+    let calls = 0
+    const run = vi.fn(async (_args: { input: AgentRunInput }) => {
+      if (++calls === 1) await first
+      return "accepted"
+    })
+    const fetcher = vi.fn(async (input: string | URL | Request) => Response.json(
+      String(input).endsWith("/pulls/42")
+        ? { head: { ref: "fix", sha: head, repo: { full_name: "acme/app" } } }
+        : [],
+    ))
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          app: { fetch: fetcher, token: "test-token" },
+          pullRequest: { reconcile: { comments: true }, reply: false },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    // SAFETY: This fixture supplies the generated route contract exercised by the webhook queue.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const stop = handler.resume({ agentName: "review", webhookState: state })
+    const request = (id: number) => new Request("https://example.com/api/github/webhook", {
+      body: JSON.stringify({
+        action: "created",
+        comment: { body: "Please fix this PR", id, user: { login: "mona", type: "User" } },
+        issue: { number: 42, pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" } },
+        repository: { full_name: "acme/app" },
+      }),
+      headers: { "content-type": "application/json", "x-github-delivery": `delivery-${id}`, "x-github-event": "issue_comment" },
+      method: "POST",
+    })
+    try {
+      expect((await handler(request(1), "github", { agentName: "review", webhookState: state })).status).toBe(200)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      expect((await handler(request(2), "github", { agentName: "review", webhookState: state })).status).toBe(200)
+      expect(run).toHaveBeenCalledOnce()
+      head = "b".repeat(40)
+      releaseFirst()
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2))
+      expect(run.mock.calls[1]?.[0].input.context?.pullRequest).toMatchObject({
+        pullRequest: { head: { sha: head } },
+      })
+    } finally {
+      releaseFirst()
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it("rehydrates queued webhook invocations before running the agent", async () => {
     const { getActiveCloudflareEnv } = await import("@vite-hub/internal/runtime/cloudflare-env")
     const { defineAgent } = await import("../src/index.ts")

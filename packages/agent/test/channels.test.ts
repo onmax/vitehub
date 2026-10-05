@@ -1426,7 +1426,7 @@ describe("agent channels", () => {
       command: "/comment",
       event: "pull_request_review",
     })
-    expect(review.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "review-delivery" })
+    expect(review.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "review-delivery", rehydrate: expect.any(Function) })
 
     const approvedChannel = github({ pullRequest: { reconcile: { comments: { reviewStates: ["approved"] } }, reply: false } })
     const approvedTrigger = approvedChannel.triggers?.webhook
@@ -1549,7 +1549,7 @@ describe("agent channels", () => {
     })
     expect(result.input.prompt).toContain("Request: Keep this pull request healthy.")
     expect(result.input.prompt).not.toContain("specifically this comment")
-    expect(result.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "delivery-1" })
+    expect(result.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "delivery-1", rehydrate: expect.any(Function) })
     expect(result.run?.activity).toEqual({ links: [], target: { installationId: 123, issue: 42, repository: "acme/app" } })
 
     const concurrentChannel = github({ pullRequest: { reconcile: { concurrencyLimit: 4 }, reply: false } })
@@ -1561,7 +1561,7 @@ describe("agent channels", () => {
       payload: githubPullRequestPayload("reopened"),
     })
     if (concurrent instanceof Response) throw new Error("Expected GitHub reconciliation invocation.")
-    expect(concurrent.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 4, deliveryId: "delivery-2" })
+    expect(concurrent.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 4, deliveryId: "delivery-2", rehydrate: expect.any(Function) })
 
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs1" }).toString()

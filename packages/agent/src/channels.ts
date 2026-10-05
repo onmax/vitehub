@@ -49,6 +49,7 @@ import type {
   AgentTriggerDefinition,
   AgentMessageChannelSettings,
   AgentTriggerInvokeResult,
+  AgentTriggerRunInvokeResult,
   AgentRuntimeConfig,
   AgentRuntimeContext,
   AgentWebhookSecretToken,
@@ -3021,36 +3022,43 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
         if (!payload && !command) return options.ignored?.("missing_payload") || ignored("missing_payload")
         if (!command) return options.ignored?.("not_command") || ignored("not_command")
         if (!reconciled && declaredInputCommand(context, command.command) === false) return options.ignored?.("not_command") || ignored("not_command")
-        const metadata = await githubPullRequestMetadata(app, context, command, options, payload)
-        const pullRequestContext = githubPullRequestRunContext(command, {
-          ...options,
-          threadId: options.threadId || maybeString(payload?.issue?.pull_request?.html_url) || maybeString(payload?.issue?.html_url) || command.pullRequestUrl,
-        }, payload, metadata)
-        const finishEffects = githubPullRequestCommentFinishEffects(options)
-        const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
-        if (activity) {
-          run.activity = {
-            links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
-            target: {
-              issue: command.issueNumber,
-              repository: command.repository,
-              ...(command.installationId ? { installationId: command.installationId } : {}),
-            },
+        const ownership = reconciled && command.deliveryId ? {
+          concurrencyGroup: `${command.repository}#${command.issueNumber}`,
+          concurrencyLimit: githubPullRequestReconcileConcurrencyLimit(options.reconcile),
+          deliveryId: command.deliveryId,
+        } : undefined
+        const resolveInvocation = async (): Promise<AgentTriggerRunInvokeResult> => {
+          const metadata = await githubPullRequestMetadata(app, context, command, options, payload)
+          const pullRequestContext = githubPullRequestRunContext(command, {
+            ...options,
+            threadId: options.threadId || maybeString(payload?.issue?.pull_request?.html_url) || maybeString(payload?.issue?.html_url) || command.pullRequestUrl,
+          }, payload, metadata)
+          const finishEffects = githubPullRequestCommentFinishEffects(options)
+          const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
+          if (activity) {
+            run.activity = {
+              links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
+              target: {
+                issue: command.issueNumber,
+                repository: command.repository,
+                ...(command.installationId ? { installationId: command.installationId } : {}),
+              },
+            }
           }
-        }
-        const invocation: AgentTriggerInvokeResult = {
-          ...(finishEffects ? { delivery: { finishEffects } } : {}),
-          input: pullRequestCommandInput(command, pullRequestContext),
-          run,
-        }
-        if (reconciled && command.deliveryId) {
-          invocation.webhook = {
-            concurrencyGroup: `${command.repository}#${command.issueNumber}`,
-            concurrencyLimit: githubPullRequestReconcileConcurrencyLimit(options.reconcile),
-            deliveryId: command.deliveryId,
+          const invocation: AgentTriggerRunInvokeResult = {
+            ...(finishEffects ? { delivery: { finishEffects } } : {}),
+            input: pullRequestCommandInput(command, pullRequestContext),
+            run,
           }
+          if (ownership) {
+            invocation.webhook = {
+              ...ownership,
+              rehydrate: async () => ({ ...await resolveInvocation(), webhook: ownership }),
+            }
+          }
+          return invocation
         }
-        return invocation
+        return await resolveInvocation()
       },
     },
     dev: {
