@@ -163,6 +163,40 @@ describe("Rate Limit core", () => {
     await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: true })
   })
 
+  it("isolates consumption when names and keys contain null characters", async () => {
+    const driver = memoryRateLimitDriver({ now: () => 1 })
+    const first = createRateLimiter({ driver, limit: 1, name: "tenant", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "tenant\0admin", window: "1m" })
+
+    await expect(first.consume({ key: "admin\0user" })).resolves.toMatchObject({ allowed: true, used: 1 })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, used: 1 })
+    await expect(first.consume({ key: "admin\0user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    expect(driver.size()).toBe(2)
+  })
+
+  it("isolates peek results when names and keys contain null characters", async () => {
+    const driver = memoryRateLimitDriver({ now: () => 1 })
+    const first = createRateLimiter({ driver, limit: 1, name: "tenant", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "tenant\0admin", window: "1m" })
+
+    await first.consume({ key: "admin\0user" })
+    await expect(first.peek({ key: "admin\0user" })).resolves.toMatchObject({ status: "known", used: 1 })
+    await expect(second.peek({ key: "user" })).resolves.toMatchObject({ status: "known", used: 0 })
+  })
+
+  it("isolates resets when names and keys contain null characters", async () => {
+    const driver = memoryRateLimitDriver({ now: () => 1 })
+    const first = createRateLimiter({ driver, limit: 1, name: "tenant", window: "1m" })
+    const second = createRateLimiter({ driver, limit: 1, name: "tenant\0admin", window: "1m" })
+
+    await second.consume({ key: "user" })
+    await expect(first.reset({ key: "admin\0user" })).resolves.toEqual({ status: "reset" })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: false, used: 1 })
+    await second.reset({ key: "user" })
+    await expect(second.consume({ key: "user" })).resolves.toMatchObject({ allowed: true, used: 1 })
+  })
+
   it("fails closed at capacity without evicting live counters", async () => {
     const driver = memoryRateLimitDriver({ maxEntries: 1, now: () => 1 })
     const limiter = createRateLimiter({ driver, limit: 1, window: "1m" })

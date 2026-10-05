@@ -5,8 +5,7 @@ import { agentErrorMessage } from "./agent-error.ts"
 import { isResolvedAgentTriggerHandledInvocation, resolveAgentTriggerInvocation, reserveAgentChannelItem, runAgent } from "./index.ts"
 import { AgentInvocationClaimConflict, exclusiveAgentInvocation, inheritedAgentInvocationClaim, type AgentInvocationJournal, pendingAgentInvocationAnnotation, pendingAgentInvocationAnnotations } from "./invocations.ts"
 import { channelMessageRunId } from "./internal/channel-run-id.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "./internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { agentToolJsonSchema } from "./tool-schema.ts"
 import { agentChannelOptions } from "./trigger-runtime.ts"
 
@@ -266,6 +265,7 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
   const result: ReplayChannelResult = { failed: 0, items: [], nextCursor: options.cursor ?? null, processed: 0, skipped: 0 }
   let cursor = options.cursor
   let remaining = options.limit ?? Number.POSITIVE_INFINITY
+  const seenCursors = new Set<string>(cursor ? [cursor] : [])
 
   const replay = { agent, agentName, channel, dryRun: options.dryRun, force: options.force, invocations, runtime, triggerId }
 
@@ -286,15 +286,21 @@ export async function replayChannel<TRuntimeConfig extends AgentRuntimeConfig = 
         }
         throw error
       }
-      for (const item of page.items.slice(0, Number.isFinite(remaining) ? remaining : undefined)) {
-        const replayed = await runChannelItem(replay, assertItemKey(history.key(item), channel, "history key()"), item)
+      result.nextCursor = page.nextCursor
+      const itemKeys = page.items.map(item => assertItemKey(history.key(item), channel, "history key()"))
+      if (page.nextCursor && page.items.length && seenCursors.has(page.nextCursor)) {
+        throw agentDiagnostics.AGENT_R0936({ message: `[vitehub] Channel "${channel}" history returned a repeated pagination cursor.` })
+      }
+      if (page.nextCursor) seenCursors.add(page.nextCursor)
+      const pageItems = page.items.slice(0, Number.isFinite(remaining) ? remaining : undefined)
+      for (const [index, item] of pageItems.entries()) {
+        const replayed = await runChannelItem(replay, itemKeys[index]!, item)
         result.items.push(replayed)
         if (replayed.status === "failed") result.failed += 1
         else if (replayed.status === "skipped") result.skipped += 1
         else result.processed += 1
         remaining -= 1
       }
-      result.nextCursor = page.nextCursor
       if (!page.nextCursor || !page.items.length) break
       cursor = page.nextCursor
     }
