@@ -1,7 +1,7 @@
 ---
 title: Diff
 description: "Render unified patches, file comparisons, parsed diffs, and merge conflicts with Pierre."
-navigation.order: 36
+navigation.order: 37
 navigation.group: Agent work
 icon: i-ph-file-code-light
 ---

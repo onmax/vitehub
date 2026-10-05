@@ -50,24 +50,24 @@ describe("Console section contributions", () => {
     }
   })
 
+  it("preserves manual Schedule run metadata when parsing section content", () => {
+    const definition = { fields: [], file: "sync.ts", name: "sync", runnable: true, source: "server-schedules" }
+    expect(parseConsoleSectionContent({ definitions: [definition], kind: "definition-catalog", section: "schedules" }, "schedules")).toEqual({ definitions: [definition], kind: "definition-catalog" })
+    const record = { cells: {}, fields: [], id: "definition:sync", runnable: true }
+    expect(parseConsoleSectionContent({ records: [record], kind: "record-table", section: "schedules" }, "schedules")).toEqual({ records: [record], kind: "record-table" })
+  })
+
+  it("accepts runnable metadata only when it is true", () => {
+    const definition = { fields: [], file: "sync.ts", name: "sync", source: "server-schedules" }
+    for (const runnable of [false, "true", 1, undefined]) {
+      expect(parseConsoleSectionContent({ definitions: [{ ...definition, runnable }], kind: "definition-catalog", section: "schedules" }, "schedules")).toEqual({ definitions: [definition], kind: "definition-catalog" })
+    }
+  })
+
   it("serializes descriptors that the Console UI can parse", () => {
     for (const descriptor of describeConsoleContributedSections([...consoleContributedSections.keys()])) {
       expect(parseConsoleContributedSection(JSON.parse(JSON.stringify(descriptor)))).toEqual(descriptor)
     }
-  })
-
-  it("preserves runnable Schedule metadata for the Console UI", () => {
-    const definition = { fields: [], file: "server/schedules/sync.ts", name: "sync", runnable: true, source: "server-schedules" }
-    const content = { definitions: [definition], kind: "definition-catalog", section: "schedules" }
-
-    expect(parseConsoleSectionContent(JSON.parse(JSON.stringify(content)), "schedules")).toEqual({
-      definitions: [definition],
-      kind: "definition-catalog",
-    })
-    expect(parseConsoleSectionContent({ ...content, definitions: [{ ...definition, runnable: "true" }] }, "schedules")).toEqual({
-      definitions: [{ ...definition, runnable: undefined }],
-      kind: "definition-catalog",
-    })
   })
 
   it("keeps the playground descriptors equal to the owner descriptors", async () => {

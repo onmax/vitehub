@@ -21,7 +21,7 @@ Use `skipLibCheck: true` in app TypeScript configs while ViteHub depends on runt
 
 The local Store persists file metadata inside `.vitehub` under the Workspace root. If file removal stops before metadata cleanup completes, reads reject with `Interrupted Workspace removal` so a restored file cannot reuse deleted ownership. Retry removal of the reported path with `force: true` and, for directories, `recursive: true` before restoring files.
 
-Lock markers are not reclaimed based on age because a slow operation or failed heartbeat may still own them. If a process crashes and operations report `Timed out waiting to read Workspace` or `Timed out waiting to write Workspace`, stop every process using that Workspace. Call `recoverLocalWorkspaceLocks({ root, offline: true })` from `@vite-hub/workspace/runtime` with the Local Store's root, then restart the processes after recovery succeeds. Prevent changes to the Store and its ancestor directories throughout recovery. The `offline: true` flag confirms exclusive offline access; it does not stop other processes. See [Local Store recovery](../../docs/content/docs/server-primitives/workspace.md#recover-a-local-store-after-a-crash) for the procedure.
+Lock markers are not reclaimed based on age because a slow operation or failed heartbeat may still own them. If a process crashes and operations report `Timed out waiting to read Workspace` or `Timed out waiting to write Workspace`, stop every process using that Workspace. Call `recoverLocalWorkspaceLocks({ root, offline: true })` from `@vite-hub/workspace/runtime` with the Local Store's root, then restart the processes after recovery succeeds. Prevent changes to the Store and its ancestor directories throughout recovery. The `offline: true` flag confirms exclusive offline access; it does not stop other processes. See [Local Store recovery](../../docs/content/docs/workspace/limits-and-errors.md#recover-a-local-store-after-a-crash) for the procedure.
 
 Set `locks: "process"` on a local Store when one process owns its root, for example a disposable checkout that one worker uses. The Store then keeps the same per-path read and write locks in memory. It creates no `.vitehub/locks` directory, does not poll lock markers, and lists entries in parallel. Keep the default `locks: "filesystem"` when more than one process can access the root.
 
@@ -217,6 +217,8 @@ GitHub-backed Workspaces pin the branch head before a hosted Session starts and 
 Use `startSession({ attach: true, host })` only when another integration already owns the live materialized tree. Attached Sessions preserve that baseline without rematerializing the tree and roll back only their own uncommitted changes on close.
 
 Use `startSession({ host, writeBack: false })` for a private writable runtime that must never publish its changes. `diff()` and `commit()` are unavailable in this mode, and `close()` restores the authoritative Workspace without first scanning the runtime tree. Agent Definitions select this mode automatically for read-only Workspaces.
+
+Basic Sessions started without a host also honor `writeBack: false`. Their private overlay remains writable, while `diff()` and `commit()` are unavailable.
 
 Custom `WorkspaceSessionHost` implementations copy Workspace files serially by default. A host can set `materializationConcurrency` to a positive integer when it supports that many independent file reads and writes safely. ViteHub's local Node host uses `8`.
 

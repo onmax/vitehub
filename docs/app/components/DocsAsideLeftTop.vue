@@ -1,5 +1,27 @@
 <script setup lang="ts">
-const { lane, laneOptions, selectLane } = useDocsLane();
+import { docsManifest } from "~~/modules/vitehub-docs/runtime/utils/docs";
+import {
+  getDocsSectionForPath,
+  getDocsSectionSelectItems,
+  type DocsSectionSelectItem,
+} from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+
+const route = useRoute();
+const router = useRouter();
+
+const items = getDocsSectionSelectItems(docsManifest.sections);
+const currentSection = computed(() => getDocsSectionForPath(docsManifest.sections, route.path));
+const selectedSectionId = computed({
+  get: () => currentSection.value?.id,
+  set: (sectionId: string | undefined) => {
+    const target = items.flat().find(item => item.value === sectionId);
+    if (target?.to && target.value !== currentSection.value?.id) void router.push(target.to);
+  },
+});
+
+function itemIcon(item: DocsSectionSelectItem) {
+  return item.value ? sidebarSectionIcon({ id: item.value, icon: item.icon ?? null }) : undefined;
+}
 </script>
 
 <template>
@@ -13,119 +35,40 @@ const { lane, laneOptions, selectLane } = useDocsLane();
       }"
     />
 
-    <nav class="vh-docs-lane-switcher" aria-label="Documentation product">
-      <button
-        v-for="(option, index) in laneOptions"
-        :key="option.id"
-        type="button"
-        :class="['vh-docs-lane-option w-max lg:w-auto', {
-          'is-active': lane === option.id,
-          'is-before-active': lane === laneOptions[index + 1]?.id,
-          'is-after-active': lane === laneOptions[index - 1]?.id,
-        }]"
-        :aria-pressed="lane === option.id"
-        @click="selectLane(option.id)"
-      >
-        <UIcon :name="option.icon" class="size-4 shrink-0" />
-        <span>{{ option.label }}</span>
-      </button>
-    </nav>
+    <USelectMenu
+      v-model="selectedSectionId"
+      :items="items"
+      value-key="value"
+      :search-input="false"
+      :icon="currentSection ? sidebarSectionIcon(currentSection) : 'i-ph-squares-four-light'"
+      trailing-icon="i-ph-caret-down-light"
+      placeholder="All products"
+      aria-label="Documentation product"
+      class="vh-docs-product-select"
+      :ui="{
+        base: 'w-full h-10 rounded-none border-0 border-b border-default bg-default ps-11 pe-10 text-sm font-semibold text-highlighted ring-0 hover:bg-muted/30 focus-visible:ring-0',
+        leading: 'ps-5',
+        leadingIcon: 'size-4 text-muted',
+        trailing: 'pe-4',
+        trailingIcon: 'size-4 text-muted',
+        content: 'rounded-md',
+        label: 'px-2 pt-2 pb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-dimmed',
+      }"
+    >
+      <template #item-leading="{ item }">
+        <UIcon v-if="itemIcon(item)" :name="itemIcon(item)!" class="size-4 shrink-0 text-muted" />
+      </template>
+    </USelectMenu>
   </div>
 </template>
 
 <style scoped>
-.vh-docs-lane-switcher {
-  display: flex;
-}
-
-.vh-docs-lane-switcher::after {
-  content: "";
-  flex: 1;
-  border-bottom: 1px solid var(--ui-border-accented);
-  background: var(--ui-bg-muted);
-}
-
-.vh-docs-lane-option {
-  display: flex;
-  min-width: 0;
-  min-height: 2.5rem;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.375rem;
-  padding: 0.5rem 1.25rem;
-  border: 0;
-  border-radius: 0;
-  background: var(--ui-bg-muted);
-  color: var(--ui-text-muted);
-  font-size: 0.75rem;
-  font-weight: 400;
-  line-height: 1rem;
-  opacity: 0.68;
-  text-align: center;
-  transition: background-color 150ms ease, color 150ms ease, opacity 150ms ease, transform 150ms ease;
-}
-
-.vh-docs-lane-option:not(.is-active) {
-  border-bottom: 1px solid var(--ui-border-accented);
-}
-
-.vh-docs-lane-option.is-before-active {
-  border-right: 1px solid var(--ui-border-accented);
-}
-
-.vh-docs-lane-option.is-after-active {
-  border-left: 1px solid var(--ui-border-accented);
-}
-
-.vh-docs-lane-option:hover,
-.vh-docs-lane-option:focus-visible {
-  opacity: 1;
-  color: var(--ui-text-highlighted);
-}
-
-.vh-docs-lane-option.is-active {
-  border: 0;
-  background: var(--ui-bg);
-  color: var(--ui-text-highlighted);
-  font-weight: 650;
-  opacity: 0.82;
-}
-
-.vh-docs-lane-option.is-active:hover,
-.vh-docs-lane-option.is-active:focus-visible {
-  opacity: 1;
-}
-
-.vh-docs-lane-option:last-child {
-  border-right: 1px solid var(--ui-border-accented);
-}
-
-.vh-docs-lane-option:active {
-  transform: scale(0.98);
-}
-
 .vh-sidebar-search {
   height: 2.5rem;
   font-size: 0.875rem;
 }
 
-@media (min-width: 64rem) {
-  .vh-docs-lane-switcher {
-    display: grid;
-    grid-template-columns: 0.8fr 1.2fr;
-  }
-
-  .vh-docs-lane-switcher::after {
-    display: none;
-  }
-
-  .vh-docs-lane-option {
-    justify-content: center;
-    padding: 0.5rem;
-  }
-
-  .vh-docs-lane-option:last-child {
-    border-right: 0;
-  }
+.vh-docs-product-select {
+  width: 100%;
 }
 </style>

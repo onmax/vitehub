@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { promisify } from "node:util"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan } from "../src/internal/pull-request-checkout.ts"
+import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan, pullRequestRepositories } from "../src/internal/pull-request-checkout.ts"
 
 const execFileAsync = promisify(execFile)
 const fixtures: string[] = []
@@ -67,6 +67,35 @@ async function githubFixture() {
 }
 
 describe("pull request checkout", () => {
+  it("keeps the pull request repositories when the managed checkout is disabled", () => {
+    const store = (pullRequest: Record<string, unknown>) => ({ get: () => ({ pullRequest, repository: { fullName: "vite-hub/vitehub", name: "vitehub" } }) })
+    const disabled = store({
+      head: { ref: "feature", repo: "contributor/vitehub", sha: "a".repeat(40) },
+      source: { checkout: false, ref: "feature", repo: "vite-hub/vitehub" },
+    })
+    expect(pullRequestCheckoutPlan(disabled)).toBeUndefined()
+    expect(pullRequestRepositories(disabled)).toEqual({ headRepository: "contributor/vitehub", repository: "vite-hub/vitehub" })
+    expect(pullRequestRepositories(store({ source: { checkout: false } }))).toEqual({ repository: "vite-hub/vitehub" })
+    expect(pullRequestRepositories({ get: () => ({ provider: "gitlab", pullRequest: { source: { repo: "vite-hub/vitehub" } } }) })).toBeUndefined()
+    expect(pullRequestRepositories(undefined)).toBeUndefined()
+  })
+
+  it("reads repository scope from the Babysitter input context without planning a checkout", () => {
+    const values = new Map<string, unknown>([
+      ["pullRequestRepository", "vite-hub/vitehub"],
+      ["pullRequestSourceRepository", "contributor/vitehub"],
+    ])
+    const context = { get: (key: string) => values.get(key) }
+    expect(pullRequestCheckoutPlan(context)).toBeUndefined()
+    expect(pullRequestRepositories(context)).toEqual({ headRepository: "contributor/vitehub", repository: "vite-hub/vitehub" })
+    values.set("pullRequestSourceRepository", "VITE-HUB/VITEHUB")
+    expect(pullRequestRepositories(context)).toEqual({ repository: "vite-hub/vitehub" })
+    values.set("pullRequestSourceRepository", "(unavailable)")
+    expect(pullRequestRepositories(context)).toEqual({ repository: "vite-hub/vitehub" })
+    values.set("pullRequestRepository", "invalid repository")
+    expect(pullRequestRepositories(context)).toBeUndefined()
+  })
+
   it.each(["", "vitehub"])("rejects a deleted fork head before preparing the %j mount", async (mount) => {
     const fixture = await githubFixture()
     const exec = vi.spyOn(fixture.session, "exec")
