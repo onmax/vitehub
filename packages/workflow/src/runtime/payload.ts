@@ -25,8 +25,7 @@ export async function validatePayload<T>(payload: unknown, schema: PayloadValida
     return await schema(payload)
   }
 
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This boundary must reject non-callable parser properties.
-  // SAFETY: The structural union may lack safeParse; inspect it before calling it.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- SAFETY: The structural union may lack safeParse; reject non-callable parser properties before calling it.
   if (hasSchemaMethod(schema, "safeParse") && typeof (schema as { safeParse?: unknown }).safeParse === "function") {
     // SAFETY: The guard verifies an allowed callable method; PayloadValidator<T> owns its result contract.
     const result = (schema as PayloadSchema<T>).safeParse(payload)
@@ -36,8 +35,7 @@ export async function validatePayload<T>(payload: unknown, schema: PayloadValida
     return result.data as T
   }
 
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This boundary must reject non-callable parser properties.
-  // SAFETY: The structural union may lack parse; inspect it before calling it.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- SAFETY: The structural union may lack parse; reject non-callable parser properties before calling it.
   if (hasSchemaMethod(schema, "parse") && typeof (schema as { parse?: unknown }).parse === "function") {
     // SAFETY: The guard verifies an allowed callable method; PayloadValidator<T> owns its result contract.
     return (schema as ParsePayloadSchema<T>).parse(payload)

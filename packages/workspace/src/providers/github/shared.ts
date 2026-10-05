@@ -157,8 +157,14 @@ export function splitGitHubRepository(
   repository: string,
   kind: "publisher" | "store",
 ): { owner: string; repo: string } {
-  const [owner, repo] = repository.split("/");
-  if (!owner || !repo) {
+  const parts = repository.split("/");
+  const owner = parts[0];
+  const repo = parts[1];
+  if (
+    parts.length !== 2
+    || !owner || /[^A-Za-z0-9-]/.test(owner)
+    || !repo || /[^A-Za-z0-9_.-]/.test(repo) || repo === "." || repo === ".."
+  ) {
     throw workspaceError(
       `[vitehub] GitHub workspace ${kind} requires a repository in owner/repo format.`,
     );
@@ -168,6 +174,10 @@ export function splitGitHubRepository(
 
 export function joinGitPath(...parts: string[]): string {
   return parts.join("/").replaceAll("\\", "/").split("/").filter(Boolean).join("/");
+}
+
+function encodeGitHubRef(ref: string): string {
+  return ref.split("/").map(encodeURIComponent).join("/");
 }
 
 export function resolveGitHubWorkspaceRoot(root: string, workspaceName: string): string {
@@ -403,7 +413,7 @@ export async function readGitHubBranchState(input: {
     ref = await requestGitHubJson(
       input.repository,
       input.token,
-      `/repos/${owner}/${repo}/git/ref/heads/${input.branch}`,
+      `/repos/${owner}/${repo}/git/ref/heads/${encodeGitHubRef(input.branch)}`,
     );
   }
   catch (error) {
@@ -416,7 +426,7 @@ export async function readGitHubBranchState(input: {
     ref = await requestGitHubJson(
       input.repository,
       input.token,
-      `/repos/${owner}/${repo}/git/ref/heads/${repository.default_branch}`,
+      `/repos/${owner}/${repo}/git/ref/heads/${encodeGitHubRef(repository.default_branch)}`,
     );
     branchExists = false;
   }
@@ -528,7 +538,7 @@ export async function commitGitHubChanges(input: {
     await requestGitHubJson(
       input.repository,
       input.token,
-      `/repos/${owner}/${repo}/git/refs/heads/${input.branch}`,
+      `/repos/${owner}/${repo}/git/refs/heads/${encodeGitHubRef(input.branch)}`,
       {
         body: JSON.stringify({ force: false, sha: commit.sha }),
         method: "PATCH",

@@ -1,6 +1,5 @@
 import { channelDeliveryHandlers } from "../src/internal/channel-delivery-handlers.ts"
-import { asUnknownBoundary, hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { asUnknownBoundary, hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { generateKeyPairSync } from "node:crypto"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import * as v from "valibot"
@@ -2722,7 +2721,16 @@ describe("agent message protocol", () => {
         version: 1 as const,
       },
     }
+    const accessorStandardSchema = Object.create({
+      "~standard": Object.defineProperties({ ...standardSchema["~standard"] }, {
+        validate: { get: () => (input: unknown) => ({ value: input }) },
+        version: { get: () => 1 },
+      }),
+    })
     const wrappedJsonSchema = { jsonSchema: rawJsonSchema }
+    const inheritedJsonSchema = Object.assign(Object.create({
+      "~standard": Object.create({ version: 1, validate: () => ({ value: {} }) }),
+    }), rawJsonSchema)
     const jsonSchema = vi.fn(schema => ({ jsonSchema: schema }))
     loadAiSdk.mockResolvedValue({
       isStepCount: vi.fn(count => ({ count })),
@@ -2757,11 +2765,23 @@ describe("agent message protocol", () => {
               inputSchema: standardSchema,
               name: "standardSchema",
             },
+            accessorStandardSchema: {
+              execute: () => "ok",
+              // SAFETY: This fixture intentionally models an accessor-backed Standard Schema marker.
+              inputSchema: accessorStandardSchema as never,
+              name: "accessorStandardSchema",
+            },
             wrappedJsonSchema: {
               execute: () => "ok",
               // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
               inputSchema: wrappedJsonSchema as never,
               name: "wrappedJsonSchema",
+            },
+            inheritedJsonSchema: {
+              execute: () => "ok",
+              // SAFETY: This fixture models an untrusted schema-like object with an inherited marker.
+              inputSchema: inheritedJsonSchema as never,
+              name: "inheritedJsonSchema",
             },
           },
         }),
@@ -2780,7 +2800,9 @@ describe("agent message protocol", () => {
     const tools = agentSettings[0]!.tools as Record<string, { inputSchema: unknown }>
     expect(tools.rawJsonSchema!.inputSchema).toEqual({ jsonSchema: rawJsonSchema })
     expect(tools.standardSchema!.inputSchema).toBe(standardSchema)
+    expect(tools.accessorStandardSchema!.inputSchema).toBe(accessorStandardSchema)
     expect(tools.wrappedJsonSchema!.inputSchema).toBe(wrappedJsonSchema)
+    expect(tools.inheritedJsonSchema!.inputSchema).toEqual({ jsonSchema: inheritedJsonSchema })
     expect(tools.defaultSchema!.inputSchema).toEqual({
       jsonSchema: {
         additionalProperties: false,
@@ -2788,7 +2810,7 @@ describe("agent message protocol", () => {
         type: "object",
       },
     })
-    expect(jsonSchema).toHaveBeenCalledTimes(2)
+    expect(jsonSchema).toHaveBeenCalledTimes(3)
   })
 
   it("resolves provider callbacks only at model invocation with byte limits", async () => {
@@ -15208,6 +15230,18 @@ describe("agent message protocol", () => {
         payload: {},
         provider: "vercel",
       }, async () => /portable/)).rejects.toMatchObject({ isRetryable: false })
+    })
+
+    it("rejects provider result markers inherited from a custom prototype", async () => {
+      const { runAgentWorkflowDefinition } = await import("../src/runtime/workflow.ts")
+      const result = Object.assign(Object.create({ output: "inherited provider output" }), { text: "visible text" })
+      // SAFETY: This test fixture intentionally constructs an untrusted provider result with an inherited marker.
+      await expect(runAgentWorkflowDefinition({} as never, {
+        id: "inherited-marker-result",
+        name: "inherited-marker-result",
+        payload: {},
+        provider: "vercel",
+      }, async () => result)).rejects.toMatchObject({ isRetryable: false })
     })
 
     it("serializes Response results before Workflow completion", async () => {

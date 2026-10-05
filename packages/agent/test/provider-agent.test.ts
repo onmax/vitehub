@@ -70,8 +70,7 @@ import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "../src/internal/agent-invocation-control.ts"
 import { withAgentInvocationResponseOwner } from "../src/internal/agent-invocation-response-owner.ts"
 import { markAuxiliaryMessageChannelInstructionContext } from "../src/internal/channels.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../src/internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { getAgentTelemetryConfiguration, setAgentTelemetryConfiguration } from "../src/internal/agent-telemetry.ts"
 import { provideBrowserRuntimeEnvironment } from "../src/internal/browser-runtime.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
@@ -252,6 +251,65 @@ describe("Provider Agent Driver", () => {
       GH_TOKEN: "installation-token",
       GIT_AUTHOR_NAME: "Override",
       GIT_CONFIG_COUNT: "1",
+    })
+  })
+
+  it("scopes the Agent GitHub environment to the pull request when the managed checkout is disabled", async () => {
+    const threadId = "thread-github-environment-no-checkout"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    // Multi-installation GitHub Apps can only resolve credentials for a repository.
+    const access = vi.fn(async (input?: { repository?: string }) => {
+      if (!input?.repository) throw new Error("credentials require a repository")
+      const token = input.repository === "contributor/portal" ? "fork-token" : "installation-token"
+      return { env: { GH_TOKEN: token }, token }
+    })
+    const base = context(threadId)
+    base.context.set("pullRequest", {
+      pullRequest: {
+        head: { ref: "feature", repo: "contributor/portal", sha: "a".repeat(40) },
+        number: 42,
+        source: { checkout: false, mount: "portal", ref: "feature", repo: "acme/portal" },
+      },
+      repository: { fullName: "acme/portal", name: "portal" },
+    })
+    await createProviderAgentAdapter({ provider: "codex" }).generate({ ...base, runtime: { ...base.runtime, githubIdentity: { access } } } as never)
+
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "acme/portal" }))
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "contributor/portal" }))
+    expect(access).not.toHaveBeenCalledWith(expect.not.objectContaining({ repository: expect.any(String) }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({
+      GH_TOKEN: "installation-token",
+      VITEHUB_GITHUB_HEAD_TOKEN: "fork-token",
+    })
+  })
+
+  it("scopes the Agent GitHub environment to the pull request from the Babysitter input context", async () => {
+    const threadId = "thread-babysitter-github-environment"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    // Multi-installation GitHub Apps can only resolve credentials for a repository.
+    const access = vi.fn(async (input?: { repository?: string }) => {
+      if (!input?.repository) throw new Error("credentials require a repository")
+      const token = input.repository === "contributor/portal" ? "fork-token" : "installation-token"
+      return { env: { GH_TOKEN: token }, token }
+    })
+    const base = context(threadId)
+    // Babysitter passes these flat fields directly as the Agent input context.
+    base.context.set("preparedCheckout", "/caller/prepared-checkout")
+    base.context.set("pullRequestHead", "a".repeat(40))
+    base.context.set("pullRequestNumber", 42)
+    base.context.set("pullRequestRepository", "acme/portal")
+    base.context.set("pullRequestSourceBranch", "feature")
+    base.context.set("pullRequestSourceRepository", "contributor/portal")
+    base.context.set("pullRequestTitle", "Fix portal")
+    base.context.set("pullRequestUrl", "https://github.com/acme/portal/pull/42")
+    await createProviderAgentAdapter({ provider: "codex" }).generate({ ...base, runtime: { ...base.runtime, githubIdentity: { access } } } as never)
+
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "acme/portal" }))
+    expect(access).toHaveBeenCalledWith(expect.objectContaining({ repository: "contributor/portal" }))
+    expect(access).not.toHaveBeenCalledWith(expect.not.objectContaining({ repository: expect.any(String) }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({
+      GH_TOKEN: "installation-token",
+      VITEHUB_GITHUB_HEAD_TOKEN: "fork-token",
     })
   })
 
@@ -1617,9 +1675,9 @@ cli_auth_credentials_store = "keyring"
   ])("rejects a hard-linked named-profile %s without changing its target", async (kind, name, contents) => {
     const profile = `provider-${kind}-hard-link-${crypto.randomUUID()}`
     const homePath = `${process.cwd()}/.vitehub/data/codex/${profile}`
-    const externalRoot = await mkdtemp(join(tmpdir(), `vitehub-codex-${kind}-target-`))
-    const externalFile = join(externalRoot, name)
     await mkdir(homePath, { recursive: true })
+    const externalRoot = await mkdtemp(join(homePath, "..", `vitehub-codex-${kind}-target-`))
+    const externalFile = join(externalRoot, name)
     await writeFile(externalFile, contents, { mode: 0o644 })
     await link(externalFile, join(homePath, name))
 
@@ -3867,6 +3925,39 @@ cli_auth_credentials_store = "keyring"
     await expect(stream.next()).resolves.toMatchObject({ value: { type: "finish" } })
   })
 
+  it("does not run inherited Standard Schema validators for provider tools", async () => {
+    let toolCall!: Promise<unknown>
+    const validate = vi.fn(() => ({ value: { query: "forged" } }))
+    const execute = vi.fn(async (input: unknown) => input)
+    const inheritedSchema = Object.assign(Object.create({ "~standard": { validate } }), {
+      properties: { query: { type: "string" } },
+      type: "object",
+    })
+    runtime("thread-tool-inherited-schema", [event("turn.completed", "thread-tool-inherited-schema", { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn(mcp) {
+        const client = new McpClient({ name: "provider-test", version: "1" })
+        const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), {
+          requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
+        })
+        await client.connect(transport)
+        toolCall = client.callTool({ arguments: { query: "raw" }, name: "lookup" })
+        await toolCall.finally(() => client.close())
+      },
+    })
+
+    // SAFETY: This fixture models an untrusted schema-like object with an inherited marker.
+    await expect(createProviderAgentAdapter({ provider: "codex" }).generate(context("thread-tool-inherited-schema", {
+      tools: {
+        lookup: { execute, inputSchema: inheritedSchema as never, name: "lookup" },
+      },
+    }) as never)).resolves.toBeDefined()
+    await expect(toolCall).resolves.toMatchObject({
+      content: [{ text: '{"query":"raw"}', type: "text" }],
+    })
+    expect(execute).toHaveBeenCalledWith({ query: "raw" }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }))
+    expect(validate).not.toHaveBeenCalled()
+  })
+
   it.each(["codex", "claude-code"] as const)("returns diagnostic guidance when an approved %s Capability tool fails", async (provider) => {
     let toolCall!: Promise<unknown>
     const failure = new Diagnostic({
@@ -4735,7 +4826,8 @@ cli_auth_credentials_store = "keyring"
       workspaceDefinition: {
         name: "docs",
         sources: {
-          docs: github({ repo: "vite-hub/vitehub", root: sourceRoot }),
+          // Raw inferred options exercise provenance normalization without constructing an unsafe GitHub Source.
+          docs: { repo: "vite-hub/vitehub", root: sourceRoot },
           ...(overlappingMount === undefined ? {} : {
             other: { mount: overlappingMount, source: github({ repo: "owner/other" }) },
           }),
