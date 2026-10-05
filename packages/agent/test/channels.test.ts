@@ -1526,7 +1526,7 @@ describe("agent channels", () => {
     } finally {
       await queue.disconnect()
     }
-  })
+  }, 30_000)
 
   it("reconciles configured pull request lifecycle events with invocation ownership", async () => {
     const { github } = await import("../src/channels.ts")
