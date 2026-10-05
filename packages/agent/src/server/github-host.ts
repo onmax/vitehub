@@ -806,7 +806,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      await rm(checkout, { force: true, recursive: true })
+      await rm(checkout, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
     }
   }
 
