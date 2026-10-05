@@ -144,6 +144,13 @@ async function pruneBuildDirectories(store: WorkspaceStore, workspace: string): 
         if (previousUsers) users[path] = previousUsers
         await writeBuildMetadata(store, buildDirectoriesMetaKey(workspace), [...pending])
         await writeBuildMetadata(store, buildDirectoryUsersMetaKey, users)
+        const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined
+        if (code === "ENOTEMPTY") {
+          // A concurrent writer won the empty-directory race. Keep the path
+          // owned so a later sync can retry after that writer is finished.
+          retained.push(path)
+          continue
+        }
         throw error
       }
     }
