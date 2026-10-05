@@ -14,9 +14,44 @@ export const EnvLanding = {
     ...variant,
     files: [
       {
-        path: "vite.config.ts",
+        path: variant.framework === "nuxt" ? "nuxt.config.ts" : "vite.config.ts",
         language: "typescript",
-        content: `// Illustrative pseudocode: compose this Env configuration with your host setup.
+        content: variant.framework === "nuxt"
+          ? `// Illustrative pseudocode: configure your deployment preset for production.
+import { env } from '@vite-hub/env/vite'
+import viteHubNuxt from 'vite-hub/nuxt'
+
+export default defineNuxtConfig({
+  modules: [viteHubNuxt],
+  vitehub: {
+    preset: 'node',
+    env: {
+      server: {
+        dryRun: env.boolean({ default: true }),
+        apiKey: env({ secret: true, source: env.source('API_KEY') }),
+      },
+    },
+  },
+})`
+          : variant.framework === "nitro"
+            ? `// Illustrative pseudocode: Nitro serves the generated Server Env module.
+import { createEnvImportAliases, env, hubEnv } from '@vite-hub/env/vite'
+import { nitro } from 'nitro/vite'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [hubEnv(), nitro()],
+  nitro: {
+    alias: createEnvImportAliases(),
+  },
+  env: {
+    server: {
+      dryRun: env.boolean({ default: true }),
+      apiKey: env({ secret: true, source: env.source('API_KEY') }),
+    },
+  },
+})`
+            : `// Illustrative pseudocode: compose this Env configuration with your host setup.
 import { env, hubEnv } from '@vite-hub/env/vite'
 import { defineConfig } from 'vite'
 

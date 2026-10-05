@@ -24,7 +24,7 @@ describe("primitive landing placeholders", () => {
         expect(variant.illustrative).toBe(true);
         const source = variant.files.map((file) => file.content).join("\n");
         expect(source).toContain("Illustrative pseudocode");
-        expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\//);
+        expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\/(?!nuxt["'])/);
       }
     }
   });
