@@ -25,11 +25,15 @@ function origin(url: string, label: string): string {
 }
 
 function preset(gateway: AgentDriverGateway, options: AgentGatewayPresetOptions | undefined): AgentDriverGateway {
-  return defineGateway({
-    ...gateway,
-    ...(options?.apiKey === undefined ? {} : { apiKey: options.apiKey }),
-    ...(options?.headers === undefined ? {} : { headers: options.headers }),
-  })
+  const value: AgentDriverGateway = { ...gateway }
+  // A present apiKey replaces the preset variable even when it is undefined, so the invocation fails
+  // instead of using another account from the environment.
+  if (options && Object.hasOwn(options, "apiKey")) {
+    value.apiKey = options.apiKey
+    delete value.apiKeyEnv
+  }
+  if (options?.headers !== undefined) value.headers = options.headers
+  return defineGateway(value)
 }
 
 /** Validate a custom gateway. Use it for an endpoint without a preset. */

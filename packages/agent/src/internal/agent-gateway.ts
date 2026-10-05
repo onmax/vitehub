@@ -27,6 +27,10 @@ function isSecretInput(value: unknown): boolean {
     || (isRuntimeRecord(value) && (hasRuntimeType(value.unseal, "function") || hasRuntimeType(value.resolve, "function")))
 }
 
+// An explicit undefined secret, such as an unset optional Server Env value, must fail the
+// invocation rather than fall back to another credential.
+const missingSecret = () => undefined
+
 /** Validate a gateway definition and return a frozen copy. */
 export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway {
   if (!isRuntimeRecord(value) || Array.isArray(value)) invalid("A driver gateway must be an object.")
@@ -50,8 +54,9 @@ export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway 
   if (value.apiKeyEnv !== undefined && (!Array.isArray(value.apiKeyEnv) || !value.apiKeyEnv.every(item => hasRuntimeType(item, "string") && environmentName.test(item)))) {
     invalid(`Gateway "${name}" apiKeyEnv must be a list of environment variable names.`)
   }
+  const apiKey = Object.hasOwn(value, "apiKey") && value.apiKey === undefined ? missingSecret : value.apiKey
   const apiKeyEnv = Array.isArray(value.apiKeyEnv) ? value.apiKeyEnv.filter((item): item is string => hasRuntimeType(item, "string")) : undefined
-  if (value.apiKey === undefined && !apiKeyEnv?.length) invalid(`Gateway "${name}" needs apiKey or apiKeyEnv.`)
+  if (apiKey === undefined && !apiKeyEnv?.length) invalid(`Gateway "${name}" needs apiKey or apiKeyEnv.`)
   let headers: AgentDriverGateway["headers"]
   if (value.headers !== undefined) {
     if (!isRuntimeRecord(value.headers) || Array.isArray(value.headers)) invalid(`Gateway "${name}" headers must be an object.`)
@@ -59,6 +64,10 @@ export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway 
     for (const [header, item] of Object.entries(value.headers)) {
       if (!headerName.test(header)) invalid(`Gateway "${name}" header name "${header}" is not a valid HTTP header name.`)
       if (/^(?:authorization|x-api-key)$/i.test(header)) invalid(`Gateway "${name}" sets the API key with apiKey, not with the "${header}" header.`)
+      if (item === undefined) {
+        headers[header] = missingSecret
+        continue
+      }
       if (!isSecretInput(item)) invalid(`Gateway "${name}" header "${header}" must be a string, sealed Server Env value, or resolver.`)
       // SAFETY: isSecretInput validated the credential input shape above.
       headers[header] = item as NonNullable<AgentDriverGateway["headers"]>[string]
@@ -68,7 +77,7 @@ export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway 
     name,
     baseURL: Object.freeze(baseURL),
     // SAFETY: isSecretInput validated the credential input shape above.
-    ...(value.apiKey === undefined ? {} : { apiKey: value.apiKey as AgentDriverGateway["apiKey"] }),
+    ...(apiKey === undefined ? {} : { apiKey: apiKey as AgentDriverGateway["apiKey"] }),
     ...(apiKeyEnv === undefined ? {} : { apiKeyEnv: Object.freeze(apiKeyEnv) }),
     ...(value.auth === undefined ? {} : { auth: value.auth }),
     ...(headers === undefined ? {} : { headers: Object.freeze(headers) }),
