@@ -1,4 +1,5 @@
 import { createError, getRequestURL, setResponseHeader } from "h3";
+import { safeParse, string } from "valibot";
 
 // Static hosts serve `/raw` files before the server. Negotiated pages and `.md` twins
 // fetch them inside the server, so this route reads the same files from server assets.
@@ -9,10 +10,11 @@ export default defineEventHandler(async (event) => {
   const markdown = path === "index.md"
     ? await $fetch<string>("/llms.txt", { responseType: "text" })
     : path.endsWith(".md") ? await useStorage("assets:vitehub-raw").getItem(path) : null;
-  if (typeof markdown !== "string") {
+  const parsedMarkdown = safeParse(string(), markdown);
+  if (!parsedMarkdown.success) {
     throw createError({ statusCode: 404, statusMessage: "Page not found" });
   }
 
   setResponseHeader(event, "content-type", "text/markdown; charset=utf-8");
-  return markdown;
+  return parsedMarkdown.output;
 });
