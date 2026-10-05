@@ -10985,7 +10985,11 @@ describe("server helpers", () => {
     }
   })
 
-  it("expires a queued webhook invocation that exceeds the execution deadline", async () => {
+  it.each([
+    { timeout: undefined, inputTimeout: undefined, deadline: 900_000 },
+    { timeout: 1_800_000, inputTimeout: undefined, deadline: 1_800_000 },
+    { timeout: 1_800_000, inputTimeout: 1_200_000, deadline: 1_200_000 },
+  ])("expires a queued webhook invocation at its configured deadline $deadline", async ({ timeout, inputTimeout, deadline }) => {
     vi.useFakeTimers()
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
@@ -11000,7 +11004,7 @@ describe("server helpers", () => {
         input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
       })
     })
-    const agent = defineAgent({ driver: { run } })
+    const agent = defineAgent({ driver: { run }, messages: timeout === undefined ? undefined : { timeout } })
     await state.connect()
     await state.enqueueWebhookDelivery({
       concurrencyKey: "review:timeout",
@@ -11008,7 +11012,7 @@ describe("server helpers", () => {
       concurrencyLimit: 1,
       deliveryId: "delivery-execution-timeout",
       enqueuedAt: Date.now(),
-      invocation: { input: { prompt: "persisted" } },
+      invocation: { input: { prompt: "persisted", timeout: inputTimeout } },
       leaseTtlMs: 3_600_000,
       request: { body: "{}", headers: {}, method: "POST", url: "https://example.com" },
       scope: "webhook:review:github:timeout:",
@@ -11022,7 +11026,13 @@ describe("server helpers", () => {
 
     try {
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
-      await vi.advanceTimersByTimeAsync(900_000)
+      await vi.advanceTimersByTimeAsync(899_000)
+      expect(complete).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1_000)
+      if (deadline > 900_000) {
+        expect(complete).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(deadline - 900_000)
+      }
       await vi.waitFor(() => expect(complete).toHaveBeenCalled())
       expect(retry).not.toHaveBeenCalled()
     } finally {

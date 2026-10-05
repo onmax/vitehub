@@ -1034,9 +1034,18 @@ function webhookConcurrencyFenceKey(concurrencyKey: string): string {
 
 const defaultWebhookQueueRetryMs = 1_000
 const maxWebhookQueueAttempts = 3
-const maxWebhookQueueExecutionMs = 900_000
+const defaultWebhookQueueExecutionMs = 900_000
 const maxWebhookLateReconciliationMs = 60_000
 const webhookLateReconciliationPollMs = 1_000
+
+function webhookQueueExecutionTimeout(agent: unknown, input: unknown): number {
+  const options = getAgentChatOptions(agent)
+  const messages = isRecord(agent) && isRecord(agent.messages) ? agent.messages : undefined
+  const requested = (isRecord(input) ? input.timeout : undefined) ?? options?.timeout ?? messages?.timeout
+  return typeof requested === "number" && Number.isFinite(requested) && requested > 0
+    ? requested
+    : defaultWebhookQueueExecutionMs
+}
 
 function positiveWebhookConcurrencyLimit(value: number | undefined): number | undefined {
   if (value === undefined) return
@@ -1461,13 +1470,14 @@ async function executeQueuedWebhookDelivery(
   const ownershipAbort = new AbortController()
   let executionTimedOut = false
   let executionTimeoutTimer: ReturnType<typeof setTimeout> | undefined
+  const executionTimeoutMs = webhookQueueExecutionTimeout(agent, delivery.invocation?.input)
   const executionTimeout = new Promise<never>((_, reject) => {
     executionTimeoutTimer = setTimeout(() => {
       executionTimedOut = true
-      const reason = agentDiagnostics.AGENT_R0820({ message: "[vitehub] Queued webhook invocation timed out after 900000ms." })
+      const reason = agentDiagnostics.AGENT_R0820({ message: `[vitehub] Queued webhook invocation timed out after ${executionTimeoutMs}ms.` })
       ownershipAbort.abort(reason)
       reject(reason)
-    }, maxWebhookQueueExecutionMs)
+    }, executionTimeoutMs)
   })
   const stopHeartbeat = startWebhookQueueHeartbeat(state, delivery, () => {
     ownershipAbort.abort(agentDiagnostics.AGENT_R0777({ message: "[vitehub] Webhook queue lease was lost during Agent execution." }))
