@@ -106,11 +106,12 @@ export async function resolveBuildConfig(
     timing: string
   },
 ): Promise<{ diagnostics: EnvDiagnosticEntry[], values: Record<string, unknown> }> {
+  assertUniqueBuildCanonicalNames(declarations, input.section, input.prefix)
   const diagnostics: EnvDiagnosticEntry[] = []
   const values: Record<string, unknown> = {}
 
   for (const [key, declaration] of Object.entries(declarations || {})) {
-    const result = await resolveBuildConfigValue(declaration, `${input.section}.${key}`, input)
+    const result = await resolveBuildConfigValue(declaration, `${input.section}.${key}`, { ...input, prefix: canonicalKey.test(key) ? input.prefix : false })
     values[key] = result.value
     diagnostics.push(...result.diagnostics)
   }
@@ -128,12 +129,13 @@ export async function resolveEnvEntries(
     timing: string
   },
 ): Promise<{ diagnostics: EnvDiagnosticEntry[], entries: ResolvedEnvEntry[] }> {
+  assertUniqueBuildCanonicalNames(declarations, input.section, input.prefix)
   const entries: ResolvedEnvEntry[] = []
   const diagnostics: EnvDiagnosticEntry[] = []
 
   for (const [key, declaration] of Object.entries(declarations || {})) {
     const defaultValue = parseDeclarationDefault(declaration, `${input.section}.${key}`)
-    const source = resolveEnvSource(declaration, `${input.section}.${key}`, input.prefix)
+    const source = resolveEnvSource(declaration, `${input.section}.${key}`, canonicalKey.test(key) ? input.prefix : false)
     const resolvedSource = await resolveSourceValue(source, input.context)
     const defaulted = typeof resolvedSource.value === "undefined"
     const valueForSchema = defaulted ? defaultValue : resolvedSource.value
@@ -195,6 +197,31 @@ export function createRuntimeRegistry(declarations: EnvRuntimeConfigOptions | un
 // A key such as "nested.token" or "api-key" has no unambiguous upper snake case name.
 const canonicalKey = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
+function claimCanonicalName(owners: Map<string, string>, canonical: string | undefined, path: string): void {
+  if (canonical === undefined) return
+  const owner = owners.get(canonical)
+  if (owner !== undefined) {
+    throw invalidEnvDeclaration(path, `${path} and ${owner} share the canonical variable name ${canonical}. Rename one, or set hubEnv({ prefix: false }).`)
+  }
+  owners.set(canonical, path)
+}
+
+function assertUniqueBuildCanonicalNames(declarations: unknown, path: string, prefix?: string | false): void {
+  const owners = new Map<string, string>()
+  const visit = (value: unknown, valuePath: string, valuePrefix?: string | false): void => {
+    if (isEnvVariableDeclaration(value)) {
+      const source = resolveEnvSource(value, valuePath, valuePrefix)
+      if (source.kind === "env") claimCanonicalName(owners, source.canonical, valuePath)
+      return
+    }
+    if (!isPlainRecord(value)) return
+    for (const [key, child] of Object.entries(value)) {
+      visit(child, `${valuePath}.${key}`, canonicalKey.test(key) ? valuePrefix : false)
+    }
+  }
+  visit(declarations, path, prefix)
+}
+
 function assertUniqueCanonicalNames(registry: EnvRuntimeRegistry, path: string): void {
   const owners = new Map<string, string>()
   const visit = (value: unknown, valuePath: string): void => {
@@ -202,11 +229,7 @@ function assertUniqueCanonicalNames(registry: EnvRuntimeRegistry, path: string):
     const source = value.source
     if (isPlainRecord(source) && source.kind === "env") {
       if (typeof source.canonical !== "string") return
-      const owner = owners.get(source.canonical)
-      if (owner !== undefined) {
-        throw invalidEnvDeclaration(valuePath, `${valuePath} and ${owner} share the canonical variable name ${source.canonical}. Rename one, or set hubEnv({ prefix: false }).`)
-      }
-      owners.set(source.canonical, valuePath)
+      claimCanonicalName(owners, source.canonical, valuePath)
       return
     }
     if (value.kind === "literal" || isPlainRecord(source)) return
@@ -278,7 +301,7 @@ async function resolveBuildConfigValue(
   const value: Record<string, unknown> = {}
   const diagnostics: EnvDiagnosticEntry[] = []
   for (const [key, child] of Object.entries(declaration)) {
-    const result = await resolveBuildConfigValue(child, `${path}.${key}`, input)
+    const result = await resolveBuildConfigValue(child, `${path}.${key}`, { ...input, prefix: canonicalKey.test(key) ? input.prefix : false })
     value[key] = result.value
     diagnostics.push(...result.diagnostics)
   }

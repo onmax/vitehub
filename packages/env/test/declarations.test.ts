@@ -3,10 +3,58 @@ import { z } from "zod"
 
 import { env } from "../src/index.ts"
 import { defaultStringSchema } from "../src/core/declarations.ts"
-import { createRuntimeRegistry, createSourceContext, resolveBuildConfig, resolveEnvSource, validateEnvConfigShape } from "../src/core/resolve.ts"
+import { createRuntimeRegistry, createSourceContext, resolveBuildConfig, resolveEnvEntries, resolveEnvSource, validateEnvConfigShape } from "../src/core/resolve.ts"
 import { parseSchema } from "../src/schema.ts"
 
 describe("env declarations", () => {
+  it("rejects public and nested define canonical collisions before resolving sources", async () => {
+    const input = {
+      context: createSourceContext({ env: {}, mode: "build", rootDir: process.cwd() }),
+      timing: "test",
+    }
+    const declarations = { apiKey: env({ mode: "build" }), api_key: env({ mode: "build" }) }
+    await expect(resolveEnvEntries(declarations, { ...input, exposure: "build public", section: "env.public" }))
+      .rejects.toMatchObject({ code: "ENV_DECLARATION_INVALID" })
+    await expect(resolveBuildConfig({ nested: declarations }, { ...input, exposure: "compile-time replacement", section: "env.define" }))
+      .rejects.toMatchObject({ code: "ENV_DECLARATION_INVALID" })
+    await expect(resolveBuildConfig({ nestedApiKey: env({ mode: "build" }), nested: { apiKey: env({ mode: "build" }) } }, {
+      ...input, exposure: "compile-time replacement", section: "env.define", prefix: "APP_",
+    })).rejects.toMatchObject({ code: "ENV_DECLARATION_INVALID" })
+  })
+
+  it("suppresses build canonical names for unsafe keys and their descendants", async () => {
+    const input = {
+      context: createSourceContext({ env: {
+        VITEHUB_PUBLIC_API_KEY: "canonical", PUBLIC_API_KEY: "conventional",
+        VITEHUB_DEFINE_NESTED_TOKEN: "canonical", DEFINE_NESTED_TOKEN: "conventional",
+        VITEHUB_DEFINE_API_KEY_TOKEN: "canonical", DEFINE_API_KEY_TOKEN: "conventional",
+      }, mode: "build", rootDir: process.cwd() }),
+      timing: "test",
+    }
+    const result = await resolveEnvEntries({ "api-key": env({ mode: "build" }) }, {
+      ...input, exposure: "build public", section: "env.public",
+    })
+    expect(result.entries[0]?.value).toBe("conventional")
+    const defined = await resolveBuildConfig({
+      "nested.token": env({ mode: "build" }),
+      "api-key": { token: env({ mode: "build" }) },
+    }, { ...input, exposure: "compile-time replacement", section: "env.define" })
+    expect(defined.values).toEqual({ "nested.token": "conventional", "api-key": { token: "conventional" } })
+  })
+
+  it("allows build collisions when canonical names are disabled", async () => {
+    const input = {
+      context: createSourceContext({ env: { PUBLIC_API_KEY: "public", DEFINE_API_KEY: "define" }, mode: "build", rootDir: process.cwd() }),
+      prefix: false as const,
+      timing: "test",
+    }
+    const declarations = { apiKey: env({ mode: "build" }), api_key: env({ mode: "build" }) }
+    const result = await resolveEnvEntries(declarations, { ...input, exposure: "build public", section: "env.public" })
+    expect(result.entries.map(entry => entry.value)).toEqual(["public", "public"])
+    const defined = await resolveBuildConfig(declarations, { ...input, exposure: "compile-time replacement", section: "env.define" })
+    expect(defined.values).toEqual({ apiKey: "define", api_key: "define" })
+  })
+
   it("rejects sparse build arrays whose values only exist on the prototype", async () => {
     const sparse: string[] = []
     sparse.length = 1

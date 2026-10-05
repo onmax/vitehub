@@ -185,7 +185,7 @@ describe("built-in deployment preset integration", () => {
         env: {
           server: {
             nested: {
-              required: env({ secret: true, source: env.source("VITEHUB_TOKEN") }),
+              required: env({ secret: true, source: env.source("VITEHUB_NESTED_REQUIRED") }),
               optional: env({ optional: true, secret: true, source: env.source("OPTIONAL_TOKEN") }),
               alternatives: env({ secret: true, source: env.source(["PRIMARY_TOKEN", "FALLBACK_TOKEN"]) }),
               external: env({ secret: true, source: env.provider("credentials", "github/token") }),
@@ -206,7 +206,7 @@ describe("built-in deployment preset integration", () => {
 
       expect((config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
-      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["APP_SECRET", "VITEHUB_TOKEN"])
+      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["APP_SECRET", "VITEHUB_NESTED_REQUIRED"])
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -235,7 +235,7 @@ describe("built-in deployment preset integration", () => {
       expect(config.root).toBe(agentRoot)
       expect((config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
-      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["TELEGRAM_BOT_TOKEN"])
+      }).nitro?.cloudflare?.wrangler?.secrets?.required).toBeUndefined()
       const types = await readFile(join(agentRoot, ".vitehub", "types", "env.d.ts"), "utf8")
       expect(types).toContain('"telegram": {')
       expect(types).toContain('"botToken": import("vite-hub/env/secret").SecretEnv<string>')
@@ -264,7 +264,7 @@ describe("built-in deployment preset integration", () => {
       }).nitro?.cloudflare?.wrangler?.secrets?.required
 
       const config = await resolve()
-      expect(requiredSecrets(config)).toEqual(["TELEGRAM_BOT_TOKEN"])
+      expect(requiredSecrets(config)).toBeUndefined()
       await symlink(join(import.meta.dirname, "../../..", "node_modules"), join(root, "node_modules"), "dir")
       const moduleUrl = pathToFileURL(join(root, ".vitehub", "env", "server.mjs")).href
       const token = execFileSync(process.execPath, ["--input-type=module", "-e", `
@@ -284,7 +284,7 @@ describe("built-in deployment preset integration", () => {
       expect(description).toContain("env.server.telegram.botToken")
 
       const renamed = await resolve({ telegram: { botToken: env({ secret: true, source: env.source("TELEGRAM_TOKEN") }) } })
-      expect(requiredSecrets(renamed)).toEqual(["TELEGRAM_TOKEN"])
+      expect(requiredSecrets(renamed)).toBeUndefined()
 
       await writeFile(join(root, "server", "agents", "support.ts"), [
         `import { defineAgent } from "vite-hub/agent"`,
@@ -538,7 +538,7 @@ describe("built-in deployment preset integration", () => {
     }
   }, 300_000)
 
-  it("emits conventional secret names from a standalone Env plugin with a custom prefix through Nitro", async () => {
+  it("omits fallback secret names from a standalone Env plugin with a custom prefix through Nitro", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-prefixed-standalone-secrets-build-"))
     try {
       await mkdir(join(root, "server", "routes"), { recursive: true })
@@ -555,8 +555,8 @@ describe("built-in deployment preset integration", () => {
       await builder.buildApp()
 
       const wrangler: unknown = JSON.parse(await readFile(join(root, ".output", "server", "wrangler.json"), "utf8"))
-      // APP_TOKEN is the canonical name and also satisfies the secret at runtime. Wrangler lists the conventional name.
-      expect(wrangler).toMatchObject({ secrets: { required: ["TOKEN"] } })
+      // Either APP_TOKEN or TOKEN satisfies the declaration; Wrangler cannot require either one alone.
+      expect(wrangler).not.toHaveProperty("secrets.required")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -579,7 +579,7 @@ describe("built-in deployment preset integration", () => {
           {
             name: "app/server-env",
             enforce: "pre",
-            config: () => ({ env: { server: { token: env({ secret: true, source: env.source("LATE_TOKEN") }) } } }),
+            config: () => ({ env: { server: { token: env({ secret: true, source: env.source("VITEHUB_TOKEN") }) } } }),
           },
           nitro() as never,
         ],
@@ -587,12 +587,30 @@ describe("built-in deployment preset integration", () => {
       await builder.buildApp()
 
       const wrangler: unknown = JSON.parse(await readFile(join(root, ".output", "server", "wrangler.json"), "utf8"))
-      expect(wrangler).toMatchObject({ secrets: { required: ["LATE_TOKEN"] } })
+      expect(wrangler).toMatchObject({ secrets: { required: ["VITEHUB_TOKEN"] } })
     }
     finally {
       await rm(root, { force: true, recursive: true })
     }
   }, 30_000)
+
+  it.each([undefined, "APP_", false] as const)("uses exact Wrangler requirements with prefix %s", async (prefix) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-secret-aliases-"))
+    try {
+      const config = await resolveConfig({
+        env: { server: { token: env({ secret: true }) } },
+        root,
+        plugins: [vitehub({ env: false, preset: "cloudflare" }), hubEnv({ prefix })],
+      } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build")
+      const required = (config as typeof config & {
+        nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
+      }).nitro?.cloudflare?.wrangler?.secrets?.required
+      expect(required).toEqual(prefix === false ? ["TOKEN"] : undefined)
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
 
   it("declares required secrets from a standalone Env plugin", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-standalone-required-secrets-"))

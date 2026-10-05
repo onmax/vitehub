@@ -140,7 +140,7 @@ Built-in Channels and gateway presets follow the same rule: their vendor names a
 
 Inspection reports `via: 'canonical'` or `via: 'conventional'` for each available value. It reports `conflict: true` when the canonical name and a conventional name hold different values; the canonical value is used. `describeServerEnv()` includes `canonicalName`. Conventional names stay out of inspection output.
 
-On Cloudflare, a required secret is listed under its conventional name in the Wrangler config. The canonical name also satisfies it at runtime.
+On Cloudflare, a required secret is listed in the Wrangler config only when it accepts one exact name. Canonical and conventional alternatives remain runtime-only because Wrangler cannot express fallback names. Use `hubEnv({ prefix: false })` or an explicit source equal to the canonical name when an exact Wrangler requirement is needed.
 
 ## Env sources
 
