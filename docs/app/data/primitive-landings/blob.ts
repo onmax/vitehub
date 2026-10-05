@@ -39,7 +39,7 @@ export const BlobLanding = {
         {
           path: "server/api/blob.ts",
           language: "typescript",
-          content: 'import { blob } from "@vite-hub/blob"\nimport { defineEventHandler } from "h3"\n\nexport default defineEventHandler(() => blob.get("greeting.txt"))',
+          content: 'import { blob } from "@vite-hub/blob"\nimport { createError, defineEventHandler } from "h3"\n\nexport default defineEventHandler(async () => {\n  const [error, file] = await blob.get("greeting.txt")\n  if (error) throw error\n  if (!file) throw createError({ statusCode: 404, statusMessage: "File not found" })\n  return file\n})',
         },
       ],
     },
@@ -56,7 +56,7 @@ export const BlobLanding = {
         {
           path: "server/api/blob.ts",
           language: "typescript",
-          content: 'import { blob } from "@vite-hub/blob"\nimport { defineEventHandler } from "h3"\n\nexport default defineEventHandler(() => blob.get("greeting.txt"))',
+          content: 'import { blob } from "@vite-hub/blob"\nimport { createError, defineEventHandler } from "h3"\n\nexport default defineEventHandler(async () => {\n  const [error, file] = await blob.get("greeting.txt")\n  if (error) throw error\n  if (!file) throw createError({ statusCode: 404, statusMessage: "File not found" })\n  return file\n})',
         },
       ],
     },
