@@ -40,6 +40,27 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           return operations.readCheckLogs(input.runId);
         },
       },
+      readBaseCheckEvidence: {
+        name: "readBaseCheckEvidence",
+        description: "Read bounded checks, statuses and workflow runs for this PR's exact assigned base commit. Use it to compare a suspected base regression without GitHub shell credentials.",
+        inputSchema: noArguments,
+        execute: () => operations.readBaseCheckEvidence(),
+      },
+      readBaseCheckLogs: {
+        name: "readBaseCheckLogs",
+        description: "Read bounded failed logs for a workflow run on this PR's exact assigned base commit. A synthetic merge run is not base evidence.",
+        inputSchema: {
+          type: "object",
+          properties: { runId: { type: "integer", minimum: 1 } },
+          required: ["runId"],
+          additionalProperties: false,
+        },
+        execute: (input: unknown) => {
+          // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability input is untyped until this runtime boundary validates it.
+          if (!input || typeof input !== "object" || !("runId" in input) || typeof input.runId !== "number") throw new Error("Expected a run ID.");
+          return operations.readBaseCheckLogs(input.runId);
+        },
+      },
       pushRepair: {
         name: "pushRepair",
         description:
