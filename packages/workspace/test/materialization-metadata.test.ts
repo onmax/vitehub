@@ -556,3 +556,24 @@ it("keeps inline binary source fingerprints compact without losing cache invalid
   await expect(hasCurrentSourceSnapshot(store, definition.name, source)).resolves.toBe(true)
   expect((await store.readFile(".agents/skills/coding/SKILL.md"))?.content).toEqual(content)
 })
+
+it("does not inspect unrelated root-mounted inline Sources when listing a directory", async () => {
+  const store = createMemoryWorkspaceStore()
+  const skillPath = ".agents/skills/coding/SKILL.md"
+  const definition = {
+    name: "inline-source-listing",
+    sources: {
+      skill: { content: "coding instructions", materialize: "startup" as const, mount: "", workspacePath: skillPath },
+    },
+  }
+  await materializeWorkspaceSources(definition, store)
+  await store.writeFile("portal/index.ts", { content: "export {}" })
+  const stat = vi.spyOn(store, "stat")
+  const view = createWorkspaceSourceView(definition, store, { reuseStartupSnapshots: true })
+
+  expect((await view.list("portal", { recursive: true })).map(({ path }) => path)).toEqual(["portal/index.ts"])
+  expect(stat.mock.calls.map(([path]) => path)).not.toContain(skillPath)
+
+  expect((await view.list(".agents/skills/coding", { recursive: true })).map(({ path }) => path)).toEqual([skillPath])
+  expect(stat.mock.calls.map(([path]) => path)).toContain(skillPath)
+})

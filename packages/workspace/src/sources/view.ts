@@ -208,7 +208,15 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   }
 
   function getLazySourcesForPath(path: string) {
-    return sources.filter(source => sourceMountIntersectsPath(source, path))
+    const normalized = normalizeWorkspacePath(path)
+    return sources.filter(source => {
+      if (!sourceMountIntersectsPath(source, normalized)) return false
+      if (source.source.name !== "file" || !source.probeKeys?.length) return true
+      return source.probeKeys.some(key => {
+        const filePath = normalizeWorkspacePath(`${source.mountPath}/${key}`)
+        return !normalized || normalized === filePath || filePath.startsWith(`${normalized}/`)
+      })
+    })
   }
 
   async function ensurePrepared(sourceKey: string) {
