@@ -57,7 +57,7 @@ describe("Box runtime selection", () => {
     });
     await expect(resolveBox({ runtime: inherited }, {})).rejects.toThrow(/Unknown Box runtime kind/);
 
-    for (const constructor of [function Fake() {}, class Fake {}]) {
+    for (const constructor of [function Fake() {}, class Fake {}, { [Symbol.toStringTag]: "Function" }]) {
       const forged = Object.create({
         constructor,
         name: "custom",
@@ -98,6 +98,25 @@ describe("Box runtime selection", () => {
       async prepare() { throw new Error("custom prepare reached"); }
     })()`);
     for (const runtime of [new CustomRuntime(), new DerivedRuntime(), foreign]) {
+      await expect(resolveBox({ runtime }, {})).rejects.toThrow("custom prepare reached");
+    }
+  });
+
+  it("accepts class runtimes with tagged constructors across realms", async () => {
+    class TaggedRuntime {
+      static [Symbol.toStringTag] = "TaggedRuntime";
+      get name() { return "custom"; }
+      async open(): Promise<never> { throw new Error("not reached"); }
+      async prepare(): Promise<never> { throw new Error("custom prepare reached"); }
+    }
+    class DerivedRuntime extends TaggedRuntime {}
+    const foreign = runInNewContext(`new (class TaggedRuntime {
+      static [Symbol.toStringTag] = "TaggedRuntime";
+      get name() { return "custom"; }
+      async open() { throw new Error("not reached"); }
+      async prepare() { throw new Error("custom prepare reached"); }
+    })()`);
+    for (const runtime of [new TaggedRuntime(), new DerivedRuntime(), foreign]) {
       await expect(resolveBox({ runtime }, {})).rejects.toThrow("custom prepare reached");
     }
   });
