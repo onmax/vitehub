@@ -5,6 +5,7 @@ import { primitiveLandings } from "~/data/primitive-landings";
 const props = defineProps<{ landing: PrimitiveLanding }>();
 const framework = useState<"vite" | "nitro" | "nuxt">("primitive-framework", () => "vite");
 const selectorOpen = ref(false);
+const primitiveOptions = Object.values(primitiveLandings);
 useSeoMeta({
   title: `ViteHub ${props.landing.name}`,
   ogTitle: `ViteHub ${props.landing.name}`,
@@ -23,7 +24,7 @@ useSeoMeta({
           <template #content>
             <div class="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-default bg-default sm:grid-cols-3">
               <NuxtLink
-                v-for="primitive in Object.values(primitiveLandings)"
+                v-for="primitive in primitiveOptions"
                 :key="primitive.slug"
                 :to="`/${primitive.slug}`"
                 class="bg-elevated p-3 transition-colors duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-accented focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-primary"
