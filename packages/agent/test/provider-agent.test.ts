@@ -490,14 +490,14 @@ describe("Provider Agent Driver", () => {
     expect(String(createProviderRuntime.mock.lastCall?.[0].settings?.launchArgs || "")).not.toContain("model_provider")
   })
 
-  it("rejects resolved driver.env values that the gateway owns", async () => {
+  it.each(["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"])("rejects resolved driver.env.%s that the gateway owns", async (variable) => {
     // The invocation fails before it starts a provider runtime, so queue none.
     const threadId = "thread-gateway-conflict"
     await expect(createProviderAgentAdapter({
-      env: async () => ({ ANTHROPIC_BASE_URL: "https://other.example" }),
+      env: async () => ({ [variable]: "https://other.example" }),
       gateway: defineGateway({ name: "proxy", baseURL: { "claude-code": "https://proxy.example" }, apiKey: "k" }),
       provider: "claude-code",
-    }).generate(context(threadId) as never)).rejects.toThrow("driver.gateway sets ANTHROPIC_BASE_URL")
+    }).generate(context(threadId) as never)).rejects.toThrow(`driver.gateway sets ${variable}`)
   })
 
   it("resolves provider environment once and launches through an isolated executable", async () => {

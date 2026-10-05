@@ -154,7 +154,8 @@ function claudeGateway(gateway: AgentDriverGateway, baseURL: string, apiKey: str
       ...(gateway.auth === "x-api-key"
         ? { ANTHROPIC_API_KEY: apiKey, ANTHROPIC_AUTH_TOKEN: "" }
         : { ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: apiKey }),
-      ...(headers.length ? { ANTHROPIC_CUSTOM_HEADERS: headers.map(([name, value]) => `${name}: ${value}`).join("\n") } : {}),
+      // Own this variable even without extra headers, just like the authentication variables.
+      ANTHROPIC_CUSTOM_HEADERS: headers.map(([name, value]) => `${name}: ${value}`).join("\n"),
     },
   }
 }
