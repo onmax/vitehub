@@ -1,4 +1,4 @@
-import { lstat, readFile, readdir, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, readdir, rename, rmdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
@@ -21,7 +21,7 @@ export function envString(value: unknown): string | undefined {
  *
  * Current GitHub hosts use a disposable checkout for each pass. The old pool
  * retained merged and closed PR workspaces, including installed dependencies,
- * under `.vitehub/checkouts`; remove that reserved directory as one unit.
+ * under the owning process host data directory; remove that pool as one unit.
  */
 export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise<number> {
   const root = join(dataDir, "checkouts");
@@ -33,8 +33,25 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(`[vitehub] Refusing to clean unsafe Babysitter checkout pool: ${root}`);
   }
-  const entries = await readdir(root, { withFileTypes: true });
-  await rm(root, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+  // Claim the entry in a private directory before deleting anything. A new
+  // pool at the original path must never become a recursive cleanup target.
+  const quarantine = await mkdtemp(join(dataDir, ".checkouts-cleanup-"));
+  const claimed = join(quarantine, "checkouts");
+  try {
+    await rename(root, claimed);
+  } catch (error) {
+    await rmdir(quarantine);
+    throw error;
+  }
+  const claimedInfo = await lstat(claimed);
+  if (!claimedInfo.isDirectory() || claimedInfo.dev !== info.dev || claimedInfo.ino !== info.ino) {
+    // Preserve an unexpected entry for inspection; do not overwrite a new pool
+    // in an attempt to restore it.
+    throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
+  }
+  const entries = await readdir(claimed, { withFileTypes: true });
+  await rm(claimed, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+  await rmdir(quarantine);
   return entries.length;
 }
 
@@ -67,12 +84,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
   const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
   const repositories = babysitterRepositories(agent.options.filter);
-  // Process hosts live at `.vitehub/agents/<name>`; the legacy pool lived at
-  // the sibling `.vitehub/checkouts` directory.
-  // Older process-host layouts placed the pool below `.vitehub/agents`;
-  // clean that sibling as well as the canonical `.vitehub/checkouts` root.
-  await cleanupLegacyBabysitterCheckouts(join(context.dataDir, "..", ".."));
-  await cleanupLegacyBabysitterCheckouts(join(context.dataDir, ".."));
+  await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();

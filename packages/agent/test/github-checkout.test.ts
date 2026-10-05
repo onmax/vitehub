@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -95,6 +95,12 @@ const args = process.argv.slice(2).map(arg => map[arg] || arg);
 const result = spawnSync(${JSON.stringify(realGit)}, args, { stdio: 'inherit' });
 process.exit(result.status ?? 1);
 `, { mode: 0o755 })
+  const globalConfig = join(root, 'global.gitconfig')
+  const globalHooks = join(root, 'global-hooks')
+  await mkdir(globalHooks)
+  await writeFile(join(globalHooks, 'post-checkout'), '#!/bin/sh\nexit 99\n', { mode: 0o755 })
+  await writeFile(globalConfig, `[core]\n hooksPath = ${globalHooks}\n`)
+  vi.stubEnv('GIT_CONFIG_GLOBAL', globalConfig)
   vi.stubEnv('PATH', `${bin}:${process.env.PATH}`)
   const credentials = vi.fn(({ repository }: { repository?: string }) => ({ token: repository ?? 'default', rateLimitKey: repository ?? 'default' }))
   const host = createGitHubHost({ credentials })
