@@ -1,7 +1,7 @@
 import { discoveredAgentName } from "./internal/discovered-agent-name.ts"
 import { agentDefinitionSourceSymbol } from "./internal/agent-definition-source.ts"
 import { registeredWorkspaceAgentNames } from "./internal/workspace-agent-registration.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
+import { hasRuntimeType } from "./internal/runtime-type.ts"
 import { resolveNamedAgentPresetOptions } from "./agent-presets.ts"
 import type { AgentDefinition, AgentInterceptOutputCarrier, AgentSettings } from "./types.ts"
 
