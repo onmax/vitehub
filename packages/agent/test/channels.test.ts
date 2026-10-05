@@ -1322,7 +1322,12 @@ describe("agent channels", () => {
     })
     if (mentioned instanceof Response) throw new Error("Expected GitHub mention invocation.")
     expect(mentioned.input.context?.github).toMatchObject({ args: "Please, review this", command: "@AgEnT", event: "issue_comment" })
-    expect(mentioned.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "mention-delivery" })
+    expect(mentioned.webhook).toEqual({
+      concurrencyGroup: "acme/app#42",
+      concurrencyLimit: 1,
+      deliveryId: "mention-delivery",
+      rehydrate: expect.any(Function),
+    })
 
     // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
     const botMention = await trigger.invoke(context as never, {
