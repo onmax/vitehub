@@ -13,7 +13,7 @@ catalog:
   remark-mdc: ^3.11.1
   remark-parse: ^11.0.0
   unified: ^11.0.5
-  vite-doctor: https://pkg.pr.new/vite-doctor@184
+  vite-doctor: https://pkg.pr.new/vite-doctor@9f33eb1748fb93f7399579b60d3bff6af3895eb1
 
 catalogMode: prefer
 
