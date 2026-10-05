@@ -2,8 +2,7 @@ import { ViteHubError } from "@vite-hub/runtime"
 
 import { capabilityFinishDeliveryEffectSymbol, defineCapability } from "../capability-runtime.ts"
 import { defineInternalTool } from "./internal.ts"
-import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
-import { isRuntimeRecord } from "../internal/runtime-type.ts"
+import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 
 import type {
   AgentCapabilityDefinition,
