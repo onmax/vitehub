@@ -34,7 +34,7 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
     throw new Error(`[vitehub] Refusing to clean unsafe Babysitter checkout pool: ${root}`);
   }
   const entries = await readdir(root, { withFileTypes: true });
-  await rm(root, { force: true, recursive: true });
+  await rm(root, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
   return entries.length;
 }
 
@@ -69,7 +69,10 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const repositories = babysitterRepositories(agent.options.filter);
   // Process hosts live at `.vitehub/agents/<name>`; the legacy pool lived at
   // the sibling `.vitehub/checkouts` directory.
+  // Older process-host layouts placed the pool below `.vitehub/agents`;
+  // clean that sibling as well as the canonical `.vitehub/checkouts` root.
   await cleanupLegacyBabysitterCheckouts(join(context.dataDir, "..", ".."));
+  await cleanupLegacyBabysitterCheckouts(join(context.dataDir, ".."));
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
