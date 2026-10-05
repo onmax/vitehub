@@ -166,8 +166,7 @@ export function liveMergeReadiness(live: unknown, head: string): MergeDecision {
   // Merging it there would strand the change outside the default branch.
   const defaultBranch = repository?.default_branch;
   if (!hasRuntimeType(defaultBranch, "string") || base?.ref !== defaultBranch) return no(`base ${String(base?.ref ?? "unknown")} is not the default branch`);
-  // GitHub uses "unstable" for failing optional checks. The required-check policy and
-  // explicit assessment already gate those; GitHub still enforces branch rules atomically.
-  if (live.mergeable_state !== "clean" && live.mergeable_state !== "unstable") return no(`mergeable_state ${String(live.mergeable_state ?? "unknown")}`);
+  // Fail closed when live checks disagree with the earlier inbox assessment.
+  if (live.mergeable_state !== "clean") return no(`mergeable_state ${String(live.mergeable_state ?? "unknown")}`);
   return { ready: true, head };
 }

@@ -91,3 +91,22 @@ it('new immutable job attempt refreshes its log while previous successful fetch 
  await hydrateFailedCiEvidence(inbox, claim, readers, 3000)
  assert.equal(calls, 2); assert.equal(claim.snapshot.ciEvidence![0]!.fetchedAt, new Date(2000).toISOString())
 })
+
+it.each(['cancelled', 'stale'])('hydrates %s checks and jobs', async conclusion => {
+ const { inbox, claim } = await fixture([check({ conclusion })])
+ await hydrateFailedCiEvidence(inbox, claim, { readJson: async () => [job({ conclusion })], readLog: async () => 'Runner stopped' })
+ assert.equal(claim.snapshot.ciEvidence![0]!.status, 'available')
+})
+it('prunes expired CI logs and metadata while retaining recent logs and unrelated metadata', async () => {
+ const { inbox, claim } = await fixture()
+ await hydrateFailedCiEvidence(inbox, claim, { readJson: async () => [job()], readLog: async () => 'old log' }, 1)
+ const expiredKey = String(claim.snapshot.ciEvidence![0]!.cacheKey)
+ await inbox.setMeta('ci-evidence:v1:job-log:recent', { fetchedAt: Date.now(), value: { log: 'recent' } })
+ await inbox.setMeta('ci-evidence:v1:jobs:legacy', { value: { jobs: [] } })
+ await inbox.setMeta('review-assessment:keep', { head: 'head' })
+ await inbox.pruneDeliveries()
+ assert.equal(await inbox.meta(expiredKey), undefined)
+ assert.equal(await inbox.meta('ci-evidence:v1:jobs:legacy'), undefined)
+ assert.equal((await inbox.metaEntries('ci-evidence:v1:')).length, 1)
+ assert.deepEqual(await inbox.meta('review-assessment:keep'), { head: 'head' })
+})

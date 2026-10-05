@@ -14,7 +14,7 @@ export type CiEvidenceReaders = {
   readJson: (path: string, projection?: string) => Promise<unknown[]>
   readLog: (path: string, repository: string) => Promise<string>
 }
-const failures = new Set(['failure', 'timed_out', 'startup_failure', 'action_required'])
+const failures = new Set(['failure', 'timed_out', 'startup_failure', 'action_required', 'cancelled', 'stale'])
 const key = (kind: string, value: unknown) => `ci-evidence:v1:${kind}:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`
 const failed = (item: Pick<GitHubEvidence, 'status' | 'conclusion'>) => item.status === 'completed' && failures.has(item.conclusion ?? '')
 const sourceUrl = (repository: string, job: ActionJob) => `https://github.com/${repository}/actions/runs/${job.run_id}/job/${job.id}`
@@ -91,11 +91,11 @@ export async function hydrateFailedCiEvidence(inbox: PullRequestInbox, claim: Cl
           ? await readers.readJson(`repos/${repository}/actions/jobs/${location.jobId}`, '.')
           : await readers.readJson(`repos/${repository}/actions/runs/${location.runId}/jobs?filter=latest&per_page=100`, '.jobs[]')
         const parsedJobs = jobs.map(job => v.parse(jobSchema, job))
-        metadata = { value: { jobs: parsedJobs } }
+        metadata = { value: { jobs: parsedJobs }, fetchedAt: now }
         // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Retry metadata is omitted after all jobs complete.
         if (!parsedJobs.length || parsedJobs.some(job => job.status !== 'completed')) metadata.retryAt = now + 120_000
       } catch {
-        metadata = { value: { error: 'GitHub Actions job metadata unavailable; this is an API read failure, not a CI result.' }, retryAt: now + 120_000 }
+        metadata = { value: { error: 'GitHub Actions job metadata unavailable; this is an API read failure, not a CI result.' }, retryAt: now + 120_000, fetchedAt: now }
       }
       await inbox.setMeta(metadataKey, metadata)
     }

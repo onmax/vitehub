@@ -115,29 +115,29 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
       return { stdout: JSON.stringify({ data }), stderr: "" };
     }
     if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ merged: true }), stderr: "" };
-    if (text.includes("--slurp") && text.includes("/protection/required_status_checks"))
-      return { stdout: JSON.stringify([{ contexts: [], checks: [] }]), stderr: "" };
+    if (text.includes("/protection/required_status_checks"))
+      return { stdout: JSON.stringify({ contexts: [], checks: [] }), stderr: "" };
     if (text.includes("/rules/branches/"))
       return {
-        stdout: JSON.stringify([
-          {
-            type: "required_status_checks",
-            parameters: { required_status_checks: [{ context: "test" }] },
-          },
-        ]),
+        stdout: JSON.stringify({
+          type: "required_status_checks",
+          parameters: { required_status_checks: [{ context: "test" }] },
+        }) + "\n",
         stderr: "",
       };
     if (text.includes("-X PATCH")) return { stdout: JSON.stringify(pr()), stderr: "" };
     const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
     if (path.includes("pulls?state=all&head="))
       return { stdout: (preset.parents ?? []).map((value) => JSON.stringify(value)).join("\n"), stderr: "" };
+    if (path.startsWith("repos/acme/app/pulls?state=open&base="))
+      return { stdout: "", stderr: "" };
     if (path === "repos/acme/app")
       return { stdout: JSON.stringify({ delete_branch_on_merge: false }), stderr: "" };
     const data =
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
         : path.includes("/reviews?")
-          ? [
+          ? preset.merge ? [] : [
               {
                 id: 41,
                 body: "Fix value",
@@ -236,7 +236,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
-  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string }> = [];
+  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
   let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async () => {
@@ -244,14 +244,18 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     let finishTurn!: () => void;
     const turnSent = new Promise<void>(resolve => { finishTurn = resolve });
     let mcp: { endpoint: string; authorizationHeader: string } | undefined;
+    let runtimeMode: string | undefined;
+    let approvalPolicy: string | undefined;
     return {
       attachmentsDirectory: join(root, "attachments"),
       close: async () => {},
       stopSession: async () => {},
       interruptTurn: async () => {},
-      startSession: async (input: { mcp?: typeof mcp, threadId: string }) => {
+      startSession: async (input: { mcp?: typeof mcp, runtimeMode?: string, approvalPolicy?: string, threadId: string }) => {
         mcp = input.mcp;
         threadId = input.threadId;
+        runtimeMode = input.runtimeMode;
+        approvalPolicy = input.approvalPolicy;
         return { threadId };
       },
       sendTurn: async (input: { input: string }) => {
@@ -272,6 +276,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
             prompt: input.input,
             session: threadId,
             instructions: await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
+            runtimeMode,
+            approvalPolicy,
           });
           if (operation) {
             const result = await client.callTool({ name: operation, arguments: operationArguments });
@@ -349,6 +355,21 @@ describe("Babysitter preset runtime", () => {
       expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge", "merge_method=squash", `sha=${"a".repeat(40)}`]));
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("releases the claim when branch safety read %s fails", async (path) => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes(path)) throw new Error("GitHub temporarily unavailable");
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(f.command.mock.calls.some(([args]) => args.includes("PUT"))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 
@@ -513,7 +534,7 @@ describe("Babysitter preset runtime", () => {
 
   it("selects the Claude Code driver", () => {
     const agent = defineAgent({ extends: babysitter, options: { driver: "claude-code" } });
-    expect(getAgentLayerOptions(agent)?.driver).toMatchObject({ kind: "claude-code", permissions: "allow-edits" });
+    expect(getAgentLayerOptions(agent)?.driver).toMatchObject({ kind: "claude-code", permissions: "allow-edits-unattended" });
     expect(agent.options.driver).toBe("claude-code");
   });
 
@@ -703,6 +724,8 @@ describe("Babysitter preset runtime", () => {
     await f.reconcile();
     expect(f.push).toHaveBeenCalledOnce();
     expect(f.prepare).toHaveBeenCalledOnce();
+    expect(f.passes[0]?.runtimeMode).toBe("auto-accept-edits");
+    expect(f.passes[0]?.approvalPolicy).toBe("never");
     expect(f.passes[0]?.tools).not.toContain("requestAutoMerge");
     expect(f.passes[0]?.tools).toContain("internalCheck");
     expect(f.passes[0]?.prompt).toContain("new-review-bot[bot]");
