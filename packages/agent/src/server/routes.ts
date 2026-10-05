@@ -1042,7 +1042,7 @@ function webhookQueueExecutionTimeout(agent: unknown, input: unknown): number {
   const options = getAgentChatOptions(agent)
   const messages = isRecord(agent) && isRecord(agent.messages) ? agent.messages : undefined
   const requested = (isRecord(input) ? input.timeout : undefined) ?? options?.timeout ?? messages?.timeout
-  return typeof requested === "number" && Number.isFinite(requested) && requested > 0
+  return isRuntimeNumber(requested) && Number.isFinite(requested) && requested > 0
     ? requested
     : defaultWebhookQueueExecutionMs
 }
