@@ -115,7 +115,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
       return { stdout: JSON.stringify({ data }), stderr: "" };
     }
     if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ merged: true }), stderr: "" };
-    if (text.includes("--slurp") && text.includes("/protection/required_status_checks"))
+    if (text.includes("/protection/required_status_checks"))
       return { stdout: JSON.stringify([{ contexts: [], checks: [] }]), stderr: "" };
     if (text.includes("/rules/branches/"))
       return {
