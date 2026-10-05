@@ -133,3 +133,19 @@ export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckStat
 export function hasPendingChecks(snapshot: Snapshot, policy: BabysitterWaitPolicy): boolean {
   return currentCheckSignals(snapshot).some(signal => pending.has(String(signal.status ?? signal.state)));
 }
+
+/** The reader paginates and projects individual records from every REST page. */
+export async function checksDependencyEvidence(wake: { repository: string; headSha: string }, read: (path: string, projection: string) => Promise<unknown[]>) {
+  const checks = await read(`repos/${wake.repository}/commits/${wake.headSha}/check-runs?per_page=100`, ".check_runs[]");
+  const statuses = await read(`repos/${wake.repository}/commits/${wake.headSha}/statuses?per_page=100`, ".[]");
+  return hash({
+    checks: checks.map(check => {
+      if (!isRuntimeRecord(check)) throw new Error("Invalid dependency check evidence.");
+      return JSON.stringify([check.id, check.status, check.conclusion]);
+    }).sort(),
+    statuses: statuses.map(status => {
+      if (!isRuntimeRecord(status)) throw new Error("Invalid dependency status evidence.");
+      return JSON.stringify([status.id, status.context, status.state]);
+    }).sort(),
+  });
+}

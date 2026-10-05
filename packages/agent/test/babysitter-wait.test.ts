@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PullRequestInbox, type Snapshot } from "../src/server/github-inbox.ts";
-import { createCheckWait, hasPendingChecks, shouldKeepWaiting, wakeReasons, type BabysitterWaitPolicy } from "../src/presets/babysitter/wait.ts";
+import { checksDependencyEvidence, createCheckWait, hasPendingChecks, shouldKeepWaiting, wakeReasons, type BabysitterWaitPolicy } from "../src/presets/babysitter/wait.ts";
 import { snapshotCheckEvidence } from "../src/presets/babysitter/merge.ts";
 import { stackRetargetBase } from "../src/presets/babysitter/stack.ts";
 import { evaluateGitHubRequiredChecks } from "../src/server/github-required-checks.ts";
@@ -128,4 +128,23 @@ describe("Babysitter stacked PRs", () => {
     expect(stackRetargetBase(pr, [parent("closed", true, "feat/grandparent")])).toBeUndefined();
     expect(stackRetargetBase({ ...pr, base: { ...pr.base, ref: "main" } }, [parent("closed", true, "main")])).toBeUndefined();
   });
+});
+
+it("hashes projected dependency statuses beyond the first page without depending on record order", async () => {
+  const checks = [{ id: 1, status: "completed", conclusion: "success" }];
+  const statuses = Array.from({ length: 101 }, (_, id) => ({ id, context: `check-${id}`, state: "pending" }));
+  const read = async (path: string, projection: string) => {
+    if (path.includes("check-runs")) {
+      expect(projection).toBe(".check_runs[]");
+      return checks;
+    }
+    expect(projection).toBe(".[]");
+    return statuses;
+  };
+  const wake = { repository, headSha: head };
+  const original = await checksDependencyEvidence(wake, read);
+  statuses.reverse();
+  expect(await checksDependencyEvidence(wake, read)).toBe(original);
+  statuses[0]!.state = "success";
+  expect(await checksDependencyEvidence(wake, read)).not.toBe(original);
 });

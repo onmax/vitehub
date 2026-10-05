@@ -88,9 +88,10 @@ describe("Babysitter merge evidence", () => {
     expect(directMergeReadiness(s, "passed", { reviewedEvidenceKey: key }).ready).toBe(false);
   });
 
-  it("allows GitHub unstable only after required policy and assessment, and rejects feature bases", () => {
+  it("rejects live unstable state and feature bases", () => {
     const s = snapshot();
-    const live = { ...s.pr, mergeable: true, mergeable_state: "unstable" };
+    const live = { ...s.pr, mergeable: true, mergeable_state: "clean" };
+    expect(liveMergeReadiness({ ...live, mergeable_state: "unstable" }, head).ready).toBe(false);
     expect(liveMergeReadiness(live, head)).toEqual({ ready: true, head });
     expect(liveMergeReadiness({ ...live, reviewDecision: "REVIEW_REQUIRED" }, head).ready).toBe(false);
     expect(liveMergeReadiness({ ...live, mergeable: false }, head).ready).toBe(false);

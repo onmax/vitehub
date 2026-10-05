@@ -397,7 +397,7 @@ it("retains directory cleanup authority after a removal failure", async () => {
   await expect(store.stat("parent")).resolves.toBeUndefined()
 })
 
-it("retains build metadata when directory removal races with a new child", async () => {
+it.each(["memory", "filesystem"])("retains build metadata when %s directory removal races with a new child", async (provider) => {
   const store = createMemoryWorkspaceStore()
   const empty = { name: "racing-mount", sources: {} }
   await syncWorkspaceDefinition({ name: "racing-mount", sources: {
@@ -409,7 +409,8 @@ it("retains build metadata when directory removal races with a new child", async
     if (!raced) {
       raced = true
       await store.writeFile(`${path}/user.md`, { path: `${path}/user.md`, content: "user" })
-      throw Object.assign(new Error("directory became non-empty"), { code: "ENOTEMPTY" })
+      if (provider === "filesystem") throw Object.assign(new Error("directory became non-empty"), { code: "ENOTEMPTY" })
+      // The memory case exercises the real provider error.
     }
     await remove(path)
   }

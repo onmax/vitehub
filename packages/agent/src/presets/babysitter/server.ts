@@ -37,7 +37,7 @@ import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } fro
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
-import { createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
+import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 
 export interface BabysitterRuntimeOptions {
@@ -273,6 +273,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
       return "not-ready";
     }
+    let mergeStarted = false;
     try {
       const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
       const current = liveMergeReadiness(live, decision.head);
@@ -299,6 +300,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "merge attempt already in flight or claim changed" });
         return "blocked";
       }
+      mergeStarted = true;
       // GitHub rejects the merge when the head no longer matches sha.
       const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
       let response: unknown;
@@ -312,6 +314,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return "blocked";
       }
     } catch (error) {
+      if (!mergeStarted) await pullRequestInbox.release(claim);
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       return "blocked";
     }
@@ -360,10 +363,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       if (!isRuntimeRecord(pr)) throw new Error("Missing external pull-request state.");
       return digest({ state: pr.state, mergedAt: pr.merged_at, head: isRuntimeRecord(pr.head) ? pr.head.sha : undefined });
     }
-    const checks = await readRest(`repos/${wake.repository}/commits/${wake.headSha}/check-runs?per_page=100`, ".check_runs[]");
-    const statuses = await readRest(`repos/${wake.repository}/commits/${wake.headSha}/statuses?per_page=100`, ".");
-    return digest({ checks: checks.map(check => isRuntimeRecord(check) ? [check.id, check.status, check.conclusion] : null),
-      statuses: statuses.map(status => isRuntimeRecord(status) ? [status.context, status.state] : null) });
+    return checksDependencyEvidence(wake, readRest);
   }
   async function externalWait(observed: Snapshot, wake: PullRequestWake | undefined, reason: string) {
     if (!wake) return { ...createCheckWait(observed, waitPolicy), kind: "external" as const, reason };
