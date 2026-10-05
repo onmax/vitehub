@@ -429,3 +429,25 @@ it("rejects stream option roots and preserves nested streams", () => {
     return defineAgent({ driver: "codex" })
   } })
 })
+
+it("types named blocks and tuples for configured presets", () => {
+  const preset = defineAgent({ configKey: "repair", options: { enabled: true, steps: ["first"] }, configure: () => defineAgent({ driver: "codex" }) })
+  expectTypeOf(preset.configKey).toEqualTypeOf<"repair">()
+  const named = defineAgent({ extends: preset, repair: { enabled: false } })
+  expectTypeOf(named.configKey).toEqualTypeOf<"repair">()
+  defineAgent({ extends: [preset, { steps: [] }], repair: { enabled: false } })
+  // @ts-expect-error Unknown options are rejected for the named block.
+  defineAgent({ extends: preset, repair: { typo: true } })
+  // @ts-expect-error Tuple options use the configured preset schema.
+  defineAgent({ extends: [preset, { enabled: "yes" }] })
+  // @ts-expect-error Extending a preset cannot rename its option block.
+  defineAgent({ extends: preset, wrong: { enabled: false } })
+})
+
+it("rejects conflicting preset option selectors", () => {
+  const preset = defineAgent({ configKey: "repair", options: { enabled: true }, configure: () => defineAgent({ driver: "codex" }) })
+  // @ts-expect-error Use named options or legacy options, not both.
+  defineAgent({ extends: preset, repair: { enabled: true }, options: { enabled: false } })
+  // @ts-expect-error Tuple options cannot also use legacy options.
+  defineAgent({ extends: [preset, { enabled: true }], options: { enabled: false } })
+})

@@ -331,3 +331,34 @@ it("preserves nested streams through preset configuration", () => {
   defineAgent({ extends: preset })
   expect(configure).toHaveBeenCalledTimes(2)
 })
+
+describe("module-style Agent presets", () => {
+  it("merges named and tuple options while retaining the config key", async () => {
+    const defaults = { filter: { labels: { deny: ["blocked"] } }, enabled: true }
+    const preset = defineAgent({
+      configKey: "repair",
+      options: defaults,
+      configure: options => defineAgent({ driver: { run: () => ({ text: JSON.stringify(options) }) } }),
+    })
+    const selected = defineAgent({
+      extends: [preset, { filter: { labels: { deny: [] } } }],
+      repair: { filter: { labels: { deny: ["wip"] } }, enabled: false },
+    })
+    expect(selected.configKey).toBe("repair")
+    expect(selected.options).toEqual({ filter: { labels: { deny: [] } }, enabled: false })
+    const child = defineAgent({ extends: selected, repair: { enabled: true } })
+    expect(child.options.enabled).toBe(true)
+    expect(defaults.filter.labels.deny).toEqual(["blocked"])
+  })
+
+  it("rejects malformed tuples, unknown options and conflicting selectors", () => {
+    const preset = defineAgent({ configKey: "repair", options: { enabled: true }, configure: () => defineAgent({ driver: "codex" }) })
+    for (const extension of [[], [preset], [preset, false], [preset, []], [preset, new Date()], [preset, {}, {}]]) {
+      expect(() => defineAgent({ extends: extension } as never)).toThrow("requires [preset, options]")
+    }
+    expect(() => defineAgent({ extends: preset, repair: { typo: true } } as never)).toThrow('Unknown Agent repair option "typo"')
+    expect(() => defineAgent({ extends: [preset, { typo: true }] } as never)).toThrow('Unknown Agent repair option "typo"')
+    expect(() => defineAgent({ extends: preset, options: {}, repair: {} } as never)).toThrow("Select preset options")
+    expect(() => defineAgent({ configKey: "driver", options: {}, configure: () => defineAgent({ driver: "codex" }) } as never)).toThrow("non-reserved")
+  })
+})

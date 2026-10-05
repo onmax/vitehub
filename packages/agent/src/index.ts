@@ -1,6 +1,6 @@
 import { readWorkflowJournalName } from "./internal/workflow-journal-name.ts"
-import type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
-export type { AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
+import type { AgentPresetConfig, AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
+export type { AgentPresetConfig, AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 import { invocationUsageWithAuxiliaryCalls } from "./internal/auxiliary-usage.ts"
 import { agentLayerMetadata, createConfiguredAgentDefinition, rememberAgentLayerOptions, resolveAgentLayerOptions } from "./agent-layers.ts"
 import { readDiscoveredAgentName } from "./internal/discovered-agent-name.ts"
@@ -2582,9 +2582,13 @@ type ConfiguredOptionsRecord<TOptions> = [Extract<TOptions, readonly unknown[] |
 
 type ConfiguredAgentOptions<TDefinition> = TDefinition extends { options: infer TOptions extends object } ? TOptions : never
 
+type ConfiguredPresetSelection<TDefinition, TParent> =
+  | ({ extends: TParent | readonly [TParent, AgentPresetOptions<NoInfer<ConfiguredAgentOptions<TDefinition>>>], options?: never } & AgentPresetConfig<NoInfer<TDefinition>>)
+  | ({ extends: TParent, options?: AgentPresetOptions<NoInfer<ConfiguredAgentOptions<TDefinition>>> } & { [K in keyof AgentPresetConfig<NoInfer<TDefinition>>]?: never })
+
 // Infer Workspace values and all spread keys separately so union members cannot hide unsupported settings.
 type ConfiguredAgentWorkspaceOptions<TOptions, TDefinition, TKeys extends PropertyKey> = TOptions & Partial<Record<TKeys, unknown>> & Record<
-  Exclude<TKeys, keyof ConfiguredAgentSettings<TDefinition> | "preset" | "presets" | "extends" | "options">, never>
+  Exclude<TKeys, keyof ConfiguredAgentSettings<TDefinition> | (TDefinition extends { configKey: infer TKey extends string } ? TKey : never) | "preset" | "presets" | "extends" | "options">, never>
 
 type ConfiguredAgentSettings<TDefinition> = TDefinition extends AgentDefinition<infer TRuntimeConfig, infer TCallOptions, infer TInvoker, infer TContext, infer TOutput, infer TDataInput, unknown, unknown, unknown>
   ? AgentSettings<TRuntimeConfig, TCallOptions, TInvoker, TContext, AgentCapabilitiesInput<TRuntimeConfig>, TOutput, AgentDriver<TRuntimeConfig, TCallOptions, TContext, TOutput>, TDefinition extends AgentDataOutputCarrier<infer TData> ? TData : unknown, never, TDataInput>
@@ -2900,10 +2904,11 @@ export interface DefineAgent {
     },
   ): ConfiguredAgentWorkspace<LayerDefinition<TParent, LayerDataInput<TParent, TSchema>, LayerData<TParent, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>, undefined, undefined, TChannels>
 
-  <TOptions extends object, TDefinition extends AgentDefinitionConstraint>(options: {
+  <TOptions extends object, TDefinition extends AgentDefinitionConstraint, const TConfigKey extends string = never>(options: {
+    configKey?: TConfigKey & (TConfigKey extends keyof AgentSettings | "preset" | "presets" | "extends" | "options" | "configure" | "configKey" | "resolve" | "run" | "constructor" | "prototype" ? never : unknown)
     options: TOptions & ConfiguredOptionsRecord<TOptions>
     configure: (options: TOptions) => TDefinition
-  }): ConfiguredAgentDefinition<TOptions, TDefinition>
+  }): ConfiguredAgentDefinition<TOptions, TDefinition, TConfigKey>
 
   <
     TPresets extends Record<string, AgentDefinitionConstraint>,
@@ -2941,16 +2946,14 @@ export interface DefineAgent {
     const TDriver extends Partial<AgentDriver> = {},
   >(options:
     Omit<Partial<ConfiguredLayerSettings<NoInfer<TDefinition>, TSchema, TIntercept, TDriver>>, "driver" | "workspace" | "capabilities" | "channels" | "data" | "intercept" | "hooks"> & {
-      extends: TDefinition
-      options?: AgentPresetOptions<NoInfer<TDefinition["options"]>>
       driver?: TDriver & Partial<AgentDriver>
       hooks?: ConfiguredAgentHooks<NoInfer<TDefinition>, TChannels, LayerData<TDefinition, TSchema>, LayerOutputFor<TDefinition, TIntercept, TDriver>>
       data?: TSchema
       intercept?: AgentInterceptHandler<AgentRuntimeConfig, unknown, AgentInvocationContextValues, LayerData<NoInfer<TDefinition>, TSchema>, TIntercept>
       capabilities?: TCapabilities
       channels?: TChannels
-    } & ConfiguredAgentWorkspaceOptions<TWorkspace, TDefinition, TKeys>
-  ): ConfiguredAgentDefinition<TDefinition["options"], ConfiguredAgentWorkspace<LayerDefinition<TDefinition, LayerDataInput<TDefinition, TSchema>, LayerData<TDefinition, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>, TWorkspace["workspace"], TCapabilities, TChannels>>
+    } & ConfiguredPresetSelection<TDefinition, TDefinition> & ConfiguredAgentWorkspaceOptions<TWorkspace, TDefinition, TKeys>
+  ): ConfiguredAgentDefinition<TDefinition["options"], ConfiguredAgentWorkspace<LayerDefinition<TDefinition, LayerDataInput<TDefinition, TSchema>, LayerData<TDefinition, TSchema>, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>, TWorkspace["workspace"], TCapabilities, TChannels>, TDefinition extends { configKey: infer TKey extends string } ? TKey : never>
 
   <
     TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
@@ -3177,6 +3180,8 @@ export const defineAgent: DefineAgent = ((options: unknown) => {
     const channels = normalizeAgentChannels(settings.channels)
     settings.channels = channels
     return isWorkspaceAgentOptions(settings) || agentContributesWorkspace({ capabilities: settings.capabilities, channels })
+  }, name => {
+    throw new TypeError(`[vitehub] Unknown Agent preset "${name}". Import the preset definition and pass it to extends.`)
   }) as AgentSettings
   const channels = normalizeAgentChannels(agentOptions.channels)
   const name = agentOptions.name?.trim()
