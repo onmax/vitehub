@@ -53,6 +53,23 @@ function importServerEnvModule(): Promise<ServerEnvModule | undefined> {
   return serverEnvModule
 }
 
+function envNameParts(segment: string): string[] {
+  return segment
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map(part => part.toUpperCase())
+}
+
+/**
+ * The canonical variable name of `env.server.<group>.<field>`, with the same rule as Server Env:
+ * `VITEHUB_` and the path in upper snake case. `cloudflareAccess.clientId` becomes `VITEHUB_CLOUDFLARE_ACCESS_CLIENT_ID`.
+ */
+export function canonicalBuiltInEnvName(group: string, field: string): string {
+  return ["VITEHUB", ...envNameParts(group), ...envNameParts(field)].join("_")
+}
+
 function envGroup(env: unknown, group: string): Record<PropertyKey, unknown> | undefined {
   const value = isRecord(env) ? env[group] : undefined
   return isRecord(value) ? value : undefined
@@ -61,7 +78,7 @@ function envGroup(env: unknown, group: string): Record<PropertyKey, unknown> | u
 /**
  * Read fields of `env.server.<group>`. A field that Server Env declares is read only from Server Env,
  * including provider-backed values. A field that it does not declare, for example without hubEnv(),
- * is read from its host variable names. An empty host variable counts as unset.
+ * is read from its canonical `VITEHUB_` name, then its host variable names. An empty host variable counts as unset.
  */
 export async function readBuiltInEnv(
   group: string,
@@ -90,8 +107,9 @@ export async function readBuiltInEnv(
       }
       continue
     }
-    // An empty host variable counts as unset, so the next name can supply the value.
-    values[field] = (specs[field]?.names ?? [])
+    // The canonical name comes first. An empty host variable counts as unset, so the next name can supply the value.
+    const names = specs[field] ? [...new Set([canonicalBuiltInEnvName(group, field), ...specs[field].names])] : []
+    values[field] = names
       .map(name => cloudflareEnv?.[name] ?? globalThis.process?.env?.[name])
       .find(value => value !== undefined && value !== "")
   }

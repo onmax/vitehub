@@ -181,6 +181,8 @@ Each preset knows the base URL that each Driver expects, so one gateway definiti
 
 `cloudflareAccess()` returns the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers for a gateway behind Cloudflare Access. It reads `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`, or takes `{ clientId, clientSecret }`.
 
+Each value first reads its canonical name, `VITEHUB_` and the Server Env path in upper snake case, then the vendor name in the table. `cliproxy()` reads `VITEHUB_CLIPROXY_API_KEY`, then `CLIPROXY_API_KEY`, and `cloudflareAccess()` reads `VITEHUB_CLOUDFLARE_ACCESS_CLIENT_ID`, then `CF_ACCESS_CLIENT_ID`. See [Server Env variable names](/docs/env/configure).
+
 ViteHub finds the presets in Agent files and declares their variables in Server Env as `env.server.<preset>.<field>`, for example `env.server.cliproxy.apiKey`. The Console shows them, `useServerEnv()` types them, and an [Env provider](/docs/env/server-api#read-external-env-storage) can supply them. Your own declaration of a field wins. The values are optional: a server that hosts Agents without the gateway still starts. Without `hubEnv()`, presets read the host variables directly.
 
 `url` is the gateway origin. A trailing `/v1` is removed. Every preset accepts `apiKey` and `headers`. `apiKey` and each header value accept a string, a sealed Server Env value, or an invocation-time resolver that may return `undefined`. ViteHub reads values for each invocation. A missing URL, key, or header value fails the invocation with `AGENT_R0980`, `AGENT_R0977`, or `AGENT_R0978` and names the variable to set. A preset that does not serve the selected Driver fails at definition time with `AGENT_R0976`.

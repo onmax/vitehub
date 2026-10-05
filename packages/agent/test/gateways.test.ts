@@ -129,6 +129,23 @@ describe("gateway Server Env", () => {
     expect((await resolveAgentDriverGateway(gateway, "codex", context)).launchArgs).toContain('base_url=\\"https://rotated.example/v1\\"')
   })
 
+  it("reads canonical VITEHUB_ names before vendor names", async () => {
+    vi.stubEnv("CLIPROXY_URL", "https://vendor.example")
+    vi.stubEnv("VITEHUB_CLIPROXY_URL", "https://canonical.example")
+    vi.stubEnv("CLIPROXY_API_KEY", "vendor-key")
+    vi.stubEnv("VITEHUB_CLIPROXY_API_KEY", "")
+    vi.stubEnv("CF_ACCESS_CLIENT_ID", "vendor-id")
+    vi.stubEnv("VITEHUB_CLOUDFLARE_ACCESS_CLIENT_ID", "canonical-id")
+    vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "secret")
+    const resolved = await resolveAgentDriverGateway(cliproxy({ headers: cloudflareAccess() }), "claude-code", context)
+    // An empty canonical value counts as unset, so the vendor key supplies it.
+    expect(resolved.environment).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: "vendor-key",
+      ANTHROPIC_BASE_URL: "https://canonical.example",
+      ANTHROPIC_CUSTOM_HEADERS: "CF-Access-Client-Id: canonical-id\nCF-Access-Client-Secret: secret",
+    })
+  })
+
   it("names the URL variable when it is missing", async () => {
     vi.stubEnv("CLIPROXY_URL", "")
     vi.stubEnv("LITELLM_URL", "")
