@@ -48,7 +48,7 @@ function isTriggerInputSchema<TInput>(input: string | StandardSchemaV1<unknown, 
       const marker = Object.getOwnPropertyDescriptor(prototype, "~standard")
       if (marker) {
         const constructor = Object.getOwnPropertyDescriptor(prototype, "constructor")?.value
-        classGetterFound = typeof marker.get === "function"
+        classGetterFound = hasRuntimeType(marker.get, "function")
           && hasRuntimeType(constructor, "function")
           && constructor !== Object
           && constructor.prototype === prototype
