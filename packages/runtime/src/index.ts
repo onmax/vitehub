@@ -3,6 +3,8 @@ import { ViteHubError } from "./errors.ts"
 import { runtimeErrorDiagnostics } from "./error-diagnostics.ts"
 import { normalizeTraceAttributes } from "./internal/trace-attributes.ts"
 
+export { runtimeErrorDiagnostics }
+
 export { isTraceContentAttributeKey } from "./internal/trace-attributes.ts"
 
 export { decodeRouteSegment, encodeRouteSegment } from "./route-segment.ts"

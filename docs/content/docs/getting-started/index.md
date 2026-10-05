@@ -47,8 +47,8 @@ Workspace in one file.
 | --- | --- |
 | Settings, feature flags, caches, cursors, or small records | [First Server Primitive](/docs/getting-started/first-server-primitive) |
 | A support, coding, research, or workspace-aware actor | [First Agent](/docs/getting-started/first-agent) |
-| Relational data, uploads, background work, workflows, schedules, or sandboxes | [Server Primitives](/docs/server-primitives) |
-| Model-facing tools, guarded product abilities, or chat entry points | [Capabilities](/docs/capabilities) |
+| Relational data, uploads, background work, workflows, schedules, or sandboxes | [Server Primitives](/docs/getting-started/server-primitives) |
+| Model-facing tools, guarded product abilities, or chat entry points | [Capabilities](/docs/agents/capabilities) |
 
 ## What ViteHub does
 
@@ -75,4 +75,4 @@ with a response you can inspect before adding another feature.
 - Read [Installation](/docs/getting-started/installation) to start with the framework distribution or choose a direct owner package for advanced composition.
 - Follow the longer [Server Primitives tutorial](/blog/server-primitives).
 - Follow the longer [Agents tutorial](/blog/agents).
-- Open [Concepts](/docs/concepts) when you need the full runtime model.
+- Open [Concepts](/docs/getting-started/concepts) when you need the full runtime model.

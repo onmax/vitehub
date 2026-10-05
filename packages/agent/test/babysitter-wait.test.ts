@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PullRequestInbox, type Snapshot } from "../src/server/github-inbox.ts";
-import { createCheckWait, isExternalWaitResult, shouldKeepWaiting, wakeReasons, type BabysitterWaitPolicy } from "../src/presets/babysitter/wait.ts";
+import { checksDependencyEvidence, createCheckWait, hasPendingChecks, shouldKeepWaiting, wakeReasons, type BabysitterWaitPolicy } from "../src/presets/babysitter/wait.ts";
 import { snapshotCheckEvidence } from "../src/presets/babysitter/merge.ts";
 import { stackRetargetBase } from "../src/presets/babysitter/stack.ts";
 import { evaluateGitHubRequiredChecks } from "../src/server/github-required-checks.ts";
@@ -89,10 +89,22 @@ describe("Babysitter check waits", () => {
     expect(shouldKeepWaiting(await parked(s => { s.wait = { ...s.wait!, headSha: "b".repeat(40) } }), "unknown", policy)).toBe(true);
   });
 
-  it("recognizes external gates in a park result", () => {
-    expect(isExternalWaitResult("Checks are still running.")).toBe(true);
-    expect(isExternalWaitResult("Waiting for review webhooks.")).toBe(true);
-    expect(isExternalWaitResult("Looks good to me.")).toBe(false);
+  it("infers waits from check evidence rather than result prose", async () => {
+    expect(hasPendingChecks(await parked(), policy)).toBe(false);
+    expect(hasPendingChecks(await parked(s => { s.checks["queued"] = { id: 8, name: "test", status: "queued", head_sha: head, app: { id: 5 } } }), policy)).toBe(true);
+  });
+  it("holds reproduced manual blockers through green checks and existing threads", async () => {
+    const snapshot = await parked(s => { s.threads = [{ id: "T1", isResolved: false, comments: [] }]; });
+    const checkWait = createCheckWait(snapshot, policy);
+    snapshot.wait = { headSha: head, ...checkWait, kind: "external", reason: "Credential denied; maintainer must restore service access" };
+    expect(wakeReasons(snapshot, "passed", { ...policy, wakeWhenReady: true })).toEqual([]);
+    snapshot.checks["new"] = { id: 55, name: "optional", status: "completed", conclusion: "failure", head_sha: head, app: { id: 5 } };
+    expect(wakeReasons(snapshot, "failed", policy)).toEqual([]);
+    snapshot.comments["manual"] = { id: 56, body: "Service access restored, please retry", user: { login: "dev" } };
+    expect(wakeReasons(snapshot, "passed", policy)).toEqual(["feedback-changed"]);
+  });
+  it("holds an external dependency through an unrelated green PR check", async () => {
+    expect(wakeReasons(await parked(s => { s.wait!.wake = { kind: "checks", repository, headSha: "b".repeat(40) }; s.wait!.reason = "base CI"; }), "passed", { ...policy, wakeWhenReady: true })).toEqual([]);
   });
 });
 
@@ -116,4 +128,23 @@ describe("Babysitter stacked PRs", () => {
     expect(stackRetargetBase(pr, [parent("closed", true, "feat/grandparent")])).toBeUndefined();
     expect(stackRetargetBase({ ...pr, base: { ...pr.base, ref: "main" } }, [parent("closed", true, "main")])).toBeUndefined();
   });
+});
+
+it("hashes projected dependency statuses beyond the first page without depending on record order", async () => {
+  const checks = [{ id: 1, status: "completed", conclusion: "success" }];
+  const statuses = Array.from({ length: 101 }, (_, id) => ({ id, context: `check-${id}`, state: "pending" }));
+  const read = async (path: string, projection: string) => {
+    if (path.includes("check-runs")) {
+      expect(projection).toBe(".check_runs[]");
+      return checks;
+    }
+    expect(projection).toBe(".[]");
+    return statuses;
+  };
+  const wake = { repository, headSha: head };
+  const original = await checksDependencyEvidence(wake, read);
+  statuses.reverse();
+  expect(await checksDependencyEvidence(wake, read)).toBe(original);
+  statuses[0]!.state = "success";
+  expect(await checksDependencyEvidence(wake, read)).not.toBe(original);
 });
