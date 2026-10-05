@@ -2,7 +2,7 @@ import { AgentsLanding } from "./agents";
 import { WorkspaceLanding } from "./workspace";
 import { SandboxLanding } from "./sandbox";
 import { ConnectionsLanding } from "./connections";
-import { WorkflowsLanding } from "./workflows";
+import { WorkflowLanding } from "./workflows";
 import { KvLanding } from "./kv";
 import { DatabasesLanding } from "./databases";
 import { QueueLanding } from "./queue";
@@ -24,7 +24,7 @@ export const primitiveLandings: Record<string, PrimitiveLanding> = Object.fromEn
   WorkspaceLanding,
   SandboxLanding,
   ConnectionsLanding,
-  WorkflowsLanding,
+  WorkflowLanding,
   KvLanding,
   DatabasesLanding,
   QueueLanding,
@@ -44,4 +44,3 @@ export const primitiveLandings: Record<string, PrimitiveLanding> = Object.fromEn
 export function getPrimitiveLanding(slug: string): PrimitiveLanding | undefined {
   return primitiveLandings[slug];
 }
-
