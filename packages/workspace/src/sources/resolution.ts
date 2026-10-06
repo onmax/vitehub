@@ -438,7 +438,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       write: (input: WorkspaceWriteInput, grant: WorkspaceSourceWriteGrant) => Promise<Result>,
       preservePath = false,
     ) {
-      const requested = await sourceView.assertWritable(input.path)
+      await sourceView.assertWritable(input.path)
       const next = await writePolicy.before({
         ...input,
         path: normalizeWorkspacePath(input.path),
@@ -449,8 +449,9 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         if (preservePath && next.path !== normalizeWorkspacePath(input.path)) {
           throw workspaceError(`[vitehub] Workspace validator cannot rewrite preserved path: ${normalizeWorkspacePath(input.path)} -> ${next.path}.`)
         }
-        // A write policy can rewrite the path. A different final path needs its own grant.
-        const grant = normalizeWorkspacePath(next.path) === requested.path ? requested : await sourceView.assertWritable(next.path)
+        // Recheck after the async policy hook. Source ownership may change while it runs,
+        // even when the policy keeps the path unchanged.
+        const grant = await sourceView.assertWritable(next.path)
         const result = await write(next, grant)
         await writePolicy.after(next)
         return { input: next, result }

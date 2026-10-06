@@ -667,9 +667,10 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     return grant
   }
 
-  // A write policy can rewrite the path. A different final path needs its own grant.
-  async function grantPolicyPath(grant: WorkspaceSourceWriteGrant, path: string) {
-    return normalizeWorkspacePath(path) === grant.path ? grant : await grantWritablePath(path)
+  // Recheck after the async policy hook. Source ownership may change while it runs,
+  // even when the policy keeps the path unchanged.
+  async function grantPolicyPath(path: string) {
+    return await grantWritablePath(path)
   }
 
   function requireWriteGrant<Args extends unknown[], Result>(write: (path: string, ...args: Args) => Promise<Result>) {
@@ -753,7 +754,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
         if (options?.preservePath && input.path !== requested.path) {
           throw workspaceError(`[vitehub] Workspace validator cannot rewrite preserved path: ${requested.path} -> ${input.path}.`)
         }
-        const grant = await grantPolicyPath(requested, input.path)
+        const grant = await grantPolicyPath(input.path)
         await grantedStore.writeFile(grant, input.path, {
           content: input.content ?? content,
           mediaType: input.mediaType,
@@ -866,7 +867,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
         workspace: definition.name,
       })
       try {
-        await grantedStore.mkdir(await grantPolicyPath(requested, input.path), input.path, options)
+        await grantedStore.mkdir(await grantPolicyPath(input.path), input.path, options)
         await writePolicy.after(input)
       }
       catch (error) {
@@ -883,7 +884,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
         workspace: definition.name,
       })
       try {
-        await grantedStore.rm(await grantPolicyPath(requested, input.path), input.path, options)
+        await grantedStore.rm(await grantPolicyPath(input.path), input.path, options)
         await writePolicy.after(input)
       }
       catch (error) {
