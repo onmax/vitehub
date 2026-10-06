@@ -109,7 +109,16 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const host = await createProcessAgentHost({
     name: context.agentName,
     dataDir: context.dataDir,
-    capacity: { concurrency: agent.options.concurrency },
+    // A webhook claim owns a PR until its provider pass finishes or records a
+    // durable wait. Keep transient provider pressure in this host queue rather
+    // than failing the claim, while bounding how long a checkout can be held.
+    capacity: {
+      concurrency: agent.options.concurrency,
+      queue: {
+        maxPending: agent.options.concurrency,
+        timeout: 36e5,
+      },
+    },
     intervalMs: 10_000,
     run: async (reason, run, accepting) => await runtime?.reconcile(reason, run, accepting),
   });
