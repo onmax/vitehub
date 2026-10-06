@@ -46,6 +46,14 @@
       "types": "./dist/http.d.ts",
       "import": "./dist/http.js"
     },
+    "./internal/agent": {
+      "types": "./dist/internal/agent.d.ts",
+      "import": "./dist/internal/agent.js"
+    },
+    "./internal/connections": {
+      "types": "./dist/internal/connections.d.ts",
+      "import": "./dist/internal/connections.js"
+    },
     "./presets": {
       "types": "./dist/presets.d.ts",
       "import": "./dist/presets.js"

@@ -467,7 +467,7 @@ describe("openapi capability", () => {
     const [url, init] = client.fetch.mock.calls[0] ?? []
     expect(url).toBe("https://portal.example.com/runtime/customers?region=eu")
     expect(new Headers(init?.headers).get("x-hook")).toBe("yes")
-    expect(connections.client).toHaveBeenCalledWith("portal", { actor: "agent:agent" })
+    expect(connections.client).toHaveBeenCalledWith("portal", { access: expect.objectContaining({ actor: { id: "agent", kind: "agent" } }) })
     expect(tools.listCustomers.metadata).toMatchObject({ connection: { name: "portal", operation: "fetch" } })
     await resolved.close()
   })

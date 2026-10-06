@@ -6,10 +6,10 @@ import { isApiKeyProvider } from "./api-key.ts"
 import { ConnectionError, isConnectionError, isEnvBridgeError } from "./errors.ts"
 import { isConnectionDefinition } from "./definition.ts"
 import { CONNECTION_NAME_MAX_LENGTH, isConnectionReadMethod } from "./types.ts"
-import { decide, envActor } from "./policy.ts"
+import { callerActor, decide, envActor } from "./policy.ts"
 import { connectionActions, prepareConnectionMethod } from "./catalog.ts"
 
-import type { EnvActivity, EnvGrantedAccessContext } from "@vite-hub/env/bridge"
+import type { EnvAccessContext, EnvActivity } from "@vite-hub/env/bridge"
 import type { ConnectionState, ConnectionStore } from "./store.ts"
 import type {
   ConnectionAccount,
@@ -247,7 +247,7 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return loaded
   }
 
-  function envContext(store: ConnectionStore, name: string, permission: "activity" | "replace" | "use", actor: string, options: UseConnectionOptions = {}): EnvGrantedAccessContext {
+  function envContext(store: ConnectionStore, name: string, permission: "activity" | "replace" | "use", actor: string, options: UseConnectionOptions = {}): EnvAccessContext {
     // The Connection access map is the policy. Env grants one permission on this Connection token only.
     return connectionEnvAccess(store.bridge, {
       actor: envActor(actor),
@@ -621,9 +621,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
   }
 
   function buildClient(name: string, options: UseConnectionOptions): ConnectionRuntimeClient {
-    const actor = options.actor ?? "server"
     let context: Promise<CallContext> | undefined
-    const resolveContext = () => (context ??= definition(name).then(loaded => ({ actor, definition: loaded, name, options, transport: createConnectionTransport(name, loaded, request) })))
+    const resolveContext = () => (context ??= (async () => {
+      const actor = callerActor(options)
+      const loaded = await definition(name)
+      return { actor, definition: loaded, name, options, transport: createConnectionTransport(name, loaded, request) }
+    })())
     return {
       async call(action: string, input?: unknown, callOptions?: { signal?: AbortSignal }): Promise<unknown> {
         return await callMethod(await resolveContext(), action, input, callOptions?.signal)

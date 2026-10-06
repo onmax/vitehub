@@ -732,6 +732,9 @@ importers:
       '@vite-hub/email':
         specifier: workspace:*
         version: link:../email
+      '@vite-hub/env':
+        specifier: workspace:*
+        version: link:../env
       '@vite-hub/markdown-template':
         specifier: workspace:*
         version: link:../markdown-template

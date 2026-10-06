@@ -203,6 +203,7 @@
     "@vercel/connect": "2.4.0",
     "@vercel/nft": "catalog:vercel",
     "@vite-hub/box": "workspace:*",
+    "@vite-hub/env": "workspace:*",
     "@vite-hub/markdown-template": "workspace:*",
     "@vite-hub/rate-limit": "workspace:*",
     "@vite-hub/runtime": "workspace:*",

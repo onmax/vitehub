@@ -166,7 +166,7 @@ describe("gmail capability", () => {
       ["gmail.users.messages.list", { userId: "me", maxResults: 5, q: "from:alice" }],
       ["gmail.users.messages.get", { userId: "me", format: "metadata", id: "m1", metadataHeaders: ["From", "To", "Cc", "Subject", "Date"] }],
     ])
-    expect(runtime.client).toHaveBeenCalledWith("google", { actor: "agent:labeller", invocationId: "trace_1" })
+    expect(runtime.client).toHaveBeenCalledWith("google", { access: expect.objectContaining({ actor: { id: "labeller", kind: "agent" }, invocationId: "trace_1" }), invocationId: "trace_1" })
     await expect(run((await tools(gmail(), primitive)).gmail_search, { max: 51 })).rejects.toThrow("from 1 to 50")
   })
 

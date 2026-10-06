@@ -266,7 +266,7 @@ describe("mcp capability", () => {
       expect(config).not.toHaveProperty("connection")
       const transport = config?.transport as { fetch: typeof globalThis.fetch, type: string, url: string }
       expect(transport).toMatchObject({ type: "http", url: "https://executor.test/mcp" })
-      expect(connections.client).toHaveBeenCalledWith("executor", { actor: "agent:agent", rejectApprovals: true })
+      expect(connections.client).toHaveBeenCalledWith("executor", { access: expect.objectContaining({ actor: { id: "agent", kind: "agent" } }), rejectApprovals: true })
       const controller = new AbortController()
       const body = JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } })
       await transport.fetch("https://executor.test/mcp", { body, method: "POST" })

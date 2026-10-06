@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { agentEnvAccess } from "@vite-hub/env/internal/agent"
 
 import { createConnectionsCliContributor, runConnectionsCli } from "../src/cli.ts"
 import { createConnectionsHandler } from "../src/http.ts"
@@ -80,7 +81,7 @@ describe("vitehub connections", () => {
     expect(await harness.run("list")).toBe(0)
     expect(harness.output.stdout).toContain("mail  example  connected  owner@example.com")
 
-    await harness.test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }).catch(() => undefined)
+    await harness.test.runtime.client("mail", { access: agentEnvAccess({ name: "labeller" }) }).call("mail.messages.modify", { id: "m1", userId: "me" }).catch(() => undefined)
     harness.output.stdout = ""
     expect(await harness.run("approvals", ["--json"])).toBe(0)
     const { approvals: [approval] } = JSON.parse(harness.output.stdout) as { approvals: Array<{ id: string }> }

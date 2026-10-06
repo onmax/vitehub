@@ -52,7 +52,7 @@ it("manages only declared unambiguous provider paths without resolving credentia
   const bridge = createEnvBridge({
     secrets: { inspect, read: vi.fn(), replace: vi.fn() },
     access: { append: vi.fn(), activity: vi.fn(), grants: vi.fn(), setGrant: vi.fn(), revokeGrant: vi.fn() },
-    runtimeContext: () => ({ actor: { kind: "service", id: "runtime" } }),
+    runtimeActor: { kind: "service", id: "runtime" },
   })
   const { adminContext } = await import("./helpers.ts")
   const admin = await adminContext()

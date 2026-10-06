@@ -37,15 +37,21 @@ describe("Env authentication", () => {
     expect(Object.isFrozen(context)).toBe(true);
     expect(app.getSession).toHaveBeenCalledWith({ headers: input.headers });
     app.isAdmin.mockReturnValue(false);
-    expect((await app.authenticate(request()))?.admin).toBe(false);
+    const user = await app.authenticate(request());
+    expect(user).toMatchObject({ actor: { kind: "user", id: "owner" } });
+    expect(user?.admin).toBeUndefined();
+    expect(Object.isFrozen(user)).toBe(true);
   });
 
   it("keeps the agent identity and scope even when its user is an administrator", async () => {
     const app = setup();
-    expect(await app.authenticate(request("Bearer verified-token"))).toEqual({
+    const context = await app.authenticate(request("Bearer verified-token"));
+    expect(context).toMatchObject({
       actor: { kind: "agent", id: "reviewer" },
       scope: [{ key: "github/token", permissions: ["use"] }],
     });
+    expect(context?.admin).toBeUndefined();
+    expect(Object.isFrozen(context?.scope)).toBe(true);
     expect(app.getSession).not.toHaveBeenCalled();
     expect(app.isAdmin).not.toHaveBeenCalled();
     expect(app.scope).toHaveBeenCalledWith(agent);

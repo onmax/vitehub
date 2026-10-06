@@ -43,18 +43,29 @@ async function fixture(rule: { read?: boolean, write?: readonly string[], approv
   const runtime = createRuntime()
   const { state } = await runtime.authorize({ name: "google", redirectUri: "http://localhost/callback" })
   await runtime.complete({ code: "fake-code", state })
-  const tools = async (active = runtime) => {
+  const tools = async (active = runtime, name = "labeller") => {
     const capability = gmail({ operations: ["search", "read", "draft"] })
     if (typeof capability.tools !== "function") throw new Error("Missing Gmail tools")
     // SAFETY: Gmail reads only these fields from the Invocation context.
     return await capability.tools({
-      agentIdentity: { name: "labeller" },
+      agentIdentity: { name },
       capabilities: { connections: { runtime: () => active } },
       context: new Map([[agentInvocationTraceIdContextKey, "invocation-1"]]),
     } as never) as Record<string, AgentToolDefinition>
   }
   return { close: () => database.close(), createRuntime, requests, runtime, tools }
 }
+
+it("gives an Agent only the Connection access of its own Agent Definition", async () => {
+  const test = await fixture()
+  try {
+    const tools = await test.tools(test.runtime, "other")
+    await expect(execute(tools.gmail_search, { max: 5, query: "in:inbox" })).rejects.toMatchObject({ code: "CONNECTION_DENIED" })
+    expect(test.requests.some(request => request.url.pathname.endsWith("/messages"))).toBe(false)
+    expect(await test.runtime.activity({ name: "google" })).toContainEqual(expect.objectContaining({ actor: { id: "other", kind: "agent" }, outcome: "denied" }))
+  }
+  finally { test.close() }
+})
 
 async function execute(tool: AgentToolDefinition | undefined, input: unknown): Promise<unknown> {
   if (!tool?.execute) throw new Error("Missing Gmail tool")

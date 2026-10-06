@@ -1,8 +1,10 @@
+import { agentEnvAccess } from "@vite-hub/env/internal/agent"
 import * as v from "valibot"
 
 import { agentInvocationTraceIdContextKey } from "../trace.ts"
 import { primitiveHandle } from "./internal.ts"
 
+import type { EnvAccessContext } from "@vite-hub/env/bridge"
 import type { AgentCapabilityContext } from "../types.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -15,7 +17,7 @@ export interface AgentConnectionClient {
 }
 
 interface AgentConnectionClientOptions {
-  actor: string
+  access: EnvAccessContext
   rejectApprovals?: boolean
   invocationId?: string
 }
@@ -36,7 +38,8 @@ export function useAgentConnectionClient(context: AgentCapabilityContext, name: 
   const invocationId = optionalString(context.context.get(agentInvocationTraceIdContextKey))
   const clientOptions: AgentConnectionClientOptions = {
     ...options,
-    actor: `agent:${context.agentIdentity?.name ?? "agent"}`,
+    // The host resolves the Agent Definition. Env creates its actor context here, never from a caller value.
+    access: agentEnvAccess({ name: context.agentIdentity?.name ?? "agent" }, invocationId ? { invocationId } : {}),
     ...(invocationId ? { invocationId } : {}),
   }
   const client: unknown = runtime.output.client(name, clientOptions)
