@@ -432,11 +432,15 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
 
     // Every base write needs a Source write grant for its exact path.
     // SAFETY: Write paths are checked by the base facade at runtime; the generic facade has no statically known named Workspace paths.
-    const rawWrites = resolveWorkspaceRawWriteTarget(workspace) ?? workspace.fs
+    const rawWrites = resolveWorkspaceRawWriteTarget(workspace)
+    if (!rawWrites && await resolveWorkspaceStoreTarget(workspace)) {
+      throw workspaceError("[vitehub] Cannot resolve a writable Source facade from an unregistered object.")
+    }
+    const writes = rawWrites ?? workspace.fs
     const baseWrites = {
-      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await rawWrites.mkdir(path, options)),
-      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await rawWrites.rm(path, options)),
-      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await rawWrites.writeFile(path, content, options)),
+      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await writes.mkdir(path, options)),
+      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await writes.rm(path, options)),
+      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await writes.writeFile(path, content, options)),
     }
 
     async function writeWithPolicy<Result = void>(
