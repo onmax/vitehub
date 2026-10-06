@@ -50,3 +50,35 @@ it("lists static Gmail tools without minting Connection authority", async () => 
   expect(Object.keys(tools ?? {}).sort()).toEqual(["gmail_read", "gmail_search"])
   expect(client).not.toHaveBeenCalled()
 })
+
+it.each([
+  { name: undefined, hostName: undefined },
+  { name: undefined, hostName: "host-alias" },
+  { name: "definition-owner", hostName: "host-alias" },
+])("keeps host attribution separate from Connection authority with %j", async ({ name, hostName }) => {
+  const { markDiscoveredAgentName } = await import("../src/internal/discovered-agent-name.ts")
+  const { useAgentConnectionClient } = await import("../src/capabilities/connection.ts")
+  const client = vi.fn((_name, options) => {
+    expect(options.access.actor).toEqual({ kind: "agent", id: name ?? "discovered-owner" })
+    return { fetch: async () => new Response("ok"), call: async () => "ok" }
+  })
+  const definition = defineAgent({
+    runtime: false,
+    name,
+    capabilities: [{ id: "connection-check", tools(context) {
+      const connection = useAgentConnectionClient(context, "service", "test")
+      return { check: { description: "Check identity", execute: () => connection.fetch("https://service.example") } }
+    } }],
+    driver: { async run(context) {
+      expect(context.agentIdentity?.name).toBe(hostName)
+      return await context.tools?.check.execute?.({}, {})
+    } },
+  })
+  markDiscoveredAgentName(definition, "discovered-owner")
+  await runAgent(definition, {
+    runtime: "unknown", memo: vi.fn(), waitUntil: vi.fn(),
+    capabilities: { connections: { runtime: () => ({ client }) } },
+    ...(hostName ? { agentIdentity: { name: hostName } } : {}),
+  }, {})
+  expect(client).toHaveBeenCalledOnce()
+})

@@ -1,4 +1,4 @@
-import { createAgentEnvIdentity } from "./internal/env-identity.ts"
+import { agentEnvIdentity, createAgentEnvIdentity } from "./internal/env-identity.ts"
 import { readWorkflowJournalName } from "./internal/workflow-journal-name.ts"
 import type { AgentPresetConfig, AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 export type { AgentPresetConfig, AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
@@ -853,6 +853,7 @@ const agentWorkflowDiscovery = Symbol("vitehub.agentWorkflowDiscovery")
 type IdentityRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> = AgentRuntimeContext<TRuntimeConfig> & {
   [agentIdentityOwner]?: object
   [agentWorkflowDiscovery]?: boolean
+  [agentEnvIdentity]?: AgentRuntimeContext["agentIdentity"]
 }
 
 // Name journal records like the Console lists them: explicit name, host identity, then discovered file name.
@@ -876,10 +877,15 @@ function withAgentIdentityOwner<TRuntimeConfig extends AgentRuntimeConfig>(
   const discovered = context[agentWorkflowDiscovery] ?? Boolean(context.agentIdentity)
   context = { ...context, [agentWorkflowDiscovery]: discovered }
   const name = agent.name || readDiscoveredAgentName(agent) || (!owner ? context.agentIdentity?.name : undefined)
-  if (!name) return { ...context, agentIdentity: undefined, [agentIdentityOwner]: agent }
+  if (!name) return { ...context, agentIdentity: undefined, [agentIdentityOwner]: agent, [agentEnvIdentity]: undefined }
+  const envIdentity = createAgentEnvIdentity({ ...(!owner ? context.agentIdentity : {}), name })
   return {
     ...context,
-    agentIdentity: createAgentEnvIdentity({ ...(!owner ? context.agentIdentity : {}), name }),
+    // Host identity controls routing and attribution; Env authority belongs to the Definition.
+    agentIdentity: !owner && context.agentIdentity
+      ? createAgentEnvIdentity(context.agentIdentity, name)
+      : agent.name ? envIdentity : undefined,
+    [agentEnvIdentity]: envIdentity,
     [agentIdentityOwner]: agent,
   }
 }

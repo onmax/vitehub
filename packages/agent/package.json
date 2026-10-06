@@ -232,6 +232,7 @@
     "@types/node": "catalog:tooling",
     "@types/proper-lockfile": "catalog:",
     "@vercel/functions": "catalog:vercel",
+    "@vite-hub/connections": "workspace:*",
     "@vite-hub/internal": "workspace:*",
     "@vite-hub/schedule": "workspace:*",
     "@vite-hub/workflow": "workspace:*",
