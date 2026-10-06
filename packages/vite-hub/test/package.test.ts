@@ -44,6 +44,7 @@ import * as frameworkRuntimeNode from "vite-hub/runtime/node";
 import { setActiveCloudflareEnv as frameworkDatabaseStateSetter } from "vite-hub/_internal/database/runtime/state";
 import * as ownerRuntimeNode from "@vite-hub/runtime/node";
 import { distributionBinEntries, distributionEntriesFromManifest } from "../vite.config.ts";
+import { hostManagedAuthorize } from "./support/console-authorize.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -768,7 +769,7 @@ describe("framework package contract", () => {
       const plugin = framework
         .vitehub({
           agent: true,
-          console: { exposure: "host-managed" },
+          console: { exposure: "host-managed", authorize: hostManagedAuthorize },
           kv: true,
           preset: "node",
           queue: true,

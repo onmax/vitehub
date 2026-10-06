@@ -137,14 +137,23 @@ export function resolveConsoleAuthConfig(root: string, config: ConsoleAuthConfig
   return resolveConsoleAuthFiles(root, config)
 }
 
-async function writeCloudflareAccessMiddleware(directory: string, config: ResolvedCloudflareAccessConsoleAuth, mountBaseURL: string): Promise<CloudflareAccessConsoleAuthHandlers> {
-  const middleware = resolve(directory, "auth-middleware.mjs")
+/** The generated Console Auth middleware. It also exports `checkConsoleAccess` for the Console data routes. */
+export function consoleAuthMiddlewareFile(root: string): string {
+  return resolve(root, ".vitehub/nitro/console/auth-middleware.mjs")
+}
+
+async function writeCloudflareAccessMiddleware(root: string, config: ResolvedCloudflareAccessConsoleAuth, mountBaseURL: string): Promise<CloudflareAccessConsoleAuthHandlers> {
+  const middleware = consoleAuthMiddlewareFile(root)
   await writeFileIfChanged(middleware, [
     'import { resolveServerEnv } from "vite-hub/env/server"',
-    'import { handleCloudflareAccessConsoleRequest } from "vite-hub/console/auth/cloudflare-access"',
+    'import { handleCloudflareAccessConsoleRequest, verifyCloudflareAccessConsoleRequest } from "vite-hub/console/auth/cloudflare-access"',
     `const settings = JSON.parse(${JSON.stringify(JSON.stringify(config.settings))})`,
     "export default function viteHubConsoleAuthMiddleware(event) {",
     `  return handleCloudflareAccessConsoleRequest(event, () => resolveServerEnv(settings, event), ${JSON.stringify(mountBaseURL)})`,
+    "}",
+    "// Each Console data route calls this check, whatever its path.",
+    "export function checkConsoleAccess(event) {",
+    "  return verifyCloudflareAccessConsoleRequest(event.req, () => resolveServerEnv(settings, event))",
     "}",
     "",
   ].join("\n"))
@@ -156,11 +165,11 @@ export async function writeConsoleAuthHandlers(root: string, config: ResolvedCon
 export async function writeConsoleAuthHandlers(root: string, config: ResolvedConsoleAuthConfig, mountBaseURL?: string): Promise<ConsoleAuthHandlers>
 export async function writeConsoleAuthHandlers(root: string, config: ResolvedConsoleAuthConfig, mountBaseURL = "/"): Promise<ConsoleAuthHandlers> {
   const directory = resolve(root, ".vitehub/nitro/console")
-  if ("settings" in config) return writeCloudflareAccessMiddleware(directory, config, mountBaseURL)
+  if ("settings" in config) return writeCloudflareAccessMiddleware(root, config, mountBaseURL)
   const definitionFile = resolve(directory, "auth-definition.mjs")
   const route = resolve(directory, "auth-route.mjs")
   const signIn = resolve(directory, "auth-sign-in.mjs")
-  const middleware = resolve(directory, "auth-middleware.mjs")
+  const middleware = consoleAuthMiddlewareFile(root)
   const client = resolve(directory, "auth-client.mjs")
   const inline = "provider" in config
   const mountBase = consoleAuthMountBase(mountBaseURL)
@@ -204,6 +213,7 @@ export async function writeConsoleAuthHandlers(root: string, config: ResolvedCon
           ]
         : [
             `import input from ${JSON.stringify(pathToFileURL(config.server).href)}`,
+            "export { input }",
           ]),
       'import { createConsoleAuthDefinition, prepareConsoleAuth } from "vite-hub/console/auth"',
       `export const definition = createConsoleAuthDefinition(input, ${JSON.stringify(mountBaseURL)})`,
@@ -227,9 +237,15 @@ export async function writeConsoleAuthHandlers(root: string, config: ResolvedCon
       "",
     ].join("\n")),
     writeFileIfChanged(middleware, [
-      'import { requireAuthAccessRoutes } from "#vitehub/auth/server"',
+      'import { requireAuthAccessRoutes, withAuthorization } from "#vitehub/auth/server"',
       'import { consoleAuthPageResponse } from "vite-hub/console/auth"',
-      'import { definition, prepare } from "./auth-definition.mjs"',
+      'import { definition, input, prepare } from "./auth-definition.mjs"',
+      "const authorizeConsoleAccess = withAuthorization(input.authorize, () => undefined, definition)",
+      "// Each Console data route calls this check, whatever its path. It never redirects to sign-in.",
+      "export async function checkConsoleAccess(event) {",
+      "  await prepare(event)",
+      "  return authorizeConsoleAccess(event)",
+      "}",
       "export default async function viteHubConsoleAuthMiddleware(event) {",
       `  const mountBase = ${JSON.stringify(mountBase)}`,
       "  const publicPath = event.url.pathname",
