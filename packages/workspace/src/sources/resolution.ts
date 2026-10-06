@@ -609,7 +609,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       sync: writeWorkspace.sync,
       tools: writeTools,
     }
-    setWorkspaceRawWriteTarget(writableWorkspace, rawWrites)
+    setWorkspaceRawWriteTarget(writableWorkspace, writes)
     sourceSyncStores.set(writableWorkspace, syncStore)
     forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, writableWorkspace)
     forwardWorkspaceStoreTarget(workspace, writableWorkspace)
