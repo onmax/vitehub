@@ -279,6 +279,7 @@ describe("generated Console access", () => {
     expect(plugin).toContain('"authorize":true,"index":1,"route":"/_vitehub/**"')
     expect(plugin).toContain('"authorize":true,"index":2,"method":"GET","route":"/api/_vitehub/console/**"')
     expect(plugin).toContain('const matched = [{"authorize":true,"index":1,"route":"/_vitehub/**"},{"authorize":true,"index":2,"method":"GET","route":"/api/_vitehub/console/**"}]')
+    expect(plugin).toContain('return path === base || path.startsWith(base + "/")')
   })
 
   it("accepts exact GET rules for the registered Console API endpoints", async () => {
@@ -310,7 +311,7 @@ describe("generated Console access", () => {
 
   it.each([
     { authorize: true, method: "POST", route: "/api/_vitehub/console/status" } as const,
-    { authorize: false, method: "GET", route: "/api/_vitehub/console/status" } as const,
+    { method: "GET", route: "/api/_vitehub/console/status" } as const,
     { authorize: true, method: "GET", route: "/api/_vitehub/console/status/child" } as const,
   ])("rejects a rule that does not authorize GET status: %j", (route) => {
     expect(() => assertConsoleProductionAccess({ access: "auth" }, {
