@@ -197,7 +197,9 @@ export const babysitter: BabysitterAgent = defineAgent({
       channels: { github: babysitterIntake },
       driver: {
         kind: driver,
-        permissions: "allow-edits",
+        // Keep edit-mode restrictions and deny native escalation without prompting.
+        // PR-bound repair tools retain their separate host authorization.
+        permissions: "allow-edits-unattended",
         instructions: {
           template: babysitterInstructions,
         },

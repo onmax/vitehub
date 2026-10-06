@@ -1443,7 +1443,7 @@ export interface AgentModelExecutionOptions<
   }
 }
 
-export type AgentProviderPermissions = "allow-all" | "allow-edits" | "ask"
+export type AgentProviderPermissions = "allow-all" | "allow-edits" | "allow-edits-unattended" | "ask"
 
 type SingleAttemptAgentOutputDefinition<TOutput> = Omit<AgentOutputDefinition<TOutput>, "maxAttempts"> & {
   maxAttempts?: never
@@ -1497,7 +1497,7 @@ export interface AgentProviderDriverOptions<
   launch?: AgentProviderLaunchResolver<TRuntimeConfig>
   model?: string
   output?: SingleAttemptAgentOutputDefinition<TOutput>
-  /** Provider approval policy. Defaults to `"ask"`; `"allow-all"` requires an explicit opt-in. */
+  /** Provider approval policy. Defaults to `"ask"`. `"allow-edits-unattended"` denies escalation without prompting; `"allow-all"` removes provider restrictions. */
   permissions?: AgentProviderPermissions
   providerSettings?: Record<string, unknown>
   /**

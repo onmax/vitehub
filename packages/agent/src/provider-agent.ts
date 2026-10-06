@@ -346,6 +346,7 @@ const imageExtensions: Record<string, string> = {
 const providerRuntimeMode: Record<AgentProviderPermissions, RuntimeMode> = {
   "allow-all": "full-access",
   "allow-edits": "auto-accept-edits",
+  "allow-edits-unattended": "auto-accept-edits",
   ask: "approval-required",
 }
 
@@ -3169,6 +3170,8 @@ async function* runProvider<
       model: options.model,
       resumeCursor,
       runtimeMode: providerRuntimeMode[options.permissions ?? defaultAgentProviderPermissions],
+      // Deny native permission escalation without removing the edit-mode boundary.
+      ...(options.permissions === "allow-edits-unattended" ? { approvalPolicy: "never" as const } : {}),
       threadId,
     }), effectiveSignal, session => finalizeDeferredRuntime(session.threadId), deferRuntimeCleanup, () => finalizeDeferredRuntime())
     if (session.resumeCursor !== undefined) pendingResumeCursor = session.resumeCursor
