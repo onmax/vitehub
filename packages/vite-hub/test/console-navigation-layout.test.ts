@@ -59,6 +59,18 @@ describe("shared Console navigation layout", () => {
     expect(home).toContain('useCollection("vitehub-console-search"')
   })
 
+  it("links Overview sections to their docs without nesting links in buttons", () => {
+    const home = component("console-home")
+    // The open button covers the cell and the Docs link sits beside it, never inside it.
+    expect(home).toMatch(/<button\s+type="button"\s+class="vitehub-console__overview-cell-target absolute inset-0"[^>]*\/>/)
+    expect(home).toContain(':href="section.docs"')
+    expect(home).toContain(':aria-label="`${section.label} documentation`"')
+    expect(home).toContain('consolePrimitives.filter((entry) => entry.id !== "usage" && !sections.value.includes(entry.id))')
+    expect(home).toContain(':aria-label="`Set up ${entry.label}`"')
+    expect(home).toContain('v-for="guide in consoleGuides"')
+    expect(home).toContain("Add your first primitive")
+  })
+
   it("keeps primitive identity in the page header instead of repeating sidebar headings", () => {
     expect(component("console-definitions")).not.toContain(">Definitions</h1>")
     expect(component("console-blob")).not.toContain(">Objects</h1>")
