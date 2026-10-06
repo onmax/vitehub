@@ -114,7 +114,6 @@ type UsageSummary = v.InferOutput<typeof usageSummarySchema>;
 const route = useRoute();
 const router = useRouter();
 const props = defineProps<{ base: string }>();
-const emit = defineEmits<{ openSessions: [] }>();
 function setFilter(key: string, value: string) {
   void router.replace({ query: { ...route.query, [key]: value || undefined } });
 }
@@ -433,9 +432,8 @@ onBeforeUnmount(() => { request?.abort(); clearTimeout(searchTimer); });
 <template>
   <UDashboardPanel id="console-usage" class="console-usage" :ui="{ body: 'min-h-0 overflow-y-auto p-0 gap-0' }">
     <template #header>
-      <UDashboardNavbar title="Usage" :ui="{ root: 'border-b border-default' }">
+      <UDashboardNavbar title="Usage" :toggle="false" :ui="{ root: 'border-b border-default' }">
         <template #right>
-          <UButton class="md:hidden" icon="i-lucide-panel-left" color="neutral" variant="ghost" size="sm" aria-label="Open sessions" @click="emit('openSessions')" />
           <USelect v-model="window" aria-label="Usage period" class="w-28" size="sm" value-key="value" :items="windowOptions" />
           <UButton aria-label="Refresh usage" color="neutral" icon="i-lucide-refresh-cw" size="sm" variant="ghost" :disabled="loading" @click="refresh(); loadStatus();" />
         </template>

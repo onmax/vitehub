@@ -1,5 +1,17 @@
+<script setup lang="ts">
+import type { ConsoleSectionId } from "../sections";
+import ConsoleRail from "./console-rail.vue";
+
+defineProps<{
+  /** Section that the current page shows. Leave it unset on the Overview. */
+  active?: ConsoleSectionId;
+  sectionsBase: string;
+}>();
+</script>
+
 <template>
   <UDashboardGroup class="vitehub-console" unit="rem" storage-key="vitehub-console-v2">
+    <ConsoleRail :active="active" :sections-base="sectionsBase" />
     <slot />
   </UDashboardGroup>
 </template>
@@ -65,7 +77,16 @@
   color: var(--ui-text-muted);
 }
 
-.vitehub-console__nav-item[aria-current="page"] {
+/* A context panel opens with the section title, like the panel headers in Linear and Featurebase. */
+.vitehub-console__panel-title {
+  align-items: center;
   color: var(--ui-text-highlighted);
+  display: flex;
+  font-size: 0.875rem;
+  font-weight: 500;
+  gap: 0.5rem;
+  height: 2rem;
+  min-width: 0;
+  padding-inline: 0.5rem;
 }
 </style>
