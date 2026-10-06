@@ -518,7 +518,7 @@ describe("vitehub", () => {
     )
 
     await expect(callHook(plugin.config, [{}, { command: "build", mode: "production" }]))
-      .rejects.toThrow("/api/_vitehub/console/**")
+      .rejects.toThrow("/api/_vitehub/console/status")
   })
 
   it("rejects Auth-backed production Console when top-level Auth is disabled", async () => {
