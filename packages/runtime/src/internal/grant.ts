@@ -20,6 +20,8 @@ export interface GrantDefinition<Kind extends string, Input, Value> {
   }
   /** Return the bound value, or `undefined` for a forged, consumed, or foreign value. Never throws. */
   check: (candidate: unknown) => Value | undefined
+  /** Return whether this definition issued the candidate and it has not been consumed. Never throws. */
+  isValid: (candidate: unknown) => boolean
   /** Return the bound value. Throws `GRANT_REQUIRED` when this definition did not issue the grant, or it was consumed. */
   verify: (grant: Grant<Kind>) => Value
   /** Verify the grant and revoke it, so it works only once. */
@@ -69,6 +71,7 @@ export function defineGrant<const Kind extends string, Input, Value>(
       issued.delete(grant)
       return value
     },
+    isValid: candidate => isRuntimeObject(candidate) && issued.has(candidate),
     attach: (owner, grant) => {
       verify(grant)
       owners.set(owner, grant)

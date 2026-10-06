@@ -4,6 +4,7 @@ import { defineGrant, type Grant } from "../src/internal/grant.ts"
 
 const pathWrite = defineGrant("test.path-write", (path: string) => path)
 const toolRun = defineGrant("test.tool-run", (input: { tool: string }) => Object.freeze({ ...input }))
+const undefinedValue = defineGrant("test.undefined-value", () => undefined)
 
 describe("defineGrant", () => {
   it("issues a frozen grant and returns its bound value", () => {
@@ -28,6 +29,15 @@ describe("defineGrant", () => {
     expect(() => pathWrite.verify(forged)).toThrow(expect.objectContaining({ code: "GRANT_REQUIRED", details: { kind: "test.path-write" } }))
     // @ts-expect-error A grant from another definition does not type-check.
     expect(() => pathWrite.verify(foreign)).toThrow(expect.objectContaining({ code: "GRANT_REQUIRED" }))
+  })
+
+  it("distinguishes a valid grant bound to undefined", () => {
+    const grant = undefinedValue.issue("ignored")
+
+    expect(undefinedValue.check(grant)).toBeUndefined()
+    expect(undefinedValue.isValid(grant)).toBe(true)
+    expect(undefinedValue.isValid(Object.freeze({}))).toBe(false)
+    expect(undefinedValue.verify(grant)).toBeUndefined()
   })
 
   it("does not verify grants across definitions or copies with the same kind", async () => {

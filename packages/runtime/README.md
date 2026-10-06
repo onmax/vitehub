@@ -177,7 +177,7 @@ export function writeSource(grant: ReturnType<typeof checkSourceWrite>, data: st
 
 - Keep the definition module-private. Only the module that owns the check issues grants.
 - Bind the grant to what it authorizes, for example a path, a tool call, or a request. The second argument of `defineGrant()` copies or freezes that value.
-- `verify()` returns the bound value or throws a `ViteHubError` with code `GRANT_REQUIRED`. `check()` returns `undefined` instead. `consume()` makes a grant single-use. `attach(owner, grant)` and `attached(owner)` keep a grant with a request or context object.
+- `verify()` returns the bound value or throws a `ViteHubError` with code `GRANT_REQUIRED`. `check()` returns `undefined` instead; use `isValid()` when a bound value may itself be `undefined`. `consume()` makes a grant single-use. `attach(owner, grant)` and `attached(owner)` keep a grant with a request or context object.
 - Each definition has its own registry. A grant from another definition, another bundled copy of the package, or a forged object fails closed. The kind string brands the grant type, so use a unique `vitehub.<package>.<name>` kind.
 - Grants are request-scoped. Never persist one. Durable or resumed work must run the check again.
 

@@ -106,7 +106,7 @@ export function withConsoleAccess<TEvent extends ConsoleRequestEvent, TResult>(
   if (!(handler instanceof Function)) throw new TypeError("[vitehub] withConsoleAccess() requires a handler function.")
   return async (event) => {
     const bound = checkedEvents.get(event)
-    if (bound && consoleAccessGrant.check(bound) !== undefined) return handler(event, bound)
+    if (bound && consoleAccessGrant.isValid(bound)) return handler(event, bound)
     const access = await checkConsoleAccess(event)
     if (access instanceof Response) return access
     checkedEvents.set(event, access)
@@ -119,7 +119,7 @@ export function withConsoleAccess<TEvent extends ConsoleRequestEvent, TResult>(
  * A guarded handler that receives this event uses the bound access. Rejects an access that `withConsoleAccess()` did not create.
  */
 export function bindConsoleAccess<TEvent extends ConsoleRequestEvent>(access: ConsoleAccess, event: TEvent): TEvent {
-  if (consoleAccessGrant.check(access) === undefined) throw consoleRequestError(403, "Forbidden")
+  if (!consoleAccessGrant.isValid(access)) throw consoleRequestError(403, "Forbidden")
   if (checkedEvents.has(event)) throw consoleRequestError(500, "Console access is already bound to this request.")
   checkedEvents.set(event, access)
   return event
