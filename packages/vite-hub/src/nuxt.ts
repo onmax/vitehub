@@ -859,11 +859,13 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       assertConsoleProductionAccess(configuredConsole, {
         auth: appAuth,
         consoleAuth: configuredConsole !== true && configuredConsole.access === "auth" && Boolean(configuredConsole.auth),
+        base: nuxt.options.app?.baseURL,
         development: Boolean(nuxt.options.dev),
       })
       const consoleAuthMode = registeredConsoleAuthMode(configuredConsole !== true && configuredConsole.access === "auth" ? configuredConsole.auth : undefined, Boolean(nuxt.options.dev))
       consoleAccess = resolveConsoleAccessBuild(configuredConsole, {
         appAuth,
+        base: nuxt.options.app?.baseURL,
         handlers: consoleAuthMode ? { auth: consoleAuthMode, middleware: consoleAuthMiddlewareFile(viteRoot) } : undefined,
         root: viteRoot,
       })

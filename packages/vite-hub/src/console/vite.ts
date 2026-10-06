@@ -231,10 +231,11 @@ function authRouteProtects(
   target: { method?: string; route: string },
 ): boolean {
   if (!route.authorize || (route.method && route.method.toUpperCase() !== target.method)) return false
-  if (!route.route.endsWith("/**")) return false
-  const routeBase = route.route.slice(0, -3)
-  const targetBase = target.route.slice(0, -3)
-  return targetBase === routeBase || targetBase.startsWith(`${routeBase}/`)
+  const recursive = route.route.endsWith("/**")
+  const routeBase = recursive ? route.route.slice(0, -3) : route.route
+  const targetRecursive = target.route.endsWith("/**")
+  const targetBase = targetRecursive ? target.route.slice(0, -3) : target.route
+  return targetBase === routeBase || (recursive && targetBase.startsWith(`${routeBase}/`))
 }
 
 export const consoleHostManagedCloudflareWarning = '[vitehub] console: { exposure: "host-managed" } trusts console.authorize to verify requests. On Cloudflare, use console: { access: "auth", auth: { provider: "cloudflare-access" } } so the Worker verifies the Cloudflare Access token.'
@@ -249,9 +250,11 @@ export function resolveConsoleAuthorizeFile(root: string, authorize: unknown): s
   return file
 }
 
-function consoleAppAuthRouteIndexes(auth: ResolvedAuthViteConfig, base: string | undefined): number[] {
+function consoleAppAuthRouteIndexes(auth: ResolvedAuthViteConfig, base: string | undefined): Array<{ authorize: boolean, index: number, method?: string, route: string }> {
   const targets = consoleAccessRoutes.map(target => ({ ...target, route: consoleMountPath(base, target.route) }))
-  return auth.access.routes.flatMap((route, index) => targets.some(target => authRouteProtects(route, target)) ? [index] : [])
+  return auth.access.routes.flatMap((route, index) => targets.some(target => authRouteProtects(route, target) || route.route.startsWith(target.route.replace(/\/\*\*$/, "")))
+    ? [{ authorize: route.authorize === true, index, method: route.method?.toUpperCase(), route: route.route }]
+    : [])
 }
 
 /**

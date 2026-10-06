@@ -29,7 +29,7 @@ function renderRetentionLimit(value: number | false | undefined): string {
  */
 export type ConsoleAccessBuild =
   | { mode: "local" }
-  | { mode: "auth" | "cloudflare-access", check?: { module: string } | { appRoutes: readonly number[] } }
+  | { mode: "auth" | "cloudflare-access", check?: { module: string } | { appRoutes: readonly { authorize: boolean, index: number, method?: string, route: string }[] } }
   | { mode: "host-managed", authorize?: string }
 
 function renderConsoleAccess(access: ConsoleAccessBuild | undefined): { imports: string[], install: string[] } {
@@ -55,7 +55,7 @@ function renderConsoleAccess(access: ConsoleAccessBuild | undefined): { imports:
   return access.check.appRoutes.length
     ? {
         imports: ['import { requireAuthAccessRoutes as vitehubRequireAuthAccessRoutes } from "#vitehub/auth/server"'],
-        install: [`installConsoleAccess({ mode: ${mode}, check: event => vitehubRequireAuthAccessRoutes(event, ${routes}, undefined, ${routes}, { redirectToSignIn: false }) })`],
+        install: [`installConsoleAccess({ mode: ${mode}, check: event => { const path = event.url.pathname; const method = (event.req?.method ?? event.request?.method ?? "GET").toUpperCase(); const matched = ${routes}.filter(route => (!route.method || route.method === method) && (path === route.route || (route.route.endsWith("/**") && path.startsWith(route.route.slice(0, -3) + "/")))); const indexes = matched.map(route => route.index); const required = matched.filter(route => route.authorize).map(route => route.index); return vitehubRequireAuthAccessRoutes(event, indexes, undefined, required, { redirectToSignIn: false }) } })`],
       }
     : {
         imports: ['import { withAuthorization as vitehubWithAuthorization } from "#vitehub/auth/server"'],

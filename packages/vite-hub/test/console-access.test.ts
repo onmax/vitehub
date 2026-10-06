@@ -276,7 +276,9 @@ describe("generated Console access", () => {
         { authorize: true, method: "GET", route: "/api/_vitehub/console/**" },
       ]),
     }, "build")
-    expect(plugin).toContain("installConsoleAccess({ mode: \"auth\", check: event => vitehubRequireAuthAccessRoutes(event, [1,2], undefined, [1,2], { redirectToSignIn: false }) })")
+    expect(plugin).toContain('"authorize":true,"index":1,"route":"/_vitehub/**"')
+    expect(plugin).toContain('"authorize":true,"index":2,"method":"GET","route":"/api/_vitehub/console/**"')
+    expect(plugin).toContain('const matched = [{"authorize":true,"index":1,"route":"/_vitehub/**"},{"authorize":true,"index":2,"method":"GET","route":"/api/_vitehub/console/**"}]')
   })
 
   it("fails closed for Auth access without a discovered Auth Definition", async () => {
