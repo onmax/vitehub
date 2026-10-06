@@ -474,7 +474,16 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
               ? `const handle = createConnectionsHandler({ actor, basePath: ${JSON.stringify(managementRoute)} })`
               : `const handle = createConnectionsHandler({ actor: "development", basePath: ${JSON.stringify(managementRoute)} })`,
             "",
-            "export default (event: { req: Request }) => handle(event.req, event)",
+            "export default (event: { req?: Request, node?: { req?: { headers?: Record<string, string | string[] | undefined>, method?: string, url?: string } } }) => {",
+            "  const raw = event.req ?? event.node?.req",
+            "  if (!raw) return handle(new Request('http://localhost/'), event)",
+            "  if (raw instanceof Request) return handle(raw, event)",
+            "  const headers = new Headers()",
+            "  for (const [name, value] of Object.entries(raw.headers ?? {})) { if (typeof value === 'string') headers.set(name, value); else if (Array.isArray(value)) for (const item of value) headers.append(name, item) }",
+            "  const host = headers.get('host') ?? 'localhost'",
+            "  const request = new Request(new URL(raw.url ?? '/', `http://${host}`), { method: raw.method ?? 'GET', headers })",
+            "  return handle(request, event)",
+            "}",
             "",
           ].join("\n"),
         );
