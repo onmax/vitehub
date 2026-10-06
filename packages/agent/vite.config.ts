@@ -7,7 +7,10 @@ export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
     deps: {
-      alwaysBundle: [/^@vite-hub\/internal/],
+      // The Env Agent mint is a private implementation detail. Bundle it into
+      // the Agent runtime so application code cannot import the mint through
+      // @vite-hub/env's public package surface.
+      alwaysBundle: [/^@vite-hub\/internal/, /^@vite-hub\/env\/internal\/agent$/],
       neverBundle: [
         "vite",
         "esbuild",

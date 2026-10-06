@@ -16,6 +16,9 @@
       ],
       "@vite-hub/runtime": [
         "packages/runtime/src/index.ts"
+      ],
+      "@vite-hub/env/internal/agent": [
+        "packages/env/dist/internal/agent.d.ts"
       ]
     }
   },

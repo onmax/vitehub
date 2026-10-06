@@ -50,6 +50,9 @@
       "@vite-hub/runtime": [
         "packages/runtime/src/index.ts"
       ],
+      "@vite-hub/env/internal/agent": [
+        "packages/env/src/internal/agent.ts"
+      ],
       "@vite-hub/rate-limit": [
         "packages/rate-limit/src/index.ts"
       ],
