@@ -76,10 +76,24 @@ const consoleSectionGroupBySection: Readonly<Record<string, ConsoleSectionGroupI
   "rate-limits": "platform",
 }
 
+/** Labels that the Overview shows above each navigation group. */
+export const consoleSectionGroupLabels: Readonly<Record<ConsoleSectionGroupId, string>> = {
+  agents: "Agents",
+  data: "Data",
+  runtime: "Runtime",
+  platform: "Platform",
+  more: "More",
+}
+
+/** Returns the navigation group of a section. A contributed section with an unknown id goes to `more`. */
+export function resolveConsoleSectionGroup(section: ConsoleSectionId): ConsoleSectionGroupId {
+  return Object.hasOwn(consoleSectionGroupBySection, section) ? consoleSectionGroupBySection[section] : "more"
+}
+
 /** Splits enabled sections into navigation groups. Keeps the given order inside each group and drops empty groups. */
 export function groupConsoleSections<T extends { id: ConsoleSectionId }>(sections: readonly T[]): T[][] {
   return consoleSectionGroupIds
-    .map(group => sections.filter(section => (Object.hasOwn(consoleSectionGroupBySection, section.id) ? consoleSectionGroupBySection[section.id] : "more") === group))
+    .map(group => sections.filter(section => resolveConsoleSectionGroup(section.id) === group))
     .filter(group => group.length > 0)
 }
 

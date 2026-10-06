@@ -50,6 +50,15 @@ describe("shared Console navigation layout", () => {
     expect(component("console-app")).toContain('v-if="!isUsageRoute"\n      id="agent-sessions"')
   })
 
+  it("groups the Overview sections and keeps one open button for each section", () => {
+    const home = component("console-home")
+    expect(home).toContain("groupConsoleSections(availableSections.value)")
+    expect(home).toContain("consoleSectionGroupLabels[id]")
+    expect(home).toContain(':aria-label="`Open ${section.label}`"')
+    expect(home).toContain("readLastConsoleSection()")
+    expect(home).toContain('useCollection("vitehub-console-search"')
+  })
+
   it("keeps primitive identity in the page header instead of repeating sidebar headings", () => {
     expect(component("console-definitions")).not.toContain(">Definitions</h1>")
     expect(component("console-blob")).not.toContain(">Objects</h1>")

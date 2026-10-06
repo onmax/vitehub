@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 
 import {
+  consoleSectionGroupIds,
+  consoleSectionGroupLabels,
   groupConsoleSections,
   consoleBuiltinSectionIds,
   consoleSectionDetails,
@@ -11,6 +13,7 @@ import {
   prioritizeConsoleSectionIds,
   readLastConsoleSection,
   rememberConsoleSection,
+  resolveConsoleSectionGroup,
   resolveConsoleSectionIds,
 } from "../src/console/runtime/sections.ts"
 
@@ -141,5 +144,13 @@ describe("Console section groups", () => {
 
   it("does not read inherited keys as groups", () => {
     expect(groupConsoleSections([{ id: "constructor" }]).map(group => group.map(section => section.id))).toEqual([["constructor"]])
+  })
+
+  it("labels every group and resolves the group of one section", () => {
+    expect(consoleSectionGroupIds.map(group => consoleSectionGroupLabels[group])).toEqual(["Agents", "Data", "Runtime", "Platform", "More"])
+    expect(resolveConsoleSectionGroup("usage")).toBe("agents")
+    expect(resolveConsoleSectionGroup("schedules")).toBe("runtime")
+    expect(resolveConsoleSectionGroup("custom-tool")).toBe("more")
+    expect(resolveConsoleSectionGroup("constructor")).toBe("more")
   })
 })

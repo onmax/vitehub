@@ -7,6 +7,7 @@ export const consoleIcons: readonly string[] = [
   "lucide:arrow-right",
   "lucide:arrow-up",
   "lucide:arrow-up-narrow-wide",
+  "lucide:arrow-up-right",
   "lucide:ban",
   "lucide:blocks",
   "lucide:book-key",
