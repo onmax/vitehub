@@ -72,7 +72,7 @@ corepack pnpm --dir packages/vite-hub exec vp test test/console-colocated-skills
 corepack pnpm --dir packages/vite-hub run typecheck
 ```
 
-Replace `vite-hub` with a manifest package name, such as `@vite-hub/agent`, and use the matching directory. Use the Vite+ target build for dependency builds; `run-package-task.mjs build --packages` builds only the selected packages. Add the following checks only when their behavior is affected:
+Replace `vite-hub` with a manifest package name, such as `@vite-hub/agent`, and use the matching directory. Use the Vite+ target build for dependency builds; `run-package-task.mjs build --packages` builds only the selected packages. The root `build` task builds every package in dependency order and caches each package build by the files it reads, so it rebuilds only packages whose inputs changed. `--no-cache` does not reach its nested run; run `corepack pnpm exec vp cache clean` first to force a full rebuild. Add the following checks only when their behavior is affected:
 
 | Change | Check from the repository root |
 | --- | --- |
