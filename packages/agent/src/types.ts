@@ -1599,9 +1599,9 @@ export interface AgentDriverGateway {
   /**
    * Base URL for each Driver. Codex sends OpenAI Responses requests to `<url>/responses`.
    * Claude Code sends Anthropic Messages requests to `<url>/v1/messages`.
-   * A Driver without an entry cannot use this gateway.
+   * A Driver without an entry cannot use this gateway. A resolver runs for each invocation, so the URL can come from Server Env.
    */
-  baseURL: Partial<Record<BuiltInAgentDriverName, string>>
+  baseURL: Partial<Record<BuiltInAgentDriverName, MaybeResolvable<string, AgentProviderCredentialContext>>>
   /** API key. When it is not set, ViteHub reads the first non-empty variable in `apiKeyEnv`. */
   apiKey?: AgentDriverGatewaySecret
   /** Process environment variables that supply the API key, in lookup order. */

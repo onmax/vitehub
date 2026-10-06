@@ -235,10 +235,42 @@ describe("built-in deployment preset integration", () => {
       expect(config.root).toBe(agentRoot)
       expect((config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
-      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["TELEGRAM_BOT_TOKEN"])
+      }).nitro?.cloudflare?.wrangler?.secrets?.required ?? []).toEqual([])
       const types = await readFile(join(agentRoot, ".vitehub", "types", "env.d.ts"), "utf8")
       expect(types).toContain('"telegram": {')
       expect(types).toContain('"botToken": import("vite-hub/env/secret").SecretEnv<string>')
+      const description = await readFile(join(agentRoot, ".vitehub", "env", "description.mjs"), "utf8")
+      expect(description).toContain("VITEHUB_TELEGRAM_BOT_TOKEN")
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it("declares optional Server Env for gateway presets used by Agents", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-gateway-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "dev.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { cliproxy, cloudflareAccess } from "vite-hub/agent/gateways"`,
+        `export default defineAgent({ driver: { kind: "codex", gateway: cliproxy({ headers: cloudflareAccess() }) } })`,
+      ].join("\n"))
+      const config = await resolveConfig({
+        root,
+        plugins: [vitehub({ agent: true, preset: "cloudflare" })],
+      } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build")
+      // A gateway key is optional, so a server that also hosts Agents without the gateway still starts.
+      expect((config as typeof config & {
+        nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
+      }).nitro?.cloudflare?.wrangler?.secrets?.required ?? []).toEqual([])
+      const types = await readFile(join(root, ".vitehub", "types", "env.d.ts"), "utf8")
+      expect(types).toContain("\"cliproxy\": {")
+      expect(types).toContain("\"apiKey\"?: import(\"vite-hub/env/secret\").SecretEnv<string>")
+      expect(types).toContain("\"cloudflareAccess\": {")
+      const description = await readFile(join(root, ".vitehub", "env", "description.mjs"), "utf8")
+      expect(description).toContain("env.server.cliproxy.url")
+      expect(description).toContain("env.server.cloudflareAccess.clientSecret")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -257,7 +289,8 @@ describe("built-in deployment preset integration", () => {
       const resolve = (server?: Record<string, unknown>) => resolveConfig({
         ...(server ? { env: { server } } : {}),
         root,
-        plugins: [vitehub({ agent: true, preset: "cloudflare" })],
+        // A single vendor name can be required by Wrangler only when canonical aliases are disabled.
+        plugins: [vitehub({ agent: true, env: { prefix: false }, preset: "cloudflare" })],
       } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build")
       const requiredSecrets = (config: Awaited<ReturnType<typeof resolve>>) => (config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
@@ -284,7 +317,7 @@ describe("built-in deployment preset integration", () => {
       expect(description).toContain("env.server.telegram.botToken")
 
       const renamed = await resolve({ telegram: { botToken: env({ secret: true, source: env.source("TELEGRAM_TOKEN") }) } })
-      expect(requiredSecrets(renamed)).toBeUndefined()
+      expect(requiredSecrets(renamed)).toEqual(["TELEGRAM_TOKEN"])
 
       await writeFile(join(root, "server", "agents", "support.ts"), [
         `import { defineAgent } from "vite-hub/agent"`,
