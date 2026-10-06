@@ -33,4 +33,30 @@ describe("Workspace Store identities", () => {
     await Promise.all([pending, queued])
     expect(events).toEqual(["first:start", "first:end", "alias"])
   })
+
+  it("keeps the queue identity when an existing target is promoted", async () => {
+    const alias = store()
+    const first = store()
+    const promoted = store()
+    const events: string[] = []
+    let release!: () => void
+    const hold = new Promise<void>(resolve => { release = resolve })
+
+    registerWorkspaceStoreAlias(alias, first)
+    const pending = withWorkspaceStoreMutation(first, async () => {
+      events.push("first:start")
+      await hold
+      events.push("first:end")
+    })
+    registerWorkspaceStoreAlias(first, promoted)
+    const queued = withWorkspaceStoreMutation(promoted, async () => {
+      events.push("promoted")
+    })
+
+    await Promise.resolve()
+    expect(events).toEqual(["first:start"])
+    release()
+    await Promise.all([pending, queued])
+    expect(events).toEqual(["first:start", "first:end", "promoted"])
+  })
 })
