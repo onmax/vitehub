@@ -280,7 +280,7 @@ async function runOperation(body: KVDevRequestBody, stores: readonly KVDevStore[
  * operation that clears a store.
  */
 export async function handleKVDevRequest(request: Request, stores: readonly KVDevStore[] = listKVDevStores()): Promise<Response> {
-  const rejection = validateViteHubNitroDevRequest(request, { header: kvDevHeader, headerValue: kvDevHeaderValue, label: "KV Dev" })
+  const { rejection } = await validateViteHubNitroDevRequest(request, { header: kvDevHeader, headerValue: kvDevHeaderValue, label: "KV Dev" })
   if (rejection) return rejection
   try {
     return json(await runOperation(await readBody(request), stores))

@@ -32,10 +32,9 @@ describe("Env authentication", () => {
   it("uses the human policy and preserves request headers", async () => {
     const app = setup();
     const input = request();
-    expect(await app.authenticate(input)).toEqual({
-      actor: { kind: "user", id: "owner" },
-      admin: true,
-    });
+    const context = await app.authenticate(input);
+    expect(context).toMatchObject({ actor: { kind: "user", id: "owner" }, admin: true });
+    expect(Object.isFrozen(context)).toBe(true);
     expect(app.getSession).toHaveBeenCalledWith({ headers: input.headers });
     app.isAdmin.mockReturnValue(false);
     expect((await app.authenticate(request()))?.admin).toBe(false);

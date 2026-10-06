@@ -3,7 +3,7 @@ import { hasRuntimeType } from "../internal/runtime-type.ts"
 
 import { createGitHubWorkspaceStore } from "@vite-hub/workspace/internal/stores/github"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
-import { registerViteHubDevEndpoint } from "@vite-hub/internal/dev-endpoint"
+import { assertViteHubDevRequestGrant, registerViteHubDevEndpoint } from "@vite-hub/internal/dev-endpoint"
 import { installHostedWorkspaceRuntime } from "@vite-hub/workspace/internal/runtime/hosted"
 import { installHostedVercelBlobWorkspaceRuntime } from "@vite-hub/workspace/internal/runtime/hosted-vercel-blob"
 import { getWorkspaceHostedStoreLoader, setWorkspaceHostedStoreLoader, setWorkspaceRuntimeRegistry } from "@vite-hub/workspace/runtime"
@@ -28,6 +28,7 @@ import {
 
 import type { IncomingMessage, ServerResponse } from "node:http"
 import type { ViteDevServer } from "vite"
+import type { ViteHubDevRequestGrant } from "@vite-hub/internal/dev-endpoint"
 import type { AgentChatMessageTriggerInput } from "../chat-trigger.ts"
 import type { AgentDevLoopDiscoveryResponse, AgentInvocationStreamEvent } from "../invocation-stream.ts"
 import type {
@@ -615,7 +616,8 @@ async function resolveDevRuntimeCapabilities(
   return capabilities
 }
 
-async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: IncomingMessage, tokenOptions: WorkspaceDevTokenOptions, abortSignal: AbortSignal | undefined, runtimeOptions: AgentDevRuntimeOptions): Promise<Response> {
+async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: IncomingMessage, grant: ViteHubDevRequestGrant, tokenOptions: WorkspaceDevTokenOptions, abortSignal: AbortSignal | undefined, runtimeOptions: AgentDevRuntimeOptions): Promise<Response> {
+  assertViteHubDevRequestGrant(grant, req)
   const capabilities = await resolveDevRuntimeCapabilities(server, runtimeOptions.runtimeCapabilities ?? [], runtimeOptions)
   const entries = await discoverStreamAgents(server)
   if (req.method === "GET") {
@@ -786,9 +788,9 @@ export async function registerAgentInvocationStreamEndpoint(server: ViteDevServe
   const tokenOptions = { serverId: workspaceDevTokenServerId(server.config.server.port) }
   await refreshWorkspaceDevToken(server.config.root, tokenOptions)
   registerViteHubDevEndpoint(server, {
-    handle: (req, res) => {
+    handle: (req, res, grant) => {
       const abort = createAbortSignalFromClose(res, "[vitehub] Agent Invocation Stream response closed.")
-      void handleAgentInvocationStreamRequest(server, req, tokenOptions, abort.signal, runtimeOptions)
+      void handleAgentInvocationStreamRequest(server, req, grant, tokenOptions, abort.signal, runtimeOptions)
         .catch(errorResponse)
         .then(response => writeResponse(res, response))
         .finally(abort.dispose)
