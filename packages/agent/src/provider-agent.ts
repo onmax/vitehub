@@ -346,6 +346,7 @@ const imageExtensions: Record<string, string> = {
 const providerRuntimeMode: Record<AgentProviderPermissions, RuntimeMode> = {
   "allow-all": "full-access",
   "allow-edits": "auto-accept-edits",
+  "allow-edits-unattended": "auto-accept-edits",
   ask: "approval-required",
 }
 
@@ -1926,6 +1927,8 @@ async function prepareWorkspace(
   if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
+    // The Driver owns this temporary root and removes it after the run, so close() must not restore it.
+    disposableTarget: true,
     host: localWorkspaceHost({ path }),
     ...(materializedSources?.ready ? { materializeSources: false } : {}),
     onProgress: createWorkspaceSetupObservers(workspaceSetupObserverOptions(context)).preparation,
@@ -3169,6 +3172,8 @@ async function* runProvider<
       model: options.model,
       resumeCursor,
       runtimeMode: providerRuntimeMode[options.permissions ?? defaultAgentProviderPermissions],
+      // Deny native permission escalation without removing the edit-mode boundary.
+      ...(options.permissions === "allow-edits-unattended" ? { approvalPolicy: "never" as const } : {}),
       threadId,
     }), effectiveSignal, session => finalizeDeferredRuntime(session.threadId), deferRuntimeCleanup, () => finalizeDeferredRuntime())
     if (session.resumeCursor !== undefined) pendingResumeCursor = session.resumeCursor

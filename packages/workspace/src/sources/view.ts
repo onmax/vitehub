@@ -551,15 +551,17 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   }
 
   async function readOwnedRootStartupFile(path: string, sourceKey?: string) {
-    if ((await store.stat(path))?.type !== "file") return
-    const file = await store.readFile(path)
-    if (!file) return
+    // Only a root startup Source can own the file. Check the owner record before any content read.
+    if (!sources.some(source => !source.mountPath && source.materialize === "startup")) return
     const owner = await readWorkspaceFileOwner(store, path)
     if (owner?.workspace !== definition.name || !owner.digest) return
     if (sourceKey && owner.source !== sourceKey) return
-    if (file.metadata?.source && (file.metadata.workspaceSourceOwner !== definition.name || file.metadata.source !== owner.source)) return
     const source = sources.find(source => !source.mountPath && source.materialize === "startup" && source.key === owner.source)
     if (!source) return
+    if ((await store.stat(path))?.type !== "file") return
+    const file = await store.readFile(path)
+    if (!file) return
+    if (file.metadata?.source && (file.metadata.workspaceSourceOwner !== definition.name || file.metadata.source !== owner.source)) return
     const snapshot = await readCurrentSourceSnapshot(store, definition.name, source)
     if (snapshot?.status !== "ready" || !Object.hasOwn(snapshot.items || {}, path)) return
     if (await sha256(file.content) === owner.digest) return file

@@ -1324,7 +1324,9 @@ function githubCommandFromUnknown(value: unknown): GitHubPullRequestCommand | un
     commentId,
     ...(maybeString(value.commentNodeId) ? { commentNodeId: maybeString(value.commentNodeId) } : {}),
     ...(maybeString(value.deliveryId) ? { deliveryId: maybeString(value.deliveryId) } : {}),
-    event: maybeString(value.event) === "pull_request" ? "pull_request" : "issue_comment",
+    event: value.event === "pull_request" || value.event === "pull_request_review" || value.event === "pull_request_review_comment"
+      ? value.event
+      : "issue_comment",
     ...(maybeNumber(value.installationId) ? { installationId: maybeNumber(value.installationId) } : {}),
     issueNumber,
     owner,
@@ -2981,6 +2983,42 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
   return {
     webhook: {
       async invoke(context, input): Promise<AgentTriggerInvokeResult> {
+        const accepted = context.queuedInvocation
+        const acceptedPullRequest = githubPullRequestRunContextFromUnknown(accepted?.input.context?.pullRequest)
+        const acceptedCommand = githubCommandFromUnknown(accepted?.input.context?.github)
+        if (accepted && acceptedPullRequest && acceptedCommand?.deliveryId) {
+          const metadata = await githubPullRequestMetadata(app, context, acceptedCommand, options)
+          const refreshed = {
+            ...acceptedPullRequest,
+            pullRequest: {
+              apiUrl: acceptedPullRequest.pullRequest.apiUrl,
+              htmlUrl: acceptedPullRequest.pullRequest.htmlUrl,
+              labels: acceptedPullRequest.pullRequest.labels,
+              number: acceptedPullRequest.pullRequest.number,
+              source: acceptedPullRequest.pullRequest.source,
+              title: acceptedPullRequest.pullRequest.title,
+              ...metadata,
+            },
+          }
+          const ownership = {
+            concurrencyGroup: `${acceptedCommand.repository}#${acceptedCommand.issueNumber}`,
+            concurrencyLimit: githubPullRequestReconcileConcurrencyLimit(options.reconcile),
+            deliveryId: acceptedCommand.deliveryId,
+          }
+          const invocation: AgentTriggerRunInvokeResult = {
+            ...accepted,
+            input: {
+              ...accepted.input,
+              ...pullRequestCommandInput(acceptedCommand, refreshed),
+              context: { ...accepted.input.context, github: acceptedCommand, pullRequest: refreshed },
+            },
+            webhook: {
+              ...ownership,
+              rehydrate: () => ({ ...invocation, webhook: ownership }),
+            },
+          }
+          return invocation
+        }
         let payload = inputPayloadOrBody(input)
         if (payload && pullRequest) {
           const optionsForFilter = pullRequest === true ? {} : pullRequest
@@ -3027,38 +3065,35 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
           concurrencyLimit: githubPullRequestReconcileConcurrencyLimit(options.reconcile),
           deliveryId: command.deliveryId,
         } : undefined
-        const resolveInvocation = async (): Promise<AgentTriggerRunInvokeResult> => {
-          const metadata = await githubPullRequestMetadata(app, context, command, options, payload)
-          const pullRequestContext = githubPullRequestRunContext(command, {
-            ...options,
-            threadId: options.threadId || maybeString(payload?.issue?.pull_request?.html_url) || maybeString(payload?.issue?.html_url) || command.pullRequestUrl,
-          }, payload, metadata)
-          const finishEffects = githubPullRequestCommentFinishEffects(options)
-          const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
-          if (activity) {
-            run.activity = {
-              links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
-              target: {
-                issue: command.issueNumber,
-                repository: command.repository,
-                ...(command.installationId ? { installationId: command.installationId } : {}),
-              },
-            }
+        const metadata = await githubPullRequestMetadata(app, context, command, options, payload)
+        const pullRequestContext = githubPullRequestRunContext(command, {
+          ...options,
+          threadId: options.threadId || maybeString(payload?.issue?.pull_request?.html_url) || maybeString(payload?.issue?.html_url) || command.pullRequestUrl,
+        }, payload, metadata)
+        const finishEffects = githubPullRequestCommentFinishEffects(options)
+        const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
+        if (activity) {
+          run.activity = {
+            links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
+            target: {
+              issue: command.issueNumber,
+              repository: command.repository,
+              ...(command.installationId ? { installationId: command.installationId } : {}),
+            },
           }
-          const invocation: AgentTriggerRunInvokeResult = {
-            ...(finishEffects ? { delivery: { finishEffects } } : {}),
-            input: pullRequestCommandInput(command, pullRequestContext),
-            run,
-          }
-          if (ownership) {
-            invocation.webhook = {
-              ...ownership,
-              rehydrate: async () => ({ ...await resolveInvocation(), webhook: ownership }),
-            }
-          }
-          return invocation
         }
-        return await resolveInvocation()
+        const invocation: AgentTriggerRunInvokeResult = {
+          ...(finishEffects ? { delivery: { finishEffects } } : {}),
+          input: pullRequestCommandInput(command, pullRequestContext),
+          run,
+        }
+        if (ownership) {
+          invocation.webhook = {
+            ...ownership,
+            rehydrate: () => ({ ...invocation, webhook: ownership }),
+          }
+        }
+        return invocation
       },
     },
     dev: {

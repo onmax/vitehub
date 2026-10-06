@@ -9181,7 +9181,13 @@ describe("server helpers", () => {
     }
   })
 
-  it("refreshes a queued GitHub PR head after the preceding invocation pushes", async () => {
+  it.each([
+    { filterLocation: "pullRequest", event: "issue_comment" },
+    { filterLocation: "comments", event: "issue_comment" },
+    { filterLocation: "triggers", event: "issue_comment" },
+    { filterLocation: "comments", event: "pull_request_review" },
+    { filterLocation: "comments", event: "pull_request_review_comment" },
+  ] as const)("refreshes a queued GitHub $event after its $filterLocation draft filter stops matching", async ({ filterLocation, event }) => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
@@ -9189,6 +9195,7 @@ describe("server helpers", () => {
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-github-queued-head-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const complete = vi.spyOn(state, "completeWebhookDelivery")
+    let draft = true
     let head = "a".repeat(40)
     let releaseFirst!: () => void
     const first = new Promise<void>(resolve => { releaseFirst = resolve })
@@ -9199,14 +9206,23 @@ describe("server helpers", () => {
     })
     const fetcher = vi.fn(async (input: string | URL | Request) => Response.json(
       String(input).endsWith("/pulls/42")
-        ? { head: { ref: "fix", sha: head, repo: { full_name: "acme/app" } } }
-        : [],
+        ? { draft, head: { ref: "fix", sha: head, repo: { full_name: "acme/app" } } }
+        : String(input).includes("/comments")
+          ? [{ id: 10, body: draft ? "old marker" : "new marker", user: { login: "mona" } }]
+          : draft ? [{ filename: "removed.ts" }] : [],
+      { headers: { link: "" } },
     ))
     const agent = defineAgent({
       channels: {
         github: github({
           app: { fetch: fetcher, token: "test-token" },
-          pullRequest: { reconcile: { comments: true }, reply: false },
+          pullRequest: {
+            ...(filterLocation === "pullRequest" ? { filter: { draft: { allow: ["true"] } } } : {}),
+            reconcile: filterLocation === "triggers"
+              ? { triggers: [{ events: ["issue_comment"], filter: { draft: { allow: ["true"] } } }] }
+              : { comments: filterLocation === "comments" ? { filter: { draft: { allow: ["true"] } } } : true },
+            reply: false,
+          },
           webhooks: { secretToken: false },
         }),
       },
@@ -9217,12 +9233,22 @@ describe("server helpers", () => {
     const stop = handler.resume({ agentName: "review", webhookState: state })
     const request = (id: number) => new Request("https://example.com/api/github/webhook", {
       body: JSON.stringify({
-        action: "created",
-        comment: { body: "Please fix this PR", id, user: { login: "mona", type: "User" } },
-        issue: { number: 42, pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" } },
+        action: event === "pull_request_review" ? "submitted" : "created",
+        ...(event !== "issue_comment" ? {
+          pull_request: { draft, number: 42, url: "https://api.github.test/repos/acme/app/pulls/42" },
+        } : {}),
+        ...(event === "pull_request_review" ? {
+          review: { body: "Please fix this PR", id, state: "changes_requested", user: { login: "mona", type: "User" } },
+        } : {}),
+        ...(event !== "pull_request_review" ? {
+          comment: { body: "Please fix this PR", id, user: { login: "mona", type: "User" } },
+        } : {}),
+        ...(event === "issue_comment" ? {
+          issue: { number: 42, pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" } },
+        } : {}),
         repository: { full_name: "acme/app" },
       }),
-      headers: { "content-type": "application/json", "x-github-delivery": `delivery-${id}`, "x-github-event": "issue_comment" },
+      headers: { "content-type": "application/json", "x-github-delivery": `delivery-${id}`, "x-github-event": event },
       method: "POST",
     })
     try {
@@ -9230,12 +9256,22 @@ describe("server helpers", () => {
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
       expect((await handler(request(2), "github", { agentName: "review", webhookState: state })).status).toBe(200)
       expect(run).toHaveBeenCalledOnce()
+      fetcher.mockClear()
+      draft = false
       head = "b".repeat(40)
       releaseFirst()
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+      await Promise.all(complete.mock.results.map(result => result.value))
+      expect(fetcher).toHaveBeenCalledTimes(3)
+      expect(run.mock.calls[1]?.[0].input.context?.github).toMatchObject({ deliveryId: "delivery-2", event })
       expect(run.mock.calls[1]?.[0].input.context?.pullRequest).toMatchObject({
-        pullRequest: { head: { sha: head } },
+        pullRequest: { head: { sha: head }, comments: [expect.objectContaining({ body: "new marker" })] },
       })
+      expect(run.mock.calls[1]?.[0].input.context?.pullRequest?.pullRequest.files).toBeUndefined()
+      expect(run.mock.calls[1]?.[0].input.prompt).toContain(head)
+      const filtered = await handler(request(3), "github", { agentName: "review", webhookState: state })
+      await expect(filtered.json()).resolves.toMatchObject({ accepted: false })
+      expect(run).toHaveBeenCalledTimes(2)
     } finally {
       releaseFirst()
       await stop()
@@ -9308,7 +9344,7 @@ describe("server helpers", () => {
       )
 
       expect(response.status).toBe(200)
-      expect(enqueue.mock.calls[0]?.[0].invocation).toBeUndefined()
+      expect(enqueue.mock.calls[0]?.[0].invocation).toMatchObject({ input: { prompt: "stale source data" } })
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
       expect(rehydrate).toHaveBeenCalledOnce()
       expect(run).toHaveBeenCalledWith(
@@ -11052,6 +11088,8 @@ describe("server helpers", () => {
     { timeout: undefined, inputTimeout: undefined, deadline: 900_000 },
     { timeout: 1_800_000, inputTimeout: undefined, deadline: 1_800_000 },
     { timeout: 1_800_000, inputTimeout: 1_200_000, deadline: 1_200_000 },
+    { timeout: 2_147_483_648, inputTimeout: undefined, deadline: 900_000 },
+    { timeout: 1_800_000, inputTimeout: 2_147_483_648, deadline: 900_000 },
   ])("expires a queued webhook invocation at its configured deadline $deadline", async ({ timeout, inputTimeout, deadline }) => {
     vi.useFakeTimers()
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
@@ -11098,6 +11136,91 @@ describe("server helpers", () => {
       }
       await vi.waitFor(() => expect(complete).toHaveBeenCalled())
       expect(retry).not.toHaveBeenCalled()
+    } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    { rehydrate: true, deadline: 1_800_000, setupMs: 60_000 },
+    { rehydrate: true, deadline: 120_000, setupMs: 60_000 },
+    { rehydrate: false, deadline: 1_800_000, setupMs: 60_000 },
+    { rehydrate: false, deadline: 120_000, setupMs: 60_000 },
+    { rehydrate: true, deadline: 30_000, setupMs: 60_000 },
+  ])("honors replayed webhook timeout $deadline after $setupMs setup (rehydrate: $rehydrate)", async ({ rehydrate, deadline, setupMs }) => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-replay-timeout-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    let replayStartedAt = 0
+    const replay = () => {
+      replayStartedAt = Date.now()
+      vi.setSystemTime(replayStartedAt + setupMs)
+      return {
+        input: { prompt: "fresh", timeout: deadline },
+        webhook: { concurrencyLimit: 1, deliveryId: "delivery-replay-timeout" },
+      }
+    }
+    const run = vi.fn(async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
+      await new Promise<never>((_resolve, reject) => {
+        input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
+      })
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              invoke: () => rehydrate
+                ? { input: { prompt: "stale" }, webhook: { concurrencyLimit: 1, deliveryId: "delivery-replay-timeout", rehydrate: replay } }
+                : replay(),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    await state.connect()
+    await state.enqueueWebhookDelivery({
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: "delivery-replay-timeout",
+      enqueuedAt: Date.now(),
+      leaseTtlMs: 3_600_000,
+      ...(rehydrate ? { rehydrate: true as const } : {}),
+      request: {
+        body: "{}",
+        headers: { "content-type": "application/json", "x-github-event": "pull_request", "x-github-delivery": "delivery-replay-timeout" },
+        method: "POST",
+        url: "https://example.com/api/github/webhook",
+      },
+      scope: "webhook:review:github:replay-timeout:",
+      webhookId: "github",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const stop = createChannelWebhookRouteHandler(agent as never).resume({ agentName: "review", webhookState: state })
+    try {
+      if (deadline > setupMs) {
+        await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+        await vi.advanceTimersByTimeAsync(replayStartedAt + deadline - Date.now() - 1_000)
+        expect(complete).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1_000)
+      }
+      await vi.waitFor(() => expect(complete).toHaveBeenCalled())
+      if (deadline <= setupMs) expect(run).not.toHaveBeenCalled()
+      expect(retry).not.toHaveBeenCalled()
+      expect(consoleError.mock.calls.flat().map(String).join(" ")).toContain(`timed out after ${deadline}ms`)
     } finally {
       await stop()
       await state.disconnect()
@@ -14126,7 +14249,9 @@ describe("server helpers", () => {
         telegram: testTelegram(telegram, {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           adapter: () => adapter as never,
-          messages: { loading: { text: "Loading…" }, state },
+          // The durable handoff refreshes typing until this timeout, 28 seconds
+          // by default. The test awaits that waitUntil task.
+          messages: { loading: { text: "Loading…" }, state, timeout: 1_000 },
         }),
       },
       driver: { run: () => "Durable answer" },

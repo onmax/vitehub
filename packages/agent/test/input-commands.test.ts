@@ -565,7 +565,8 @@ describe("inputCommands", () => {
     expect(calls).toBe(4_095)
   })
 
-  // This regression executes the full million-command budget, including on slower CI runners.
+  // This regression executes the full million-command budget. It takes seconds
+  // when each step stays small, so the timeout also catches quadratic growth.
   it("caps cumulative work for numeric fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
@@ -585,7 +586,7 @@ describe("inputCommands", () => {
     await expect(resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 21" }))
       .rejects.toThrow("maximum command expansion depth")
     expect(calls).toBeLessThanOrEqual(1_000_001)
-  }, 600_000)
+  }, 60_000)
 
   it("allows finite same-command fan-out", async () => {
     const { inputCommands } = await import("../src/capabilities.ts")
@@ -842,6 +843,49 @@ describe("inputCommands", () => {
     }, runtime(), { messages: [createMessage({ role: "user", text: "/review" })] })
 
     expect(resolved.input.messages?.map(message => getMessageText(message))).toEqual(["/review"])
+  })
+
+  it.each([
+    ["/drop\n/fill", "second"],
+    ["first\n/drop\n/fill", "first\nsecond"],
+    ["first /drop", "first"],
+    ["first /drop   ", "first"],
+    ["first /drop /drop /fill", "first second"],
+  ])("removes one separator with an empty string replacement in %j", async (prompt, expected) => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const capability = inputCommands({ commands: { drop: { call: () => "" }, fill: { call: () => "second" } } })
+
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt })
+    expect(resolved.input.prompt).toBe(expected)
+
+    const fromMessage = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), {
+      messages: [createMessage({ role: "user", text: prompt })],
+    })
+    expect(fromMessage.input.messages?.map(message => getMessageText(message))).toEqual([expected])
+  })
+
+  it("keeps the text size bounded while empty replacements remove fan-out leaves", async () => {
+    const { inputCommands } = await import("../src/capabilities.ts")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    let longest = 0
+    const capability = inputCommands({
+      commands: {
+        same: {
+          call({ args, context }) {
+            longest = Math.max(longest, String(context.input.get().prompt).length)
+            const depth = Number(args)
+            return depth > 0 ? `/same ${depth - 1} /same ${depth - 1}` : ""
+          },
+        },
+      },
+    })
+
+    // Each removed leaf used to leave its separator, so 4,095 calls grew the
+    // prompt to about 2,000 characters and made every later step slower.
+    const resolved = await resolveAgentCapabilities({ capabilities: [capability] }, runtime(), { prompt: "/same 11" })
+    expect(resolved.input.prompt).toBe("/same 0")
+    expect(longest).toBeLessThanOrEqual(100)
   })
 
   it("replaces command text from an initial message", async () => {

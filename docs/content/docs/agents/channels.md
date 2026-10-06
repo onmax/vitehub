@@ -291,9 +291,9 @@ export default defineAgent({
 
 Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent invocation slots per repository and pull request. The default is `1`. Set a positive integer such as `4` to allow up to four deliveries for the same pull request to run together. Other pull requests have separate limits. ViteHub ignores bot-authored `synchronize` events to prevent a bot push from immediately triggering itself. Existing slash commands still work when reconciliation is enabled. Reconciliation starts work; merge policy and any required human consent remain application-owned instructions or Capabilities.
 
-Persisted inline webhook executions have a 15-minute default deadline. Set `messages.timeout` in milliseconds to change it, for example `30 * 60_000`. A timeout on the persisted Invocation input takes precedence. The deadline includes workspace preparation and cancels the Invocation when it expires.
+Persisted inline webhook executions have a 15-minute default deadline. Set `messages.timeout` in milliseconds to change it, for example `30 * 60_000`. A timeout on the persisted Invocation input takes precedence. The selected timeout must be positive, finite, and at most `2_147_483_647` milliseconds; invalid values use the 15-minute default. Replayed or rehydrated Invocation input can override the deadline after setup, with elapsed setup time deducted. Setup remains bounded by the initial deadline. The deadline includes workspace preparation and cancels the Invocation when it expires.
 
-Queued GitHub reconciliation reloads the PR head, comments, and files before the Driver starts, so each Invocation uses the current PR state. Use the default `concurrencyLimit: 1` for tasks that write to the same PR branch.
+Queued GitHub reconciliation reloads the PR head, comments, and files before the Driver starts, so each Invocation uses the current PR state. Eligibility is decided when the delivery is accepted and is preserved while queued. Use the default `concurrencyLimit: 1` for tasks that write to the same PR branch.
 
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 

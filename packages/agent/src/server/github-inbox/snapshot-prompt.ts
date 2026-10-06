@@ -62,6 +62,7 @@ function projectSnapshotContext(snapshot: Snapshot) {
       startedAt: value.started_at, completedAt: value.completed_at, app: value.app?.slug,
       url: value.details_url, summary: value.output?.summary, text: value.output?.text })),
     statuses: knownStatuses.map(value => ({ context: value.context, state: value.state, description: value.description, url: value.target_url })),
+    ciEvidence: snapshot.ciEvidence ?? [],
     feedback,
     comments: Object.values(snapshot.comments).filter(value => !value.deleted).map(value => commentProjection(value, head))
       .sort((left, right) => Number(right.author.type === 'User') - Number(left.author.type === 'User')

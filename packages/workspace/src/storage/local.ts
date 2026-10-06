@@ -1326,7 +1326,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async getMeta(key: string): Promise<unknown> {
-    return (await this.#readMeta()).get(key)
+    return structuredClone((await this.#readMeta()).get(key))
   }
 
   async setMeta(key: string, value: unknown): Promise<void> {

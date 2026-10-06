@@ -2308,10 +2308,12 @@ cli_auth_credentials_store = "keyring"
     ["Codex omitted", "codex", undefined, "approval-required"],
     ["Codex ask", "codex", "ask", "approval-required"],
     ["Codex allow edits", "codex", "allow-edits", "auto-accept-edits"],
+    ["Codex unattended edits", "codex", "allow-edits-unattended", "auto-accept-edits"],
     ["Codex allow all", "codex", "allow-all", "full-access"],
     ["Claude Code omitted", "claude-code", undefined, "approval-required"],
     ["Claude Code ask", "claude-code", "ask", "approval-required"],
     ["Claude Code allow edits", "claude-code", "allow-edits", "auto-accept-edits"],
+    ["Claude Code unattended edits", "claude-code", "allow-edits-unattended", "auto-accept-edits"],
     ["Claude Code allow all", "claude-code", "allow-all", "full-access"],
   ] as const)("maps %s to its provider runtime mode", async (_label, providerName, permissions, runtimeMode) => {
     const threadId = `thread-permissions-${providerName}-${permissions ?? "omitted"}`
@@ -2324,6 +2326,9 @@ cli_auth_credentials_store = "keyring"
     await adapter.generate(context(threadId) as never)
 
     expect(provider.startSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode, threadId }))
+    const session = provider.startSession.mock.calls[0]?.[0]
+    if (permissions === "allow-edits-unattended") expect(session).toHaveProperty("approvalPolicy", "never")
+    else expect(session).not.toHaveProperty("approvalPolicy")
   })
 
   it("keeps provider session state for the lifetime of an Agent Definition", async () => {
@@ -5475,6 +5480,11 @@ cli_auth_credentials_store = "keyring"
     expect(session.diff).not.toHaveBeenCalled()
     expect(session.commit).not.toHaveBeenCalled()
     expect(workspace.startSession).toHaveBeenCalledWith(expect.objectContaining({ writeBack: false }))
+    // The Driver owns and removes its temporary root, so the Session must not restore it on close.
+    expect(workspace.startSession).toHaveBeenCalledWith(expect.objectContaining({
+      disposableTarget: true,
+      target: expect.stringMatching(/\/vitehub-provider-[^/]+$/),
+    }))
     expect(workspace.startSession).toHaveBeenCalledWith(expect.not.objectContaining({ materializeSources: false }))
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     expect(readAgentWorkspaceDiff(runContext.context as never)).toBeUndefined()
