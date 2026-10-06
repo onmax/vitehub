@@ -18,6 +18,7 @@ import {
 import { ConsoleRequestError } from "../src/console/runtime/client/request.ts"
 import type { ConsoleSectionId } from "../src/console/runtime/sections.ts"
 import { consoleVitePlugin } from "../src/console/vite.ts"
+import { hostManagedAuthorize } from "./support/console-authorize.ts"
 
 const connection = {
   account: { email: "ada@example.com", id: "1" },
@@ -196,7 +197,7 @@ describe("Connections actor", () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-connections-sections-"))
     try {
       const plugin = consoleVitePlugin({
-        console: command === "serve" ? { access: "auth" } : { exposure: "host-managed" },
+        console: command === "serve" ? { access: "auth" } : { exposure: "host-managed", authorize: hostManagedAuthorize },
         connections,
         sections: ["env", "connections"],
       })
