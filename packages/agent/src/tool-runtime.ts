@@ -47,7 +47,7 @@ function copyWithOverrides<T extends object, Overrides extends object>(tool: T, 
     ...Object.getOwnPropertyDescriptors(overrides),
   })
   const policyOwner = agentToolPolicyOwners.get(tool)
-  const overrideExecute = (overrides as { execute?: unknown }).execute
+  const overrideExecute = Object.getOwnPropertyDescriptor(overrides, "execute")?.value
   if (policyOwner && (!Object.hasOwn(overrides, "execute") || (hasRuntimeType(overrideExecute, "function") && approvalPreservingExecutorOwners.get(overrideExecute) === policyOwner))) {
     agentToolPolicyOwners.set(copied, policyOwner)
   }
