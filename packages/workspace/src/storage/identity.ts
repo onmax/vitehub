@@ -15,5 +15,12 @@ export function workspaceStoreIdentity(store: Pick<WorkspaceStore, "getMeta">): 
 
 // Wrappers share volatile metadata while retaining their own mutation guards.
 export function registerWorkspaceStoreAlias(alias: WorkspaceStore, store: WorkspaceStore): void {
-  aliases.set(alias, workspaceStoreIdentity(store))
+  const aliasIdentity = workspaceStoreIdentity(alias)
+  const storeIdentity = workspaceStoreIdentity(store)
+  if (aliasIdentity === storeIdentity) return
+
+  // A facade can be resolved more than once. If it reuses an existing Store
+  // wrapper, merge the new target into the identity it already owns instead
+  // of replacing that identity and splitting the mutation queue.
+  aliases.set(aliases.has(alias) ? storeIdentity : aliasIdentity, aliases.has(alias) ? aliasIdentity : storeIdentity)
 }
