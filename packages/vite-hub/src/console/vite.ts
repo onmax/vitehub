@@ -135,10 +135,15 @@ export function updateConsoleInvocationRootState(
   bindConsoleInvocationsIdentity(state.binding, identity, projectRoot)
 }
 
-const consoleAccessRoutes = [
-  { route: "/_vitehub/**" },
-  { method: "GET", route: "/api/_vitehub/console/**" },
-] satisfies Array<{ method?: string; route: string }>
+function consoleAccessTargets(base: string | undefined, sections?: readonly ConsoleSectionId[]): Array<{ method?: string; route: string }> {
+  return [
+    { route: consoleMountPath(base, "/_vitehub/**") },
+    { method: "GET", route: consoleMountPath(base, "/api/_vitehub/console/status") },
+    ...(sections?.includes("agents") && sections.includes("usage")
+      ? [{ method: "GET", route: consoleMountPath(base, "/api/_vitehub/console/usage") }]
+      : []),
+  ]
+}
 
 function consoleMountBase(base: string | undefined): string {
   if (!base || base === "./") return ""
@@ -234,6 +239,8 @@ function authRouteProtects(
   const recursive = route.route.endsWith("/**")
   const routeBase = recursive ? route.route.slice(0, -3) : route.route
   const targetRecursive = target.route.endsWith("/**")
+  // An exact Auth rule protects only its exact endpoint. It cannot satisfy a recursive Console namespace target.
+  if (targetRecursive && !recursive) return false
   const targetBase = targetRecursive ? target.route.slice(0, -3) : target.route
   return targetBase === routeBase || (recursive && targetBase.startsWith(`${routeBase}/`))
 }
@@ -250,8 +257,8 @@ export function resolveConsoleAuthorizeFile(root: string, authorize: unknown): s
   return file
 }
 
-function consoleAppAuthRouteIndexes(auth: ResolvedAuthViteConfig, base: string | undefined): Array<{ authorize: boolean, index: number, method?: string, route: string }> {
-  const targets = consoleAccessRoutes.map(target => ({ ...target, route: consoleMountPath(base, target.route) }))
+function consoleAppAuthRouteIndexes(auth: ResolvedAuthViteConfig, base: string | undefined, sections?: readonly ConsoleSectionId[]): Array<{ authorize: boolean, index: number, method?: string, route: string }> {
+  const targets = consoleAccessTargets(base, sections)
   return auth.access.routes.flatMap((route, index) => targets.some(target => authRouteProtects(route, target) || route.route.startsWith(target.route.replace(/\/\*\*$/, "")))
     ? [{ authorize: route.authorize === true, index, method: route.method?.toUpperCase(), route: route.route }]
     : [])
@@ -266,7 +273,7 @@ function consoleAppAuthRouteIndexes(auth: ResolvedAuthViteConfig, base: string |
  */
 export function resolveConsoleAccessBuild(
   configured: true | ConsoleOptions,
-  options: { appAuth?: ResolvedAuthViteConfig, base?: string, handlers?: Pick<ConsoleAuthHandlers, "auth" | "middleware">, root: string },
+  options: { appAuth?: ResolvedAuthViteConfig, base?: string, handlers?: Pick<ConsoleAuthHandlers, "auth" | "middleware">, root: string, sections?: readonly ConsoleSectionId[] },
 ): ConsoleAccessBuild {
   if (configured === true) return { mode: "local" }
   if (configured.exposure === "host-managed") {
@@ -278,7 +285,7 @@ export function resolveConsoleAccessBuild(
       : { mode: "local" }
   }
   return options.appAuth
-    ? { mode: "auth", check: { appRoutes: consoleAppAuthRouteIndexes(options.appAuth, options.base) } }
+    ? { mode: "auth", check: { appRoutes: consoleAppAuthRouteIndexes(options.appAuth, options.base, options.sections) } }
     : { mode: "auth" }
 }
 
@@ -289,6 +296,7 @@ export function assertConsoleProductionAccess(
     auth?: ResolvedAuthViteConfig
     base?: string
     consoleAuth?: boolean
+    sections?: readonly ConsoleSectionId[]
   },
 ): void {
   if (options.development) return
@@ -308,7 +316,7 @@ export function assertConsoleProductionAccess(
   if (!options.auth) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0005({ message: '[vitehub] console: { access: "auth" } requires a discovered ViteHub Auth Definition.' })
   }
-  const accessRoutes = consoleAccessRoutes.map(target => ({ ...target, route: consoleMountPath(options.base, target.route) }))
+  const accessRoutes = consoleAccessTargets(options.base, options.sections)
   const missing = accessRoutes.filter(target => !options.auth?.access.routes.some(route => authRouteProtects(route, target)))
   if (missing.length) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0006({ message: `[vitehub] Console Auth access must configure an authorize callback for ${missing.map(target => target.route).join(" and ")}.` })
@@ -354,7 +362,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
 
   function consoleAccess(): ConsoleAccessBuild | undefined {
     if (!resolvedConsoleConfiguration || !root) return
-    return resolveConsoleAccessBuild(resolvedConsoleConfiguration, { appAuth: resolvedAppAuth, base: baseURL, handlers: consoleAuthHandlers, root })
+    return resolveConsoleAccessBuild(resolvedConsoleConfiguration, { appAuth: resolvedAppAuth, base: baseURL, handlers: consoleAuthHandlers, root, sections })
   }
 
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
@@ -455,6 +463,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         auth: appAuth,
         base: baseURL,
         consoleAuth: configured !== true && configured.access === "auth" && Boolean(configured.auth),
+        sections,
         development: environment.command !== "build",
       })
       hostManagedCloudflareBuild = environment.command === "build" && !cliDiscovery && options.preset === "cloudflare" && configured !== true && configured.exposure === "host-managed"

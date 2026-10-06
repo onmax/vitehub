@@ -859,6 +859,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       assertConsoleProductionAccess(configuredConsole, {
         auth: appAuth,
         consoleAuth: configuredConsole !== true && configuredConsole.access === "auth" && Boolean(configuredConsole.auth),
+        sections: consoleSections,
         base: nuxt.options.app?.baseURL,
         development: Boolean(nuxt.options.dev),
       })
@@ -868,6 +869,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         base: nuxt.options.app?.baseURL,
         handlers: consoleAuthMode ? { auth: consoleAuthMode, middleware: consoleAuthMiddlewareFile(viteRoot) } : undefined,
         root: viteRoot,
+        sections: consoleSections,
       })
     }
     if (!nuxt.options.dev && !nuxt.options.vitehubCliDiscovery && plan.preset === "cloudflare" && configuredConsole !== true && configuredConsole.exposure === "host-managed") {

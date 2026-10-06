@@ -281,6 +281,65 @@ describe("generated Console access", () => {
     expect(plugin).toContain('const matched = [{"authorize":true,"index":1,"route":"/_vitehub/**"},{"authorize":true,"index":2,"method":"GET","route":"/api/_vitehub/console/**"}]')
   })
 
+  it("accepts exact GET rules for the registered Console API endpoints", async () => {
+    const plugin = await generatedPlugin({
+      console: { access: "auth" },
+      sections: ["agents", "usage"],
+      resolveAuthConfig: () => appAuth([
+        { authorize: true, route: "/_vitehub/**" },
+        { authorize: true, method: "GET", route: "/api/_vitehub/console/status" },
+        { authorize: true, method: "GET", route: "/api/_vitehub/console/usage" },
+      ]),
+    }, "build")
+    expect(plugin).toContain('"authorize":true,"index":1,"method":"GET","route":"/api/_vitehub/console/status"')
+    expect(plugin).toContain('"authorize":true,"index":2,"method":"GET","route":"/api/_vitehub/console/usage"')
+  })
+
+  it.each([undefined, "/portal/"])("accepts exact status access with base %s when Usage is not registered", (base) => {
+    const prefix = base?.replace(/\/$/, "") ?? ""
+    expect(() => assertConsoleProductionAccess({ access: "auth" }, {
+      auth: appAuth([
+        { authorize: true, route: `${prefix}/_vitehub/**` },
+        { authorize: true, method: "GET", route: `${prefix}/api/_vitehub/console/status` },
+      ]),
+      base,
+      development: false,
+      sections: ["agents"],
+    })).not.toThrow()
+  })
+
+  it.each([
+    { authorize: true, method: "POST", route: "/api/_vitehub/console/status" } as const,
+    { authorize: false, method: "GET", route: "/api/_vitehub/console/status" } as const,
+    { authorize: true, method: "GET", route: "/api/_vitehub/console/status/child" } as const,
+  ])("rejects a rule that does not authorize GET status: %j", (route) => {
+    expect(() => assertConsoleProductionAccess({ access: "auth" }, {
+      auth: appAuth([{ authorize: true, route: "/_vitehub/**" }, route]),
+      development: false,
+    })).toThrow("/api/_vitehub/console/status")
+  })
+
+  it("requires separate Usage coverage when the Usage endpoint is registered", () => {
+    expect(() => assertConsoleProductionAccess({ access: "auth" }, {
+      auth: appAuth([
+        { authorize: true, route: "/_vitehub/**" },
+        { authorize: true, method: "GET", route: "/api/_vitehub/console/status" },
+      ]),
+      development: false,
+      sections: ["agents", "usage"],
+    })).toThrow("/api/_vitehub/console/usage")
+  })
+
+  it("does not treat an exact Console shell rule as recursive protection", () => {
+    expect(() => assertConsoleProductionAccess({ access: "auth" }, {
+      auth: appAuth([
+        { authorize: true, route: "/_vitehub" },
+        { authorize: true, method: "GET", route: "/api/_vitehub/console/**" },
+      ]),
+      development: false,
+    })).toThrow("/_vitehub/**")
+  })
+
   it("fails closed for Auth access without a discovered Auth Definition", async () => {
     await expect(generatedPlugin({ console: { access: "auth" } }, "serve")).resolves.toContain('installConsoleAccess({ mode: "auth" })')
   })
