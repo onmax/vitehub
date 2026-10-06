@@ -114,6 +114,7 @@ import { resolveConfig, type Plugin, type PluginOption } from "vite"
 import { contributeProviderDeploymentOutput, useProviderOutputCatalog } from "../../internal/src/build/deployment-output.ts"
 import frameworkPackageManifest from "../package.json" with { type: "json" }
 import { vitehub } from "../src/index.ts"
+import { hostManagedAuthorize } from "./support/console-authorize.ts"
 
 const deniedGeneratedOwnerPackageNames = new Set(["@vite-hub/cli"])
 const generatedOwnerPackageCases = Object.keys(frameworkPackageManifest.dependencies)
@@ -349,7 +350,7 @@ describe("vitehub", () => {
 
   it("allows a host-managed Console on Cloudflare", async () => {
     const plugin = dependencyPluginByName(
-      vitehub({ agent: true, console: { exposure: "host-managed" }, preset: "cloudflare" }),
+      vitehub({ agent: true, console: { exposure: "host-managed", authorize: hostManagedAuthorize }, preset: "cloudflare" }),
       "vite-hub/console",
     )
 
@@ -536,7 +537,7 @@ describe("vitehub", () => {
     try {
       await writeFile(join(root, "package.json"), "{}\n")
       const implicit = dependencyPluginByName(
-        vitehub({ agent: true, console: { exposure: "host-managed" }, preset: "netlify" }),
+        vitehub({ agent: true, console: { exposure: "host-managed", authorize: hostManagedAuthorize }, preset: "netlify" }),
         "vite-hub/console",
       )
       const implicitConfig: { nitro?: { handlers?: Array<{ route?: string }> }; root: string } = { root }
@@ -553,7 +554,7 @@ describe("vitehub", () => {
       const explicit = dependencyPluginByName(
         vitehub({
           agent: true,
-          console: { exposure: "host-managed" },
+          console: { exposure: "host-managed", authorize: hostManagedAuthorize },
           preset: "netlify",
           workflow: { provider: "vercel" },
         }),

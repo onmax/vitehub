@@ -14,6 +14,7 @@ import { createCloudflareAccessVerifier, handleCloudflareAccessConsoleRequest, t
 import { resolveConsoleAuthConfig, writeConsoleAuthHandlers } from "../src/console/auth-build.ts"
 import { cloudflareAccessIssuer } from "../src/console/auth-path.ts"
 import { consoleVitePlugin } from "../src/console/vite.ts"
+import { hostManagedAuthorize } from "./support/console-authorize.ts"
 
 const packageRoot = resolve(import.meta.dirname, "..")
 const teamDomain = "acme.cloudflareaccess.com"
@@ -406,7 +407,7 @@ describe("Cloudflare Access Console Auth", () => {
     try {
       await writeFile(join(root, "package.json"), "{}\n")
       const run = async (preset: string) => {
-        const plugin = consoleVitePlugin({ console: { exposure: "host-managed" }, preset })
+        const plugin = consoleVitePlugin({ console: { exposure: "host-managed", authorize: hostManagedAuthorize }, preset })
         const configHook = plugin.config
         const resolvedHook = plugin.configResolved
         if (!configHook || !resolvedHook) throw new TypeError("Expected Console config hooks.")

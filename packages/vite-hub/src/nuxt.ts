@@ -23,16 +23,16 @@ import { consoleFixtureEnvironmentVariable, consoleFixtureRevision, readConsoleF
 import { createConsoleInvocationsIdentity, type ConsoleAuthMode } from "./console/internal.ts"
 import { installConsoleInvocations } from "./console/runtime/server/invocations.ts"
 import { discoverConsoleBuildCatalog } from "./console/build.ts"
-import { writeConsoleNitroPlugin } from "./console/plugin.ts"
+import { writeConsoleNitroPlugin, type ConsoleAccessBuild } from "./console/plugin.ts"
 import { installConsoleProjectName, installConsoleSections } from "./console/runtime/server/sections.ts"
 import { resolveConsoleProjectNameFromRoot } from "./console/project.ts"
 import { consoleSectionRouteName, isConsoleConnectionsEnabled, resolveConsoleSectionIds, type ConsoleSectionId } from "./console/runtime/sections.ts"
 import { describeConsoleContributedSections, isConsoleContributedSectionId } from "./console/contributions.ts"
 import { consoleIcons } from "./console/icons.ts"
 import { addConsoleDevframeHandler, addConsoleRpcHandler } from "./console/nitro.ts"
-import { consoleConnectionsActorId, registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, writeConsoleConnectionsActor } from "./console/auth-build.ts"
+import { consoleAuthMiddlewareFile, consoleConnectionsActorId, registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, writeConsoleConnectionsActor } from "./console/auth-build.ts"
 import { serializeConsoleRefresh } from "./console/refresh.ts"
-import { assertConsoleProductionAccess, closeConsoleInvocationRootState, consoleHostManagedCloudflareWarning, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
+import { assertConsoleProductionAccess, closeConsoleInvocationRootState, consoleHostManagedCloudflareWarning, configureConsoleFixtureLifecycle, consoleInvocationRootPlugin, createConsoleInvocationRootState, generatedConsolePluginRegistration, resolveConsoleAccessBuild, resolveGeneratedConsolePlugin, type ConsoleInvocationRootState, updateConsoleInvocationRootState } from "./console/vite.ts"
 
 import type { AgentInvocationRetentionOptions, AgentInvocationsOptions } from "@vite-hub/agent/server"
 import type { DatabaseNuxtIntegrationOptions } from "@vite-hub/database"
@@ -298,6 +298,7 @@ async function installConsole(
   journal?: ConsoleJournal,
   independentAuth: ConsoleAuthMode | false = false,
   retention?: AgentInvocationRetentionOptions,
+  access?: ConsoleAccessBuild,
 ): Promise<string> {
   const uiModule = (await import("@vite-hub/ui/nuxt")).default
   const uiConfigured = (nuxt.options.modules ?? []).some((entry) => {
@@ -443,6 +444,7 @@ async function installConsole(
       journal,
       independentAuth,
       retention,
+      access,
     )
     if (invocationRootState) {
       updateConsoleInvocationRootState(invocationRootState, projectRoot, identity)
@@ -841,21 +843,29 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
   let resolvedConsoleFixture: string | undefined
   let generatedConsolePluginPath: string | undefined
   let consoleWorkflowConfigResolved = false
+  let consoleAccess: ConsoleAccessBuild | undefined
   if (options.console) {
     const configuredConsole = options.console === true ? true : options.console
     const viteAuth = nuxt.options.vite?.auth
     const effectiveAuth = viteAuth ?? options.auth
     if (!nuxt.options.vitehubCliDiscovery) {
+      const appAuth = configuredConsole !== true && configuredConsole.access === "auth" && !configuredConsole.auth && effectiveAuth
+        ? resolveAuthViteConfig(
+            effectiveAuth === true ? undefined : effectiveAuth,
+            viteRoot,
+            { serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined },
+          )
+        : undefined
       assertConsoleProductionAccess(configuredConsole, {
-        auth: configuredConsole !== true && configuredConsole.access === "auth" && !configuredConsole.auth && effectiveAuth
-          ? resolveAuthViteConfig(
-              effectiveAuth === true ? undefined : effectiveAuth,
-              viteRoot,
-              { serverDirs: nuxt.options.serverDir ? [nuxt.options.serverDir] : undefined },
-            )
-          : undefined,
+        auth: appAuth,
         consoleAuth: configuredConsole !== true && configuredConsole.access === "auth" && Boolean(configuredConsole.auth),
         development: Boolean(nuxt.options.dev),
+      })
+      const consoleAuthMode = registeredConsoleAuthMode(configuredConsole !== true && configuredConsole.access === "auth" ? configuredConsole.auth : undefined, Boolean(nuxt.options.dev))
+      consoleAccess = resolveConsoleAccessBuild(configuredConsole, {
+        appAuth,
+        handlers: consoleAuthMode ? { auth: consoleAuthMode, middleware: consoleAuthMiddlewareFile(viteRoot) } : undefined,
+        root: viteRoot,
       })
     }
     if (!nuxt.options.dev && !nuxt.options.vitehubCliDiscovery && plan.preset === "cloudflare" && configuredConsole !== true && configuredConsole.exposure === "host-managed") {
@@ -1273,6 +1283,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
         replayedConsoleJournal,
         registeredConsoleAuthMode(options.console !== true && options.console.access === "auth" ? options.console.auth : undefined, Boolean(nuxt.options.dev)),
         options.console === true ? undefined : options.console.retention,
+        consoleAccess,
       )
     }
     Object.assign(config, mergeGeneratedSourceNitroConfig(config, generatedSourceHandlers))
@@ -1352,6 +1363,7 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
       consoleJournal,
       registeredConsoleAuthMode(options.console !== true && options.console.access === "auth" ? options.console.auth : undefined, Boolean(nuxt.options.dev)),
       options.console === true ? undefined : options.console.retention,
+      consoleAccess,
     )
   }
 }
