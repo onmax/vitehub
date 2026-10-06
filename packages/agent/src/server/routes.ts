@@ -1447,40 +1447,7 @@ async function runInvocationReference(agentName: string | undefined, run: AgentR
   }
 }
 
-// Keep terminal callbacks single-flight within a worker. The persisted queue row
-// handles process recovery, while this fence covers a lease handoff that happens
-// while the original callback is still settling.
-const activeWebhookFailureNotifications = new Map<string, Promise<void>>()
-
-/**
- * Calls the trigger's `failed` callback when the queue stops retrying a delivery.
- * The callback cannot change the delivery outcome. Its errors are logged.
- */
 async function notifyQueuedWebhookFailure(
-  agent: AgentInput<ViteAgentRouteRuntimeContext>,
-  handlerOptions: AgentChannelWebhookRouteOptions,
-  delivery: AgentWebhookQueueDelivery,
-  error: unknown,
-  attempts: number,
-  invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
-): Promise<void> {
-  const key = `${delivery.scope}:${delivery.deliveryId}`
-  const active = activeWebhookFailureNotifications.get(key)
-  if (active) {
-    await active
-    return
-  }
-  const notification = notifyQueuedWebhookFailureOnce(agent, handlerOptions, delivery, error, attempts, invocation)
-  activeWebhookFailureNotifications.set(key, notification)
-  try {
-    await notification
-  }
-  finally {
-    if (activeWebhookFailureNotifications.get(key) === notification) activeWebhookFailureNotifications.delete(key)
-  }
-}
-
-async function notifyQueuedWebhookFailureOnce(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   handlerOptions: AgentChannelWebhookRouteOptions,
   delivery: AgentWebhookQueueDelivery,
@@ -1521,32 +1488,17 @@ async function deliverQueuedWebhookFailure(
   invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
 ): Promise<boolean> {
   const failure = { error: error instanceof Error ? error.message : String(error), attempts }
-  const notificationLock = await state.acquireLock(
-    `webhook-failure:${delivery.scope}:${delivery.deliveryId}`,
-    delivery.leaseTtlMs,
-  )
-  if (!notificationLock) return false
-  let notificationLockLost = false
-  const stopNotificationLockHeartbeat = startWebhookLockHeartbeat(state, notificationLock, delivery.leaseTtlMs, () => {
-    notificationLockLost = true
-  })
-  try {
-    if (state.markWebhookDeliveryFailure) {
-      if (!await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
-      if (notificationLockLost) return false
-      await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
-      if (notificationLockLost) return false
-      return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
-    }
-    if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
-    if (notificationLockLost) return false
+  if (state.markWebhookDeliveryFailure && state.beginWebhookFailureNotification) {
+    if (!delivery.failure && !await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
+    // This durable claim has no expiry. A paused callback cannot be fenced by a
+    // renewable lease: once dispatched, its external effects may already exist.
+    if (!await state.beginWebhookFailureNotification(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
     await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
-    return true
+    return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
   }
-  finally {
-    stopNotificationLockHeartbeat()
-    await state.releaseLock(notificationLock).catch(() => undefined)
-  }
+  if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
+  await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+  return true
 }
 
 async function executeQueuedWebhookDelivery(
@@ -1559,51 +1511,9 @@ async function executeQueuedWebhookDelivery(
   lifecycleSignal: AbortSignal,
 ): Promise<number | undefined> {
   if (delivery.failure) {
-    const error = new Error(delivery.failure.error)
-    const notificationLock = await state.acquireLock(
-      `webhook-failure:${delivery.scope}:${delivery.deliveryId}`,
-      delivery.leaseTtlMs,
-    )
-    if (!notificationLock) return
-    const stopNotificationLockHeartbeat = startWebhookLockHeartbeat(state, notificationLock, delivery.leaseTtlMs, () => {
-      // Keep awaiting the callback even if the recovery fence is lost.
-    })
     // SAFETY: The queue persists invocation input and run metadata from this route contract.
-    // Keep the recovered terminal notification fenced while the callback runs. A callback
-    // may outlive the normal queue lease, and an expired lease would let another worker
-    // claim and invoke the once-per-delivery notification concurrently.
-    let leaseLost = false
-    let rejectLeaseLost!: (reason: unknown) => void
-    const leaseLostSignal = new Promise<never>((_, reject) => {
-      rejectLeaseLost = reject
-    })
-    const stopHeartbeat = startWebhookQueueHeartbeat(state, delivery, () => {
-      leaseLost = true
-      rejectLeaseLost(agentDiagnostics.AGENT_R0783({ message: "[vitehub] Recovered webhook failure notification lost its lease." }))
-    })
-    try {
-      // SAFETY: The queue persists invocation input and run metadata from this route contract.
-      const recoveredInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
-      const notification = notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, recoveredInvocation)
-      // Always let the callback settle before returning on lease loss. Promise.race
-      // would leave it running while another worker can reclaim the delivery.
-      await Promise.race([notification, leaseLostSignal]).catch(async error => {
-        if (!leaseLost) throw error
-        await notification
-      })
-      if (leaseLost) return
-      if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
-        throw agentDiagnostics.AGENT_R0783({ message: "[vitehub] Recovered webhook failure notification lost its lease before completion." })
-      }
-    }
-    catch (notificationError) {
-      if (!leaseLost) throw notificationError
-    }
-    finally {
-      stopHeartbeat()
-      stopNotificationLockHeartbeat()
-      await state.releaseLock(notificationLock).catch(() => undefined)
-    }
+    const recoveredInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
+    await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(delivery.failure.error), delivery.failure.attempts, recoveredInvocation)
     return
   }
   const steeringClaim = await state.get(webhookOwnershipKey(delivery.scope, "steer", delivery.deliveryId))

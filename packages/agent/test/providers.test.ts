@@ -10630,6 +10630,9 @@ describe("server helpers", () => {
     })
     return {
       complete,
+      state,
+      resume: (webhookState: typeof state) => handler.resume({ agentName: "review", webhookState }),
+      stateUrl: `file:${join(stateDir, "state.sqlite")}`,
       deliveries: () => handler.deliveries(request(), "github", { agentName: "review", webhookState: state }),
       retry,
       send: () => handler(request(), "github", { agentName: "review", webhookState: state }),
@@ -10670,6 +10673,66 @@ describe("server helpers", () => {
       consoleError.mockRestore()
       vi.unstubAllGlobals()
       await fixture.cleanup()
+    }
+  })
+
+  it.each(["last attempt", "execution leases", "recovered"] as const)("durably fences the %s failure callback beyond lease expiry", async (terminal) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    let settle!: () => void
+    const blocked = new Promise<void>(resolve => { settle = resolve })
+    const failed = vi.fn(() => blocked)
+    const fixture = await failedTriggerFixture({
+      failed,
+      run: vi.fn(async () => { throw new Error("persistent failure") }),
+      startAttempts: terminal === "execution leases" ? 3 : 2,
+    })
+    const otherWorker = createLibsqlAgentState({ url: fixture.stateUrl })
+    let stopRecovery: (() => Promise<void>) | undefined
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      if (terminal === "recovered") vi.spyOn(fixture.state, "beginWebhookFailureNotification").mockResolvedValueOnce(false)
+      await fixture.send()
+      if (terminal === "recovered") {
+        await vi.waitFor(async () => {
+          const [scope] = await fixture.state.webhookDeliveryScopes()
+          const [pending] = await fixture.state.webhookDeliveries(scope!)
+          expect(pending?.failure).toBeDefined()
+        })
+        expect(failed).not.toHaveBeenCalled()
+        const [scope] = await fixture.state.webhookDeliveryScopes()
+        const [pending] = await fixture.state.webhookDeliveries(scope!)
+        clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + pending!.leaseTtlMs + 1)
+        await otherWorker.connect()
+        vi.spyOn(otherWorker, "completeWebhookDelivery").mockImplementation(fixture.complete)
+        stopRecovery = fixture.resume(otherWorker)
+      }
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      const scopes = await fixture.state.webhookDeliveryScopes()
+      const scope = scopes[0]!
+      const [delivery] = await fixture.state.webhookDeliveries(scope)
+      expect(delivery?.failure?.notificationStarted).toBe(true)
+      const expired = Date.now() + delivery!.leaseTtlMs + 1
+      clock = vi.spyOn(Date, "now").mockReturnValue(expired)
+      await otherWorker.connect()
+      // A separate state connection has no access to process-local callback guards.
+      await expect(otherWorker.claimWebhookDelivery(scope)).resolves.toBeNull()
+      expect(failed).toHaveBeenCalledOnce()
+      expect(fixture.complete).not.toHaveBeenCalled()
+      settle()
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalledOnce())
+      await expect(fixture.complete.mock.results[0]?.value).resolves.toBe(true)
+      await expect(otherWorker.claimWebhookDelivery(scope)).resolves.toBeNull()
+      await expect(otherWorker.webhookDeliveries(scope)).resolves.toEqual([])
+      expect(failed).toHaveBeenCalledOnce()
+    }
+    finally {
+      settle()
+      clock?.mockRestore()
+      await stopRecovery?.()
+      await otherWorker.disconnect()
+      await fixture.cleanup()
+      consoleError.mockRestore()
     }
   })
 

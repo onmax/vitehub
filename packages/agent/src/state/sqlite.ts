@@ -339,13 +339,29 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             tx,
             `UPDATE ${this.tables.webhookQueue}
           SET status = 'completed', value = '{}', lease_token = NULL, lease_expires_at = NULL
-          WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
+          WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering', 'notifying') AND lease_token = ?
           RETURNING delivery_id`,
             [scope, deliveryId, leaseToken],
           ),
       )
     })
     return completed.length > 0
+  }
+
+  async beginWebhookFailureNotification(scope: string, deliveryId: string, leaseToken: string): Promise<boolean> {
+    const claimed = await retrySqliteBusy(() => this.transaction(async tx => {
+      const current = await execute(tx, `SELECT value FROM ${this.tables.webhookQueue}
+        WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?`, [scope, deliveryId, leaseToken])
+      if (current.length === 0 || !isRuntimeString(current[0]?.value)) return []
+      const delivery = parseAgentWebhookQueueDelivery(current[0].value)
+      if (!delivery.failure) return []
+      delivery.failure.notificationStarted = true
+      return await execute(tx, `UPDATE ${this.tables.webhookQueue}
+        SET status = 'notifying', value = ?, lease_expires_at = NULL
+        WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
+        RETURNING delivery_id`, [JSON.stringify(delivery), scope, deliveryId, leaseToken])
+    }))
+    return claimed.length > 0
   }
 
   async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }): Promise<boolean> {

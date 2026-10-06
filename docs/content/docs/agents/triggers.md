@@ -167,9 +167,11 @@ defineChannelTrigger({
 })
 ```
 
-ViteHub calls `failed` once per delivery: after the last failed attempt, after an execution timeout, or when the delivery used all its execution leases because the process stopped during each attempt. It does not call `failed` for an attempt that the queue retries, or for a cancelled Invocation. The event has `attempts`, `deliveryId`, `error`, `publicError`, and, when they are known, `input`, `run`, and `invocation: { id, consoleUrl? }`. `consoleUrl` needs a [public URL](/docs/getting-started/concepts/vite-integrations-and-provider-output#public-url).
+ViteHub dispatches `failed` at most once per delivery: after the last failed attempt, after an execution timeout, or when the delivery used all its execution leases because the process stopped during each attempt. It does not call `failed` for an attempt that the queue retries, or for a cancelled Invocation. The event has `attempts`, `deliveryId`, `error`, `publicError`, and, when they are known, `input`, `run`, and `invocation: { id, consoleUrl? }`. `consoleUrl` needs a [public URL](/docs/getting-started/concepts/vite-integrations-and-provider-output#public-url).
 
 The delivery is already marked as failed when `failed` runs. ViteHub logs an error from `failed` and does not retry the delivery or change its outcome. Keep the callback short, because the queue worker waits for it.
+
+With the built-in SQLite state providers, a pending notification survives a restart until a worker claims it. That claim has no expiry, so another worker cannot repeat a callback after a lease expires. If the process exits after claiming the notification, its external effects are unknown and ViteHub does not replay it automatically. `webhookDeliveries(scope)` retains the delivery with `failure.notificationStarted: true` for inspection. Reconcile such notifications with the destination using `deliveryId`; do not assume that a missing completion means the callback did not run. Custom queue adapters without durable notification claims provide best-effort, at-most-once dispatch.
 
 ## Choose how to call the Agent
 
