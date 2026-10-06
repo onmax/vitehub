@@ -1,4 +1,5 @@
 import { redactInspectionText } from "./inspect.ts"
+import { isViteHubSecretEqual } from "./secret.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
 
@@ -93,21 +94,6 @@ export function assertViteHubDevRequestGrant(grant: ViteHubDevRequestGrant, requ
   }
 }
 
-const devValueEncoder = new TextEncoder()
-
-/**
- * Compares a request value with an expected secret in constant time for the length of `expected`. Returns `false`
- * when either value is missing or empty. It uses no Node API, so it also runs in Worker runtimes.
- */
-export function isViteHubDevSecretEqual(actual: string | null | undefined, expected: string | null | undefined): boolean {
-  if (!actual || !expected) return false
-  const left = devValueEncoder.encode(actual)
-  const right = devValueEncoder.encode(expected)
-  let difference = left.length ^ right.length
-  for (let index = 0; index < right.length; index += 1) difference |= (left[index] ?? 0) ^ right[index]!
-  return difference === 0
-}
-
 const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
 
 const ipv4Octet = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)"
@@ -195,7 +181,7 @@ export function validateViteHubDevRequest(
   if (!isViteHubDevHostAllowed(server, req)) {
     return rejectDevRequest(new Response(`Forbidden ${guard.label} host.`, { status: 403 }))
   }
-  if (!isViteHubDevSecretEqual(firstHeader(req.headers[guard.header]), guard.headerValue)) {
+  if (!isViteHubSecretEqual(firstHeader(req.headers[guard.header]), guard.headerValue)) {
     return rejectDevRequest(new Response(`Forbidden ${guard.label} request.`, { status: 403 }))
   }
   const origin = firstHeader(req.headers.origin)
@@ -477,7 +463,7 @@ export async function validateViteHubNitroDevRequest(request: Request, guard: Vi
   if (!isViteHubNitroDevHostAllowed(request)) {
     return rejectDevRequest(new Response(`Forbidden ${guard.label} host.`, { status: 403 }))
   }
-  if (!isViteHubDevSecretEqual(request.headers.get(guard.header), guard.headerValue)) {
+  if (!isViteHubSecretEqual(request.headers.get(guard.header), guard.headerValue)) {
     return rejectDevRequest(new Response(`Forbidden ${guard.label} request.`, { status: 403 }))
   }
   const origin = request.headers.get("origin")

@@ -1,6 +1,7 @@
 import type { ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRunContext } from "../types.ts"
 import { runWithScheduleWaitUntil } from "./wait-until.ts"
 import { scheduleErrorDiagnostics } from "../error-diagnostics.ts"
+import { isViteHubBearerSecretEqual } from "@vite-hub/internal/secret"
 
 export interface ExecuteStaticScheduleOptions {
   cron: string
@@ -39,6 +40,13 @@ export interface StaticScheduleRun extends ScheduleRunContext {
 
 export function missingScheduleDefinitionError(name: string): Error {
   return scheduleErrorDiagnostics.SCHEDULE_R0034({ message: `Missing schedule definition: ${name}` })
+}
+
+/**
+ * Checks the `Authorization` header of a Vercel Cron request against `CRON_SECRET` in constant time.
+ */
+export function isScheduleCronAuthorized(authorization: string | null | undefined, cronSecret: string): boolean {
+  return isViteHubBearerSecretEqual(authorization, cronSecret)
 }
 
 export function normalizeScheduleRuntimeError(error: unknown): Error {

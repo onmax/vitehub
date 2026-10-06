@@ -14,6 +14,7 @@ import { createServer } from "node:http"
 import { hostname, tmpdir } from "node:os"
 import { basename, delimiter, dirname, extname, join, posix, relative, resolve } from "node:path"
 
+import { isViteHubBearerSecretEqual } from "@vite-hub/internal/secret"
 import { formatRuntimeDiagnosticError, getViteHubErrorShape, normalizeExecutionAuthority, resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
 import { normalizeWorkspaceSourcesMetadata } from "@vite-hub/workspace/source-metadata"
@@ -1635,7 +1636,7 @@ async function startToolServer(
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() })
   await mcp.connect(transport)
   const http = createServer((request, response) => {
-    if (request.headers.authorization !== `Bearer ${token}`) {
+    if (!isViteHubBearerSecretEqual(request.headers.authorization, token)) {
       response.writeHead(401).end()
       return
     }

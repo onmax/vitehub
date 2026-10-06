@@ -1,5 +1,6 @@
 import * as v from "valibot"
-import { isViteHubDevSecretEqual, validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { isViteHubSecretEqual } from "@vite-hub/internal/secret"
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 // The package imports keep the Nitro module graph on the storage and runtime config that the generated Nitro plugin
@@ -307,7 +308,7 @@ export async function handleBlobDevRequest(request: Request, storesOrRoot?: read
       if (!serverId) return
       const requestedServerId = request.headers.get(blobDevTokenServerHeader)
       const token = request.headers.get(viteHubDevTokenHeader)
-      if (requestedServerId !== serverId || !isViteHubDevSecretEqual(token, await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId }))) {
+      if (requestedServerId !== serverId || !isViteHubSecretEqual(token, await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId }))) {
         return new Response("Forbidden Blob Dev token.", { status: 403 })
       }
     },

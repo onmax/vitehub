@@ -3901,6 +3901,12 @@ cli_auth_credentials_store = "keyring"
     runtime("thread-tools", [event("turn.completed", "thread-tools", { state: "completed" }, { turnId: "turn-1" })], {
       async onSendTurn(mcp) {
         expect(mcp).toBeDefined()
+        const token = mcp!.authorizationHeader.slice("Bearer ".length)
+        const sameLength = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`
+        for (const authorization of [undefined, `Bearer ${token.slice(0, -1)}`, `Bearer ${token}x`, `Bearer ${sameLength}`, `Basic ${token}`]) {
+          const response = await fetch(mcp!.endpoint, { body: "{}", headers: authorization ? { authorization } : {}, method: "POST" })
+          expect(response.status).toBe(401)
+        }
         const client = new McpClient({ name: "provider-test", version: "1" })
         const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), {
           requestInit: { headers: { Authorization: mcp!.authorizationHeader } },

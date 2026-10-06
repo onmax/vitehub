@@ -2,6 +2,8 @@ import { createServer } from "node:http"
 
 import * as v from "valibot"
 
+import { isViteHubSecretEqual } from "@vite-hub/internal/secret"
+
 import { isLoopbackHost } from "./api-key.ts"
 import { CONNECTIONS_ROUTE } from "./route.ts"
 
@@ -216,7 +218,7 @@ async function connectLoopback(name: string, parsed: ParsedArgs, context: CliCon
       rejectCallback(new CliError("The provider did not grant access."))
       return
     }
-    if (!state || !code || state !== expectedState) {
+    if (!state || !code || !isViteHubSecretEqual(state, expectedState)) {
       done(400, "The authorization response does not match this request.")
       return
     }
