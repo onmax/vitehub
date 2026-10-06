@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { lstat, mkdtemp, readdir, realpath, rename, rm } from "node:fs/promises"
+import { lstat, mkdtemp, readdir, realpath, rename } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
@@ -748,7 +748,16 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       catch {
         return
       }
-      if (await isCheckout(claim)) await rm(claim, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
+      if (await isCheckout(claim)) {
+        // Keep the recursive deletion attached to the claimed directory inode.
+        // A pathname-based rm can delete a replacement created after the
+        // identity check. The child process keeps this inode as its cwd even
+        // if the claim is renamed while its contents are being removed.
+        await exec(process.execPath, ["-e", `
+          const { readdir, rm } = await import("node:fs/promises")
+          for (const entry of await readdir(".")) await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
+        `], { cwd: claim, maxBuffer })
+      }
     }
     const operation = controlledOperation(options)
     try {
