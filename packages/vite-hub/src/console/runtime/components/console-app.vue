@@ -12,7 +12,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import { resolveConsoleNewChatAgent } from "./console-new-chat";
 
-import type { DropdownMenuItem, SplitterItem } from "@nuxt/ui";
+import type { CommandPaletteItem, DropdownMenuItem, SplitterItem } from "@nuxt/ui";
 import type {
   AgentInvocationConfiguration,
   AgentInvocationListItem,
@@ -225,6 +225,17 @@ const selectedAgentInvocation = computed(() =>
 );
 const newChatTargetName = computed(() =>
   resolveConsoleNewChatAgent(selectedAgentName.value, agentInvocationOptions.value),
+);
+// Search shows the same New chat action as the sidebar button.
+const searchActions = computed<CommandPaletteItem[]>(() =>
+  newChatTargetName.value
+    ? [{
+        description: `Start a session with ${newChatTargetName.value}`,
+        icon: "i-ph-note-pencil-light",
+        label: "New chat",
+        onSelect: () => void startNewChat(),
+      }]
+    : [],
 );
 const selectedAgentLabel = computed(
   () => selectedAgentName.value || (agentsLoading.value ? "Loading agents" : "Agents"),
@@ -1188,6 +1199,7 @@ onBeforeUnmount(() => {
     </UDashboardSidebar>
 
     <ConsoleSearch
+      :actions="searchActions"
       :agent-names="agentNames"
       :agents-base="agentsBase"
       :definitions-base="definitionsBase"
