@@ -13,8 +13,26 @@ icon: i-lucide-code-2
 | `defineConnection`, `oauth2`, `apiKey`, `useConnection` from `vite-hub/connections` | Define a Connection, use a generic OAuth 2 or API key provider, and call a Connection from server code. |
 | `google`, `gmail`, `gmailOperations` from `vite-hub/connections/google` | Google OAuth preset and typed Gmail REST Operations. |
 | `createConnectionsRuntime`, `useConnectionsRuntime` from `vite-hub/connections/server` | Runtime access for hosts and tests. |
-| `createConnectionsHandler` from `vite-hub/connections/http` | Management, connect, and callback routes. The Console mounts them. |
+| `createConnectionsHandler` from `vite-hub/connections/http` | Management, connect, and callback routes. The Console mounts them. It requires an `actor` access policy. |
 | `hubConnections` from `@vite-hub/connections/vite` | Standalone Vite integration. |
+
+## Management routes
+
+The management routes are `POST /_vitehub/connections`, `GET /_vitehub/connections/connect/:name`, and `GET /_vitehub/connections/callback`. With a Vite `base`, they start with that base.
+
+Each route checks access itself before it reads or changes a Connection. With the Console, it runs the same access policy as the Console data routes, then names the manager for activity:
+
+| Console access | Check | Manager |
+| --- | --- | --- |
+| Console Auth | The Console Auth session and its `authorize` callback. | The signed-in user. |
+| `access: 'auth'` with an Auth Definition | The app Auth access routes that protect the Console. | The signed-in user. |
+| Cloudflare Access | The Cloudflare Access token. | `user:cloudflare-access` |
+| `exposure: 'host-managed'` | The host `console.authorize` function. | `user:host-managed` |
+| `console: true` | Development server only. | `user:local` |
+
+A rejected request returns `403` with `CONNECTION_FORBIDDEN`. With `createConnectionsHandler()`, pass `actor`: a function that returns `user:<id>` for an authorized manager, or `'development'`. `'development'` allows `user:local` only when `NODE_ENV` is `development`, and returns `500` with `CONNECTION_AUTH_REQUIRED` elsewhere.
+
+The OAuth callback is reached by a redirect from the provider. It completes the flow only for the browser that started it (the `state` cookie) and for the same manager. The `state` works one time only and expires after 10 minutes. A `state` from another manager returns `403`.
 
 ## Calls
 

@@ -97,6 +97,23 @@ async function checkConsoleAccess(event: ConsoleRequestEvent): Promise<ConsoleAc
 }
 
 /**
+ * Name the manager of one Connections management request with the installed Console access policy.
+ * The generated Connections actor module calls it, so Connections routes and Console data routes share one policy.
+ * - `auth`: `sessionActor` reads the signed-in user as `user:<id>`.
+ * - `local`, `host-managed`, and `cloudflare-access` have no user id. The manager is `user:<mode>`.
+ * Returns `undefined` when the policy rejects the request. The Connections handler then returns `403`.
+ */
+export async function consoleConnectionsActor(
+  event: ConsoleRequestEvent,
+  sessionActor?: () => Promise<string | undefined>,
+): Promise<string | undefined> {
+  const access = await checkConsoleAccess(event)
+  if (access instanceof Response) return undefined
+  if (access.mode === "auth") return sessionActor ? await sessionActor() : undefined
+  return `user:${access.mode}`
+}
+
+/**
  * Wraps a Console server handler so it runs only after the installed access policy accepts the request.
  * Otherwise the wrapper returns the rejection `Response`. Without an installed policy, it returns `500`.
  */

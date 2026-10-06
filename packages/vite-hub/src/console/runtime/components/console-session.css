@@ -1524,9 +1524,6 @@
 .vitehub-console__search:hover {
   color: var(--ui-text) !important;
 }
-.vitehub-console__search [data-slot="trailing"] {
-  display: none;
-}
 .vitehub-console__session-navbar button {
   color: var(--ui-text-muted);
 }

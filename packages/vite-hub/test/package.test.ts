@@ -691,24 +691,19 @@ describe("framework package contract", () => {
     expect(consoleSearch).toContain("if (!open.value) return");
     expect(consoleSearch).toContain("if (open.value) debouncedSearchTerm.value = value.trim()");
     expect(consoleSearch).toContain("debouncedSearchTerm.value = nextSearchTerm");
-    const consoleBrand = readFileSync(
-      `${packageRoot}/dist/console/runtime/components/console-brand.vue`,
-      "utf8",
-    );
-    expect(consoleBrand).toContain("<RouterLink");
-    expect(consoleBrand).toContain("resolveConsoleRouteName(route.name, 'vitehub-console')");
-    expect(consoleBrand).toContain("subscribeConsoleNavigation(props.sectionsBase");
     const consoleHome = readFileSync(
       `${packageRoot}/dist/console/runtime/components/console-home.vue`,
       "utf8",
     );
     expect(consoleHome).toContain("loadConsoleNavigation(props.sectionsBase)");
-    const consolePrimitiveSwitcher = readFileSync(
-      `${packageRoot}/dist/console/runtime/components/console-primitive-switcher.vue`,
+    const consoleRail = readFileSync(
+      `${packageRoot}/dist/console/runtime/components/console-rail.vue`,
       "utf8",
     );
-    expect(consolePrimitiveSwitcher).toContain("navigationFailed.value = true");
-    expect(consolePrimitiveSwitcher).toContain('aria-label="Retry loading primitives"');
+    expect(consoleRail).toContain("navigationFailed.value = true");
+    expect(consoleRail).toContain('aria-label="Retry loading primitives"');
+    expect(consoleRail).toContain("open('vitehub-console')");
+    expect(consoleRail).toContain("subscribeConsoleNavigation(props.sectionsBase");
     expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-usage.vue`)).toBe(
       true,
     );

@@ -1258,16 +1258,60 @@ describe("Provider Agent Driver", () => {
   it("reuses one session store concurrently for equivalent paths", async () => {
     const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
     const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
+    let started!: () => void
+    let overlap!: () => void
+    const firstStarted = new Promise<void>(resolve => { started = resolve })
+    const secondStarted = new Promise<void>(resolve => { overlap = resolve })
+    const runtimes = [
+      runtime("thread-session-first", [event("turn.completed", "thread-session-first", { state: "completed" }, { turnId: "turn-1" })], {
+        onStartSession: async () => { started() }, beforeEvent: () => secondStarted,
+      }),
+      runtime("thread-session-second", [event("turn.completed", "thread-session-second", { state: "completed" }, { turnId: "turn-1" })], {
+        onStartSession: async () => { overlap() },
+      }),
+    ]
+    // Start the second call after the first owns its mock runtime, while its turn is still active.
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const first = createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never)
+    await firstStarted
+    await Promise.all([
+      first,
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      createProviderAgentAdapter({ provider: "codex", sessionStorePath: resolve(path) }).generate(context("thread-session-second") as never),
+    ])
+
+    expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1)
+    expect(runtimes.every(value => value.close.mock.calls.length === 1)).toBe(true)
+  })
+
+  it("shares pending session store creation for equivalent paths", async () => {
+    const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
+    const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
+    const createStore = createSqliteProviderRuntimeSessionStore.getMockImplementation()!
+    let notifyOpening!: () => void
+    const opening = new Promise<void>(resolve => { notifyOpening = resolve })
+    let releaseStore!: () => void
+    const pendingStore = new Promise<void>(resolve => { releaseStore = resolve })
+    createSqliteProviderRuntimeSessionStore.mockImplementationOnce(async (path) => {
+      notifyOpening()
+      await pendingStore
+      return await createStore(path)
+    })
     const runtimes = ["first", "second"].map(suffix => runtime(`thread-session-${suffix}`, [
       event("turn.completed", `thread-session-${suffix}`, { state: "completed" }, { turnId: "turn-1" }),
     ]))
 
-    await Promise.all([
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const first = createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never)
+    await opening
+    const second = createProviderAgentAdapter({
+      provider: "codex",
+      sessionStorePath: resolve(path),
       // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never),
-      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({ provider: "codex", sessionStorePath: resolve(path) }).generate(context("thread-session-second") as never),
-    ])
+    }).generate(context("thread-session-second") as never)
+    await vi.waitFor(() => expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1))
+    releaseStore()
+    await Promise.all([first, second])
 
     expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1)
     expect(runtimes.every(value => value.close.mock.calls.length === 1)).toBe(true)
@@ -3901,6 +3945,12 @@ cli_auth_credentials_store = "keyring"
     runtime("thread-tools", [event("turn.completed", "thread-tools", { state: "completed" }, { turnId: "turn-1" })], {
       async onSendTurn(mcp) {
         expect(mcp).toBeDefined()
+        const token = mcp!.authorizationHeader.slice("Bearer ".length)
+        const sameLength = `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`
+        for (const authorization of [undefined, `Bearer ${token.slice(0, -1)}`, `Bearer ${token}x`, `Bearer ${sameLength}`, `Basic ${token}`]) {
+          const response = await fetch(mcp!.endpoint, { body: "{}", headers: authorization ? { authorization } : {}, method: "POST" })
+          expect(response.status).toBe(401)
+        }
         const client = new McpClient({ name: "provider-test", version: "1" })
         const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), {
           requestInit: { headers: { Authorization: mcp!.authorizationHeader } },

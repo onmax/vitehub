@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import {
@@ -67,14 +67,6 @@ type GrantException = GrantFinding & ({ pr: number, reason?: undefined } | { pr?
  * The test fails when an entry no longer matches the source, so remove the entry in the PR that removes the shape.
  */
 const exceptions: readonly GrantException[] = [
-  // remove when #1862 merges
-  { file: "packages/schedule/src/dev-run.ts", pattern: "token !== await readViteHubDevToken(server.config.root, { namespace: scheduleDevTokenNamespace, serverId })", pr: 1862, rule: "secret-compare" },
-  // remove when #1874 merges
-  { file: "packages/agent/src/provider-agent.ts", pattern: "request.headers.authorization !== `Bearer ${token}`", pr: 1874, rule: "secret-compare" },
-  // remove when #1874 merges
-  { file: "packages/connections/src/cli.ts", pattern: "state !== expectedState", pr: 1874, rule: "secret-compare" },
-  // remove when #1874 merges
-  { file: "packages/connections/src/http.ts", pattern: "cookie(request, STATE_COOKIE) !== state", pr: 1874, rule: "secret-compare" },
   // remove when #1875 merges
   { file: "packages/agent/src/capabilities/access.ts", pattern: "Symbol.for(\"vitehub.workspace.metadataTarget\")", pr: 1875, rule: "symbol-for-capability" },
   // remove when #1875 merges
@@ -178,7 +170,13 @@ async function packageSourceFindings(): Promise<GrantFinding[]> {
   const tracked = execFileSync("git", ["ls-files", "-z", "--", "packages"], { cwd: repoRoot, encoding: "utf8" })
   for (const file of tracked.split("\0")) {
     if (!/^packages\/[^/]+\/src\/.+\.[cm]?tsx?$/.test(file) || file.endsWith(".d.ts")) continue
-    findings.push(...grantFindings(file, readFileSync(resolve(repoRoot, file), "utf8")))
+    const path = resolve(repoRoot, file)
+    // Keep modified tracked sources in the scan, but use the index blob when a tracked file
+    // is absent from the worktree (for example after a local deletion or in a sparse checkout).
+    const source = existsSync(path)
+      ? readFileSync(path, "utf8")
+      : execFileSync("git", ["show", `:${file}`], { cwd: repoRoot, encoding: "utf8" })
+    findings.push(...grantFindings(file, source))
   }
   return findings
 }

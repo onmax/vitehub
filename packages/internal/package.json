@@ -34,6 +34,7 @@
     "./http-request": "./dist/http-request.js",
     "./inspect": "./dist/inspect.js",
     "./runtime/random": "./dist/runtime/random.js",
+    "./secret": "./dist/secret.js",
     "./runtime/time-zone": "./dist/runtime/time-zone.js",
     "./build/cloudflare": "./dist/build/cloudflare.js",
     "./build/deployment-output": "./dist/build/deployment-output.js",

@@ -1993,13 +1993,13 @@ describe("ViteHub Nuxt integration", () => {
     const generated = await readFile(actor, "utf8")
     if (source === "console-auth") {
       expect(generated).toContain('import { definition } from "./auth-definition.mjs"')
-      expect(generated).toContain("createAuthForRequest(definition, event.req")
+      expect(generated).toContain("createAuthForRequest(definition, request")
     }
     else if (source === "app-auth") {
-      expect(generated).toContain("getAuthForRequest(event.req")
+      expect(generated).toContain("getAuthForRequest(request")
     }
     else {
-      expect(generated).toContain("return undefined")
+      expect(generated).toContain("return consoleConnectionsActor(event)")
     }
     await development.runNitroConfigHook(config)
     expect(await readFile(actor, "utf8")).toBe(generated)

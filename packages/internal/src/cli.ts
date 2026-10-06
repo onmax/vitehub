@@ -229,6 +229,7 @@ export async function fetchViteHubDevEndpoint(
 ): Promise<Response> {
   return await fetchImpl(url, {
     ...init,
+    redirect: "manual",
     headers: {
       ...init.headers,
       [endpoint.header]: endpoint.headerValue,
@@ -311,7 +312,7 @@ export async function discoverViteHubDevServer<TDiscovery extends { root?: unkno
   try {
     response = await fetchViteHubDevEndpoint(options.fetch, url, options.endpoint, {
       headers: { accept: "application/json" },
-      signal: options.signal,
+      ...(options.signal ? { signal: options.signal } : {}),
     })
   }
   catch {

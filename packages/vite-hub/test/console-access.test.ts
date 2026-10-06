@@ -11,7 +11,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { createConsoleAuthDefinition, defineConsoleAuth, defineConsoleAuthorize, prepareConsoleAuth } from "../src/console/auth.ts"
 import { consoleRpcHeader, consoleRpcMethods } from "../src/console/runtime/rpc.ts"
-import { bindConsoleAccess, installConsoleAccess, withConsoleAccess } from "../src/console/runtime/server/access.ts"
+import { createConnectionsHandler } from "@vite-hub/connections/http"
+import { createConnectionsRuntime } from "@vite-hub/connections/server"
+
+import { bindConsoleAccess, consoleConnectionsActor, installConsoleAccess, withConsoleAccess } from "../src/console/runtime/server/access.ts"
 import { handleConsoleRpcRequest } from "../src/console/runtime/server/rpc.ts"
 import { installConsoleSections } from "../src/console/runtime/server/sections.ts"
 import { assertConsoleProductionAccess, consoleVitePlugin } from "../src/console/vite.ts"
@@ -218,6 +221,53 @@ describe("Console access grants", () => {
     await expect(outer(event())).resolves.toEqual({ mode: "auth" })
     expect(check).toHaveBeenCalledTimes(1)
     expect(inner).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("Connections manager from Console access", () => {
+  function connectionsEvent(): ConsoleRequestEvent {
+    return { method: "POST", req: new Request("http://vitehub.local/_vitehub/connections", { headers: { "content-type": "application/json", origin: "http://vitehub.local" }, method: "POST", body: JSON.stringify({ action: "list" }) }) }
+  }
+
+  it.each([
+    { name: "host-managed allows", policy: { mode: "host-managed", authorize: () => true }, actor: "user:host-managed" },
+    { name: "host-managed denies", policy: { mode: "host-managed", authorize: () => false }, actor: undefined },
+    { name: "host-managed without authorize", policy: { mode: "host-managed" }, actor: undefined },
+    { name: "auth with a session", policy: { mode: "auth", check: async () => undefined }, session: "user:ada", actor: "user:ada" },
+    { name: "auth without a session", policy: { mode: "auth", check: async () => undefined }, actor: undefined },
+    { name: "auth rejected by the policy", policy: { mode: "auth", check: async () => new Response(null, { status: 403 }) }, session: "user:ada", actor: undefined },
+    { name: "cloudflare-access", policy: { mode: "cloudflare-access", check: async () => undefined }, actor: "user:cloudflare-access" },
+    { name: "local", policy: { mode: "local" }, actor: "user:local" },
+  ] satisfies Array<{ name: string, policy: ConsoleAccessPolicy, session?: string, actor: string | undefined }>)("uses the Console policy: $name", async ({ policy, session, actor }) => {
+    installConsoleAccess(policy)
+    await expect(consoleConnectionsActor(connectionsEvent(), session ? async () => session : undefined)).resolves.toBe(actor)
+  })
+
+  it("denies the local Console policy in production and without an installed policy", async () => {
+    vi.stubEnv("NODE_ENV", "production")
+    installConsoleAccess({ mode: "local" })
+    await expect(consoleConnectionsActor(connectionsEvent())).resolves.toBeUndefined()
+    Reflect.deleteProperty(globalThis, policyKey)
+    vi.unstubAllEnvs()
+    await expect(consoleConnectionsActor(connectionsEvent())).resolves.toBeUndefined()
+  })
+
+  it("runs Connections routes only after the host-managed authorize function", async () => {
+    const authorize = vi.fn(({ request }: { request: Request }) => request.headers.get("x-admin") === "1")
+    installConsoleAccess({ mode: "host-managed", authorize })
+    // No Connection Definitions, so `list` never opens the store.
+    const runtime = vi.fn(() => createConnectionsRuntime({ definitions: {}, store: () => { throw new Error("The store is not used.") } }))
+    const call = (headers: Record<string, string>) => {
+      const request = new Request("http://vitehub.local/_vitehub/connections", { body: JSON.stringify({ action: "list" }), headers: { "content-type": "application/json", origin: "http://vitehub.local", ...headers }, method: "POST" })
+      const requestEvent: ConsoleRequestEvent = { method: "POST", req: request }
+      return createConnectionsHandler({ actor: () => consoleConnectionsActor(requestEvent), runtime })(request, requestEvent)
+    }
+    expect((await call({})).status).toBe(403)
+    expect(runtime).not.toHaveBeenCalled()
+    const allowed = await call({ "x-admin": "1" })
+    expect(allowed.status).toBe(200)
+    await expect(allowed.json()).resolves.toEqual({ connections: [] })
+    expect(authorize).toHaveBeenCalledTimes(2)
   })
 })
 
