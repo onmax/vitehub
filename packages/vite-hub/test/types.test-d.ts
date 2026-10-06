@@ -40,9 +40,15 @@ vitehub({ name: "my-app", preset: "cloudflare", blob: true, rateLimit: true })
 vitehub({ agent: true, database: true, preset: "node", workflow: true, workspace: true })
 vitehub({ console: true, preset: "node" })
 vitehub({ auth: true, console: { access: "auth" }, preset: "node" })
+vitehub({ console: { authorize: "server/console-authorize.ts", exposure: "host-managed" }, preset: "node" })
+vitehub({ console: { authorize: "server/console-authorize.ts", exposure: "host-managed", invoke: true }, preset: "node" })
+vitehub({ console: { authorize: "server/console-authorize.ts", exposure: "host-managed", invoke: false }, preset: "node" })
+// @ts-expect-error Host-managed Console routes need the host authorize function.
 vitehub({ console: { exposure: "host-managed" }, preset: "node" })
-vitehub({ console: { exposure: "host-managed", invoke: true }, preset: "node" })
-vitehub({ console: { exposure: "host-managed", invoke: false }, preset: "node" })
+// @ts-expect-error console.authorize is a server file path, not an inline function.
+vitehub({ console: { authorize: () => true, exposure: "host-managed" }, preset: "node" })
+// @ts-expect-error ViteHub Auth access uses Auth callbacks, not console.authorize.
+vitehub({ console: { access: "auth", authorize: "server/console-authorize.ts" }, preset: "node" })
 vitehub({ console: { access: "auth", auth: { provider: "cloudflare-access" } }, preset: "cloudflare" })
 vitehub({ console: { access: "auth", auth: { provider: "cloudflare-access", teamDomain: "acme.cloudflareaccess.com", audience: env({ source: env.source("CF_ACCESS_AUD") }) }, invoke: true }, preset: "vercel" })
 // @ts-expect-error Cloudflare Access Console Auth has no database or allowlist; the Access policy decides who signs in.
