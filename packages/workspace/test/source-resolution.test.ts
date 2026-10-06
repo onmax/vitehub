@@ -1338,6 +1338,40 @@ describe("Workspace Source Resolution", () => {
     await expect(base.exists("pull-request")).resolves.toBe(false)
   })
 
+  it("rejects overlay rebases that take remote content under a Source mount", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    const rebase = vi.fn(async (_options?: { takeRemote?: string[] }) => {})
+    const facade = writableFacade(base)
+    facade.history.rebase = rebase
+    const definition: WorkspaceDefinition = {
+      name: "support",
+      sources: {
+        pullRequest: custom({
+          materialize: "lazy",
+          mount: "pull-request",
+          async getKeys() {
+            return ["body.md"]
+          },
+          async getItem(key) {
+            return { key, path: key, content: "# Pull request\n" }
+          },
+        }),
+      },
+    }
+
+    const { workspace } = await createWorkspaceSourceResolutionFacade(facade, definition, {
+      invocation,
+      overlay: true,
+    })
+    // SAFETY: This test fixture intentionally constructs the exact asserted Workspace contract.
+    const writable = workspace as WritableWorkspaceFacade
+
+    await expect(writable.history.rebase({ takeRemote: ["pull-request/body.md"] })).rejects.toThrow("read-only")
+    expect(rebase).not.toHaveBeenCalled()
+    await writable.history.rebase({ takeRemote: ["artifacts/draft.md"] })
+    expect(rebase).toHaveBeenCalledWith({ takeRemote: ["artifacts/draft.md"] })
+  })
+
   it("publishes the resolved writable overlay", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     const publish = vi.fn<(context: PublishContext) => Promise<void>>(async () => {})

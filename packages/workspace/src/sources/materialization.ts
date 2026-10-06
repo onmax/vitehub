@@ -14,6 +14,7 @@ import { withWorkspaceStoreMutation } from "../storage/mutation.ts"
 import { workspaceStoreIdentity } from "../storage/identity.ts"
 import { resolveWorkspaceStoreTarget } from "../storage/target.ts"
 import { withWorkspaceFileCheckpoint, recordWorkspaceFileOwner, readWorkspaceFileOwner, removeWorkspaceFileOwner, removeWorkspaceOwnedFile } from "./file-ownership.ts"
+import { createWorkspaceSourceMountAuthority, type WorkspaceSourceMountGrant } from "./mount-grants.ts"
 import type { ResolvedWorkspaceSource } from "./config.ts"
 import type { ResolvedSourcePath } from "./resolver.ts"
 import type {
@@ -72,6 +73,8 @@ const volatileSnapshots = new WeakMap<object, Map<string, SourceSnapshotMetadata
 const volatileStartupIndexes = new WeakMap<object, Map<string, string[] | MaterializedStartupSource[]>>()
 const startupReconciliationByStore = new WeakMap<WorkspaceStore, Promise<void>>()
 const activeStartupSourcesByStore = new WeakMap<WorkspaceStore, Map<string, Set<ResolvedWorkspaceSource>>>()
+// Only Source materialization creates these grants. Each grant limits file changes to one Source mount.
+const sourceMaterializationGrants = createWorkspaceSourceMountAuthority("Source materialization")
 
 export interface MaterializationControl {
   isCurrent(): boolean
@@ -371,6 +374,7 @@ function sourceOwnsDirectory(source: Pick<ResolvedWorkspaceSource, "mountPath">,
 
 async function removeStaleMaterializedSourceFiles(
   store: WorkspaceStore,
+  grant: WorkspaceSourceMountGrant,
   workspace: string,
   source: ResolvedWorkspaceSource,
   sources: ResolvedWorkspaceSource[],
@@ -382,6 +386,7 @@ async function removeStaleMaterializedSourceFiles(
   checkpointDirectoryOwnership: (path: string, owned: boolean) => Promise<void>,
   onRemoved?: (path: string, bytes: number) => void,
 ) {
+  const sourceStore = sourceMaterializationGrants.store(grant, store)
   const previousPaths = new Set(Object.keys(previousSnapshot?.items || {}))
   const nextDirectories = new Set([...nextPaths].flatMap(path => parentDirectoryPaths(path)))
   // Owned directories survive failed cleanup after their last file was removed.
@@ -459,7 +464,7 @@ async function removeStaleMaterializedSourceFiles(
           if (retainedSnapshot?.status !== "ready" || !retainedSnapshot.items?.[entry.path]) continue
           await writeSourceSnapshotMetadata(store, workspace, { ...retainedSnapshot, status: "updating" })
         }
-        await removeWorkspaceOwnedFile(store, entry.path)
+        await removeWorkspaceOwnedFile(sourceStore, entry.path)
         onRemoved?.(entry.path, file ? contentSize(file.content) : 0)
       }
     }))
@@ -477,7 +482,7 @@ async function removeStaleMaterializedSourceFiles(
       removedDirectories.add(path)
       continue
     }
-    if ((await store.list(path)).length || !store.removeEmptyDirectory) continue
+    if ((await store.list(path)).length || !sourceStore.removeEmptyDirectory) continue
     try {
       const removed = await control.mutate(async () => {
         // Mutation admission can wait while another writer replaces the path.
@@ -485,7 +490,7 @@ async function removeStaleMaterializedSourceFiles(
         if ((await store.stat(path))?.type !== "directory") return true
         await checkpointDirectoryOwnership(path, false)
         try {
-          await store.removeEmptyDirectory!(path)
+          await sourceStore.removeEmptyDirectory!(path)
         }
         catch (error) {
           await checkpointDirectoryOwnership(path, true)
@@ -562,6 +567,8 @@ async function reconcileRemovedStartupSourcesInternal(
   }
   const pendingDirectoryCleanup: MaterializedStartupSource[] = []
   for (const source of previousSources.filter(source => currentMounts.get(source.key) !== source.mountPath && !isActive(source))) {
+    // The startup index records the mount that this removed Source owned.
+    const sourceStore = sourceMaterializationGrants.store(sourceMaterializationGrants.grant(source), store)
     const snapshot = await readSourceSnapshotMetadata(store, workspace, source.key)
     const invalidatedSnapshot = snapshot && snapshot.mountPath === undefined && snapshot.items === undefined
     if (snapshot?.mountPath !== source.mountPath && !invalidatedSnapshot) continue
@@ -597,7 +604,7 @@ async function reconcileRemovedStartupSourcesInternal(
           if (retainedSnapshot?.status !== "ready" || !retainedSnapshot.items?.[path]) continue
           await writeSourceSnapshotMetadata(store, workspace, { ...retainedSnapshot, status: "updating" })
         }
-        await removeWorkspaceOwnedFile(store, path)
+        await removeWorkspaceOwnedFile(sourceStore, path)
       }))
     }
     let directoryCleanupUnavailable = false
@@ -667,7 +674,7 @@ async function reconcileRemovedStartupSourcesInternal(
       // Decide whether removal is needed before calling the Store, so an actual
       // removal failure always preserves the snapshot and index for a retry.
       if ((await store.stat(path))?.type !== "directory" || (await store.list(path)).length) continue
-      if (!store.removeEmptyDirectory) {
+      if (!sourceStore.removeEmptyDirectory) {
         directoryCleanupUnavailable = true
         continue
       }
@@ -678,7 +685,7 @@ async function reconcileRemovedStartupSourcesInternal(
         // authorize cleanup of a directory recreated at the same path.
         await retireDirectory(path)
         try {
-          await store.removeEmptyDirectory!(path)
+          await sourceStore.removeEmptyDirectory!(path)
         }
         catch (error) {
           if (previousSnapshot) {
@@ -984,6 +991,8 @@ async function materializeWorkspaceSourcesInternal(
       }))
     }
 
+    const grant = sourceMaterializationGrants.grant(source)
+    const sourceStore = sourceMaterializationGrants.store(grant, store)
     let sourceFiles = 0
     let sourceBytes = 0
     let persistedBytesDelta = 0
@@ -1002,7 +1011,7 @@ async function materializeWorkspaceSourcesInternal(
           for (const path of parentDirectoryPaths(source.mountPath)) {
             if (!await store.stat(path)) missingAncestors.push(path)
           }
-          await store.mkdir(source.mountPath, { recursive: true })
+          await sourceStore.mkdir(source.mountPath, { recursive: true })
           ownsMount = ownsMount || !mountExists
           for (const path of missingAncestors) {
             if (!ownedAncestors.includes(path)) ownedAncestors.push(path)
@@ -1057,7 +1066,7 @@ async function materializeWorkspaceSourcesInternal(
         const tracked = Object.hasOwn(itemMetadata, path)
         const previousItemMetadata = itemMetadata[path]
         const written = await control.mutate(() => withWorkspaceStoreMutation(store, async () => {
-          const write = () => writeMaterializedFile(store, path, {
+          const write = () => writeMaterializedFile(sourceStore, path, {
             path,
             content: entry.content,
             contentStream: entry.contentStream,
@@ -1083,7 +1092,7 @@ async function materializeWorkspaceSourcesInternal(
             await checkpoint(result)
             return result
           }
-          return await withWorkspaceFileCheckpoint(store, path, write, checkpoint, async () => {
+          return await withWorkspaceFileCheckpoint(sourceStore, path, write, checkpoint, async () => {
             if (previousItemMetadata) itemMetadata[path] = previousItemMetadata
             else delete itemMetadata[path]
           })
@@ -1117,7 +1126,7 @@ async function materializeWorkspaceSourcesInternal(
         }
       }
       throwIfAborted(options.abortSignal)
-      const removedDirectories = await removeStaleMaterializedSourceFiles(store, workspace, source, configuredSources, nextPaths, options, control, existing, ownedDirectories, async (path, owned) => {
+      const removedDirectories = await removeStaleMaterializedSourceFiles(store, grant, workspace, source, configuredSources, nextPaths, options, control, existing, ownedDirectories, async (path, owned) => {
         const previouslyOwned = ownedDirectories.has(path)
         const previouslyOwnedMount = ownsMount
         if (owned) ownedDirectories.add(path)

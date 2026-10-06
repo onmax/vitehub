@@ -33,6 +33,7 @@ import type {
   WorkspaceEntry,
   WorkspaceFile,
   WorkspaceName,
+  WorkspaceRebaseOptions,
   WorkspaceSearchHit,
   WorkspaceSearchQuery,
   WorkspaceStore,
@@ -432,6 +433,14 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await workspace.fs.rm(path as never, options)),
       writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await workspace.fs.writeFile(path as never, content, options)),
     }
+    const baseRebase = sourceView.requireRebaseGrants(async options => await workspace.history.rebase(options))
+
+    // A takeRemote path replaces local content, so Source-backed paths are rejected.
+    async function rebase(options?: WorkspaceRebaseOptions) {
+      const grants = []
+      for (const path of options?.takeRemote ?? []) grants.push(await sourceView.assertWritable(path))
+      await baseRebase(grants, options)
+    }
 
     async function writeWithPolicy<Result = void>(
       input: Omit<WorkspaceWriteInput, "previous" | "rule" | "workspace">,
@@ -546,7 +555,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         const resolvedStore = createWritableFacadeStore({ ...workspace, fs: writeFs })
         await publishWorkspace(resolvedDefinition, resolvedStore, options)
       },
-      rebase: workspace.history.rebase,
+      rebase,
       readFile: writeFs.readFile,
       rm: writeFs.rm,
       search: writeFs.search,
@@ -592,6 +601,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       ...workspace,
       diff: writeWorkspace.diff,
       fs: writeFs,
+      history: { ...workspace.history, rebase },
       materializeSources,
       publish: writeWorkspace.publish,
       snapshot: writeWorkspace.snapshot,

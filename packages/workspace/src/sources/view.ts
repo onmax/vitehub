@@ -36,6 +36,7 @@ import type {
   WorkspaceSearchHit,
   WorkspaceSearchQuery,
   WorkspaceMaterializeSourcesResult,
+  WorkspaceRebaseOptions,
   WorkspaceSourceItem,
   WorkspaceStat,
   WorkspaceStore,
@@ -79,6 +80,11 @@ export interface WorkspaceSourceView {
    * The wrapped write receives the normalized path from the grant.
    */
   requireWriteGrant<Args extends unknown[], Result>(write: (path: string, ...args: Args) => Promise<Result>): (grant: WorkspaceSourceWriteGrant, path: string, ...args: Args) => Promise<Result>
+  /**
+   * Wraps a history rebase. Each `takeRemote` path replaces local content, so it needs a grant from this view.
+   * Pass the grants in the order of `takeRemote`. The wrapped rebase receives the normalized paths from the grants.
+   */
+  requireRebaseGrants(rebase: (options?: WorkspaceRebaseOptions) => Promise<void>): (grants: readonly WorkspaceSourceWriteGrant[], options?: WorkspaceRebaseOptions) => Promise<void>
   list(path?: string, options?: ListOptions): Promise<WorkspaceEntry[]>
   glob(pattern: string | string[], options?: GlobOptions): Promise<WorkspaceEntry[]>
   search(query: WorkspaceSearchQuery): Promise<WorkspaceSearchHit[]>
@@ -683,6 +689,22 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     }
   }
 
+  function requireRebaseGrants(rebase: (options?: WorkspaceRebaseOptions) => Promise<void>) {
+    return async (grants: readonly WorkspaceSourceWriteGrant[], options?: WorkspaceRebaseOptions): Promise<void> => {
+      const takeRemote = options?.takeRemote ?? []
+      if (!Array.isArray(grants) || grants.length !== takeRemote.length) {
+        throw workspaceError("[vitehub] Workspace rebase requires one Source write grant for each takeRemote path.")
+      }
+      for (const [index, path] of takeRemote.entries()) {
+        const grant = grants[index]
+        if (!grant || writeGrants.get(grant) !== normalizeWorkspacePath(path)) {
+          throw workspaceError(`[vitehub] Workspace rebase to take remote ${path} requires a Source write grant for that path.`)
+        }
+      }
+      await rebase(options?.takeRemote ? { ...options, takeRemote: grants.map(grant => grant.path) } : options)
+    }
+  }
+
   const grantedStore = {
     mkdir: requireWriteGrant(async (path, options?: MkdirOptions) => await store.mkdir(path, options)),
     rm: requireWriteGrant(async (path, options?: RmOptions) => await store.rm(path, options)),
@@ -698,6 +720,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       return await grantWritablePath(path)
     },
     requireWriteGrant,
+    requireRebaseGrants,
     async readFile(path, options) {
       const descriptorSource = descriptorSourceForPath(normalizeWorkspacePath(path))
       if (descriptorSource) return decodeFile(descriptorContent(descriptorSource), options)
