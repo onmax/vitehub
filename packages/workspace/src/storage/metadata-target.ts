@@ -10,6 +10,8 @@ export interface WorkspaceMetadataTarget {
   mkdir?(path: string, options?: MkdirOptions): Promise<void>
   rm?(path: string, options?: RmOptions): Promise<void>
   getMeta?(key: string): Promise<unknown>
+  /** Owner-only metadata write. It accepts internal keys that public `setMeta` rejects. */
+  setMeta?(key: string, value: unknown): Promise<void>
   list?(path: string, options?: ListOptions): Promise<WorkspaceEntry[]>
 }
 
@@ -26,6 +28,7 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataTarget, wo
     mkdir: store.mkdir?.bind(store),
     rm: store.rm?.bind(store),
     getMeta: store.getMeta?.bind(store),
+    setMeta: store.setMeta?.bind(store),
     list: store.list?.bind(store),
   }
   forwardWorkspaceStoreTarget(store, target)

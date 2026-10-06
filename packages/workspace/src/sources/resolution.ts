@@ -268,6 +268,9 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
       return meta.get(key)
     },
     async setMeta(key, value) {
+      // Source Sync state uses internal keys, which public setMeta rejects.
+      const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
+      if (target?.setMeta) return await target.setMeta(key, value)
       if (metadata.setMeta) {
         await metadata.setMeta(key, value)
         return

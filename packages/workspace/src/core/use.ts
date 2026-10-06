@@ -17,6 +17,7 @@ import { useRegisteredWorkspace } from "./registry.ts"
 import { createWorkspace } from "./workspace.ts"
 import { attachWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "../sources/request-execution.ts"
 import { forwardWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
+import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { forwardWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
 import { createHostedWorkspaceSession } from "../session/host.ts"
 
@@ -374,7 +375,7 @@ function createLazyWorkspace(name: WorkspaceName, definition?: WorkspaceDefiniti
       return await (await resolveWorkspace()).getMeta?.(key)
     },
     async setMeta(key, value) {
-      await (await resolveWorkspace()).setMeta?.(key, value)
+      await (await resolveWorkspace()).setMeta?.(assertPublicWorkspaceMetaKey(key), value)
     },
     async startSession(options) {
       return await (await resolveSyncedWorkspace()).startSession(options)
