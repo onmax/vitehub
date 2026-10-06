@@ -1,5 +1,5 @@
 import * as v from "valibot"
-import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { isViteHubDevSecretEqual, validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/inspect"
 // The package imports keep the Nitro module graph on the storage and runtime config that the generated Nitro plugin
@@ -302,15 +302,20 @@ export async function handleBlobDevRequest(request: Request, storesOrRoot?: read
     serverId = rootDir
     rootDir = storesOrRoot
   }
-  const rejection = validateViteHubNitroDevRequest(request, { header: blobDevHeader, headerValue: blobDevHeaderValue, label: "Blob Dev" })
+  const { rejection } = await validateViteHubNitroDevRequest(request, {
+    authorize: async (request) => {
+      if (!serverId) return
+      const requestedServerId = request.headers.get(blobDevTokenServerHeader)
+      const token = request.headers.get(viteHubDevTokenHeader)
+      if (requestedServerId !== serverId || !isViteHubDevSecretEqual(token, await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId }))) {
+        return new Response("Forbidden Blob Dev token.", { status: 403 })
+      }
+    },
+    header: blobDevHeader,
+    headerValue: blobDevHeaderValue,
+    label: "Blob Dev",
+  })
   if (rejection) return rejection
-  if (serverId) {
-    const requestedServerId = request.headers.get(blobDevTokenServerHeader)
-    const token = request.headers.get(viteHubDevTokenHeader)
-    if (requestedServerId !== serverId || !token || token !== await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId })) {
-      return new Response("Forbidden Blob Dev token.", { status: 403 })
-    }
-  }
   try {
     return await runOperation(await readBody(request), stores ?? await listBlobDevStores())
   }

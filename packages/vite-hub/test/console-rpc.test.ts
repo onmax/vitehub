@@ -8,8 +8,9 @@ import { consoleInvocationsIdentityKey, consoleInvocationsIdentityRootKey, conso
 
 import { requestConsole } from "../src/console/runtime/client/request.ts"
 import { consoleRpcHeader, consoleRpcMethods } from "../src/console/runtime/rpc.ts"
-import consoleRpcHandler, { handleConsoleRpcRequest } from "../src/console/runtime/server/rpc.ts"
+import consoleRpcHandler from "../src/console/runtime/server/rpc.ts"
 import { installConsoleProjectName, installConsoleSections } from "../src/console/runtime/server/sections.ts"
+import { handleConsoleRpcRequest } from "./support/console-rpc.ts"
 
 const callURL = "http://vitehub.local/_vitehub/rpc/__call"
 

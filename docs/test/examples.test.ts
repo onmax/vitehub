@@ -12,7 +12,7 @@ describe("examples catalog", () => {
     const header = readFileSync(resolve(docsRoot, "app/components/AppHeader.vue"), "utf8");
     expect(header).toContain('{ label: "Examples", to: "/examples" }');
 
-    const sitemap = readFileSync(resolve(docsRoot, "server/routes/sitemap.xml.ts"), "utf8");
+    const sitemap = readFileSync(resolve(docsRoot, "server/api/__sitemap__/urls.ts"), "utf8");
     expect(sitemap).toContain('{ path: "/examples" }');
   });
 

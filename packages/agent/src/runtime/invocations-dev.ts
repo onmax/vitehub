@@ -1,5 +1,5 @@
 import agentRegistry from "#vitehub/agent/registry"
-import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { assertViteHubDevRequestGrant, isViteHubDevSecretEqual, validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
 
@@ -9,6 +9,7 @@ import { getAgentFromRegistry } from "../index.ts"
 import { agentInvocationsDevGuard, agentInvocationsDevTokenServerHeader } from "../invocations-dev.ts"
 import { isAgentInvocations } from "../invocations.ts"
 
+import type { ViteHubDevRequestGrant } from "@vite-hub/internal/dev-endpoint"
 import type { AgentInvocationsDevRequestBody } from "../invocations-dev.ts"
 import type { AgentInvocationCancelResult, AgentInvocations } from "../invocations.ts"
 
@@ -48,7 +49,8 @@ async function registeredInvocationJournals(): Promise<AgentInvocations[]> {
 
 class InvocationJournalAmbiguityError extends Error {}
 
-async function cancelInJournals(journals: readonly AgentInvocations[], id: string): Promise<AgentInvocationCancelResult> {
+async function cancelInJournals(request: Request, grant: ViteHubDevRequestGrant, journals: readonly AgentInvocations[], id: string): Promise<AgentInvocationCancelResult> {
+  assertViteHubDevRequestGrant(grant, request)
   const matches: AgentInvocations[] = []
   let failure: unknown
   for (const journal of journals) {
@@ -69,24 +71,26 @@ async function cancelInJournals(journals: readonly AgentInvocations[], id: strin
  * Handles `vitehub agent invocations cancel` inside the Nitro dev runtime.
  *
  * The Vite endpoint forwards the request here, so the cancel reaches the application's own journals and abort
- * registry. The handler exists only in `vite dev`.
+ * registry. The handler exists only in `vite dev`. The request must carry the Workspace dev token of `serverId`.
+ * Without a `serverId`, every request is rejected.
  */
 export async function handleAgentInvocationsDevRequest(request: Request, options: { rootDir?: string, serverId?: string } = {}): Promise<Response> {
-  const rejection = validateViteHubNitroDevRequest(request, agentInvocationsDevGuard)
-  if (rejection) return rejection
-  if (options.serverId) {
-    const serverId = request.headers.get(agentInvocationsDevTokenServerHeader)
-    const token = request.headers.get(workspaceDevTokenHeader)
-    if (serverId !== options.serverId || !token || token !== await readWorkspaceDevToken(options.rootDir ?? process.cwd(), { serverId })) {
-      return new Response("Forbidden Agent Invocations Dev token.", { status: 403 })
-    }
-  }
+  const { grant, rejection } = await validateViteHubNitroDevRequest(request, {
+    ...agentInvocationsDevGuard,
+    authorize: async (request) => {
+      const serverId = request.headers.get(agentInvocationsDevTokenServerHeader)
+      const authorized = Boolean(options.serverId) && serverId === options.serverId
+        && isViteHubDevSecretEqual(request.headers.get(workspaceDevTokenHeader), await readWorkspaceDevToken(options.rootDir ?? process.cwd(), { serverId }))
+      return authorized ? undefined : new Response("Forbidden Agent Invocations Dev token.", { status: 403 })
+    },
+  })
+  if (!grant) return rejection
   const body = await readBody(request)
   if (!body) return failure("The Agent Invocations Dev request body is invalid.", 400)
   try {
     const journals = await registeredInvocationJournals()
     if (!journals.length) return failure("No Agent invocation journal is configured.", 404)
-    return Response.json(await cancelInJournals(journals, body.id))
+    return Response.json(await cancelInJournals(request, grant, journals, body.id))
   }
   catch (error) {
     return failure(`Agent Invocation cancel failed: ${error instanceof Error ? error.message : String(error)}`, error instanceof InvocationJournalAmbiguityError ? 409 : 500)

@@ -30,6 +30,22 @@ interface AgentChatApprovalCustodyOptions {
   ttlMs?: number
 }
 
+declare const agentChatApprovalGrantBrand: unique symbol
+
+/** Proof that the approval owner read the tools approved in one chat session for one request. */
+export interface AgentChatApprovalGrant {
+  readonly [agentChatApprovalGrantBrand]: true
+}
+
+interface AgentChatApprovalGrantBinding {
+  invokerId: string
+  sessionId: string
+  tools: ReadonlySet<string>
+}
+
+const agentChatApprovalGrants = new WeakMap<AgentChatApprovalGrant, AgentChatApprovalGrantBinding>()
+const agentChatApprovalGrantKey: unique symbol = Symbol("vitehub.agent.chat-approval-grant")
+
 const defaultAgentChatApprovalTtlMs = 24 * 60 * 60 * 1000
 const agentChatApprovalLockTtlMs = 10_000
 
@@ -114,6 +130,35 @@ export function resolveAgentChatApprovalTtl(maximumTtlMs?: number): number {
     : defaultAgentChatApprovalTtlMs
 }
 
+function createAgentChatApprovalGrant(binding: AgentChatApprovalGrantBinding): AgentChatApprovalGrant | undefined {
+  if (!binding.tools.size) return
+  // SAFETY: The brand is type-only; the WeakMap entry below is the runtime proof.
+  const grant = Object.freeze({}) as AgentChatApprovalGrant
+  agentChatApprovalGrants.set(grant, binding)
+  return grant
+}
+
+/**
+ * Attach a chat approval grant to one request runtime context.
+ * The grant stays out of the Invocation context, so it is not persisted or replayed.
+ */
+export function withAgentChatApprovalGrant<T extends object>(context: T, grant: AgentChatApprovalGrant | undefined): T {
+  return grant ? { ...context, [agentChatApprovalGrantKey]: grant } : context
+}
+
+/**
+ * Read the tools approved for this chat session. Only a grant from `authorize()`
+ * that matches the current invoker and chat session counts.
+ */
+export function agentChatApprovedTools(context: object & { invoker: { id: string } }, sessionId: unknown): ReadonlySet<string> {
+  // SAFETY: Only withAgentChatApprovalGrant writes this module-private key; the WeakMap check below rejects other values.
+  const grant = (context as { [agentChatApprovalGrantKey]?: AgentChatApprovalGrant })[agentChatApprovalGrantKey]
+  const binding = grant && agentChatApprovalGrants.get(grant)
+  return binding && binding.invokerId === context.invoker.id && binding.sessionId === sessionId
+    ? new Set(binding.tools)
+    : new Set()
+}
+
 export function createAgentChatApprovalCustody(options: AgentChatApprovalCustodyOptions) {
   const { authenticated, invokerId, sessionId, state } = options
   const ttlMs = resolveAgentChatApprovalTtl(options.ttlMs)
@@ -121,6 +166,10 @@ export function createAgentChatApprovalCustody(options: AgentChatApprovalCustody
   async function approvedTools(): Promise<string[]> {
     if (!authenticated) return []
     return (await state.get<string[]>(agentChatApprovedToolsKey(invokerId, sessionId))) ?? []
+  }
+
+  function grantFor(tools: string[]): AgentChatApprovalGrant | undefined {
+    return createAgentChatApprovalGrant({ invokerId, sessionId, tools: new Set(tools) })
   }
 
   async function withApprovalLock<T>(callback: () => Promise<T>): Promise<T> {
@@ -139,7 +188,7 @@ export function createAgentChatApprovalCustody(options: AgentChatApprovalCustody
 
   async function authorize(
     messages: UIMessageLike[],
-  ): Promise<{ approvedTools: string[]; messages: UIMessageLike[] }> {
+  ): Promise<{ grant: AgentChatApprovalGrant | undefined; messages: UIMessageLike[] }> {
     const submitted = messages.flatMap((message, messageIndex) =>
       (message.parts || []).flatMap((part) => {
         const approvalPart = uiApprovalPart(part)
@@ -151,7 +200,7 @@ export function createAgentChatApprovalCustody(options: AgentChatApprovalCustody
     if (!authenticated && submitted.some((part) => part.record.state === "approval-responded")) {
       throw approvalError(400, "Agent chat approval responses require an authenticated invoker.")
     }
-    if (!submitted.length) return { approvedTools: await approvedTools(), messages }
+    if (!submitted.length) return { grant: grantFor(await approvedTools()), messages }
 
     return await withApprovalLock(async () => {
       const pending = new Map(
@@ -281,7 +330,7 @@ export function createAgentChatApprovalCustody(options: AgentChatApprovalCustody
       await Promise.all(
         [...consumed].map((id) => state.delete(agentChatApprovalKey(invokerId, sessionId, id))),
       )
-      return { approvedTools: persistedApprovedTools, messages: authorized }
+      return { grant: grantFor(persistedApprovedTools), messages: authorized }
     })
   }
 

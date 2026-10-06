@@ -8,8 +8,9 @@ import { env } from "../src/core/declarations.ts";
 import { createRuntimeRegistry } from "../src/core/resolve.ts";
 import { loadServerEnv } from "../src/server.ts";
 import { SecretEnv } from "../src/secret.ts";
+import { adminContext } from "./helpers.ts";
 
-const admin: EnvAccessContext = { actor: { kind: "user", id: "owner" }, admin: true };
+const admin = await adminContext();
 const agent: EnvAccessContext = {
   actor: { kind: "agent", id: "runner" },
   traceId: "trace-request",

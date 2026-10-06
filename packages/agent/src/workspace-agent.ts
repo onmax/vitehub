@@ -12,8 +12,8 @@ import {
 } from "@vite-hub/runtime"
 
 import {
-  hasTrustedWorkspaceAccessScope,
   markTrustedSourceFreeInspection,
+  trustedWorkspaceAccessScope,
 } from "./access-runtime.ts"
 import {
   capabilityWorkspaceSources,
@@ -991,10 +991,7 @@ function workspaceMetadataFiles<
   options: WorkspaceAgentOptions<TRuntimeConfig, Name>,
   context?: AgentInvocationContextStore,
 ): AgentInspectionFileTreeItem[] {
-  const access = context && hasTrustedWorkspaceAccessScope(context)
-    ? context.get("access")
-    : undefined
-  const scope = access?.workspaceScope
+  const scope = context && trustedWorkspaceAccessScope(context)
   const pathIntersects = (left: string, right: string) => !left || !right || left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)
   const sources = normalizedSourcesFromOptions(options).filter(source => {
     if (!scope || scope.all || scope.sources?.includes(source.key)) return true

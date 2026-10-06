@@ -66,7 +66,7 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({ resolveInstalle
 import { appendLatestFinalText } from "../src/agent-output.ts"
 import { createProviderAgentAdapter, localWorkspaceHost } from "../src/provider-agent.ts"
 import { cliproxy, defineGateway, vercel } from "../src/gateways.ts"
-import { markTrustedWorkspaceAccessScope } from "../src/access-runtime.ts"
+import { grantWorkspaceAccessScope } from "../src/access-runtime.ts"
 import { codexDriver, defineAgent, runAgent } from "../src/index.ts"
 import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "../src/internal/agent-invocation-control.ts"
@@ -1258,34 +1258,60 @@ describe("Provider Agent Driver", () => {
   it("reuses one session store concurrently for equivalent paths", async () => {
     const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
     const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
-    let notifyFirstStarted!: () => void
-    let notifySecondStarted!: () => void
-    const firstStarted = new Promise<void>(resolve => { notifyFirstStarted = resolve })
-    const secondStarted = new Promise<void>(resolve => { notifySecondStarted = resolve })
+    let started!: () => void
+    let overlap!: () => void
+    const firstStarted = new Promise<void>(resolve => { started = resolve })
+    const secondStarted = new Promise<void>(resolve => { overlap = resolve })
+    const runtimes = [
+      runtime("thread-session-first", [event("turn.completed", "thread-session-first", { state: "completed" }, { turnId: "turn-1" })], {
+        onStartSession: async () => { started() }, beforeEvent: () => secondStarted,
+      }),
+      runtime("thread-session-second", [event("turn.completed", "thread-session-second", { state: "completed" }, { turnId: "turn-1" })], {
+        onStartSession: async () => { overlap() },
+      }),
+    ]
+    // Start the second call after the first owns its mock runtime, while its turn is still active.
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const first = createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never)
+    await firstStarted
+    await Promise.all([
+      first,
+      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+      createProviderAgentAdapter({ provider: "codex", sessionStorePath: resolve(path) }).generate(context("thread-session-second") as never),
+    ])
+
+    expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1)
+    expect(runtimes.every(value => value.close.mock.calls.length === 1)).toBe(true)
+  })
+
+  it("shares pending session store creation for equivalent paths", async () => {
+    const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
+    const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
+    const createStore = createSqliteProviderRuntimeSessionStore.getMockImplementation()!
+    let notifyOpening!: () => void
+    const opening = new Promise<void>(resolve => { notifyOpening = resolve })
+    let releaseStore!: () => void
+    const pendingStore = new Promise<void>(resolve => { releaseStore = resolve })
+    createSqliteProviderRuntimeSessionStore.mockImplementationOnce(async (path) => {
+      notifyOpening()
+      await pendingStore
+      return await createStore(path)
+    })
     const runtimes = ["first", "second"].map(suffix => runtime(`thread-session-${suffix}`, [
       event("turn.completed", `thread-session-${suffix}`, { state: "completed" }, { turnId: "turn-1" }),
-    ], {
-      // Keep both invocations active, but assign the FIFO runtime mocks in order.
-      beforeEvent: async () => { await secondStarted },
-      onStartSession: async () => {
-        if (suffix === "first") notifyFirstStarted()
-        else notifySecondStarted()
-      },
-    }))
+    ]))
 
-    await Promise.all([
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const first = createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never)
+    await opening
+    const second = createProviderAgentAdapter({
+      provider: "codex",
+      sessionStorePath: resolve(path),
       // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never),
-      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({
-        provider: "codex",
-        sessionStorePath: resolve(path),
-        env: async () => {
-          await firstStarted
-          return {}
-        },
-      }).generate(context("thread-session-second") as never),
-    ])
+    }).generate(context("thread-session-second") as never)
+    await vi.waitFor(() => expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1))
+    releaseStore()
+    await Promise.all([first, second])
 
     expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1)
     expect(runtimes.every(value => value.close.mock.calls.length === 1)).toBe(true)
@@ -5006,9 +5032,8 @@ cli_auth_credentials_store = "keyring"
         },
       },
     })
-    runContext.context.set("access", { workspaceScope: { all: false, paths: selectedPaths } })
-    // SAFETY: This fixture supplies the trusted access context expected by the helper.
-    markTrustedWorkspaceAccessScope(runContext.context as never)
+    // SAFETY: This fixture supplies the invocation context store expected by the helper.
+    grantWorkspaceAccessScope(runContext.context as never, { all: false, paths: selectedPaths, role: "viewer", scope: "docs", sources: [] })
     // SAFETY: This fixture supplies the complete provider generation context.
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
 
@@ -5044,9 +5069,8 @@ cli_auth_credentials_store = "keyring"
       workspaceDefinition: { name: "docs" },
       workspaceMaterializationPaths: ["docs/a.md", "docs/b.md"],
     })
-    runContext.context.set("access", { workspaceScope: { all: false, paths: ["docs/a.md", "docs/b.md"] } })
-    // SAFETY: This test fixture supplies the trusted access context expected by the helper.
-    markTrustedWorkspaceAccessScope(runContext.context as never)
+    // SAFETY: This test fixture supplies the invocation context store expected by the helper.
+    grantWorkspaceAccessScope(runContext.context as never, { all: false, paths: ["docs/a.md", "docs/b.md"], role: "viewer", scope: "docs", sources: [] })
 
     // SAFETY: This test fixture supplies the complete provider generation context.
     const generation = createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
@@ -5057,6 +5081,30 @@ cli_auth_credentials_store = "keyring"
     releaseActive()
     await expect(generation).rejects.toThrow("Canceled")
     expect(activeSettled).toBe(true)
+  })
+
+  it("uses the granted access scope when the access context value is overwritten", async () => {
+    const threadId = "thread-workspace-forged-access-scope"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async () => ({ code: 0, stderr: "", stdout: "" })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const materializeSources = vi.fn(async (_options: { path: string }) => ({ bytes: 0, directories: 0, durationMs: 0, files: 0, path: "", sources: [] }))
+    const workspace = { fs: {}, materializeSources, startSession: vi.fn(async (_options: { paths?: readonly string[] }) => session), tools: {} }
+    const runContext = context(threadId, { workspace, workspaceDefinition: { name: "docs" } })
+    // SAFETY: This test fixture supplies the invocation context store expected by the helper.
+    grantWorkspaceAccessScope(runContext.context as never, { all: false, paths: ["docs/a.md"], role: "viewer", scope: "docs", sources: [] })
+    runContext.context.set("access", { workspaceScope: { all: true, paths: ["docs/a.md", "secrets/key.md"], role: "admin", scope: "all", sources: [] } })
+
+    // SAFETY: This test fixture supplies the complete provider generation context.
+    await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
+
+    expect(materializeSources.mock.calls.map(([options]) => options.path)).toEqual(["docs/a.md"])
+    expect(workspace.startSession).toHaveBeenCalledWith(expect.objectContaining({ paths: ["docs/a.md"] }))
   })
 
   it("keeps session materialization enabled after selected Source errors", async () => {
