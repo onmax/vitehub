@@ -1,4 +1,5 @@
-import { assertViteHubDevRequestGrant, isViteHubDevSecretEqual, validateViteHubNitroDevRequest } from "../src/dev-endpoint.ts"
+import { assertViteHubDevRequestGrant, validateViteHubNitroDevRequest } from "../src/dev-endpoint.ts"
+import { isViteHubBearerSecretEqual, isViteHubSecretEqual } from "../src/secret.ts"
 
 import type { ViteHubDevRequestGrant } from "../src/dev-endpoint.ts"
 
@@ -14,13 +15,16 @@ function devRequest(headers: Record<string, string> = {}): Request {
 
 describe("Nitro dev request check in workerd", () => {
   it("compares secrets without Node APIs", () => {
-    expect(isViteHubDevSecretEqual("token", "token")).toBe(true)
-    expect(isViteHubDevSecretEqual("tokem", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual(null, "token")).toBe(false)
+    expect(isViteHubSecretEqual("token", "token")).toBe(true)
+    expect(isViteHubSecretEqual("tokem", "token")).toBe(false)
+    expect(isViteHubSecretEqual("toke", "token")).toBe(false)
+    expect(isViteHubSecretEqual(null, "token")).toBe(false)
+    expect(isViteHubBearerSecretEqual("Bearer token", "token")).toBe(true)
+    expect(isViteHubBearerSecretEqual("Bearer tokem", "token")).toBe(false)
   })
 
   it("grants a guarded request and rejects a forged grant", async () => {
-    const authorize = async (request: Request) => isViteHubDevSecretEqual(request.headers.get("x-test-token"), "secret")
+    const authorize = async (request: Request) => isViteHubSecretEqual(request.headers.get("x-test-token"), "secret")
       ? undefined
       : new Response("Forbidden token.", { status: 403 })
     const request = devRequest({ "x-test-token": "secret" })

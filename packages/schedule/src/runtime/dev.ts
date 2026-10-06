@@ -1,4 +1,4 @@
-import { isViteHubDevSecretEqual } from "@vite-hub/internal/dev-endpoint"
+import { isViteHubSecretEqual } from "@vite-hub/internal/secret"
 import { readViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 
 import { scheduleDevTokenNamespace, scheduleDevTokenServerHeader } from "../dev.ts"
@@ -10,6 +10,6 @@ export async function handleScheduleDevRequest(request: Request, options: { root
     const serverId = request.headers.get(scheduleDevTokenServerHeader)
     const token = request.headers.get(viteHubDevTokenHeader)
     if (!options.serverId || serverId !== options.serverId || !token) return false
-    return isViteHubDevSecretEqual(token, await readViteHubDevToken(options.rootDir ?? process.cwd(), { namespace: scheduleDevTokenNamespace, serverId }))
+    return isViteHubSecretEqual(token, await readViteHubDevToken(options.rootDir ?? process.cwd(), { namespace: scheduleDevTokenNamespace, serverId }))
   } })
 }

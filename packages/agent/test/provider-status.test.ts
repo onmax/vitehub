@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import * as childProcess from "node:child_process"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
@@ -101,6 +101,59 @@ describe("provider inspection", () => {
     const result = await inspectAgentProvider({ provider: "codex" }, context())
     expect(result.readiness).toBe(readiness)
     expect(JSON.stringify(result)).not.toContain("secret diagnostic")
+  })
+
+  it("reports the provider message when the status check fails", async () => {
+    inspectProvider.mockResolvedValue({ ...ready(), status: "error", message: "Codex App Server process exited with code 1" })
+    expect(await inspectAgentProvider({ provider: "codex" }, context())).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed: Codex App Server process exited with code 1",
+    })
+    inspectProvider.mockResolvedValue({ ...ready(), status: "error", message: undefined })
+    expect(await inspectAgentProvider({ provider: "codex" }, context())).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed.",
+    })
+  })
+
+  it("adds the redacted launcher stderr when the status check fails", async () => {
+    const secret = "probe-secret-value"
+    inspectProvider.mockImplementation(async options => {
+      const launched = spawnSync(options.settings.binaryPath, [], { encoding: "utf8", env: options.environment })
+      expect(launched.status).toBe(1)
+      return { ...ready(), status: "error", message: "Codex App Server process exited with code 1" }
+    })
+    const result = await inspectAgentProvider({
+      provider: "codex",
+      env: { RUNNER_SECRET: secret },
+      launch: { command: "sh", args: ["-c", 'echo "CODEX_HOME does not exist value=$RUNNER_SECRET" >&2; exit 1'] },
+      // The failed launch also prevents the requirement check. The launch failure is the more useful reason.
+      requirements: ["sh"],
+    }, context())
+    expect(result).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed: Codex App Server process exited with code 1 Launch stderr: CODEX_HOME does not exist value=[REDACTED]",
+    })
+    expect(JSON.stringify(result)).not.toContain(secret)
+  })
+
+  it("redacts runtime launch arguments from launcher stderr", async () => {
+    const runtimeSecret = "runtime-launch-secret"
+    inspectProvider.mockImplementation(async options => {
+      const launched = spawnSync(options.settings.binaryPath, ["--api-key", runtimeSecret], { encoding: "utf8", env: options.environment })
+      expect(launched.status).toBe(1)
+      return { ...ready(), status: "error", message: "Codex App Server process exited with code 1" }
+    })
+    const result = await inspectAgentProvider({
+      provider: "codex",
+      providerSettings: { launchArgs: `--api-key ${runtimeSecret}` },
+      launch: { command: "sh", args: ["-c", 'echo "runtime args: $*" >&2; exit 1'] },
+    }, context())
+    expect(result).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed: Codex App Server process exited with code 1 Launch stderr: runtime args: [REDACTED]",
+    })
+    expect(JSON.stringify(result)).not.toContain(runtimeSecret)
   })
 
   it("reports Driver commands that are missing where the Driver runs", async () => {
@@ -251,6 +304,18 @@ process.exit(result.status ?? 1)
       return { ...ready(), status: "error" }
     })
     const status = await inspectAgentProvider({ provider: "codex", env: { DRIVER_SECRET: secret }, launch, requirements: ["sh"] }, context())
+    expect(status.readiness).toBe("unavailable")
+    expect(JSON.stringify(status)).not.toContain(secret)
+  })
+
+  it("redacts values embedded in custom launch arguments", async () => {
+    const secret = "bare-private-launch-argument"
+    const launch = { command: process.execPath, args: ["-e", "process.stderr.write(process.argv.at(-1));process.exit(1)", "--", secret] }
+    inspectProvider.mockImplementation(async options => {
+      expect(() => execFileSync(options.settings.binaryPath, [], { env: options.environment, stdio: "pipe" })).toThrow()
+      return { ...ready(), status: "error" }
+    })
+    const status = await inspectAgentProvider({ provider: "codex", launch }, context())
     expect(status.readiness).toBe("unavailable")
     expect(JSON.stringify(status)).not.toContain(secret)
   })

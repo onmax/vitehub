@@ -51,6 +51,7 @@ export const consoleIcons: readonly string[] = [
   "lucide:layers-3",
   "lucide:lightbulb",
   "lucide:link",
+  "lucide:list",
   "lucide:list-tree",
   "lucide:loader-circle",
   "lucide:log-out",

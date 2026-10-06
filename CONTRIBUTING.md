@@ -109,6 +109,8 @@ Treat a downstream workaround as evidence of a ViteHub gap unless it is product-
 
 Every runtime feature must be inspectable through code or CLI. This includes generated state, bindings, discovered definitions, and provider output. A dashboard can help, but it must not be the only inspection path.
 
+A check that guards a sensitive action returns a grant, and the action requires that grant. Define grants with the [runtime grant helper](packages/runtime/README.md#grants). Grants are request-scoped. Never persist a grant. `test/grant-contract.test.ts` fails on known shapes that skip this rule.
+
 Familiar interfaces such as filesystems, tools, and shells are useful. Keep their contracts honest. State durability, isolation, security, persistence, cost, and production readiness explicitly.
 
 Keep changes small. Use existing code or a suitable library before building infrastructure. Prefer inferred types that make invalid states hard to represent. Avoid cast-only wrappers. Comments should explain use or a non-obvious constraint. Measure before and after when claiming a performance improvement.
