@@ -31,6 +31,8 @@ describe("ViteHub CLI config loading", () => {
     "export default { vitehub: { agent: { cli: false } } }\n",
     "import { vitehub } from 'vite-hub'\nexport default { plugins: [vitehub({ agent: false })] }\n",
     "import { vitehub } from 'vite-hub'\nexport default { plugins: [vitehub({ agent: { cli: false } })] }\n",
+    "import { vitehub as hub } from 'vite-hub'\nexport default { plugins: [hub({ agent: false })] }\n",
+    "import { vitehub as hub } from 'vite-hub'\nexport default { plugins: [hub({ agent: { cli: false } })] }\n",
   ])("honors an Agent CLI opt-out without evaluating config", async source => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
     roots.push(root)
@@ -55,6 +57,16 @@ describe("ViteHub CLI config loading", () => {
     await writeFile(join(root, "vite.config.ts"), `
       const plugin = (options: unknown) => options
       export default { plugins: [plugin({ agent: false })] }
+    `, "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(true)
+  })
+
+  it("does not treat an unrelated local vitehub function as the ViteHub plugin", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), `
+      const vitehub = (options: unknown) => options
+      export default { plugins: [vitehub({ agent: false })] }
     `, "utf8")
     await expect(isAgentCliEnabled(root)).resolves.toBe(true)
   })

@@ -21,8 +21,17 @@ function matchingBrace(source: string, open: number): number {
 
 function hasAgentOptOut(source: string): boolean {
   const clean = stripCommentsAndStrings(source)
+  const pluginNames = new Set<string>()
+  for (const match of source.matchAll(/\bimport\s*\{([\s\S]*?)\}\s*from\s*["']vite-hub["']/gu)) {
+    for (const specifier of match[1].split(",")) {
+      const parts = specifier.trim().split(/\s+as\s+/u)
+      if (parts[0] === "vitehub") pluginNames.add(parts[1] || parts[0])
+    }
+  }
   const starts: number[] = []
-  for (const match of clean.matchAll(/\bvitehub\s*:\s*\{|\bvitehub\s*\(\s*\{/gu)) {
+  for (const match of clean.matchAll(/\bvitehub\s*:\s*\{|\b([A-Za-z_$][\w$]*)\s*\(\s*\{/gu)) {
+    const token = match[0]
+    if (token.includes("(") && !pluginNames.has(match[1])) continue
     starts.push(match.index! + match[0].lastIndexOf("{"))
   }
   return starts.some(open => {
