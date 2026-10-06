@@ -4,6 +4,12 @@ import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-la
 import { stubLanding } from "../app/data/primitive-landings/stub";
 
 describe("primitive landing routes", () => {
+  it("offers only supported Connections hosts in badges and project tabs", () => {
+    const landing = getPrimitiveLanding("connections");
+    expect(landing?.supported).toEqual(["Vite", "Nitro"]);
+    expect(landing?.variants.map((variant) => variant.framework)).toEqual(["vite", "nitro"]);
+  });
+
   it("resolves registered primitives", () => {
     for (const landing of Object.values(primitiveLandings)) {
       expect(getPrimitiveLanding(landing.slug)).toBe(landing);
