@@ -66,7 +66,7 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({ resolveInstalle
 import { appendLatestFinalText } from "../src/agent-output.ts"
 import { createProviderAgentAdapter, localWorkspaceHost } from "../src/provider-agent.ts"
 import { cliproxy, defineGateway, vercel } from "../src/gateways.ts"
-import { markTrustedWorkspaceAccessScope } from "../src/access-runtime.ts"
+import { grantWorkspaceAccessScope } from "../src/access-runtime.ts"
 import { codexDriver, defineAgent, runAgent } from "../src/index.ts"
 import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "../src/internal/agent-invocation-control.ts"
@@ -4988,9 +4988,8 @@ cli_auth_credentials_store = "keyring"
         },
       },
     })
-    runContext.context.set("access", { workspaceScope: { all: false, paths: selectedPaths } })
-    // SAFETY: This fixture supplies the trusted access context expected by the helper.
-    markTrustedWorkspaceAccessScope(runContext.context as never)
+    // SAFETY: This fixture supplies the invocation context store expected by the helper.
+    grantWorkspaceAccessScope(runContext.context as never, { all: false, paths: selectedPaths, role: "viewer", scope: "docs", sources: [] })
     // SAFETY: This fixture supplies the complete provider generation context.
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
 
@@ -5026,9 +5025,8 @@ cli_auth_credentials_store = "keyring"
       workspaceDefinition: { name: "docs" },
       workspaceMaterializationPaths: ["docs/a.md", "docs/b.md"],
     })
-    runContext.context.set("access", { workspaceScope: { all: false, paths: ["docs/a.md", "docs/b.md"] } })
-    // SAFETY: This test fixture supplies the trusted access context expected by the helper.
-    markTrustedWorkspaceAccessScope(runContext.context as never)
+    // SAFETY: This test fixture supplies the invocation context store expected by the helper.
+    grantWorkspaceAccessScope(runContext.context as never, { all: false, paths: ["docs/a.md", "docs/b.md"], role: "viewer", scope: "docs", sources: [] })
 
     // SAFETY: This test fixture supplies the complete provider generation context.
     const generation = createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
@@ -5039,6 +5037,30 @@ cli_auth_credentials_store = "keyring"
     releaseActive()
     await expect(generation).rejects.toThrow("Canceled")
     expect(activeSettled).toBe(true)
+  })
+
+  it("uses the granted access scope when the access context value is overwritten", async () => {
+    const threadId = "thread-workspace-forged-access-scope"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async () => ({ code: 0, stderr: "", stdout: "" })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const materializeSources = vi.fn(async (_options: { path: string }) => ({ bytes: 0, directories: 0, durationMs: 0, files: 0, path: "", sources: [] }))
+    const workspace = { fs: {}, materializeSources, startSession: vi.fn(async (_options: { paths?: readonly string[] }) => session), tools: {} }
+    const runContext = context(threadId, { workspace, workspaceDefinition: { name: "docs" } })
+    // SAFETY: This test fixture supplies the invocation context store expected by the helper.
+    grantWorkspaceAccessScope(runContext.context as never, { all: false, paths: ["docs/a.md"], role: "viewer", scope: "docs", sources: [] })
+    runContext.context.set("access", { workspaceScope: { all: true, paths: ["docs/a.md", "secrets/key.md"], role: "admin", scope: "all", sources: [] } })
+
+    // SAFETY: This test fixture supplies the complete provider generation context.
+    await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
+
+    expect(materializeSources.mock.calls.map(([options]) => options.path)).toEqual(["docs/a.md"])
+    expect(workspace.startSession).toHaveBeenCalledWith(expect.objectContaining({ paths: ["docs/a.md"] }))
   })
 
   it("keeps session materialization enabled after selected Source errors", async () => {

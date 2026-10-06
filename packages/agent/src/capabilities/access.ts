@@ -1,4 +1,4 @@
-import { isTrustedSourceFreeInspection, markTrustedWorkspaceAccessScope, markTrustedWorkspaceSourceResolutionDefinition, registerWorkspaceAccessWrapper, workspaceOverrideSymbol } from "../access-runtime.ts"
+import { isTrustedSourceFreeInspection, grantWorkspaceAccessScope, markTrustedWorkspaceSourceResolutionDefinition, registerWorkspaceAccessWrapper, workspaceOverrideSymbol } from "../access-runtime.ts"
 import { defineCapability } from "../capability-runtime.ts"
 import { agentInvocationSourceContext } from "../invocation-context.ts"
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
@@ -427,16 +427,7 @@ export function access(options: AccessCapabilityOptions): AgentCapabilityDefinit
         // SAFETY: Access scope normalization establishes the asserted Workspace facade contract.
         : createScopedWorkspaceFacade(workspaceForScope as ReadonlyWorkspaceFacade<WorkspaceName>, finalScope, workspaceRuntime)
       const modelSafeWorkspace = createModelSafeWorkspaceFacade(scopedWorkspace as ReadonlyWorkspaceFacade<WorkspaceName>, workspaceRuntime)
-      context.context.set("access", {
-        workspaceScope: {
-          all: finalScope.all,
-          paths: finalScope.paths,
-          role: finalScope.role,
-          scope: finalScope.scope,
-          sources: finalScope.sources,
-        },
-      })
-      markTrustedWorkspaceAccessScope(context.context)
+      grantWorkspaceAccessScope(context.context, finalScope)
       registerWorkspaceAccessWrapper(context.context, workspace => createModelSafeWorkspaceFacade(workspace, workspaceRuntime))
       if (sourceResolution.definition && sourceResolution.definition !== context.workspaceDefinition) {
         context.context.set("workspace.sourceResolution.definition", sourceResolution.definition)
