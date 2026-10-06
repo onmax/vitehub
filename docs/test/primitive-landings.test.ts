@@ -80,6 +80,23 @@ describe("primitive landing placeholders", () => {
   });
 });
 
+describe("Agents landing", () => {
+  it("provides real Agent definitions and enables the host integration in every tab", () => {
+    const landing = getPrimitiveLanding("agents")!;
+    expect(landing.variants.map((variant) => variant.framework)).toEqual(["vite", "nitro", "nuxt"]);
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).not.toBe(true);
+      const agent = variant.files.find((file) => file.path === "server/agents/greeting.ts")!;
+      expect(agent.content).toContain('import { defineAgent } from "vite-hub/agent"');
+      expect(agent.content).toContain("run({ prompt })");
+      const config = variant.files.find((file) => file.path.endsWith(".config.ts"))!;
+      expect(config.content).toContain('preset: "node", agent: true');
+      expect(variant.files.map((file) => file.content).join("\n")).not.toMatch(/definePrimitive|vite-hub\/agents|vite-hub\/vite/);
+      expect(variant.files.some((file) => file.path.includes("agentss"))).toBe(false);
+    }
+  });
+});
+
 describe("Sandbox landing projects", () => {
   it("supplies package handlers, callers, and configured hosts", () => {
     const landing = getPrimitiveLanding("sandbox")!;
