@@ -213,13 +213,16 @@ const newChatTargetName = computed(() =>
 const selectedAgentLabel = computed(
   () => selectedAgentName.value || (agentsLoading.value ? "Loading agents" : "Agents"),
 );
-const agentMenuItems = computed<DropdownMenuItem[]>(() =>
-  agentNames.value.map((name) => ({
+// Checkbox items render the selected Agent's check mark and expose it as `aria-checked`.
+const agentMenuItems = computed<DropdownMenuItem[]>(() => [
+  { type: "label", label: "Agents" },
+  ...agentNames.value.map((name): DropdownMenuItem => ({
+    type: "checkbox",
     label: name,
+    checked: selectedAgentName.value === name,
     onSelect: () => selectAgent(name),
-    trailingIcon: selectedAgentName.value === name ? "i-ph-check-light" : undefined,
   })),
-);
+]);
 const activeFilterCount = computed(() => Number(Boolean(selectedCapabilityId.value)) + Number(Boolean(selectedTriggeredBy.value)));
 const capabilityOptions = computed(() => capabilityIds.value.map(id => ({ label: capabilityLabel(id), value: id })));
 const routeInvocation = computed(() => {
@@ -938,7 +941,7 @@ onBeforeUnmount(() => {
         root: 'md:flex',
         header: 'p-0',
         body: 'gap-0 overflow-hidden p-0',
-        footer: 'px-2 py-1.5',
+        footer: 'shrink-0 border-t border-default px-2 py-1.5',
         content: 'md:hidden w-[calc(100vw-0.75rem)] max-w-none',
         overlay: 'md:hidden',
       }"
@@ -989,7 +992,6 @@ onBeforeUnmount(() => {
             block
             class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
             label="Search"
-            :ui="{ trailing: 'vitehub-console__search-shortcut' }"
           />
           <UTooltip v-if="newChatTargetName" text="New chat">
             <UButton
@@ -1005,7 +1007,7 @@ onBeforeUnmount(() => {
           <UPopover
             v-model:open="filterOpen"
             :content="{ align: 'start', collisionPadding: 12 }"
-            :ui="{ content: 'w-80 max-w-[calc(100vw-1.5rem)] p-3' }"
+            :ui="{ content: 'w-80 max-w-[calc(100vw-1.5rem)] p-0' }"
           >
             <UButton
               aria-label="Filter sessions"
@@ -1016,13 +1018,21 @@ onBeforeUnmount(() => {
               :variant="activeFilterCount ? 'soft' : 'ghost'"
             />
             <template #content>
-              <div class="grid gap-3">
-                <div class="flex items-start justify-between gap-3">
-                  <div>
-                    <p class="text-sm font-medium">Filter sessions</p>
-                  </div>
-                  <UBadge v-if="activeFilterCount" color="primary" size="sm" variant="subtle">{{ activeFilterCount }}</UBadge>
-                </div>
+              <div class="flex items-center gap-2 border-b border-default px-3 py-2">
+                <UIcon name="i-ph-funnel-light" class="size-4 shrink-0 text-muted" />
+                <p class="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-[.08em] text-muted">
+                  Filter sessions
+                </p>
+                <UBadge
+                  v-if="activeFilterCount"
+                  class="font-mono tabular-nums"
+                  color="primary"
+                  size="sm"
+                  variant="subtle"
+                  >{{ activeFilterCount }}</UBadge
+                >
+              </div>
+              <div class="grid gap-3 p-3">
                 <div
                   v-if="capabilitiesLoading"
                   class="grid gap-2 py-1"
@@ -1067,16 +1077,16 @@ onBeforeUnmount(() => {
                     No filter values recorded yet.
                   </p>
                 </template>
-                <div class="flex justify-end border-t border-default pt-2">
-                  <UButton
-                    color="neutral"
-                    label="Reset"
-                    size="xs"
-                    variant="ghost"
-                    :disabled="!activeFilterCount"
-                    @click="resetSessionFilters"
-                  />
-                </div>
+              </div>
+              <div class="flex justify-end border-t border-default px-2 py-1.5">
+                <UButton
+                  color="neutral"
+                  label="Reset"
+                  size="xs"
+                  variant="ghost"
+                  :disabled="!activeFilterCount"
+                  @click="resetSessionFilters"
+                />
               </div>
             </template>
           </UPopover>
@@ -1539,10 +1549,6 @@ onBeforeUnmount(() => {
 
 .vitehub-console__search {
   border: 0;
-}
-
-.vitehub-console__search-shortcut {
-  display: none;
 }
 
 .vitehub-console__sessions .vh-invocation-list__item[aria-current="true"] {
