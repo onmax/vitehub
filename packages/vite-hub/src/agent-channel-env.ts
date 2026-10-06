@@ -40,7 +40,9 @@ export function agentChannelEnvPlugin(): Plugin {
           const group: EnvRuntimeConfigOptions = { ...existing }
           for (const [field, { names, required, secret }] of Object.entries(fields)) {
             if (group[field] !== undefined) continue
-            group[field] = env({ optional: !required, secret, source: env.source(names, { skipEmpty: true }) })
+            // Built-in Channels read their documented vendor names directly. Canonical
+            // aliases will be added by the gateway stack when that support lands.
+            group[field] = env({ optional: !required, secret, source: env.source(names, { canonical: false, skipEmpty: true }) })
             changed = true
           }
           server[channel] = group

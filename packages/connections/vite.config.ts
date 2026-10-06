@@ -4,7 +4,7 @@ export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
     deps: {
-      alwaysBundle: [/^@vite-hub\/internal/],
+      alwaysBundle: [/^@vite-hub\/internal/, /^@vite-hub\/env\/internal\//],
       neverBundle: ["#vitehub/connections/registry", "vite"],
       onlyBundle: false,
     },

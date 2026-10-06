@@ -100,7 +100,7 @@ An expired unresolved lease blocks every token revision. A replacement token can
 
 Custom stores must implement atomic `refreshLeases.claim()` and owner-fenced `refreshLeases.release()`. The name remains for compatibility, but the lease covers all token mutations. `claim()` returns `acquired`, `busy`, or `expired`; it must never replace an expired unresolved lease, even when the token revision changed. A lost refresh response or failed token write requires reconnecting rather than reusing the old grant. An unconfirmed callback exchange or revoke keeps its lease until the provider outcome is confirmed and the store is repaired. A successful callback exchange stays fenced through account extraction and token/state persistence. Failures during those steps quarantine the current token revision as `reauth_required`.
 
-A custom Connections store must supply the token revision as the second `bridge.use()` callback argument. Revocation requires a provider `revocationEndpoint` and uses that revision to replace the token with a revoked marker. A provider without that endpoint rejects revocation and keeps the stored grant. The default Env Bridge supplies it.
+A custom Connections store must supply the token revision as the second `bridge.use()` callback argument. Revocation requires a provider `revocationEndpoint` and uses that revision to replace the token with a revoked marker. A provider without that endpoint rejects revocation and keeps the stored grant. The default Env Bridge supplies it. Connections has no standing administrator access to its bridge. For each call, Env gives it a context for one Connection token and one permission.
 
 ## Vite integration
 

@@ -1,3 +1,4 @@
+import { getActiveCloudflareBinding } from "@vite-hub/internal/runtime/cloudflare-env"
 import { createStorage } from "unstorage"
 import createDriver from "unstorage/drivers/cloudflare-kv-binding"
 import { normalizeKVListPrefix } from "./list-prefix.ts"
@@ -14,8 +15,15 @@ interface CloudflareKVNamespace {
 }
 
 function createCloudflareDriver(options: Record<string, unknown>): KVRuntimeDriver {
+  const bindingName = options.binding
+  // unstorage reads `binding` on every operation and finds a binding name only on globals.
+  // Resolve it from the active Cloudflare env first, because ViteHub workers scope env per request without the global `__env__`.
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The resolved store config crosses an untyped driver boundary.
+  const driverOptions = typeof bindingName === "string"
+    ? { ...options, get binding() { return getActiveCloudflareBinding<CloudflareKVNamespace>(bindingName) ?? bindingName } }
+    : options
   // SAFETY: The unstorage Cloudflare driver exposes getInstance and this adapter installs listKeys before returning.
-  const driver = createDriver(options) as KVRuntimeDriver & { getInstance: () => CloudflareKVNamespace }
+  const driver = createDriver(driverOptions) as KVRuntimeDriver & { getInstance: () => CloudflareKVNamespace }
   driver.listKeys = async ({ cursor, limit, prefix = "" }: KVListOptions): Promise<KVListPage> => {
     const listOptions: { cursor?: string; limit: number; prefix?: string } = { limit }
     if (cursor) listOptions.cursor = cursor
