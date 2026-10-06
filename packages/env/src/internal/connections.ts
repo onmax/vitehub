@@ -25,6 +25,7 @@ export function connectionEnvAccess(
 
 /** Return the actor of a context that Env created. Other values fail with `ENV_BRIDGE_UNTRUSTED`. */
 export function envAccessActor(context: EnvAccessContext): EnvActor {
-  envAccessAuthority(context);
+  const authority = envAccessAuthority(context);
+  if (authority.kind !== "agent") throw envBridgeError("untrusted");
   return { id: context.actor.id, kind: context.actor.kind };
 }
