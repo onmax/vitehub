@@ -393,6 +393,33 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.findAll(".vh-invocation-list__title").map(title => title.text())).toEqual(items.map(item => item.title));
   });
 
+  it("groups sessions by recency in local calendar days when asked", () => {
+    const now = new Date(2026, 9, 6, 10, 0).getTime();
+    const at = (day: number, hour = 12) => new Date(2026, 9, day, hour).toISOString();
+    const items = [
+      { id: "old", status: "completed" as const, title: "Old", updatedAt: new Date(2026, 8, 28, 23).toISOString() },
+      { id: "today-late", status: "running" as const, title: "Today late", startedAt: at(5), updatedAt: at(6, 9) },
+      { id: "yesterday", status: "failed" as const, title: "Yesterday", updatedAt: at(5, 0) },
+      { id: "week", status: "completed" as const, title: "Week", updatedAt: at(2) },
+      { id: "undated", status: "pending" as const, title: "Undated" },
+      { id: "today-early", status: "completed" as const, title: "Today early", updatedAt: at(6, 0) },
+    ];
+    const wrapper = mount(AgentInvocationList, { props: { groupBy: "recency", items, now, selectedId: "week" } });
+    const groups = wrapper.findAll(".vh-invocation-list__group");
+    expect(groups.map(group => group.get("h3").text())).toEqual(["Today", "Yesterday", "Previous 7 days", "Older"]);
+    expect(groups.map(group => group.findAll(".vh-invocation-list__item").map(row => row.attributes("data-invocation-id"))))
+      .toEqual([["today-late", "today-early"], ["yesterday"], ["week"], ["old", "undated"]]);
+    expect(wrapper.get('[data-invocation-id="week"]').attributes("aria-current")).toBe("true");
+  });
+
+  it("stays flat when recency grouping has no clock", () => {
+    const wrapper = mount(AgentInvocationList, {
+      props: { groupBy: "recency", items: [{ id: "one", status: "completed", title: "One", updatedAt: "2026-10-06T00:00:00Z" }] },
+    });
+    expect(wrapper.find(".vh-invocation-list__group").exists()).toBe(false);
+    expect(wrapper.findAll(".vh-invocation-list__item")).toHaveLength(1);
+  });
+
   it("keeps completed status accessible and shows only the project line above the title", () => {
     const wrapper = mount(AgentInvocationList, {
       props: {
