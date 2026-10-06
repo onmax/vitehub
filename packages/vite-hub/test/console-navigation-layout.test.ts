@@ -93,11 +93,18 @@ describe("shared Console navigation layout", () => {
     for (const section of databaseSections) expect(enabled).toContain(section)
   })
 
-  it("marks the selected Agent with a checkbox menu item", () => {
+  it("lists Agents in the Agents panel and marks the selected Agent", () => {
     const app = component("console-app")
-    // Nuxt UI dropdown items ignore `trailingIcon`, so the selected Agent showed no check mark.
-    expect(app).not.toMatch(/agentMenuItems[\s\S]*?trailingIcon/)
-    expect(app).toMatch(/type: "checkbox",\s*label: name,\s*checked: selectedAgentName\.value === name/)
+    expect(app).toMatch(/class="vitehub-console__panel-title[^"]*">\s*<span class="min-w-0 flex-1 truncate">Agents<\/span>/)
+    expect(app).not.toContain("<UDropdownMenu")
+    expect(app).not.toContain("<UDashboardSearchButton")
+    expect(app).toContain('aria-label="Filter sessions"')
+    expect(app).toContain('<section v-if="hasMultipleAgents" class="vitehub-console__agents')
+    // The selected row exposes its state to assistive technology, not only through color.
+    expect(app).toMatch(/v-for="name in agentRows\.visible"[\s\S]*?:aria-current="name === selectedAgentName \? 'true' : undefined"[\s\S]*?@click="selectAgent\(name\)"/)
+    expect(app).toContain("Show {{ agentRows.hidden }} more")
+    expect(app).toMatch(/<span>Sessions<\/span>\s*<span v-if="selectedAgentName"/)
+    expect(app).toContain('group-by="recency"')
   })
 
   it("generates the Tailwind classes that the Console app config declares", () => {

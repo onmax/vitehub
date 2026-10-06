@@ -571,8 +571,10 @@ describe("framework package contract", () => {
     expect(consolePage).toContain("list.loadMoreError.value");
     expect(consolePage).toContain("Retry loading older sessions");
     expect(consolePage).toContain('@click="list.loadMore"');
-    expect(consolePage).toContain("Switch Agent");
-    expect(consolePage).toContain("agentMenuItems");
+    expect(consolePage).toContain('import {\n  readConsoleAgentListOpen,');
+    expect(consolePage).toContain('aria-controls="vitehub-console-agent-list"');
+    expect(consolePage).toContain('group-by="recency"');
+    expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-agent-list.ts`)).toBe(true);
     expect(consolePage).toContain("invocation.agentName !== selectedAgentName.value");
     expect(consolePage).toContain("invocation.agentName === agentName");
     expect(consolePage).toContain(
