@@ -43,8 +43,26 @@
   color: var(--ui-text) !important;
 }
 
+/* The shortcut stays visible as quiet monospace text, not as key caps. */
 .vitehub-console .vitehub-console__search [data-slot="trailing"] {
-  display: none;
+  gap: 0;
+  opacity: 1;
+}
+
+.vitehub-console .vitehub-console__search [data-slot="trailing"] kbd {
+  background: transparent;
+  box-shadow: none;
+  color: var(--ui-text-dimmed);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.6875rem;
+  min-width: 0;
+  padding-inline: 0.0625rem;
+  transition: color 150ms ease;
+}
+
+.vitehub-console .vitehub-console__search:hover [data-slot="trailing"] kbd,
+.vitehub-console .vitehub-console__search:focus-visible [data-slot="trailing"] kbd {
+  color: var(--ui-text-muted);
 }
 
 .vitehub-console__nav-item[aria-current="page"] {
