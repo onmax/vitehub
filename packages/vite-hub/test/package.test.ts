@@ -88,6 +88,7 @@ const consolidatedOwnerExports = new Set(["@vite-hub/blob/ensure", "@vite-hub/wo
 const lowLevelOwnerExports = new Set([
   "@vite-hub/agent/ai-sdk",
   "@vite-hub/agent/cloudflare/state",
+  "@vite-hub/agent/env-identity",
   "@vite-hub/agent/eve",
   "@vite-hub/agent/mcp/stdio",
   "@vite-hub/agent/messages",

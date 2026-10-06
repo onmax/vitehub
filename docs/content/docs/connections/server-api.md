@@ -51,7 +51,7 @@ Options:
 | Option | Default | Description |
 | --- | --- | --- |
 | `event` | None | The request event. The route becomes the actor, for example `GET /api/labels`. |
-| `actor` | Route from `event`, else `{ id: 'server', kind: 'service' }` | The actor for access rules and activity. |
+| `actor` | Route from `event`, else `{ id: 'server', kind: 'service' }` | The actor for access rules and activity. An `agent:` actor fails with `CONNECTION_INVALID`: Agent actors come only from the ViteHub Agent runtime, through the Connection capabilities of the Agent. |
 | `dryRun` | `false` | Write Operations return `{ skipped: 'dry-run', operation }` and do not call the provider. `fetch` returns `204` with the `x-vitehub-connection-skipped` header. |
 | `audit` | `'changes'` | `'changes'` records writes, denials, skipped calls, and failures. `'all'` also records reads. |
 | `signal` | None | Cancels token refresh, refresh-lease waits, and the Operation request, including its response body. |

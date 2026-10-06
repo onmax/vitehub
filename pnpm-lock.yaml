@@ -735,6 +735,9 @@ importers:
       '@vite-hub/email':
         specifier: workspace:*
         version: link:../email
+      '@vite-hub/env':
+        specifier: workspace:*
+        version: link:../env
       '@vite-hub/markdown-template':
         specifier: workspace:*
         version: link:../markdown-template
@@ -799,6 +802,9 @@ importers:
       '@vercel/functions':
         specifier: catalog:vercel
         version: 3.9.11(@aws-sdk/credential-provider-web-identity@3.972.78)(ws@8.22.0)
+      '@vite-hub/connections':
+        specifier: workspace:*
+        version: link:../connections
       '@vite-hub/internal':
         specifier: workspace:*
         version: link:../internal
@@ -1413,6 +1419,9 @@ importers:
 
   packages/env:
     dependencies:
+      '@vite-hub/agent':
+        specifier: ^0.0.4
+        version: link:../agent
       '@vite-hub/runtime':
         specifier: workspace:*
         version: link:../runtime
