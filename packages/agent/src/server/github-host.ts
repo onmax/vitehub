@@ -774,7 +774,10 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["check-ref-format", `refs/heads/${pullRequest.headRef}`], commandOptions)
         if (pullRequest.headRef.startsWith("-")) throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef cannot start with a dash." })
       }
-      await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
+      // Provider workspaces must be self-contained. A blobless partial clone
+      // defers file objects to a lazy network fetch, which is unavailable to
+      // isolated agent runs when they inspect a full PR diff.
+      await exec("git", ["clone", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
       if (pullRequest.headRef) {
         // Fetch the source branch: GitHub's synthetic pull refs can lag a push.
         const sourceRepository = pullRequest.headRepository ?? pullRequest.repository
