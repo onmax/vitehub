@@ -17,6 +17,7 @@ export interface BuiltInEnvField {
 /** The host context that selects Cloudflare bindings when they exist. */
 export interface BuiltInEnvContext {
   cloudflare?: { env?: Record<string, unknown> }
+  abortSignal?: AbortSignal
 }
 
 const serverEnvModuleId = "#vitehub/env/server"
@@ -26,11 +27,12 @@ function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
 }
 
 interface ServerEnvModule {
-  loadServerEnv?: (event?: unknown) => Promise<unknown>
+  loadServerEnv?: (event?: unknown, options?: { signal?: AbortSignal }) => Promise<unknown>
   useServerEnv?: (event?: unknown) => unknown
 }
 
 let serverEnvModule: Promise<ServerEnvModule | undefined> | undefined
+const loadedServerEnv = new WeakMap<object, Promise<Record<PropertyKey, unknown> | undefined>>()
 
 // Without hubEnv() the generated module does not resolve. Other import failures, such as a
 // provider module that throws while it loads, are configuration errors and stay visible.
@@ -102,7 +104,12 @@ export async function readBuiltInEnv(
         // Provider-backed values need the asynchronous snapshot.
         if (getViteHubErrorShape(error)?.code !== "ENV_ASYNC_REQUIRED" || !module?.loadServerEnv) throw error
         const loadServerEnv = module.loadServerEnv
-        loaded ??= loadServerEnv(event).then(env => envGroup(env, group))
+        loaded ??= loadedServerEnv.get(context)?.then(env => envGroup(env, group))
+        if (!loaded) {
+          const snapshot = loadServerEnv(event, { signal: context.abortSignal })
+          loadedServerEnv.set(context, snapshot.then(env => isRecord(env) ? env : undefined))
+          loaded = snapshot.then(env => envGroup(env, group))
+        }
         values[field] = (await loaded)?.[field]
       }
       continue
@@ -115,4 +122,3 @@ export async function readBuiltInEnv(
   }
   return values
 }
-
