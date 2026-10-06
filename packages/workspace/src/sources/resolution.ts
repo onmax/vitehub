@@ -12,7 +12,7 @@ import { prepareWorkspaceSource } from "./preparation.ts"
 import { markLiveWorkspaceSource } from "./live.ts"
 import { attachWorkspaceSourceRequestExecution, createWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "./request-execution.ts"
 import { resolveWorkspacePath } from "./resolver.ts"
-import { createWorkspaceSourceView } from "./view.ts"
+import { createWorkspaceSourceView, type WorkspaceSourceWriteGrant } from "./view.ts"
 
 import type {
   ReadonlyWorkspaceFacade,
@@ -25,7 +25,10 @@ import type {
 import type {
   GlobOptions,
   ListOptions,
+  MkdirOptions,
+  RmOptions,
   Workspace,
+  WorkspaceContent,
   WorkspaceDefinition,
   WorkspaceEntry,
   WorkspaceFile,
@@ -35,6 +38,7 @@ import type {
   WorkspaceStore,
   WorkspaceSession,
   WorkspaceSessionOptions,
+  WorkspaceSessionWriteFileOptions,
   WorkspaceWriteInput,
   WorkspaceSelectedScope,
   WorkspaceSource,
@@ -42,6 +46,7 @@ import type {
   WorkspaceSourceResolutionContext,
   WorkspaceSourceResolutionInvocation,
   WorkspaceSourceResolver,
+  WriteFileOptions,
 } from "../core/types.ts"
 
 export interface WorkspaceSourceResolutionOptions {
@@ -420,12 +425,20 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       }
     }
 
+    // Every base write needs a Source write grant for its exact path.
+    // SAFETY: Write paths are checked by the base facade at runtime; the generic facade has no statically known named Workspace paths.
+    const baseWrites = {
+      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await workspace.fs.mkdir(path as never, options)),
+      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await workspace.fs.rm(path as never, options)),
+      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await workspace.fs.writeFile(path as never, content, options)),
+    }
+
     async function writeWithPolicy<Result = void>(
       input: Omit<WorkspaceWriteInput, "previous" | "rule" | "workspace">,
-      write: (input: WorkspaceWriteInput) => Promise<Result>,
+      write: (input: WorkspaceWriteInput, grant: WorkspaceSourceWriteGrant) => Promise<Result>,
       preservePath = false,
     ) {
-      await sourceView.assertWritable(input.path)
+      const requested = await sourceView.assertWritable(input.path)
       const next = await writePolicy.before({
         ...input,
         path: normalizeWorkspacePath(input.path),
@@ -436,8 +449,9 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         if (preservePath && next.path !== normalizeWorkspacePath(input.path)) {
           throw workspaceError(`[vitehub] Workspace validator cannot rewrite preserved path: ${normalizeWorkspacePath(input.path)} -> ${next.path}.`)
         }
-        await sourceView.assertWritable(next.path)
-        const result = await write(next)
+        // A write policy can rewrite the path. A different final path needs its own grant.
+        const grant = normalizeWorkspacePath(next.path) === requested.path ? requested : await sourceView.assertWritable(next.path)
+        const result = await write(next, grant)
         await writePolicy.after(next)
         return { input: next, result }
       }
@@ -448,25 +462,32 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     }
 
     function withSessionSourceGuards(session: WorkspaceSession): WorkspaceSession {
+      const sessionWrites = {
+        mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await session.mkdir(path, options)),
+        rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await session.rm(path, options)),
+        writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WorkspaceSessionWriteFileOptions) => await session.writeFile(path, content, options)),
+      }
       return {
         ...session,
         async mkdir(path, options) {
-          await sourceView.assertWritable(path)
-          await session.mkdir(path, options)
+          await sessionWrites.mkdir(await sourceView.assertWritable(path), path, options)
         },
         async rm(path, options) {
-          await sourceView.assertWritable(path)
-          await session.rm(path, options)
+          await sessionWrites.rm(await sourceView.assertWritable(path), path, options)
         },
         async writeFile(path, content, options) {
-          await sourceView.assertWritable(path)
-          await session.writeFile(path, content, options)
+          await sessionWrites.writeFile(await sourceView.assertWritable(path), path, content, options)
         },
       }
     }
 
+    // appendFile, copyPath, and movePath write through writeWorkspace, so each write gets its own grant.
+    // The early checks below reject Source paths before any partial copy.
     const writeFs: WritableWorkspaceFacade<Name>["fs"] = attachWorkspaceSourceRequestExecution({
-      appendFile: async (path, content) => await appendWorkspaceFile(writeWorkspace, path, content),
+      appendFile: async (path, content) => {
+        await sourceView.assertWritable(path)
+        await appendWorkspaceFile(writeWorkspace, path, content)
+      },
       copyPath: async (from, to, options) => {
         await sourceView.assertWritable(to)
         await copyWorkspacePath(writeWorkspace, from, to, options?.overwrite)
@@ -478,7 +499,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         await writeWithPolicy({
           operation: "mkdir",
           path,
-        }, async input => await workspace.fs.mkdir(input.path as never, options))
+        }, async (input, grant) => await baseWrites.mkdir(grant, input.path, options))
       },
       movePath: async (from, to, options) => {
         await sourceView.assertWritable(from)
@@ -491,7 +512,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         await writeWithPolicy({
           operation: "rm",
           path,
-        }, async input => await workspace.fs.rm(input.path as never, options))
+        }, async (input, grant) => await baseWrites.rm(grant, input.path, options))
       },
       search: fs.search,
       stat: fs.stat,
@@ -502,11 +523,11 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
           metadata: options?.metadata,
           operation: "writeFile",
           path,
-        }, async (next) => {
+        }, async (next, grant) => {
           const writeOptions = options === undefined && next.mediaType === undefined && next.metadata === undefined
             ? undefined
             : { ...options, mediaType: next.mediaType, metadata: next.metadata }
-          return await workspace.fs.writeFile(next.path as never, next.content ?? content, writeOptions)
+          return await baseWrites.writeFile(grant, next.path, next.content ?? content, writeOptions)
         }, options?.preservePath)
         return result || input.path
       },
