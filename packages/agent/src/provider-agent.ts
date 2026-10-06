@@ -1273,6 +1273,7 @@ async function missingProviderCommands(
     : await check(["-c", providerRequirementScript, "sh", ...commands])
 }
 const providerStatusCacheMs = 30_000
+const providerStatusStderrMaxLength = 1_500
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
@@ -1330,6 +1331,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     })
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
+    let launchDiagnosticPath: string | undefined
     let requirementCapture: ProviderRequirementCapture | undefined
     if (options.launch !== undefined) {
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
@@ -1346,7 +1348,9 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       const providerLaunch = requirementCapture
         ? { ...launch, args: [...launch.args || [], "-c", providerRequirementPrelude, "sh", String(requirements.length), requirementCapture.prefix, ...requirements, command] }
         : launch
-      binaryPath = (await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)).path
+      const launcher = await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)
+      binaryPath = launcher.path
+      launchDiagnosticPath = launcher.diagnosticPath
     }
     const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
@@ -1358,6 +1362,15 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       provider: options.provider, environment, signal,
       settings: { ...options.providerSettings, ...(binaryPath ? { binaryPath } : {}), ...(home ? { homePath: home.homePath } : {}), ...(launchArgs ? { launchArgs } : {}) },
     })
+    // A custom launcher records the child's stderr. Without it, a failed probe reports only the exit code.
+    const launchFailure = snapshot.status === "error"
+      ? await providerLaunchFailure(launchDiagnosticPath, environment, providerSecretEnvironmentKeys(overrides, []), undefined)
+      : undefined
+    const launchStderr = launchFailure?.details?.stderr
+    const failureMessage = [
+      snapshot.message && redactProviderDiagnostic(snapshot.message, environment, providerSecretEnvironmentKeys(overrides, [])),
+      hasRuntimeType(launchStderr, "string") && launchStderr ? `Launch stderr: ${launchStderr.slice(-providerStatusStderrMaxLength)}` : undefined,
+    ].filter(Boolean).join(" ")
     if (requirementCapture) missingCommands = await capturedProviderRequirements(requirementCapture)
     const requirementsUnknown = requirements.length > 0 && missingCommands === undefined
     const authenticated = snapshot.auth.status === "unknown" ? undefined : snapshot.auth.status === "authenticated"
@@ -1369,7 +1382,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       ...(home?.scope ? { account: { id: home.scope, kind: "credential" as const } } : {}),
       checkedAt: snapshot.checkedAt, stale: false, installed: snapshot.installed, authenticated, readiness,
       ...(requirements.length && missingCommands !== undefined ? { missingCommands } : {}),
-      reason: missingCommands?.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : requirementsUnknown ? "Driver requirements could not be verified." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
+      reason: missingCommands?.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : unavailable ? `Provider status check failed${failureMessage ? `: ${failureMessage}` : "."}` : requirementsUnknown ? "Driver requirements could not be verified." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
       ...(snapshot.usageLimits ? { usageLimits: {
         checkedAt: snapshot.usageLimits.checkedAt,
         windows: snapshot.usageLimits.windows,

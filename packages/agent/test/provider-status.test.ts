@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawnSync } from "node:child_process"
 import * as childProcess from "node:child_process"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
@@ -101,6 +101,40 @@ describe("provider inspection", () => {
     const result = await inspectAgentProvider({ provider: "codex" }, context())
     expect(result.readiness).toBe(readiness)
     expect(JSON.stringify(result)).not.toContain("secret diagnostic")
+  })
+
+  it("reports the provider message when the status check fails", async () => {
+    inspectProvider.mockResolvedValue({ ...ready(), status: "error", message: "Codex App Server process exited with code 1" })
+    expect(await inspectAgentProvider({ provider: "codex" }, context())).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed: Codex App Server process exited with code 1",
+    })
+    inspectProvider.mockResolvedValue({ ...ready(), status: "error", message: undefined })
+    expect(await inspectAgentProvider({ provider: "codex" }, context())).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed.",
+    })
+  })
+
+  it("adds the redacted launcher stderr when the status check fails", async () => {
+    const secret = "probe-secret-value"
+    inspectProvider.mockImplementation(async options => {
+      const launched = spawnSync(options.settings.binaryPath, [], { encoding: "utf8", env: options.environment })
+      expect(launched.status).toBe(1)
+      return { ...ready(), status: "error", message: "Codex App Server process exited with code 1" }
+    })
+    const result = await inspectAgentProvider({
+      provider: "codex",
+      env: { RUNNER_SECRET: secret },
+      launch: { command: "sh", args: ["-c", 'echo "CODEX_HOME does not exist value=$RUNNER_SECRET" >&2; exit 1'] },
+      // The failed launch also prevents the requirement check. The launch failure is the more useful reason.
+      requirements: ["sh"],
+    }, context())
+    expect(result).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed: Codex App Server process exited with code 1 Launch stderr: CODEX_HOME does not exist value=[REDACTED]",
+    })
+    expect(JSON.stringify(result)).not.toContain(secret)
   })
 
   it("reports Driver commands that are missing where the Driver runs", async () => {
