@@ -57,7 +57,7 @@ import { isWorkflowRun } from "../http-response.ts"
 import { messageChannelStateContextKey } from "../internal/channels.ts"
 import { chatFinalReplyContextKey, chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
 import type { ChatFinalReplyMode, ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
-import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl } from "../internal/chat-approvals.ts"
+import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl, withAgentChatApprovalGrant } from "../internal/chat-approvals.ts"
 import { agentChatInvocationIdHeader } from "../internal/routes.ts"
 import { requireAtomicAgentStateQueue } from "../internal/state-queue.ts"
 import { isAmbiguousAgentWorkflowStartFailure } from "../internal/workflow-start.ts"
@@ -7291,14 +7291,9 @@ export function createChannelChatRouteHandler(
         : undefined
       if (approvalCustody) {
         const authorized = await approvalCustody.authorize(triggerInput.messages)
-        triggerInput = {
-          ...triggerInput,
-          context: {
-            ...triggerInput.context,
-            ...(authorized.approvedTools.length ? { "vitehub.eve.approvedTools": authorized.approvedTools } : {}),
-          },
-          messages: authorized.messages,
-        }
+        // The grant rides on this request's runtime context, not on the Invocation context that hooks can write.
+        context = withAgentChatApprovalGrant(context, authorized.grant)
+        triggerInput = { ...triggerInput, messages: authorized.messages }
       }
       await recordChannelDeliveryEvidence(delivery, {
         type: "accepted",
