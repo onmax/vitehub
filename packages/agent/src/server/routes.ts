@@ -1495,11 +1495,10 @@ async function deliverQueuedWebhookFailure(
       return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
     }
     if (!delivery.failure && !await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
-    // This durable claim has no expiry. A paused callback cannot be fenced by a
-    // renewable lease: once dispatched, its external effects may already exist.
+    // The dispatch marker is permanent, while queue ownership can expire.
+    // Recovery finalizes the failure without repeating a paused callback.
     if (!await state.beginWebhookFailureNotification(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
     await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
-    if (state.finishWebhookFailureNotification && !await state.finishWebhookFailureNotification(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
     return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
   }
   if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false

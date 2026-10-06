@@ -40,8 +40,6 @@ export interface AgentWebhookQueueStateAdapter extends StateAdapter {
   completeWebhookDelivery(scope: string, deliveryId: string, leaseToken: string): Promise<boolean>
   /** Claims notification permanently; uncertain callback effects must not be replayed. */
   beginWebhookFailureNotification?: (scope: string, deliveryId: string, leaseToken: string) => Promise<boolean>
-  /** Makes a settled notification recoverable for finalization without callback replay. */
-  finishWebhookFailureNotification?: (scope: string, deliveryId: string, leaseToken: string) => Promise<boolean>
   markWebhookDeliveryFailure?: (scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }) => Promise<boolean>
   enqueueWebhookDelivery(delivery: AgentWebhookQueueDelivery): Promise<boolean>
   extendWebhookDeliveryLease(scope: string, deliveryId: string, leaseToken: string, ttlMs: number): Promise<boolean>

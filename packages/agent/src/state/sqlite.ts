@@ -247,7 +247,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             candidate.concurrency_key, candidate.concurrency_limit, candidate.lease_ttl_ms, candidate.attempts
           FROM ${this.tables.webhookQueue} AS candidate
           WHERE candidate.scope = ? AND candidate.available_at <= ?
-            AND (candidate.status = 'queued' OR (candidate.status IN ('running', 'steering') AND candidate.lease_expires_at <= ?))
+            AND (candidate.status = 'queued' OR (candidate.status IN ('running', 'steering', 'notifying') AND COALESCE(candidate.lease_expires_at, 0) <= ?))
             AND (
               SELECT COUNT(*) FROM ${this.tables.webhookQueue} AS active_group
               WHERE active_group.status = 'running' AND active_group.lease_expires_at > ?
@@ -277,14 +277,14 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             SET attempts = attempts + CASE WHEN status IN ('running', 'steering') THEN 1 ELSE 0 END,
               status = 'running', lease_token = ?, lease_expires_at = ?
             WHERE scope = ? AND delivery_id = ?
-              AND (status = 'queued' OR (status IN ('running', 'steering') AND lease_expires_at <= ?))
+              AND (status = 'queued' OR (status IN ('running', 'steering', 'notifying') AND COALESCE(lease_expires_at, 0) <= ?))
             RETURNING value`,
           [leaseToken, now + leaseTtlMs, scope, candidate.delivery_id, now],
         )
         if (claimed.length === 0 || !isRuntimeString(candidate.value)) continue
         return {
           ...parseAgentWebhookQueueDelivery(candidate.value),
-          attempts: numberValue(candidate.attempts) + (candidate.status === "queued" ? 0 : 1),
+          attempts: numberValue(candidate.attempts) + (candidate.status === "running" || candidate.status === "steering" ? 1 : 0),
           leaseExpiresAt: now + leaseTtlMs,
           leaseToken,
         }
@@ -356,23 +356,14 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
       const delivery = parseAgentWebhookQueueDelivery(current[0].value)
       if (!delivery.failure || delivery.failure.notificationStarted) return []
       delivery.failure.notificationStarted = true
+      // Fence dispatch permanently, but retain the lease so finalization can
+      // recover even when no state write succeeds after the callback.
       return await execute(tx, `UPDATE ${this.tables.webhookQueue}
-        SET status = 'notifying', value = ?, lease_expires_at = NULL
+        SET status = 'notifying', value = ?
         WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
         RETURNING delivery_id`, [JSON.stringify(delivery), scope, deliveryId, leaseToken])
     }))
     return claimed.length > 0
-  }
-
-  async finishWebhookFailureNotification(scope: string, deliveryId: string, leaseToken: string): Promise<boolean> {
-    // Only a settled callback releases the permanent dispatch fence. Retain its
-    // notificationStarted marker so expired leases retry finalization, not dispatch.
-    const settled = await retrySqliteBusy(() => this.transaction(async tx => await execute(tx,
-      `UPDATE ${this.tables.webhookQueue}
-        SET status = 'running', lease_expires_at = ? + lease_ttl_ms
-        WHERE scope = ? AND delivery_id = ? AND status = 'notifying' AND lease_token = ?
-        RETURNING delivery_id`, [Date.now(), scope, deliveryId, leaseToken])))
-    return settled.length > 0
   }
 
   async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }): Promise<boolean> {

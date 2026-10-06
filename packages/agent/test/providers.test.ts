@@ -10716,12 +10716,16 @@ describe("server helpers", () => {
       clock = vi.spyOn(Date, "now").mockReturnValue(expired)
       await otherWorker.connect()
       // A separate state connection has no access to process-local callback guards.
-      await expect(otherWorker.claimWebhookDelivery(scope)).resolves.toBeNull()
+      const finalizer = (await otherWorker.claimWebhookDelivery(scope))!
+      expect(finalizer.failure?.notificationStarted).toBe(true)
+      await expect(otherWorker.beginWebhookFailureNotification(scope, finalizer.deliveryId, finalizer.leaseToken)).resolves.toBe(false)
       expect(failed).toHaveBeenCalledOnce()
       expect(fixture.complete).not.toHaveBeenCalled()
+      await expect(otherWorker.completeWebhookDelivery(scope, finalizer.deliveryId, finalizer.leaseToken)).resolves.toBe(true)
+      const completedBeforeSettlement = fixture.complete.mock.calls.length
       settle()
-      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalledOnce())
-      await expect(fixture.complete.mock.results[0]?.value).resolves.toBe(true)
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalledTimes(completedBeforeSettlement + 1))
+      await expect(fixture.complete.mock.results.at(-1)?.value).resolves.toBe(false)
       await expect(otherWorker.claimWebhookDelivery(scope)).resolves.toBeNull()
       await expect(otherWorker.webhookDeliveries(scope)).resolves.toEqual([])
       expect(failed).toHaveBeenCalledOnce()

@@ -489,17 +489,19 @@ describe("SQLite Agent State Provider", () => {
     vi.advanceTimersByTime(60_000)
     const restored = createLibsqlAgentState({ tablePrefix: "test_agent_state_", url })
     await restored.connect()
-    await expect(restored.claimWebhookDelivery(delivery.scope)).resolves.toBeNull()
+    const finalizer = (await restored.claimWebhookDelivery(delivery.scope))!
+    await expect(restored.beginWebhookFailureNotification(finalizer.scope, finalizer.deliveryId, finalizer.leaseToken)).resolves.toBe(false)
     await expect(restored.webhookDeliveries(delivery.scope)).resolves.toEqual([
       expect.objectContaining({ failure: { error: "failed", attempts: 3, notificationStarted: true } }),
     ])
     await expect(restored.completeWebhookDelivery(original.scope, original.deliveryId, original.leaseToken)).resolves.toBe(false)
-    await expect(restored.completeWebhookDelivery(recovered.scope, recovered.deliveryId, recovered.leaseToken)).resolves.toBe(true)
+    await expect(restored.completeWebhookDelivery(recovered.scope, recovered.deliveryId, recovered.leaseToken)).resolves.toBe(false)
+    await expect(restored.completeWebhookDelivery(finalizer.scope, finalizer.deliveryId, finalizer.leaseToken)).resolves.toBe(true)
     await expect(restored.claimWebhookDelivery(delivery.scope)).resolves.toBeNull()
     await restored.disconnect()
   })
 
-  it("recovers only finalization of a settled notification after restart", async () => {
+  it.each([false, true])("recovers finalization without a post-callback state write (missing expiry: %s)", async (missingExpiry) => {
     vi.useFakeTimers()
     const { state, url } = await createState()
     await state.connect()
@@ -510,8 +512,12 @@ describe("SQLite Agent State Provider", () => {
     const lease = (await queue.claimWebhookDelivery(delivery.scope))!
     await queue.markWebhookDeliveryFailure(lease.scope, lease.deliveryId, lease.leaseToken, { error: "failed", attempts: 3 })
     await queue.beginWebhookFailureNotification(lease.scope, lease.deliveryId, lease.leaseToken)
-    await expect(queue.finishWebhookFailureNotification(lease.scope, lease.deliveryId, "stale-token")).resolves.toBe(false)
-    await expect(queue.finishWebhookFailureNotification(lease.scope, lease.deliveryId, lease.leaseToken)).resolves.toBe(true)
+    if (missingExpiry) {
+      // Rows written before finalization recovery had no expiry.
+      const client = createClient({ url })
+      await client.execute("UPDATE test_agent_state_webhook_queue SET lease_expires_at = NULL WHERE status = 'notifying'")
+      client.close()
+    }
     await state.disconnect()
 
     vi.advanceTimersByTime(1_001)
