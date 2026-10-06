@@ -203,7 +203,7 @@ export interface AgentInvocationStore {
 export interface AgentInvocationRetentionOptions {
   /** Maximum age of terminal records, measured from their last update. Set to false to disable age-based retention. */
   maxAgeMs?: false | number
-  /** Maximum number of terminal records. Set to false to disable count-based retention. */
+  /** Maximum number of terminal records. Set to false to disable count-based retention. Stores may apply it periodically, so the count can briefly exceed it. */
   maxRecords?: false | number
 }
 

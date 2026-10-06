@@ -6,11 +6,15 @@ import { H3 } from "h3"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "@vite-hub/agent/server"
 import { getConsoleAgentDefinition, installConsoleAgentDefinitions } from "../src/console/runtime/server/agents.ts"
 import { installConsoleInvocations } from "../src/console/runtime/server/invocations.ts"
-import agentInvocationsHandler from "../src/console/runtime/server/agent-invocations.post.ts"
-import statusHandler from "../src/console/runtime/server/status.get.ts"
+import agentInvocationsHandlerRoute from "../src/console/runtime/server/agent-invocations.post.ts"
+import statusHandlerRoute from "../src/console/runtime/server/status.get.ts"
 import { createAgentStatusReader } from "@vite-hub/agent/server"
 import type { AgentInput, AgentProviderStatus } from "@vite-hub/agent"
 import type { H3Config } from "h3"
+import { allowed } from "./support/console-access.ts"
+
+const agentInvocationsHandler = allowed(agentInvocationsHandlerRoute)
+const statusHandler = allowed(statusHandlerRoute)
 
 const ready: AgentProviderStatus = { agent: "bot", checkedAt: "2026-09-05T12:00:00.000Z", readiness: "ready", stale: false }
 const agent = (status?: AgentInput["status"]): AgentInput => ({ resolve: vi.fn(), status })

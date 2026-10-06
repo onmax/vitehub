@@ -11,6 +11,7 @@ import type {
   AgentCallbackContext,
   AgentCapabilityDefinition,
   AgentChannelDefinition,
+  AgentChannelTriggerContext,
   AgentChannelDeliveryEffectIntent,
   AgentChannelDeliveryFinishEffect,
   AgentChannelDispatchItem,
@@ -177,6 +178,7 @@ export async function resolveAgentTriggers<
 >(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
   context: ResolvedAgentRuntimeContext<TRuntimeConfig>,
+  queuedInvocation?: AgentChannelTriggerContext["queuedInvocation"],
 ): Promise<Record<string, ResolvedAgentTriggerDefinition<TRuntimeConfig>>> {
   const runtimeContext = createAgentCallbackContext(context)
   const capabilities = normalizeCapabilities(agentCapabilityOptions(agent) as never) as AgentCapabilityDefinition<TRuntimeConfig>[]
@@ -233,6 +235,7 @@ export async function resolveAgentTriggers<
           agentCapabilities: channelCapabilities,
           agentName: agent.name || runtimeContext.agentIdentity?.name,
           channel,
+          ...(queuedInvocation ? { queuedInvocation } : {}),
           ...(channelState ? { channelState } : {}),
           dispatch: (items: readonly AgentChannelDispatchItem[], options: AgentChannelDispatchOptions) =>
             dispatchAgentChannelItems(agent, context, channelId, items, options),
@@ -564,9 +567,9 @@ export async function resolveAgentTriggerInvocation<
   context: ResolvedAgentRuntimeContext<TRuntimeConfig>,
   triggerId: string,
   input: TInput,
-  options?: { verifyWebhook?: boolean },
+  options?: { verifyWebhook?: boolean; queuedInvocation?: AgentChannelTriggerContext["queuedInvocation"] },
 ): Promise<ResolvedAgentTriggerInvocationResult<TRuntimeConfig, CALL_OPTIONS>> {
-  const triggers = await resolveAgentTriggers(agent, context)
+  const triggers = await resolveAgentTriggers(agent, context, options?.queuedInvocation)
   const trigger = triggers[triggerId] as ResolvedAgentTriggerDefinition<TRuntimeConfig, TInput, CALL_OPTIONS> | undefined
   if (!trigger) {
     throw agentDiagnostics.AGENT_R0871({ message: `[vitehub] Agent trigger "${triggerId}" is not defined by this agent.` })

@@ -1003,17 +1003,19 @@ describe("hubBlob", () => {
               ].join("\n"),
               loader: "js",
             }))
-            // Mirrors Auth's authorizeRequest contract. Auth tests cover the real session lookup.
+            // Mirrors Auth's withAuthorization contract. Auth tests cover the real session lookup.
             build.onLoad({ filter: /^#vitehub\/auth\/server$/, namespace: "blob-authorize-route-stub" }, () => ({
               contents: [
-                "export async function authorizeRequest(event, authorize) {",
-                "  const cookie = event.req.headers.get('cookie') || ''",
-                "  const user = cookie.startsWith('session=') ? { id: cookie.slice(8) } : undefined",
-                "  if (!user) return Response.json({ error: 'Unauthorized.' }, { status: 401 })",
-                "  if (authorize === true) return",
-                "  const result = await authorize({ request: event.req, session: {}, user })",
-                "  if (result instanceof Response) return result",
-                "  if (result !== true) return Response.json({ error: 'Forbidden.' }, { status: 403 })",
+                "export function withAuthorization(authorize, handler) {",
+                "  return async (event) => {",
+                "    const cookie = event.req.headers.get('cookie') || ''",
+                "    const user = cookie.startsWith('session=') ? { id: cookie.slice(8) } : undefined",
+                "    if (!user) return Response.json({ error: 'Unauthorized.' }, { status: 401 })",
+                "    const result = authorize === true || await authorize({ request: event.req, session: {}, user })",
+                "    if (result instanceof Response) return result",
+                "    if (result !== true) return Response.json({ error: 'Forbidden.' }, { status: 403 })",
+                "    return handler(event, Object.freeze({ request: event.req, session: {}, user }))",
+                "  }",
                 "}",
               ].join("\n"),
               loader: "js",
@@ -1044,8 +1046,8 @@ describe("hubBlob", () => {
           root,
         } as never)
         const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
-        expect(handler).toContain("import { authorizeRequest } from \"#vitehub/auth/server\"")
-        expect(handler).toContain("authorizeRequest(event, true)")
+        expect(handler).toContain("import { withAuthorization } from \"#vitehub/auth/server\"")
+        expect(handler).toContain("withAuthorization(true, (event: H3Event) => serveBlob(event))")
 
         const request = await bundleServeRoute(root)
         const anonymous = await request("u1/meal.jpg")
@@ -1098,7 +1100,7 @@ describe("hubBlob", () => {
         } as never)
         const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
         expect(handler).toContain(`import { authorize } from ${JSON.stringify(join(root, "server", `blob${extension}`))}`)
-        expect(handler).toContain("authorizeRequest(event, authorize)")
+        expect(handler).toContain("withAuthorization(authorize, (event: H3Event) => serveBlob(event))")
 
         const request = await bundleServeRoute(root)
         const own = await request("u1/meal.jpg", { cookie: "session=u1" })
@@ -1162,7 +1164,7 @@ describe("hubBlob", () => {
         } as never)
         const handler = await readFile(join(root, ".vitehub", "blob", "serve-route.ts"), "utf8")
         expect(handler).not.toContain(JSON.stringify(join(root, "server", "blob.ts")))
-        expect(handler).toContain("authorizeRequest(event, true)")
+        expect(handler).toContain("withAuthorization(true, (event: H3Event) => serveBlob(event))")
       }
       finally {
         await rm(root, { force: true, recursive: true })

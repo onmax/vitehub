@@ -2054,6 +2054,16 @@ describe("workspace host sessions", () => {
     await session.close()
   })
 
+  it.each(["/workspace/portal", "/workspace/portal/src"])("maps nested portable cwd %s to a custom target", async (cwd) => {
+    const host = memoryHost()
+    const session = await workspace().startSession({ host, target: "/boxes/live" })
+    await session.mkdir("portal/src", { recursive: true })
+
+    await expect(session.exec("write", ["result.txt", "done"], { cwd })).resolves.toMatchObject({ exitCode: 0 })
+    expect(host.readText(cwd.replace("/workspace/", "/boxes/live/") + "/result.txt")).toBe("done")
+    await session.close()
+  })
+
   it("resolves glob patterns from the requested working directory", async () => {
     const docs = workspace()
     await docs.writeFile("src/index.ts", "export {}")

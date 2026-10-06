@@ -12,8 +12,8 @@ import {
 } from "@vite-hub/runtime"
 
 import {
-  hasTrustedWorkspaceAccessScope,
   markTrustedSourceFreeInspection,
+  trustedWorkspaceAccessScope,
 } from "./access-runtime.ts"
 import {
   capabilityWorkspaceSources,
@@ -606,10 +606,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && hasRuntimeType(value, "object") && !Array.isArray(value)
 }
 
-function staticDriverExecutionAuthority(driver: { credentials?: unknown, kind: AgentDriverKind }): ExecutionAuthority {
+function staticDriverExecutionAuthority(driver: { credentials?: unknown, gateway?: unknown, kind: AgentDriverKind }): ExecutionAuthority {
   if (driver.kind !== "provider") return noExecutionAuthority
   return normalizeExecutionAuthority({
-    credentials: driver.credentials === undefined ? "ambient" : "provisioned",
+    credentials: driver.credentials === undefined && driver.gateway === undefined ? "ambient" : "provisioned",
     environment: "selected",
     filesystem: { access: "read-write", scope: "host" },
     isolation: "none",
@@ -800,6 +800,7 @@ function providerMetadata(driver: {
   credentials?: unknown
   env?: unknown
   cwd?: unknown
+  gateway?: { name: string }
   requirements?: readonly string[]
   launch?: unknown
   model?: string
@@ -821,6 +822,7 @@ function providerMetadata(driver: {
     ...(driver.cwd !== undefined ? { cwd: providerResolverKind(driver.cwd) } : {}),
     ...(driver.requirements?.length ? { requirements: driver.requirements } : {}),
     ...(driver.env !== undefined ? { environment: providerResolverKind(driver.env) } : {}),
+    ...(driver.gateway ? { gateway: driver.gateway.name } : {}),
     ...(driver.launch !== undefined ? { launch: providerResolverKind(driver.launch) } : {}),
     ...(driver.model ? { model: driver.model } : {}),
     permissions: driver.permissions,
@@ -989,10 +991,7 @@ function workspaceMetadataFiles<
   options: WorkspaceAgentOptions<TRuntimeConfig, Name>,
   context?: AgentInvocationContextStore,
 ): AgentInspectionFileTreeItem[] {
-  const access = context && hasTrustedWorkspaceAccessScope(context)
-    ? context.get("access")
-    : undefined
-  const scope = access?.workspaceScope
+  const scope = context && trustedWorkspaceAccessScope(context)
   const pathIntersects = (left: string, right: string) => !left || !right || left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`)
   const sources = normalizedSourcesFromOptions(options).filter(source => {
     if (!scope || scope.all || scope.sources?.includes(source.key)) return true

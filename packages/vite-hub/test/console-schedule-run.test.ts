@@ -12,14 +12,17 @@ import { consoleDefinitionsKey, consoleDefinitionsRegistryKey, consoleDefinition
 import { discoverConsoleBuildCatalog } from "../src/console/build.ts"
 import { writeConsoleNitroPlugin } from "../src/console/plugin.ts"
 import { consoleRpcHeader, consoleRpcMethods } from "../src/console/runtime/rpc.ts"
-import definitionsHandler from "../src/console/runtime/server/definitions.get.ts"
+import definitionsHandlerRoute from "../src/console/runtime/server/definitions.get.ts"
 import { installConsoleDefinitions, installConsoleSchedules } from "../src/console/runtime/server/definitions.ts"
-import { handleConsoleRpcRequest } from "../src/console/runtime/server/rpc.ts"
 import { handleConsoleScheduleRunRequest } from "../src/console/runtime/server/schedule-run.ts"
 import { installConsoleSections } from "../src/console/runtime/server/sections.ts"
 
 import type { ConsoleInvocationScope } from "../src/console/internal.ts"
 import type { ConsoleRpcInput, ConsoleRpcMethod } from "../src/console/runtime/rpc.ts"
+import { allowed } from "./support/console-access.ts"
+import { handleConsoleRpcRequest } from "./support/console-rpc.ts"
+
+const definitionsHandler = allowed(definitionsHandlerRoute)
 
 // SAFETY: Console state uses the same optional symbol keys in runtime and tests.
 const scope = globalThis as ConsoleInvocationScope

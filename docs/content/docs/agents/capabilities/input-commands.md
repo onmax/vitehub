@@ -50,7 +50,7 @@ With this definition, `/docs billing limits` becomes `Use documentation context 
 
 | Handler result | Effect |
 | --- | --- |
-| `string` | Replaces the command text and its `args`. An empty string removes them, but keeps the command when it is the only text. |
+| `string` | Replaces the command text and its `args`. An empty string removes them and the whitespace after them, or before them at the end of the text. It keeps the command when it is the only text. |
 | `Partial<AgentRunInput>` | Merges into the Agent Run Input. `context` keys merge. A returned `prompt` or `messages` value replaces the other input form. |
 | `Response` | Stops the invocation and returns this response. The Agent Driver does not run. |
 | `void`, or no `call` | Removes the command text. Command names and `args` are not passed through as prompts. |

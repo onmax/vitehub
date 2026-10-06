@@ -235,11 +235,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const requiredChecks = createGitHubRequiredCheckPolicyReader(async (path) => {
     const repository = path.split("/").slice(1, 3).join("/");
     try {
-      const result = await github.command(["api", "--paginate", "--slurp", path], { repository, timeout: 60_000 });
-      const pages: unknown = JSON.parse(result.stdout);
-      if (!Array.isArray(pages)) return { status: 0 };
-      // gh returns one entry per page. Rules are a list; protection endpoints return one object.
-      return { status: 200, data: path.includes("/rules/") ? pages.flat() : pages[0], nextPage: null };
+      // The hosted gh CLI does not provide `--slurp`; ask it to emit one JSON
+      // value per line and assemble the already-paginated response here.
+      const rules = path.includes("/rules/");
+      const result = await github.command(
+        ["api", "--paginate", path, "--jq", rules ? ".[] | @json" : ". | @json"],
+        { repository, timeout: 60_000 },
+      );
+      const values = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+      // Rules are a list; protection and branch endpoints return one object.
+      return { status: 200, data: rules ? values : values[0], nextPage: null };
     } catch (error) {
       return { status: Number(String(error).match(/HTTP\s+(\d{3})/i)?.[1] ?? 0) };
     }
@@ -813,7 +818,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 capabilities: workerCapabilities as never,
                 driver: {
                   ...workerDriver,
-                  permissions: "allow-edits",
+                  // Match the preset: unattended passes cannot escalate native
+                  // permissions. Repair tools remain authorized by the host.
+                  permissions: "allow-edits-unattended",
                   env: async (context) => {
                     const environment =
                       workerDriver.env === undefined

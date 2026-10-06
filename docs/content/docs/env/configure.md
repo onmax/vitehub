@@ -39,7 +39,7 @@ Pass Integration Options to `hubEnv()`.
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `diagnostics` | `EnvDiagnostics` | Package default | Controls Env diagnostic output during Vite config/dev/build. Values: `off`, `summary`, `trace`. |
-| `prefix` | `string` | None | Prefixes env variable lookup names. |
+| `prefix` | `string \| false` | `'VITEHUB_'` | Prefix of [canonical variable names](#variable-names). `false` disables canonical names. |
 | `projectRoot` | `string` | ViteHub project root | Resolves generated files and package import updates from a custom project root. |
 | `providers` | `Record<string, string>` | None | Maps runtime provider names to application module specifiers. Relative specifiers resolve from the ViteHub project root. |
 | `runtimeImports.secret` | `string` | `@vite-hub/env/secret` | Replaces the type import used for `SecretEnv` in generated Server Env modules. Framework integrations can point generated code at their runtime-owned entry point. |
@@ -112,6 +112,35 @@ The typed helpers accept every `env()` option except `schema` and `type`. A `def
 The error details contain the declaration path and source kind. The rejected value is never included. `inspectServerEnv()` reports a value that does not parse as `invalid`.
 
 The helpers also work in `env.public` and `env.define` with `mode: 'build'`.
+
+## Variable names
+
+Every env-backed declaration reads two kinds of variable name, in this order:
+
+1. The canonical name: `VITEHUB_` and the declaration path in upper snake case. `env.server.cliproxy.apiKey` reads `VITEHUB_CLIPROXY_API_KEY`, and `env.public.appName` reads `VITEHUB_PUBLIC_APP_NAME`.
+2. The conventional names: the names in `env.source()`, or the path name without a prefix, such as `CLIPROXY_API_KEY`.
+
+```ts [vite.config.ts]
+server: {
+  // Reads VITEHUB_GITHUB_TOKEN, then GITHUB_TOKEN.
+  github: { token: env({ secret: true, source: env.source('GITHUB_TOKEN') }) },
+  // Reads VITEHUB_LOG_LEVEL, then LOG_LEVEL.
+  logLevel: env({ default: 'info' }),
+}
+```
+
+Use the conventional name for values that a vendor documents, such as `OPENAI_API_KEY`. Use the canonical name when the conventional name is taken by something else, for example `GITHUB_TOKEN` in CI, or when you want to set any declared value without reading the config. The canonical name always wins.
+
+Built-in Channels and gateway presets follow the same rule: their vendor names are the conventional names, so `telegram()` reads `VITEHUB_TELEGRAM_BOT_TOKEN`, then `TELEGRAM_BOT_TOKEN`.
+
+- `env.provider()`, Git, `package.json`, and custom sources have no canonical name.
+- A key that is not a JavaScript identifier, such as `'api-key'` or `'nested.token'`, has no canonical name.
+- Two declarations that produce the same canonical name, such as `apiKey` and `api_key`, fail with `ENV_DECLARATION_INVALID`. Rename one, or set `hubEnv({ prefix: false })`.
+- `hubEnv({ prefix: 'APP_' })` changes the prefix. `hubEnv({ prefix: false })` reads only the conventional names.
+
+Inspection reports `via: 'canonical'` or `via: 'conventional'` for each available value. It reports `conflict: true` when the canonical name and a conventional name hold different values; the canonical value is used. `describeServerEnv()` includes `canonicalName`. Conventional names stay out of inspection output.
+
+On Cloudflare, a required secret is listed in the Wrangler config only when it accepts one exact name. Canonical and conventional alternatives remain runtime-only because Wrangler cannot express fallback names. Use `hubEnv({ prefix: false })` or an explicit source equal to the canonical name when an exact Wrangler requirement is needed.
 
 ## Env sources
 

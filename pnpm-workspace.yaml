@@ -63,7 +63,7 @@ catalogs:
     "@nuxt/content": ^3.16.1
     "@nuxt/ui": ^4.11.3
     "@takumi-rs/core": 2.14.0
-    docus: https://pkg.pr.new/docus@986a334
+    docus: https://pkg.pr.new/docus@c229a86
     nuxt: ^4.5.2
     nuxt-schema-org: ^6.4.3
   nuxt-compat:
@@ -198,3 +198,4 @@ patchedDependencies:
   "@pierre/trees@1.0.0-beta.6": patches/@pierre__trees@1.0.0-beta.6.patch
   "@vercel/blob@2.8.0": patches/@vercel__blob@2.8.0.patch
   nitro@3.0.260903-beta: patches/nitro@3.0.260903-beta.patch
+  nuxt-agent-discovery@0.7.0: patches/nuxt-agent-discovery@0.7.0.patch

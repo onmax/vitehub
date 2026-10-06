@@ -1,6 +1,7 @@
 import { providerCallbackMetadata, withProviderCallbackMetadata } from "./internal/provider-callback-metadata.ts"
 import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
+import { resolveAgentDriverGateway, withAgentDriverGatewayEnvironment } from "./internal/agent-gateway.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { browserRuntimeEnvironment } from "./internal/browser-runtime.ts"
@@ -18,7 +19,7 @@ import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
 import { normalizeWorkspaceSourcesMetadata } from "@vite-hub/workspace/source-metadata"
 import { createProviderRuntime, createSqliteProviderRuntimeSessionStore, inspectProvider } from "@t3tools/provider-runtime"
 
-import { hasTrustedWorkspaceAccessScope } from "./access-runtime.ts"
+import { trustedWorkspaceAccessScope } from "./access-runtime.ts"
 import { setActiveAgentWorkspaceCommands, setActiveAgentWorkspaceFiles, setAgentWorkspaceDiff } from "./agent-workspace-runtime.ts"
 import { appendLatestFinalText, streamAgentOutputToEvents } from "./agent-output.ts"
 import { composeInstructionDocument } from "./instruction-composition.ts"
@@ -35,7 +36,7 @@ import { ownedAgentInvocationControlId } from "./internal/agent-invocation-respo
 import { isAuxiliaryAgentAdapterContext, markAuxiliaryMessageChannelInstructionContext, resolveMessageChannelInstructions } from "./internal/channels.ts"
 import { attachmentStringBytes, currentInputAttachments, getMessageText, isAttachmentPart, resolveAttachmentData } from "./messages.ts"
 import { workspaceAutoCommitDisabled, workspaceDefinitionWithAutoCommitRules } from "./workspace-agent.ts"
-import { agentToolPolicyApproveSymbol } from "./tool-runtime.ts"
+import { approveAgentToolRequest, executeApprovedAgentTool } from "./tool-runtime.ts"
 import { agentInvocationTraceIdContextKey, createAgentStreamEventTracer } from "./trace.ts"
 
 import type {
@@ -57,6 +58,7 @@ import type {
   AgentProviderCredentialContext,
   AgentProviderStatus,
   AgentProviderCredentialResolver,
+  AgentDriverGateway,
   AgentProviderEnvironment,
   AgentProviderEnvironmentResolver,
   AgentProviderLaunchCommand,
@@ -102,6 +104,8 @@ export interface ProviderAgentAdapterOptions<
   /** Provider process environment. Every resolved value is treated as a credential in persisted diagnostics. */
   env?: AgentProviderEnvironmentResolver<TRuntimeConfig>
   execution?: { attachments?: { maxBytes?: number } }
+  /** LLM proxy or gateway for model requests. It replaces `credentials`. */
+  gateway?: AgentDriverGateway
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   launch?: AgentProviderLaunchResolver<TRuntimeConfig>
   model?: string
@@ -346,6 +350,7 @@ const imageExtensions: Record<string, string> = {
 const providerRuntimeMode: Record<AgentProviderPermissions, RuntimeMode> = {
   "allow-all": "full-access",
   "allow-edits": "auto-accept-edits",
+  "allow-edits-unattended": "auto-accept-edits",
   ask: "approval-required",
 }
 
@@ -461,15 +466,11 @@ const providerHostEnvironmentKeys = [
   "XDG_DATA_HOME",
 ] as const
 
-function providerEnvironment(env: Record<string, string | undefined> | undefined, provider?: "claude-code" | "codex"): NodeJS.ProcessEnv {
+function providerEnvironment(env: Record<string, string | undefined> | undefined): NodeJS.ProcessEnv {
   const host = Object.fromEntries(providerHostEnvironmentKeys.flatMap(key => {
     return hasRuntimeType(process.env[key], "string") ? [[key, process.env[key]]] : []
   }))
-  const proxyBaseUrl = env && Object.hasOwn(env, "CLIPROXY_BASE_URL") ? env.CLIPROXY_BASE_URL : process.env.CLIPROXY_BASE_URL
-  const proxy = provider === "codex" && proxyBaseUrl?.trim()
-    ? { CLIPROXY_BASE_URL: proxyBaseUrl, CLIPROXY_API_KEY: process.env.CLIPROXY_API_KEY }
-    : {}
-  return Object.fromEntries(Object.entries({ ...host, ...proxy, ...env }).filter((entry): entry is [string, string] => hasRuntimeType(entry[1], "string")))
+  return Object.fromEntries(Object.entries({ ...host, ...env }).filter((entry): entry is [string, string] => hasRuntimeType(entry[1], "string")))
 }
 
 function withPathPrefix(env: NodeJS.ProcessEnv, prefix: readonly string[] | undefined): NodeJS.ProcessEnv {
@@ -543,7 +544,7 @@ function parsedProviderLaunchDiagnostic(value: unknown): ProviderLaunchDiagnosti
 }
 
 function providerSecretEnvironmentKeys(environment: AgentProviderEnvironment | undefined, requiredEnvironment: readonly string[]): string[] {
-  return [...new Set([...Object.keys(environment || {}), ...requiredEnvironment, "CLIPROXY_API_KEY"])].filter(key => key !== "VITEHUB_BROWSER_ACTIVE")
+  return [...new Set([...Object.keys(environment || {}), ...requiredEnvironment])].filter(key => key !== "VITEHUB_BROWSER_ACTIVE")
 }
 
 function providerLauncherSource(
@@ -1275,11 +1276,18 @@ const providerStatusCacheMs = 30_000
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
+/** A gateway replaces Codex sign-in, so its adapter never prepares a credential home. */
+function withoutReplacedCredentials<TOptions extends ProviderAgentAdapterOptions<never, never>>(options: TOptions): TOptions {
+  if (options.gateway === undefined || (options.credentials === undefined && options.credentialProfile === undefined)) return options
+  return { ...options, credentialProfile: undefined, credentials: undefined }
+}
+
 export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeConfig>(
-  options: ProviderAgentAdapterOptions<TRuntimeConfig>,
+  configuredOptions: ProviderAgentAdapterOptions<TRuntimeConfig>,
   context: AgentProviderCredentialContext<TRuntimeConfig>,
   inspectionOptions: { checkRequirements?: boolean } = {},
 ): Promise<AgentProviderStatus> {
+  const options = withoutReplacedCredentials(configuredOptions)
   const signal = context.abortSignal
   const checkRequirements = inspectionOptions.checkRequirements !== false
   // The toolchain exists only after an invocation prepares its checkout.
@@ -1304,19 +1312,22 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     // Environment resolvers can select a different account on each inspection. Do not reuse a
     // result until that environment has a stable credential scope.
     const statusScope = home ? home.scope : ""
-    const cacheable = options.credentials !== undefined || options.env === undefined
+    const cacheable = options.gateway === undefined && (options.credentials !== undefined || options.env === undefined)
     const statusKey = cacheable && statusScope !== undefined ? `${statusScope}:${requirements.length > 0}` : undefined
     if (statusKey !== undefined) {
       const cached = providerStatusCache.get(options)?.get(statusKey)
       if (cached && Date.now() - Date.parse(cached.checkedAt) < providerStatusCacheMs) return { ...cached, agent: context.agentIdentity?.name ?? "agent" }
     }
-    const overrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
+    const configuredOverrides = options.env === undefined ? undefined : normalizedProviderEnvironment(await waitForProviderOperation(resolveRuntimeValue(options.env, context), signal))
     signal?.throwIfAborted()
+    const gateway = options.gateway === undefined ? undefined : await waitForProviderOperation(resolveAgentDriverGateway(options.gateway, options.provider, context), signal)
+    signal?.throwIfAborted()
+    const overrides = withAgentDriverGatewayEnvironment(gateway, configuredOverrides)
     if (home && overrides?.CODEX_HOME !== undefined) throw agentDiagnostics.AGENT_R0906({ message: "[vitehub] driver.credentials owns CODEX_HOME." })
     const environment = providerEnvironment({
       ...(options.provider === "codex" && !home ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
       ...overrides,
-    }, options.provider)
+    })
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
     let requirementCapture: ProviderRequirementCapture | undefined
@@ -1324,7 +1335,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
       const command = hasRuntimeType(binary, "string") && binary.trim() ? binary : options.provider === "codex" ? "codex" : "claude"
       const launch = normalizedProviderLaunch(await waitForProviderOperation(resolveRuntimeValue(options.launch, {
-        ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: home ? ["CODEX_HOME"] : [],
+        ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: [...(home ? ["CODEX_HOME"] : []), ...Object.keys(gateway?.environment || {})],
       }), signal))
       signal?.throwIfAborted()
       if (requirements.length) requirementCapture = {
@@ -1337,7 +1348,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         : launch
       binaryPath = (await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)).path
     }
-    const launchArgs = [options.providerSettings?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
+    const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
     let missingCommands = options.launch === undefined
       ? await missingProviderCommands(requirements, environment, root || process.cwd(), signal)
@@ -1602,12 +1613,10 @@ async function startToolServer(
             // the user's approval into a side effect.
             await new Promise<void>(resolve => setImmediate(resolve))
             executionSignal.throwIfAborted()
-            // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
-            const approve = (tool as AgentToolDefinition & { [agentToolPolicyApproveSymbol]?: (input: unknown) => void })[agentToolPolicyApproveSymbol]
-            if (approve) {
-              approve(approvalRequest.input)
+            const grant = approveAgentToolRequest(approvalRequest)
+            if (grant) {
               try {
-                return toolResult(await tool.execute!(approvalRequest.input, { abortSignal: executionSignal }))
+                return toolResult(await executeApprovedAgentTool(tool, grant, { abortSignal: executionSignal }))
               }
               catch (approvedError) {
                 if (executionSignal.aborted) throw approvedError
@@ -1803,8 +1812,7 @@ function workspaceSessionStarter(workspace: ReadonlyWorkspaceFacade) {
 
 function selectedWorkspacePaths(context: AgentAdapterRunContext): readonly string[] | undefined {
   const required = [...new Set(context.workspaceMaterializationPaths || [])]
-  if (!hasTrustedWorkspaceAccessScope(context.context)) return undefined
-  const scope = context.context.get("access")?.workspaceScope
+  const scope = trustedWorkspaceAccessScope(context.context)
   if (!scope || scope.all) return undefined
   const paths = [...new Set([...(scope.paths || []), ...required])]
   return paths.length ? paths : []
@@ -1926,6 +1934,8 @@ async function prepareWorkspace(
   if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
+    // The Driver owns this temporary root and removes it after the run, so close() must not restore it.
+    disposableTarget: true,
     host: localWorkspaceHost({ path }),
     ...(materializedSources?.ready ? { materializeSources: false } : {}),
     onProgress: createWorkspaceSetupObservers(workspaceSetupObserverOptions(context)).preparation,
@@ -2139,6 +2149,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
   model?: string
   provider: "claude-code" | "codex"
   resumed: boolean
+  transport?: "gateway"
 }): StreamEvent {
   const usage = event.payload.usage
   const usedTokens = usage.usedTokens ?? usage.lastUsedTokens
@@ -2184,7 +2195,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
       options.accumulator.partitionComplete = false
       options.accumulator.identityAmbiguous = true
     }
-    const snapshot = { ...(options.model ? { model: options.model } : {}), provider: options.provider, raw: usage }
+    const snapshot = { ...(options.model ? { model: options.model } : {}), provider: options.provider, ...(options.transport ? { transport: options.transport } : {}), raw: usage }
     if (options.accumulator.lastUsageEvent && options.accumulator.lastResponseIdentity === undefined && options.accumulator.previousTotalProcessedTokens === undefined) {
       options.accumulator.calls[options.accumulator.calls.length - 1] = snapshot
     }
@@ -2213,6 +2224,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
     options.accumulator.calls.push({
       ...(options.model ? { model: options.model } : {}),
       provider: options.provider,
+      ...(options.transport ? { transport: options.transport } : {}),
       raw: usage,
     })
   }
@@ -2227,6 +2239,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
     const call = {
       ...(options.model ? { model: options.model } : {}),
       provider: options.provider,
+      ...(options.transport ? { transport: options.transport } : {}),
       raw: usage,
       usage: {
         details: {
@@ -2314,6 +2327,7 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
       ...usageRecordExtras,
       ...(options.model ? { model: options.model } : {}),
       provider: options.provider,
+      ...(options.transport ? { transport: options.transport } : {}),
       ...(usage.durationMs === undefined ? {} : { latency: { durationMs: usage.durationMs } }),
       raw: usage,
       usage: {
@@ -2450,6 +2464,7 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
   model?: string
   provider: "claude-code" | "codex"
   resumed: boolean
+  transport?: "gateway"
   toolTitles: Map<string, string>
 }): StreamEvent[] {
   switch (event.type) {
@@ -2950,6 +2965,7 @@ async function* runProvider<
     const resolverContext: AgentProviderCredentialContext<TRuntimeConfig> = {
       ...providerMetadataContext(context),
       abortSignal: effectiveSignal,
+      purpose: "invocation",
     }
     // A run that opts out of the managed checkout still acts on its pull
     // request's repositories, so keep credentials scoped to them.
@@ -2966,10 +2982,13 @@ async function* runProvider<
           Promise.resolve(resolveRuntimeValue(options.env, resolverContext)),
           effectiveSignal,
         ))
-    // driver.env can override the Agent GitHub environment.
-    const providerEnvironmentOverrides = githubEnvironment
+    const gateway = options.gateway === undefined
+      ? undefined
+      : await waitForProviderOperation(resolveAgentDriverGateway(options.gateway, options.provider, resolverContext), effectiveSignal)
+    // driver.env can override the Agent GitHub environment. The gateway owns its own variables.
+    const providerEnvironmentOverrides = withAgentDriverGatewayEnvironment(gateway, githubEnvironment
       ? { ...githubEnvironment, ...configuredEnvironmentOverrides }
-      : configuredEnvironmentOverrides
+      : configuredEnvironmentOverrides, { auxiliary })
     if (codexCredentialHome && providerEnvironmentOverrides?.CODEX_HOME !== undefined) {
       throw agentDiagnostics.AGENT_R0713({ message: "[vitehub] driver.credentials owns CODEX_HOME and cannot be combined with resolved driver.env.CODEX_HOME." })
     }
@@ -3027,7 +3046,7 @@ async function* runProvider<
       ...(capabilityEnvironment?.PATH || toolchainPath.length
         ? { PATH: `${[capabilityEnvironment?.PATH, ...toolchainPath].filter(Boolean).join(delimiter)}${delimiter}${providerEnvironmentOverrides?.PATH || process.env.PATH || ""}` }
         : {}),
-    }, options.provider)
+    })
     let providerLauncher: string | undefined
     if (options.launch !== undefined) {
       if (!hasRuntimeType(providerCommand, "string")) {
@@ -3037,6 +3056,7 @@ async function* runProvider<
         "VITEHUB_BROWSER_ACTIVE",
         ...(codexCredentialHome ? ["CODEX_HOME"] : []),
         ...(Object.keys(context.tools || {}).length ? ["T3_MCP_BEARER_TOKEN"] : []),
+        ...Object.keys(gateway?.environment || {}),
       ])
       providerLaunchSecretEnvironmentKeys = providerSecretEnvironmentKeys(providerEnvironmentOverrides, requiredEnvironment)
       const launchContext: AgentProviderLaunchContext<TRuntimeConfig> = {
@@ -3104,6 +3124,7 @@ async function* runProvider<
       ...(claudePromptFile ? [`--append-system-prompt-file ${JSON.stringify(claudePromptFile)}`] : []),
       auxiliaryEnvironmentLaunchArgs,
       generatedLaunchArgs,
+      gateway?.launchArgs,
       // Login profiles reset PATH and hide the invocation's managed browser CLI.
       ...(options.provider === "codex" && capabilityEnvironment?.PATH ? ['-c "allow_login_shell=false"'] : []),
       ...(codexCredentialHome ? ['-c "cli_auth_credentials_store=\\"file\\""'] : []),
@@ -3169,6 +3190,8 @@ async function* runProvider<
       model: options.model,
       resumeCursor,
       runtimeMode: providerRuntimeMode[options.permissions ?? defaultAgentProviderPermissions],
+      // Deny native permission escalation without removing the edit-mode boundary.
+      ...(options.permissions === "allow-edits-unattended" ? { approvalPolicy: "never" as const } : {}),
       threadId,
     }), effectiveSignal, session => finalizeDeferredRuntime(session.threadId), deferRuntimeCleanup, () => finalizeDeferredRuntime())
     if (session.resumeCursor !== undefined) pendingResumeCursor = session.resumeCursor
@@ -3302,6 +3325,7 @@ async function* runProvider<
         model: options.model,
         provider: options.provider,
         resumed,
+        transport: gateway ? "gateway" : undefined,
         toolTitles,
       })
       if (current.value.type === "item.completed" && current.value.itemId) messagePhases.delete(current.value.itemId)
@@ -3668,7 +3692,8 @@ async function generateProvider<CALL_OPTIONS, TRuntimeConfig extends AgentRuntim
 export function createProviderAgentAdapter<
   CALL_OPTIONS = unknown,
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
->(options: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>): AgentAdapter<CALL_OPTIONS, TRuntimeConfig> {
+>(configuredOptions: ProviderAgentAdapterOptions<TRuntimeConfig, CALL_OPTIONS>): AgentAdapter<CALL_OPTIONS, TRuntimeConfig> {
+  const options = withoutReplacedCredentials(configuredOptions)
   const resumeCursors = new Map<string, unknown>()
   const sessionLocks = new Map<string, Promise<void>>()
   const cwdLocks = new Map<string, Promise<void>>()

@@ -33,6 +33,12 @@ it("opens the inspector on its launcher and keeps terminal session chrome quiet"
   expect(sessionNavbar).toContain('v-if="refreshable" text="Refresh session"');
 });
 
+it("imports the invocation deletion helper the Console uses", () => {
+  // A missing import compiles but throws ReferenceError on load, leaving every Console page blank.
+  expect(consolePage).toContain("createConsoleInvocationDeletion()");
+  expect(consolePage).toContain('import { createConsoleInvocationDeletion } from "../client/invocation-deletion";');
+});
+
 it("loads session filter values only for the filter menu or an active filter", () => {
   expect(consolePage).toContain(
     "if (filterOpen.value || selectedCapabilityId.value || selectedTriggeredBy.value) void loadCapabilityIds();",

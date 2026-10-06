@@ -16,15 +16,15 @@ export interface CollectionHandlerEvent {
   req: { signal: AbortSignal }
 }
 
-/** Authorizes one Collection request. Return a `Response` to reject it. */
-export type CollectionRequestAuthorizer = (
-  event: { req: Request },
+/** Wraps a Collection handler so it runs only after the request is authorized. Return a `Response` to reject the request. */
+export type CollectionAuthorizationGuard = <TEvent extends { req: Request }, TResult>(
   authorize: AccessAuthorizeOption,
-) => Promise<Response | undefined>
+  handler: (event: TEvent) => Promise<TResult>,
+) => (event: TEvent) => Promise<TResult | Response>
 
 export interface CollectionHandlerOptions {
-  /** Required when the Collection declares `authorize`. Generated routes pass Auth's `authorizeRequest`. */
-  authorizeRequest?: CollectionRequestAuthorizer
+  /** Required when the Collection declares `authorize`. Generated routes pass Auth's `withAuthorization`. */
+  withAuthorization?: CollectionAuthorizationGuard
 }
 
 function queryValue(query: Record<string, string | string[] | undefined>, key: string): string | undefined {
@@ -117,17 +117,12 @@ export function defineCollectionHandler<TItem, TQuery extends object, TQueryInpu
 ): CollectionHandler {
   assertCollection(collection)
   const { authorize } = collection
-  const { authorizeRequest } = options
-  if (authorize && !authorizeRequest) {
+  const { withAuthorization } = options
+  if (authorize && !withAuthorization) {
     // Fail closed: without Auth, the route cannot read a session.
     throw sourceErrorDiagnostics.SOURCE_R0025({ message: "[vitehub] Collection authorize requires Auth. Enable Auth and add `server/auth.ts`." })
   }
-  // SAFETY: CollectionHandler preserves the callable and fetch contracts exposed by H3's handler.
-  return defineEventHandler(async (event: H3Event) => {
-    if (authorize && authorizeRequest) {
-      const rejection = await authorizeRequest(event, authorize)
-      if (rejection) return rejection
-    }
+  const handlePage = async (event: H3Event) => {
     const requestQuery = getQuery(event)
     let cursor: string | undefined
     let limit: number | undefined
@@ -146,5 +141,7 @@ export function defineCollectionHandler<TItem, TQuery extends object, TQueryInpu
       if (cause instanceof CollectionCursorError) invalidRequest(cause)
       throw cause
     }
-  }) as CollectionHandler
+  }
+  // SAFETY: CollectionHandler preserves the callable and fetch contracts exposed by H3's handler.
+  return defineEventHandler(authorize && withAuthorization ? withAuthorization(authorize, handlePage) : handlePage) as CollectionHandler
 }

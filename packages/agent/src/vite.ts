@@ -18,7 +18,6 @@ import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { validateWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 
-import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
 import {
   agentInvocationsDevGuard,
   agentInvocationsDevRoute,
@@ -3027,6 +3026,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       server.watcher?.on("add", refreshDiscovery)
       server.watcher?.on("unlink", refreshDiscovery)
       if (agent !== false) {
+        // The Dev Loop runs Agents in this process. Load the Agent runtime with the dev server, not with the Vite config.
+        const { registerAgentInvocationStreamEndpoint } = await import("./vite/invocation-stream-endpoint.ts")
         await registerAgentInvocationStreamEndpoint(server, {
           runtimeCapabilities,
           schedule: hasScheduleVitePlugin(resolved ?? server.config),

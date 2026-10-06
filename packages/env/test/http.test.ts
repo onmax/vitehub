@@ -4,9 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { createEnvBridge, type EnvAccessContext } from "../src/bridge.ts"
 import { createDatabaseEnvStore } from "../src/database.ts"
 import { createEnvBridgeHandler } from "../src/http.ts"
+import { adminContext } from "./helpers.ts"
 
 const origin = "https://console.example"
-const admin: EnvAccessContext = { actor: { kind: "user", id: "owner" }, admin: true }
+const admin = await adminContext()
 const agent: EnvAccessContext = { actor: { kind: "agent", id: "reviewer" } }
 const key = "private/provider/github"
 const path = "github.token"
@@ -73,15 +74,30 @@ describe("Env management HTTP", () => {
     expect(denied?.actor).toEqual(agent.actor)
   })
 
-  it("enforces the verified token scope even for an administrative identity", async () => {
-    const { handler, bridge } = setup({ ...admin, scope: [{ key, permissions: ["inspect"] }] })
+  it("enforces the verified token scope over durable grants", async () => {
+    const { handler, bridge } = setup({ ...agent, scope: [{ key, permissions: ["inspect"] }] })
     await bridge.replace(admin, { key, value: secret, expectedRevision: null })
+    await bridge.grant(admin, { key, actor: agent.actor, permissions: ["inspect", "preview"] })
     const inspected = await handler(request({ path, action: "inspect" }))
     expect(await inspected.json()).toMatchObject({ permissions: ["inspect"], admin: false })
     expect((await handler(request({ path, action: "preview", scope: undefined }))).status).toBe(
       403,
     )
     expect((await handler(request({ path, action: "grants" }))).status).toBe(403)
+  })
+
+  it("rejects an administrator context that authentication code copied or built", async () => {
+    for (const context of [
+      { ...admin, scope: [{ key, permissions: ["inspect"] }] },
+      { actor: admin.actor, admin: true },
+    ]) {
+      // @ts-expect-error Only Env creates administrator contexts.
+      const { handler, bridge } = setup(context)
+      const response = await handler(request({ path, action: "grants" }))
+      expect(response.status).toBe(503)
+      expect(await response.json()).toMatchObject({ code: "ENV_BRIDGE_UNTRUSTED" })
+      expect(await bridge.activity(admin, key)).toEqual([])
+    }
   })
 
   it("rejects cross-origin and unproven browser requests before resolving or authenticating", async () => {
