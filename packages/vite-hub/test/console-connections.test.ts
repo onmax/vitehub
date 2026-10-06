@@ -22,6 +22,7 @@ import { ConsoleRequestError } from "../src/console/runtime/client/request.ts"
 import type { ConsoleSectionId } from "../src/console/runtime/sections.ts"
 import { consoleVitePlugin } from "../src/console/vite.ts"
 import { vitehub } from "../src/index.ts"
+import { hostManagedAuthorize } from "./support/console-authorize.ts"
 
 const connection = {
   account: { email: "ada@example.com", id: "1" },
@@ -175,21 +176,23 @@ describe("Connections actor", () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-connections-actor-"))
     try {
       // The Connections handler calls the policy with the Request first and the server event second.
+      // Every module checks the installed Console access policy before it names the manager.
       const consoleAuth = await readFile(await writeConsoleConnectionsActor(root, "console-auth"), "utf8")
       expect(consoleAuth).toContain('import { createAuthForRequest } from "#vitehub/auth/server"')
       expect(consoleAuth).toContain('import { definition } from "./auth-definition.mjs"')
       expect(consoleAuth).toContain("viteHubConsoleConnectionsActor(request, event)")
-      expect(consoleAuth).toContain("consoleSessionActor(createAuthForRequest(definition, request, undefined, event), request)")
+      expect(consoleAuth).toContain("consoleConnectionsActor(event, () => consoleSessionActor(createAuthForRequest(definition, request, undefined, event), request))")
 
       const appAuth = await readFile(await writeConsoleConnectionsActor(root, "app-auth"), "utf8")
       expect(appAuth).toContain("viteHubConsoleConnectionsActor(request, event)")
-      expect(appAuth).toContain("consoleSessionActor(getAuthForRequest(request, undefined, event), request)")
+      expect(appAuth).toContain("consoleConnectionsActor(event, () => consoleSessionActor(getAuthForRequest(request, undefined, event), request))")
 
-      // Without Auth, the Connections development policy fails closed outside a development server.
       const file = await writeConsoleConnectionsActor(root, "none")
       expect(file).toBe(join(root, ".vitehub/nitro/console/connections-actor.mjs"))
-      const none = (await import(file) as { default: unknown }).default
-      expect(none).toBe("development")
+      const none = await readFile(file, "utf8")
+      expect(none).toContain('import { consoleConnectionsActor } from "vite-hub/console/sections"')
+      expect(none).toContain("return consoleConnectionsActor(event)")
+      expect(none).not.toContain("user:local")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -204,7 +207,7 @@ describe("Connections actor", () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-console-connections-sections-"))
     try {
       const plugin = consoleVitePlugin({
-        console: command === "serve" ? { access: "auth" } : { exposure: "host-managed" },
+        console: command === "serve" ? { access: "auth" } : { exposure: "host-managed", authorize: hostManagedAuthorize },
         connections,
         sections: ["env", "connections"],
       })
@@ -255,7 +258,7 @@ describe("Connections actor", () => {
       }
       const actor = await configure(["connections"])
       expect(actor).toBe(join(root, ".vitehub/nitro/console/connections-actor.mjs"))
-      expect(await readFile(actor!, "utf8")).toContain('export default "development"')
+      expect(await readFile(actor!, "utf8")).toContain("return consoleConnectionsActor(event)")
       expect(await configure(["env"])).toBeUndefined()
     }
     finally {

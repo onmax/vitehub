@@ -120,13 +120,15 @@ The actor module default-exports one of these policies:
 
 Without an actor module, the development server uses `"development"`. A production build without an actor module fails.
 
-With `vite-hub` and the Console, the policy follows the Console access configuration:
+With `vite-hub` and the Console, the policy is the Console access policy of the data routes. The Connections routes first run the same check, then name the manager:
 
-| Console access | Policy in development and production |
-| --- | --- |
-| Console Auth (`console: { access: "auth", auth: { ... } }`) | The signed-in Console Auth user. |
-| Primary Auth (`console: { access: "auth" }` with an Auth Definition) | The signed-in app Auth user. |
-| No Auth (`console: true`, `exposure: "host-managed"`, or Cloudflare Access) | `"development"`. A production server returns `500` with `CONNECTION_AUTH_REQUIRED`. |
+| Console access | Check | Manager |
+| --- | --- | --- |
+| Console Auth (`console: { access: "auth", auth: { ... } }`) | The Console Auth session and its `authorize` callback. | The signed-in user, `user:<id>`. |
+| Primary Auth (`console: { access: "auth" }` with an Auth Definition) | The app Auth access routes that protect the Console. | The signed-in user, `user:<id>`. |
+| Cloudflare Access (`auth: { provider: "cloudflare-access" }`) | The Cloudflare Access token. | `user:cloudflare-access`. |
+| `exposure: "host-managed"` | The host `console.authorize` function. | `user:host-managed`. |
+| `console: true` | Development server only. Production returns `403`. | `user:local`. |
 
 ```ts
 import { hubConnections } from "@vite-hub/connections/vite";

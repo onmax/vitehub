@@ -92,9 +92,9 @@ Open Connections to see each [Connection](/docs/connections) from `server/connec
 - **Access** shows the rules from the Connection Definition for server code, routes, and Agents.
 - **Activity** lists Agent calls, writes, denials, failures, and account changes, newest first. Agent calls link to their Invocation. Activity has no request or response bodies or headers.
 
-The Console registers `POST /_vitehub/connections`, `GET /_vitehub/connections/connect/:name`, and `GET /_vitehub/connections/callback` only when Connections is enabled. Each route checks the Console Auth or app Auth session itself, in development and in production, and records actions with the signed-in user as `user:<id>`. Without Auth, the routes work only on the development server, as `user:local`. A production server returns `500` with `CONNECTION_AUTH_REQUIRED`. The Connections section is not available in Nuxt apps.
+The Console registers `POST /_vitehub/connections`, `GET /_vitehub/connections/connect/:name`, and `GET /_vitehub/connections/callback` only when Connections is enabled. Each route runs the Console access policy itself, in development and in production, the same as the Console data routes. With Console Auth or app Auth, actions record the signed-in user as `user:<id>`. With `exposure: "host-managed"`, the host `console.authorize` function decides, and actions record `user:host-managed`. With Cloudflare Access, they record `user:cloudflare-access`. With `console: true`, the routes work only on the development server, as `user:local`. The Connections section is not available in Nuxt apps.
 
-Starting Connect creates a single-use OAuth `state` in the Connections store. The browser opens the GET connect route, receives a `state` cookie, and follows a redirect to the provider. The provider redirects back to the GET callback route. The callback consumes the stored `state` and checks the browser cookie and the signed-in user before it saves the grant. A `state` from another user returns `403`. Proxies must forward both GET routes, their query strings, and cookies, as well as the management POST route. When Vite `base` is set, these routes use that mount prefix.
+Starting Connect creates a single-use OAuth `state` in the Connections store. The browser opens the GET connect route, receives a `state` cookie, and follows a redirect to the provider. The provider redirects back to the GET callback route. The callback consumes the stored `state` and checks the browser cookie and the manager before it saves the grant. A `state` from another manager returns `403`. Proxies must forward both GET routes, their query strings, and cookies, as well as the management POST route. When Vite `base` is set, these routes use that mount prefix.
 
 ## Develop against a fixture
 
@@ -249,33 +249,60 @@ ViteHub checks for an Auth Session before it calls `authorizeConsole`. A missing
 
 The `role` field above is an application example, not a ViteHub field. Replace it with the role, permission, or allowlist already used by the host.
 
-Apps that use another authentication library must protect `/_vitehub/**` and `/api/_vitehub/console/**` in host middleware and acknowledge that boundary explicitly:
+Apps that use another authentication library set `exposure: 'host-managed'` and give the Console an `authorize` function. `authorize` is the path of a server file that default-exports `defineConsoleAuthorize()`:
 
 ```ts [vite.config.ts]
 export default defineConfig({
   plugins: [vitehub({
     agent: true,
-    console: { exposure: 'host-managed' },
+    console: { exposure: 'host-managed', authorize: './server/console-authorize.ts' },
     preset: 'node',
   })],
 })
 ```
 
-`host-managed` is an acknowledgement, not middleware. ViteHub does not inspect or enforce the host's access policy in this mode.
+```ts [server/console-authorize.ts]
+import { defineConsoleAuthorize } from 'vite-hub/console/auth'
+import { readHostSession } from './session'
 
-All Console paths in this guide include the resolved Vite `base` pathname. With `base: '/portal/'`, host middleware must authenticate and authorize `/portal/_vitehub/**` and `/portal/api/_vitehub/console/**` for every method, including assets, RPC, and invocation actions. Policies for only the root routes do not protect these mounted routes. Update host policies when changing the base or upgrading to base-aware Console routes. An absolute base such as `https://cdn.example/portal/` uses the same `/portal/` prefix. Relative bases (`''` or `'./'`) use root routes. Primary Auth access routes must also include the prefix; built-in Console Auth applies it automatically.
+export default defineConsoleAuthorize(async ({ request }) => {
+  const session = await readHostSession(request)
+  if (!session) return new Response('Sign in first.', { status: 401 })
+  return session.user.role === 'admin'
+})
+```
+
+`readHostSession()` is an example of your own session code. Every Console data route calls `authorize` with the Web `Request` before it reads data. This includes the RPC transport, invocation actions, Env management, Channel replay, and Schedule runs. Return `true` to allow the request. Return `false` for `403`, or return a `Response` for another rejection. The page shell, the client script, and static assets do not call it, because they contain no project data.
+
+Without `authorize`, a production build fails with `VITE_HUB_B0014`. In development, the Console data routes return `500` until you set it. Keep your host middleware as a first layer if you already have one.
+
+### How each mode checks a request
+
+Each Console data route checks access itself. The Console Auth middleware stays as a first layer in front of the routes.
+
+| Configuration | Check in each Console data route |
+| --- | --- |
+| `console: true` | Allows the development server. A production build rejects this configuration, and a production runtime returns `403`. |
+| `access: 'auth', auth: { ... }` | Checks the Console Auth Session and the `authorize` callback with `withAuthorization()`. Returns `401` or `403`. It does not redirect to sign-in. |
+| `access: 'auth', auth: { provider: 'cloudflare-access' }` | Verifies the Cloudflare Access token. Development has no Access edge, so it allows the development server, as before. |
+| `access: 'auth'` | Checks the Primary Auth Session and every Auth access route that protects the Console. Without a discovered Auth Definition, it returns `500`. |
+| `exposure: 'host-managed'` | Calls `console.authorize`. Without it, it returns `500`. |
+
+Migration: `host-managed` was an acknowledgement and ViteHub did not check requests. Add `authorize` to keep the Console available. A function that returns `true` keeps the old behavior and trusts your host middleware only. Use it only when that middleware protects every Console route.
+
+All Console paths in this guide include the resolved Vite `base` pathname. With `base: '/portal/'`, host middleware that you keep as a first layer must authenticate and authorize `/portal/_vitehub/**` and `/portal/api/_vitehub/console/**` for every method, including assets, RPC, and invocation actions. Policies for only the root routes do not protect these mounted routes. Update host policies when changing the base or upgrading to base-aware Console routes. An absolute base such as `https://cdn.example/portal/` uses the same `/portal/` prefix. Relative bases (`''` or `'./'`) use root routes. Primary Auth access routes must also include the prefix; built-in Console Auth applies it automatically.
 
 ### Start Agent Invocations
 
 Explicit `access` and `exposure` configurations keep invocation disabled unless you set `invoke: true`. This applies to both Vite and Nuxt:
 
 ```ts
-console: { exposure: 'host-managed', invoke: true }
+console: { exposure: 'host-managed', authorize: './server/console-authorize.ts', invoke: true }
 // Or use ViteHub Auth:
 console: { access: 'auth', invoke: true }
 ```
 
-For `host-managed`, your middleware must authenticate and authorize all `/_vitehub/**` and `/api/_vitehub/console/**` routes, including the RPC transport, before it allows a request through. The build cannot verify this policy. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
+For `host-managed`, your `authorize` function decides who can start invocations, because the invocation routes call it. Setting `invoke: false` keeps inspection available and disables Agent Invocation creation. The development shorthand `console: true` enables invocation; fixture mode always disables it.
 
 ### Manage Connections
 
@@ -345,6 +372,7 @@ Set `observations` on the Console configuration when the fallback journal needs 
 ```ts
 console: {
   exposure: 'host-managed',
+  authorize: './server/console-authorize.ts',
   observations: {
     maxCount: 1024,
     maxStringLength: 131072,
@@ -415,7 +443,9 @@ The Console does not calculate missing provider data. Token counts, model metada
 | Sandboxes is absent from the Console home | Configure `sandbox: true` with a deployment preset that supports Sandbox. |
 | KV inspection returns a provider error | Check that the deployed Console runtime has permission and credentials to read the configured store. Read-only Console requests still perform provider reads. |
 | Agents opens but has no sessions | Invoke a discovered Agent. Confirm it uses the framework fallback instead of a separate `invocations` store. |
-| A production build rejects `console: true` | Configure an explicit production access contract: use `console: { access: 'auth' }` with a callback-backed policy for `/_vitehub/**`, or acknowledge host middleware with `console: { exposure: 'host-managed' }`. |
+| A production build rejects `console: true` | Configure an explicit production access contract: use `console: { access: 'auth' }` with a callback-backed policy for `/_vitehub/**`, or use `console: { exposure: 'host-managed', authorize: './server/console-authorize.ts' }`. |
+| A production build fails with `VITE_HUB_B0014` | Set `console.authorize` to a server file that default-exports `defineConsoleAuthorize()`. |
+| Console data routes return `500` with "requires console.authorize" | Set `console.authorize` for `exposure: 'host-managed'`. |
 | Agent Console startup fails on a hosted preset | Configure one durable Agent Invocations journal and attach it to every discovered Agent Definition. The local SQLite fallback requires a writable, persistent filesystem. |
 | The page returns `401` | Sign in through the Auth provider configured by the host. |
 | The page returns `403` | Check the host's `authorize` callback and the current user's role or permission. |

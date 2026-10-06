@@ -20,15 +20,17 @@ icon: i-lucide-code-2
 
 The management routes are `POST /_vitehub/connections`, `GET /_vitehub/connections/connect/:name`, and `GET /_vitehub/connections/callback`. With a Vite `base`, they start with that base.
 
-Each route checks access itself before it reads or changes a Connection. Middleware, such as Console Auth, is an extra layer. The access policy comes from the Console configuration:
+Each route checks access itself before it reads or changes a Connection. With the Console, it runs the same access policy as the Console data routes, then names the manager for activity:
 
-| Console access | Who can manage Connections |
-| --- | --- |
-| Console Auth | The signed-in Console Auth user. |
-| `access: 'auth'` with an Auth Definition | The signed-in app Auth user. |
-| No Auth (`console: true`, `exposure: 'host-managed'`, or Cloudflare Access) | Everyone, as `user:local`, but only on the development server. A production server returns `500` with `CONNECTION_AUTH_REQUIRED`. |
+| Console access | Check | Manager |
+| --- | --- | --- |
+| Console Auth | The Console Auth session and its `authorize` callback. | The signed-in user. |
+| `access: 'auth'` with an Auth Definition | The app Auth access routes that protect the Console. | The signed-in user. |
+| Cloudflare Access | The Cloudflare Access token. | `user:cloudflare-access` |
+| `exposure: 'host-managed'` | The host `console.authorize` function. | `user:host-managed` |
+| `console: true` | Development server only. | `user:local` |
 
-A rejected request returns `403` with `CONNECTION_FORBIDDEN`. With `createConnectionsHandler()`, pass `actor`: a function that returns `user:<id>` for an authorized manager, or `'development'` for the development-only policy.
+A rejected request returns `403` with `CONNECTION_FORBIDDEN`. With `createConnectionsHandler()`, pass `actor`: a function that returns `user:<id>` for an authorized manager, or `'development'`. `'development'` allows `user:local` only when `NODE_ENV` is `development`, and returns `500` with `CONNECTION_AUTH_REQUIRED` elsewhere.
 
 The OAuth callback is reached by a redirect from the provider. It completes the flow only for the browser that started it (the `state` cookie) and for the same manager. The `state` works one time only and expires after 10 minutes. A `state` from another manager returns `403`.
 

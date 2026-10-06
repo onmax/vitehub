@@ -3,6 +3,7 @@ import * as v from "valibot"
 
 import { consoleAgentInvokerProfiles, getConsoleAgentDefinition } from "./agents.ts"
 import { getConsoleInvocations } from "./invocations.ts"
+import { withConsoleAccess, type ConsoleAccessRoute } from "./access.ts"
 import { assertConsoleRequest, consoleRequestError, consoleRequestJSON, consoleRequestURL } from "./request.ts"
 import { invocationUsage } from "./usage.ts"
 
@@ -185,4 +186,5 @@ const invocationHandler = async (event: ConsoleRequestEvent): Promise<ConsoleInv
     : deleteConsoleInvocationAction(event, body)
 }
 
-export default invocationHandler
+const guardedHandler: ConsoleAccessRoute<typeof invocationHandler> = withConsoleAccess(invocationHandler)
+export default guardedHandler
