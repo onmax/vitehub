@@ -27,6 +27,7 @@ import {
   decodeAgentRouteParam,
   encodeAgentRouteParam,
   resolveConsoleRouteName,
+  resolveUsageSessionsAgent,
 } from "../console-route";
 import { isRetryableConsoleRequestError, requestConsole } from "../client/request";
 import { useConsoleConnectionUnavailable } from "./console-connection";
@@ -119,9 +120,7 @@ const isUsageRoute = computed(
 );
 
 async function openSessionsFromUsage(): Promise<void> {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Query values can also be arrays or null.
-  const queryAgent = typeof route.query.returnAgent === "string" ? route.query.returnAgent.trim() : "";
-  const agent = selectedAgentName.value || (queryAgent.length <= 512 ? queryAgent : "");
+  const agent = resolveUsageSessionsAgent(route.query, selectedAgentName.value);
   if (agent) {
     await router.push({
       name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
