@@ -630,6 +630,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
     tools.inspect = createReadTools as WritableWorkspaceFacade<Name>["tools"]["inspect"]
     tools.write = createTools as WritableWorkspaceFacade<Name>["tools"]["write"]
     tools.none = emptyTools
+    // SAFETY: The writable facade delegates all operations to the lazy Workspace and carries its Store accessor.
     const facade = {
       [workspaceMetadataTarget]: async () => await (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.(),
       [workspaceStoreTarget]: async () => {
