@@ -863,10 +863,17 @@ function withAgentIdentityOwner<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentRuntimeContext<TRuntimeConfig>,
 ): AgentRuntimeContext<TRuntimeConfig> {
   if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  if (!context.agentIdentity || (context as AgentRuntimeContext & { [agentIdentityOwner]?: object })[agentIdentityOwner]) return context
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  return { ...context, [agentIdentityOwner]: agent as object } as AgentRuntimeContext<TRuntimeConfig>
+  // Always derive the identity from the resolved Definition when one is available. A
+  // standalone run has no caller supplied identity, so leaving the context unchanged
+  // would make Connection capabilities fall back to the literal "agent" actor.
+  if ((context as AgentRuntimeContext & { [agentIdentityOwner]?: object })[agentIdentityOwner]) return context
+  const name = agent.name || context.agentIdentity?.name
+  if (!name) return context
+  return {
+    ...context,
+    agentIdentity: { ...context.agentIdentity, name },
+    [agentIdentityOwner]: agent as object,
+  } as AgentRuntimeContext<TRuntimeConfig>
 }
 
 function hasAgentDefinition(value: unknown): value is AgentDefinition {

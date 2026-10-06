@@ -35,11 +35,14 @@ export function useAgentConnectionClient(context: AgentCapabilityContext, name: 
   if (!runtime.success) {
     throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires the Connections runtime to expose client().` })
   }
+  if (!context.agentIdentity) {
+    throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires a resolved Agent Definition identity.` })
+  }
   const invocationId = optionalString(context.context.get(agentInvocationTraceIdContextKey))
   const clientOptions: AgentConnectionClientOptions = {
     ...options,
     // The host resolves the Agent Definition. Env creates its actor context here, never from a caller value.
-    access: agentEnvAccess({ name: context.agentIdentity?.name ?? "agent" }, invocationId ? { invocationId } : {}),
+    access: agentEnvAccess(context.agentIdentity, invocationId ? { invocationId } : {}),
     ...(invocationId ? { invocationId } : {}),
   }
   const client: unknown = runtime.output.client(name, clientOptions)
