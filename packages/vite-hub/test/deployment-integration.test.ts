@@ -235,10 +235,12 @@ describe("built-in deployment preset integration", () => {
       expect(config.root).toBe(agentRoot)
       expect((config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
-      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["TELEGRAM_BOT_TOKEN"])
+      }).nitro?.cloudflare?.wrangler?.secrets?.required ?? []).toEqual([])
       const types = await readFile(join(agentRoot, ".vitehub", "types", "env.d.ts"), "utf8")
       expect(types).toContain('"telegram": {')
       expect(types).toContain('"botToken": import("vite-hub/env/secret").SecretEnv<string>')
+      const description = await readFile(join(agentRoot, ".vitehub", "env", "description.mjs"), "utf8")
+      expect(description).toContain("VITEHUB_TELEGRAM_BOT_TOKEN")
     }
     finally {
       await rm(root, { force: true, recursive: true })
