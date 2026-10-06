@@ -354,7 +354,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
         WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?`, [scope, deliveryId, leaseToken])
       if (current.length === 0 || !isRuntimeString(current[0]?.value)) return []
       const delivery = parseAgentWebhookQueueDelivery(current[0].value)
-      if (!delivery.failure) return []
+      if (!delivery.failure || delivery.failure.notificationStarted) return []
       delivery.failure.notificationStarted = true
       return await execute(tx, `UPDATE ${this.tables.webhookQueue}
         SET status = 'notifying', value = ?, lease_expires_at = NULL
@@ -362,6 +362,17 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
         RETURNING delivery_id`, [JSON.stringify(delivery), scope, deliveryId, leaseToken])
     }))
     return claimed.length > 0
+  }
+
+  async finishWebhookFailureNotification(scope: string, deliveryId: string, leaseToken: string): Promise<boolean> {
+    // Only a settled callback releases the permanent dispatch fence. Retain its
+    // notificationStarted marker so expired leases retry finalization, not dispatch.
+    const settled = await retrySqliteBusy(() => this.transaction(async tx => await execute(tx,
+      `UPDATE ${this.tables.webhookQueue}
+        SET status = 'running', lease_expires_at = ? + lease_ttl_ms
+        WHERE scope = ? AND delivery_id = ? AND status = 'notifying' AND lease_token = ?
+        RETURNING delivery_id`, [Date.now(), scope, deliveryId, leaseToken])))
+    return settled.length > 0
   }
 
   async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }): Promise<boolean> {

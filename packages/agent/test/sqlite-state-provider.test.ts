@@ -499,6 +499,33 @@ describe("SQLite Agent State Provider", () => {
     await restored.disconnect()
   })
 
+  it("recovers only finalization of a settled notification after restart", async () => {
+    vi.useFakeTimers()
+    const { state, url } = await createState()
+    await state.connect()
+    // SAFETY: createState constructs the SQLite adapter with the webhook queue methods.
+    const queue = state as ViteHubSqliteAgentStateAdapter
+    const delivery = webhookDelivery("settled-failure")
+    await queue.enqueueWebhookDelivery(delivery)
+    const lease = (await queue.claimWebhookDelivery(delivery.scope))!
+    await queue.markWebhookDeliveryFailure(lease.scope, lease.deliveryId, lease.leaseToken, { error: "failed", attempts: 3 })
+    await queue.beginWebhookFailureNotification(lease.scope, lease.deliveryId, lease.leaseToken)
+    await expect(queue.finishWebhookFailureNotification(lease.scope, lease.deliveryId, "stale-token")).resolves.toBe(false)
+    await expect(queue.finishWebhookFailureNotification(lease.scope, lease.deliveryId, lease.leaseToken)).resolves.toBe(true)
+    await state.disconnect()
+
+    vi.advanceTimersByTime(1_001)
+    const restored = createLibsqlAgentState({ tablePrefix: "test_agent_state_", url })
+    await restored.connect()
+    const recovered = (await restored.claimWebhookDelivery(delivery.scope))!
+    expect(recovered.failure).toEqual({ error: "failed", attempts: 3, notificationStarted: true })
+    await expect(restored.beginWebhookFailureNotification(recovered.scope, recovered.deliveryId, recovered.leaseToken)).resolves.toBe(false)
+    await expect(restored.completeWebhookDelivery(lease.scope, lease.deliveryId, lease.leaseToken)).resolves.toBe(false)
+    await expect(restored.completeWebhookDelivery(recovered.scope, recovered.deliveryId, recovered.leaseToken)).resolves.toBe(true)
+    await expect(restored.webhookDeliveries(delivery.scope)).resolves.toEqual([])
+    await restored.disconnect()
+  })
+
   it("completes terminal notifications with the original worker lease", async () => {
     const { state } = await createState()
     await state.connect()

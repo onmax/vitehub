@@ -1489,11 +1489,17 @@ async function deliverQueuedWebhookFailure(
 ): Promise<boolean> {
   const failure = { error: error instanceof Error ? error.message : String(error), attempts }
   if (state.markWebhookDeliveryFailure && state.beginWebhookFailureNotification) {
+    // A notification claim is permanent. If completion failed after dispatch,
+    // recovery only finalizes the durable row and must not call the user hook again.
+    if (delivery.failure?.notificationStarted) {
+      return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+    }
     if (!delivery.failure && !await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
     // This durable claim has no expiry. A paused callback cannot be fenced by a
     // renewable lease: once dispatched, its external effects may already exist.
     if (!await state.beginWebhookFailureNotification(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
     await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+    if (state.finishWebhookFailureNotification && !await state.finishWebhookFailureNotification(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
     return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
   }
   if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
@@ -1513,7 +1519,15 @@ async function executeQueuedWebhookDelivery(
   if (delivery.failure) {
     // SAFETY: The queue persists invocation input and run metadata from this route contract.
     const recoveredInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
-    await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(delivery.failure.error), delivery.failure.attempts, recoveredInvocation)
+    const delivered = await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(delivery.failure.error), delivery.failure.attempts, recoveredInvocation)
+    if (delivered) {
+      const channelDelivery = delivery.channelDeliveryId ? await resumeAgentChannelDelivery(state, delivery.channelDeliveryId) : undefined
+      if (channelDelivery) await settleChannelDeliveryInvocation(channelDelivery, "failed", "failed", {
+        attempt: delivery.failure.attempts,
+        error: delivery.failure.error,
+        runId: recoveredInvocation?.run?.runId,
+      })
+    }
     return
   }
   const steeringClaim = await state.get(webhookOwnershipKey(delivery.scope, "steer", delivery.deliveryId))

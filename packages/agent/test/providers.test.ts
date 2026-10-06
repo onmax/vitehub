@@ -10736,6 +10736,56 @@ describe("server helpers", () => {
     }
   })
 
+  it.each([
+    { terminal: "last attempt", completion: "reject", startAttempts: 2 },
+    { terminal: "last attempt", completion: "false", startAttempts: 2 },
+    { terminal: "execution leases", completion: "reject", startAttempts: 3 },
+    { terminal: "execution leases", completion: "false", startAttempts: 3 },
+  ])("recovers $terminal finalization after a $completion completion without replaying failed", async ({ completion, startAttempts }) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const failed = vi.fn()
+    const run = vi.fn(async () => { throw new Error("persistent failure") })
+    const fixture = await failedTriggerFixture({ failed, run, startAttempts })
+    const otherWorker = createLibsqlAgentState({ url: fixture.stateUrl })
+    let stopRecovery: (() => Promise<void>) | undefined
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      // Keep the original worker from finalizing so a new connection must recover it.
+      fixture.complete.mockImplementation(async () => {
+        if (completion === "reject") throw new Error("temporary completion outage")
+        return false
+      })
+      await fixture.send()
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalled(), { timeout: 10_000 })
+      expect(failed).toHaveBeenCalledOnce()
+      const [scope] = await fixture.state.webhookDeliveryScopes()
+      const [pending] = await fixture.state.webhookDeliveries(scope!)
+      expect(pending?.failure?.notificationStarted).toBe(true)
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + pending!.leaseTtlMs + 1)
+      await otherWorker.connect()
+      stopRecovery = fixture.resume(otherWorker)
+      await vi.waitFor(async () => {
+        await expect(otherWorker.webhookDeliveries(scope!)).resolves.toEqual([])
+        await expect(fixture.deliveries()).resolves.toEqual([
+          expect.objectContaining({ sourceId: "delivery-failed", status: "failed", events: expect.arrayContaining([
+            expect.objectContaining({ type: "invocation.failed", attempt: 3 }),
+            expect.objectContaining({ type: "failed", attempt: 3 }),
+          ]) }),
+        ])
+      }, { timeout: 10_000 })
+      expect(failed).toHaveBeenCalledOnce()
+      expect(run).toHaveBeenCalledTimes(startAttempts === 2 ? 1 : 0)
+    }
+    finally {
+      clock?.mockRestore()
+      await stopRecovery?.()
+      await otherWorker.disconnect()
+      await fixture.cleanup()
+      consoleError.mockRestore()
+    }
+  }, 20_000)
+
   it("does not call the trigger failed callback for a retried delivery", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const failed = vi.fn()
