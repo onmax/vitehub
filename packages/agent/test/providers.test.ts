@@ -13236,7 +13236,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
+  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13329,6 +13329,45 @@ describe("server helpers", () => {
       const restartNotice = "The server restarted while I was working on this. I'll retry it automatically."
       expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
 
+      if (scenario === "concurrent recovery" || scenario === "index contention") {
+        const indexKey = setSpy.mock.calls.find(([key]) => key.endsWith("vitehub:interrupted-chat"))![0]
+        const originalRecord = await state.get(indexKey)
+        const replayGate = deferred<void>()
+        const dispatch = vi.spyOn(Chat.prototype, "processMessage").mockImplementation(() => replayGate.promise)
+        const initialize = vi.spyOn(Chat.prototype, "initialize")
+        const acquire = state.acquireLock.bind(state)
+        const acquireSpy = vi.spyOn(state, "acquireLock").mockImplementation((key, ttl) =>
+          scenario === "index contention" && key === `${indexKey}:lock` ? Promise.resolve(null) : acquire(key, ttl))
+        const stops: (() => Promise<void>)[] = []
+        try {
+          for (let index = 0; index < (scenario === "concurrent recovery" ? 2 : 1); index++) {
+            // SAFETY: The test Agent supplies the route contract through defineAgent.
+            stops.push(createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+              agentIdentity: { name: "support" }, recoverInterruptedBefore: Date.now(), state, webhookState: state,
+            }))
+          }
+          await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(stops.length))
+          await vi.waitFor(() => expect(dispatch).toHaveBeenCalled())
+          await new Promise(resolveWait => setTimeout(resolveWait, 250))
+          expect(dispatch).toHaveBeenCalledTimes(1)
+          replayGate.resolve()
+          if (scenario === "index contention") {
+            await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.some(value => value instanceof Error && value.message.includes("interrupted chat index lock")))).toBe(true), { timeout: 8_000 })
+            expect(await state.get(indexKey)).toEqual(originalRecord)
+          }
+          else {
+            await vi.waitFor(async () => expect(await state.get(indexKey)).toBeNull())
+            return
+          }
+        }
+        finally {
+          replayGate.resolve()
+          await Promise.all(stops.map(stop => stop()))
+          acquireSpy.mockRestore()
+          initialize.mockRestore()
+          dispatch.mockRestore()
+        }
+      }
       if (scenario === "initialize failure" || scenario === "retry failure") {
         const failure = new Error("temporary recovery failure")
         const method = scenario === "initialize failure" ? "initialize" : "processMessage"
