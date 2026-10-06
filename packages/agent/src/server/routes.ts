@@ -1530,7 +1530,12 @@ async function executeQueuedWebhookDelivery(
       // SAFETY: The queue persists invocation input and run metadata from this route contract.
       const recoveredInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
       const notification = notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, recoveredInvocation)
-      await Promise.race([notification, leaseLostSignal])
+      // Always let the callback settle before returning on lease loss. Promise.race
+      // would leave it running while another worker can reclaim the delivery.
+      await Promise.race([notification, leaseLostSignal]).catch(async error => {
+        if (!leaseLost) throw error
+        await notification
+      })
       if (leaseLost) return
       if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
         throw agentDiagnostics.AGENT_R0783({ message: "[vitehub] Recovered webhook failure notification lost its lease before completion." })
