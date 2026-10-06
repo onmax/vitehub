@@ -293,22 +293,16 @@ async function runOperation(body: BlobDevRequestBody, stores: readonly BlobDevSt
  * Handles one Blob operation from `vitehub blob`. The Vite Development Server forwards the request into the Nitro
  * runtime, so the operation uses the same Blob stores and bindings as the application.
  *
- * The request must carry the Blob dev header, must not come from another origin, and must use JSON. A successful
- * `get` returns the raw file bytes. Every other response is JSON.
+ * The request must carry the Blob dev header and the private Blob dev token of `serverId`, must not come from another
+ * origin, and must use JSON. Without a `serverId`, every request is rejected. A successful `get` returns the raw file
+ * bytes. Every other response is JSON.
  */
-export async function handleBlobDevRequest(request: Request, storesOrRoot?: readonly BlobDevStore[] | string, rootDir: string = process.cwd(), serverId?: string): Promise<Response> {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This overload boundary distinguishes the legacy root-path argument from configured stores.
-  const stores = typeof storesOrRoot === "string" ? undefined : storesOrRoot
-  if (typeof storesOrRoot === "string") {
-    serverId = rootDir
-    rootDir = storesOrRoot
-  }
+export async function handleBlobDevRequest(request: Request, rootDir: string, serverId: string): Promise<Response> {
   const { rejection } = await validateViteHubNitroDevRequest(request, {
     authorize: async (request) => {
-      if (!serverId) return
       const requestedServerId = request.headers.get(blobDevTokenServerHeader)
       const token = request.headers.get(viteHubDevTokenHeader)
-      if (requestedServerId !== serverId || !isViteHubSecretEqual(token, await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId }))) {
+      if (!serverId || requestedServerId !== serverId || !isViteHubSecretEqual(token, await readViteHubDevToken(rootDir, { namespace: blobDevTokenNamespace, serverId }))) {
         return new Response("Forbidden Blob Dev token.", { status: 403 })
       }
     },
@@ -318,7 +312,7 @@ export async function handleBlobDevRequest(request: Request, storesOrRoot?: read
   })
   if (rejection) return rejection
   try {
-    return await runOperation(await readBody(request), stores ?? await listBlobDevStores())
+    return await runOperation(await readBody(request), await listBlobDevStores())
   }
   catch (error) {
     if (error instanceof BlobDevRequestError) return failure(error.message, error.status, error.code)

@@ -3,6 +3,8 @@ import { isAbsolute, relative, resolve, sep } from "node:path"
 
 import { isExecutionAuthority, type ExecutionAuthority } from "@vite-hub/runtime"
 
+import { readWorkspaceDevToken, workspaceDevTokenHeader } from "@vite-hub/workspace/server"
+
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../invocation-stream.ts"
 
 import type { AgentInspectionMetadata } from "../types.ts"
@@ -30,6 +32,27 @@ interface ParsedInfoArgs {
 export function isCompatibleAgentDevServerRoot(rootDir: string, serverRoot: string): boolean {
   const nestedPath = relative(resolve(rootDir), resolve(serverRoot))
   return nestedPath === "" || (nestedPath !== ".." && !nestedPath.startsWith(`..${sep}`) && !isAbsolute(nestedPath))
+}
+
+/**
+ * Reads the private Agent Dev Loop token for the server at `endpoint`. The discovery `GET` returns the server root and
+ * the token server ID, and the CLI reads the token file locally. Returns no header when the server publishes no token
+ * scope or its root is outside `rootDir`. The endpoint then rejects the request.
+ */
+export async function readAgentDevLoopTokenHeaders(endpoint: string, rootDir: string, fetchImpl: typeof fetch, signal?: AbortSignal): Promise<Record<string, string>> {
+  const response = await fetchImpl(endpoint, {
+    headers: { accept: "application/json", [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue },
+    ...(signal ? { signal } : {}),
+  })
+  if (!response.ok) {
+    await response.body?.cancel()
+    return {}
+  }
+  const discovery: unknown = await response.json().catch(() => undefined)
+  if (!isRuntimeRecord(discovery) || !hasRuntimeType(discovery.root, "string") || !hasRuntimeType(discovery.workspaceDevTokenServerId, "string")) return {}
+  if (!isCompatibleAgentDevServerRoot(rootDir, discovery.root)) return {}
+  const token = await readWorkspaceDevToken(discovery.root, { serverId: discovery.workspaceDevTokenServerId })
+  return token ? { [workspaceDevTokenHeader]: token } : {}
 }
 
 function writeInfoUsage(context: AgentInfoCliContext): void {
@@ -192,13 +215,17 @@ function agentInfoMetadata(metadata: AgentInspectionMetadata): AgentInspectionMe
   }
 }
 
-async function fetchAgentInfo(url: string, fetchImpl: typeof fetch, timeout: number): Promise<Response> {
+async function fetchAgentInfo(url: string, rootDir: string, fetchImpl: typeof fetch, timeout: number): Promise<Response> {
+  const signal = AbortSignal.timeout(timeout)
+  const discovery = new URL(url)
+  discovery.search = ""
   return await fetchImpl(url, {
     headers: {
       accept: "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await readAgentDevLoopTokenHeaders(discovery.href, rootDir, fetchImpl, signal),
     },
-    signal: AbortSignal.timeout(timeout),
+    signal,
   })
 }
 
@@ -237,7 +264,7 @@ export async function runAgentInfoCli<TContext extends AgentInfoCliContext>(
   const timeout = options.timeout ?? 30_000
   let response: Response
   try {
-    response = await fetchAgentInfo(url, fetchImpl, timeout)
+    response = await fetchAgentInfo(url, context.rootDir, fetchImpl, timeout)
   }
   catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {

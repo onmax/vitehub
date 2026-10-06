@@ -819,9 +819,14 @@ function assistantMessage(text: string, index: number): UIMessageLike {
   }
 }
 
+/** The Agent Dev Loop endpoint rejects every request except discovery without the private token. */
+async function devTokenHeaders(target: AgentDevTarget): Promise<Record<string, string>> {
+  const token = await readWorkspaceDevToken(target.root, target.tokenOptions)
+  return token ? { [workspaceDevTokenHeader]: token } : {}
+}
+
 async function sendDevMessage(
-  url: string,
-  agent: string,
+  target: AgentDevTarget,
   text: string,
   history: UIMessageLike[],
   parsed: ParsedDevArgs,
@@ -833,9 +838,9 @@ async function sendDevMessage(
   const startedAt = Date.now()
   let response: Response
   try {
-    response = await fetchViteHubDevEndpoint(fetchImpl, url, agentDevEndpoint, {
+    response = await fetchViteHubDevEndpoint(fetchImpl, target.url, agentDevEndpoint, {
       body: JSON.stringify({
-        agent,
+        agent: target.agent,
         ...(messages.length ? { messages } : {}),
         ...(parsed.payload ? { payload: parsed.payload } : {}),
         ...(parsed.timeout ? { timeout: parsed.timeout } : {}),
@@ -843,6 +848,7 @@ async function sendDevMessage(
       }),
       headers: {
         "content-type": "application/json",
+        ...await devTokenHeaders(target),
       },
       method: "POST",
       signal,
@@ -1029,15 +1035,14 @@ async function sendDevMessage(
 }
 
 async function sendDevCliCommand(
-  url: string,
-  agent: string,
+  target: AgentDevTarget,
   parsed: ParsedDevArgs,
   context: AgentCliContext,
   fetchImpl: typeof fetch,
 ): Promise<number> {
-  const response = await fetchViteHubDevEndpoint(fetchImpl, url, agentDevEndpoint, {
+  const response = await fetchViteHubDevEndpoint(fetchImpl, target.url, agentDevEndpoint, {
     body: JSON.stringify({
-      agent,
+      agent: target.agent,
       ...(parsed.payload ? { payload: parsed.payload } : {}),
       ...(parsed.timeout ? { timeout: parsed.timeout } : {}),
       cli: {
@@ -1047,6 +1052,7 @@ async function sendDevCliCommand(
     }),
     headers: {
       "content-type": "application/json",
+      ...await devTokenHeaders(target),
     },
     method: "POST",
   })
@@ -1185,7 +1191,7 @@ async function runInteractiveDevLoop(
       }
       activeRequest = new AbortController()
       try {
-        const nextHistory = await sendDevMessage(target.url, target.agent, text, history, parsed, context, fetchImpl, activeRequest.signal)
+        const nextHistory = await sendDevMessage(target, text, history, parsed, context, fetchImpl, activeRequest.signal)
         if (!nextHistory) return 1
         history = nextHistory
       }
@@ -1237,7 +1243,7 @@ export async function runAgentDevCli(
   if (!target) return 1
 
   if (parsed.cli) {
-    return await sendDevCliCommand(target.url, target.agent, parsed, context, fetchImpl)
+    return await sendDevCliCommand(target, parsed, context, fetchImpl)
   }
   if (workspaceCommand) {
     return await sendDevWorkspaceCommand(target.url, target.agent, workspaceCommand, parsed, context, fetchImpl, target.root, target.tokenOptions)
@@ -1248,7 +1254,7 @@ export async function runAgentDevCli(
     || Array.isArray(parsed.payload.messages) && parsed.payload.messages.length > 0
   )
   if (parsed.message || payloadStartsInvocation) {
-    return await sendDevMessage(target.url, target.agent, parsed.message || "", [], parsed, context, fetchImpl, new AbortController().signal) ? 0 : 1
+    return await sendDevMessage(target, parsed.message || "", [], parsed, context, fetchImpl, new AbortController().signal) ? 0 : 1
   }
   if (!process.stdin.isTTY) {
     context.stderr.write("Pass a message or run in an interactive terminal.\n")
