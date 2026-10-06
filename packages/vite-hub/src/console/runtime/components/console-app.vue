@@ -33,6 +33,7 @@ import ConsoleInvocationComposer from "./console-invocation-composer.vue";
 import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
 import ConsoleSessionNavbar from "./console-session-navbar.vue";
+import { createConsoleInvocationDeletion } from "../client/invocation-deletion";
 import ConsoleSessionCancel from "./console-session-cancel.vue";
 import ConsoleSessionActions from "./console-session-actions.vue";
 import type { ConsoleSessionRerun } from "./console-session-actions.vue";

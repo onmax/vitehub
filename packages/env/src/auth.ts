@@ -1,3 +1,4 @@
+import { grantEnvAccess } from "./internal/access.ts";
 import type { EnvAccessContext, EnvPermission } from "./bridge.ts";
 
 export interface EnvHumanSession {
@@ -71,10 +72,10 @@ export function createEnvAuthenticator<
       }
       const session = await options.getSession({ headers: request.headers });
       if (!session || !identifier(session.user.id)) return null;
-      return {
-        actor: { kind: "user", id: session.user.id },
-        admin: (await options.isAdmin(session)) === true,
-      };
+      const actor = { kind: "user" as const, id: session.user.id };
+      // Only this check creates an administrator context. The bridge rejects copies.
+      if ((await options.isAdmin(session)) === true) return grantEnvAccess({ actor }, { admin: true });
+      return { actor, admin: false };
     } catch {
       return null;
     }
