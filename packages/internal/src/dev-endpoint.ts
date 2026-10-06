@@ -298,8 +298,8 @@ export function registerViteHubDevEndpoint(server: ViteHubDevEndpointServer, opt
         error: { message: redactInspectionText(`${options.label} request failed: ${error instanceof Error ? error.message : String(error)}`) },
       }, { status: 500 })))
       .finally(() => {
-        req.removeListener("aborted", onAborted)
-        res.removeListener("close", onClose)
+        req.off("aborted", onAborted)
+        res.off("close", onClose)
       })
   })
 }
