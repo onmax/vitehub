@@ -110,7 +110,7 @@ describe("Source Sync owner grants", () => {
     registerWorkspace("sync-forged-state", defineWorkspace({ store, sources: { docs: docsSource({ sync: { stale: "remove" } }) } }))
     const workspace = await useRegisteredWorkspace("sync-forged-state")
     await store.writeFile("notes/private.md", { path: "notes/private.md", content: "private" })
-    await store.setMeta!(sourceSyncMetaKey("docs"), {
+    await store.setMeta!(sourceSyncMetaKey("docs", "sync-forged-state"), {
       configHash: "forged",
       mountPath: "",
       paths: { "notes/private.md": { digest: await sha256("private"), sourcePath: "private.md" } },

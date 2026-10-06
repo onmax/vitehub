@@ -636,7 +636,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   async function isSyncedStatePath(path: string) {
     if (!store.getMeta) return false
     for (const source of syncSources) {
-      const state = readWorkspaceSourceSyncState(await store.getMeta(sourceSyncMetaKey(source.key)))
+      const state = readWorkspaceSourceSyncState(await store.getMeta(sourceSyncMetaKey(source.key, definition.name)))
       if (!state) continue
       if (state.paths[path]) return true
       if (Object.keys(state.paths).some(item => item.startsWith(`${path}/`))) return true
@@ -672,7 +672,9 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
     }
     const resolution = resolveWorkspacePath(definition, path)
-    if (isDescriptorPath(resolution.workspacePath)) {
+    if (isDescriptorPath(resolution.workspacePath)
+      || allSources.some(source => (source.materialize === "lazy" || source.materialize === "startup")
+        && sourceMountIntersectsPath(source, resolution.workspacePath))) {
       throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
     }
     await assertWritableResolvedStorePath(path, resolution.workspacePath, resolution.type)
@@ -720,7 +722,10 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
           throw workspaceError(`[vitehub] Workspace rebase to take remote ${path} requires a Source write grant for that path.`)
         }
       }
-      await rebase(options?.takeRemote ? { ...options, takeRemote: grants.map(grant => grant.path) } : options)
+      await withWorkspaceStoreMutation(store, async () => {
+        for (const grant of grants) await assertWritableCurrentPath(grant.path)
+        await rebase(options?.takeRemote ? { ...options, takeRemote: grants.map(grant => grant.path) } : options)
+      })
     }
   }
 

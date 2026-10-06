@@ -34,6 +34,7 @@ interface SourceSyncPlan {
   paths: WorkspaceSourceSyncPathResult[]
   removals: WorkspaceSourceSyncPathResult[]
   source: ResolvedWorkspaceSource
+  definitionName: string
   stateChanged: boolean
 }
 
@@ -130,7 +131,7 @@ async function planSourceSync(
 ): Promise<SourceSyncPlan> {
   const ctx = createSourceContext(definition, source)
   const [previousState, configHash, items] = await Promise.all([
-    store.getMeta?.(sourceSyncMetaKey(source.key)).then(readWorkspaceSourceSyncState),
+    store.getMeta?.(sourceSyncMetaKey(source.key, definition.name)).then(readWorkspaceSourceSyncState),
     sourceConfigHash(source),
     getSourceItems(source, ctx),
   ])
@@ -200,6 +201,7 @@ async function planSourceSync(
     paths,
     removals,
     source,
+    definitionName: definition.name,
     stateChanged: !workspaceSourceSyncStateEquals(previousState, nextState),
   }
 }
@@ -214,7 +216,7 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
     await sourceStore.rm(removal.path, { force: true })
   }
   await pruneEmptySourceDirectories(sourceStore, plan.source, plan.removals)
-  if (plan.stateChanged) await store.setMeta?.(sourceSyncMetaKey(plan.source.key), plan.nextState)
+  if (plan.stateChanged) await store.setMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName), plan.nextState)
 }
 
 async function pruneEmptySourceDirectories(store: WorkspaceStore, source: ResolvedWorkspaceSource, removals: WorkspaceSourceSyncPathResult[]) {
