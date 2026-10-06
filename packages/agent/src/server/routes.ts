@@ -1514,7 +1514,16 @@ async function executeQueuedWebhookDelivery(
   if (delivery.failure) {
     const error = new Error(delivery.failure.error)
     // SAFETY: The queue persists invocation input and run metadata from this route contract.
-    await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)
+    // Keep the recovered terminal notification fenced while the callback runs. A callback
+    // may outlive the normal queue lease, and an expired lease would let another worker
+    // claim and invoke the once-per-delivery notification concurrently.
+    const stopHeartbeat = startWebhookQueueHeartbeat(state, delivery, () => undefined)
+    try {
+      await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)
+    }
+    finally {
+      stopHeartbeat()
+    }
     await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
     return
   }
