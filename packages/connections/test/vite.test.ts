@@ -1,5 +1,7 @@
 import { fork } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
+import { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -159,8 +161,64 @@ describe("hubConnections", () => {
       `import actor from ${JSON.stringify(join(root, "server/connections-auth.ts"))}`,
     );
     expect(handler).toContain('createConnectionsHandler({ actor, basePath: "/_vitehub/connections" })');
-    expect(handler).toContain("handle(event.req, event)");
+    expect(handler).toContain("handle(request, event)");
     expect(handler).not.toContain("user:local");
+  });
+
+  it("preserves H3 request bodies, external origins, and the original event", async () => {
+    const root = await createTempProject();
+    const config = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
+    await (hubConnections().config as unknown as ConfigHook)(config, { command: "serve", mode: "development" });
+    const handlers = (config.nitro as { handlers: Array<{ handler: string }> }).handlers;
+    const source = await readFile(handlers[0]!.handler, "utf8");
+    expect(source).not.toContain('from "node:stream"');
+    // Execute the generated adapter with a recording handler at its Web Request boundary.
+    const handle = vi.fn((request: Request, event: unknown) => ({ request, event }));
+    const code = source.replace(/^import .*\n/gm, "").replace(/^const handle = .*\n/m, "").replace("export default", "const generated =");
+    const adapt = new Function("Readable", "handle", `return (function() { ${stripTypeScriptTypes(code)} return generated })()`)(Readable, handle) as (event: unknown) => { request: Request, event: unknown };
+    const body = JSON.stringify({ action: "list" });
+    const raw = Object.assign(Readable.from([Buffer.from(body.slice(0, 8)), Buffer.from(body.slice(8))]), {
+      headers: { host: "internal:3000", "x-forwarded-host": "public.example:8443, proxy", "x-forwarded-proto": "https, http", "content-type": "application/json" },
+      method: "POST", url: "/_vitehub/connections?test=1", socket: {},
+    });
+    const event = { node: { req: raw } };
+    const result = adapt(event);
+    expect(result.event).toBe(event);
+    expect(result.request.url).toBe("https://public.example:8443/_vitehub/connections?test=1");
+    expect(result.request.headers.get("content-type")).toBe("application/json");
+    expect(await result.request.text()).toBe(body);
+
+    for (const method of ["GET", "HEAD"]) {
+      const request = adapt({ node: { req: { headers: { host: "secure.example" }, method, url: "/callback", socket: { encrypted: true } } } }).request;
+      expect(request.url).toBe("https://secure.example/callback");
+      expect(request.body).toBeNull();
+    }
+    const web = new Request("https://public.example/_vitehub/connections", { method: "POST", body });
+    const webEvent = { req: web };
+    expect(adapt(webEvent)).toEqual({ request: web, event: webEvent });
+    expect(handle).toHaveBeenLastCalledWith(web, webEvent);
+  });
+
+  it("checks every development request with the actor module, or the development policy without one", async () => {
+    const handlerFor = async (plugin: ReturnType<typeof hubConnections>, command: "build" | "serve") => {
+      const root = await createTempProject();
+      const config = { nitro: {}, root, [VITEHUB_NITRO_CONFIG_CONTEXT]: true };
+      await (plugin.config as unknown as ConfigHook)(config, { command, mode: command === "serve" ? "development" : "production" });
+      const handlers = (config.nitro as { handlers: Array<{ handler: string }> }).handlers;
+      return await readFile(handlers[0]!.handler, "utf8");
+    };
+    const local = await handlerFor(hubConnections(), "serve");
+    expect(local).toContain('createConnectionsHandler({ actor: "development", basePath: "/_vitehub/connections" })');
+    expect(local).not.toContain("user:local");
+
+    const authenticated = await handlerFor(hubConnections({ actor: "#app/connections-actor" }), "serve");
+    expect(authenticated).toContain('import actor from "#app/connections-actor"');
+    expect(authenticated).toContain('createConnectionsHandler({ actor, basePath: "/_vitehub/connections" })');
+
+    const production = await handlerFor(hubConnections({ actor: "#app/connections-actor", management: true }), "build");
+    expect(production).toContain('import actor from "#app/connections-actor"');
+    const explicit = await handlerFor(hubConnections({ actor: "#app/connections-actor", management: { actor: "#app/managers" } }), "build");
+    expect(explicit).toContain('import actor from "#app/managers"');
   });
 
   it("preserves existing config arrays when Vite merges the hook result", async () => {
