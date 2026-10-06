@@ -5595,7 +5595,9 @@ async function resumeInterruptedChatInvocations(
       let claimed = false
       await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
         const existing = current[record.runId]
-        if (existing?.startedAt !== record.startedAt || existing.recoveryToken !== record.recoveryToken) return
+        // A reservation is a durable one-shot claim. A later startup must not
+        // replace it while the original owner is still dispatching the retry.
+        if (!existing || existing.recoveryToken || existing.startedAt !== record.startedAt) return
         current[record.runId] = { ...existing, recoveryToken, startedAt: new Date().toISOString() }
         claimed = true
       })
