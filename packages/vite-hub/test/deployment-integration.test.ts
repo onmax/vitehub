@@ -235,7 +235,7 @@ describe("built-in deployment preset integration", () => {
       expect(config.root).toBe(agentRoot)
       expect((config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
-      }).nitro?.cloudflare?.wrangler?.secrets?.required).toBeUndefined()
+      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["TELEGRAM_BOT_TOKEN"])
       const types = await readFile(join(agentRoot, ".vitehub", "types", "env.d.ts"), "utf8")
       expect(types).toContain('"telegram": {')
       expect(types).toContain('"botToken": import("vite-hub/env/secret").SecretEnv<string>')
@@ -264,7 +264,7 @@ describe("built-in deployment preset integration", () => {
       }).nitro?.cloudflare?.wrangler?.secrets?.required
 
       const config = await resolve()
-      expect(requiredSecrets(config)).toBeUndefined()
+      expect(requiredSecrets(config)).toEqual(["TELEGRAM_BOT_TOKEN"])
       await symlink(join(import.meta.dirname, "../../..", "node_modules"), join(root, "node_modules"), "dir")
       const moduleUrl = pathToFileURL(join(root, ".vitehub", "env", "server.mjs")).href
       const token = execFileSync(process.execPath, ["--input-type=module", "-e", `
@@ -664,12 +664,12 @@ describe("built-in deployment preset integration", () => {
 
       const [first, second] = await Promise.all([
         resolveConfig({
-          env: { server: { first: env({ secret: true, source: env.source("FIRST_TOKEN") }) } },
+          env: { server: { first: env({ secret: true, source: env.source("VITEHUB_FIRST") }) } },
           root,
           plugins: [vitehub({ env: false, preset: "cloudflare" }), envPlugin],
         } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build"),
         resolveConfig({
-          env: { server: { second: env({ secret: true, source: env.source("SECOND_TOKEN") }) } },
+          env: { server: { second: env({ secret: true, source: env.source("VITEHUB_SECOND") }) } },
           root,
           plugins: [vitehub({ env: false, preset: "cloudflare" }), envPlugin],
         } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build"),
@@ -677,8 +677,8 @@ describe("built-in deployment preset integration", () => {
       const required = (config: typeof first) => (config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
       }).nitro?.cloudflare?.wrangler?.secrets?.required
-      expect(required(first)).toEqual(["FIRST_TOKEN"])
-      expect(required(second)).toEqual(["SECOND_TOKEN"])
+      expect(required(first)).toEqual(["VITEHUB_FIRST"])
+      expect(required(second)).toEqual(["VITEHUB_SECOND"])
     }
     finally {
       await rm(root, { force: true, recursive: true })
