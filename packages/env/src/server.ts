@@ -57,7 +57,7 @@ function readRuntimeSource(entry: RuntimeEnvEntry, env: RuntimeEnv): { found: bo
 /** Report which kind of name supplied the value, and whether a shadowed conventional name holds another value. */
 function runtimeSourceOrigin(entry: RuntimeEnvEntry, env: RuntimeEnv, source: { found: boolean, name?: string, value?: unknown }): Pick<ServerEnvInspectionEntry, "conflict" | "via"> {
   const canonical = entry.source.canonical
-  if (!source.found || canonical === undefined) return {}
+  if (!source.found || canonical === undefined || canonical === false) return {}
   if (source.name !== canonical) return { via: "conventional" }
   const conflict = (entry.source.names || [entry.source.name])
     .some(name => name !== canonical && hasRuntimeName(entry, env, name) && env[name] !== source.value)

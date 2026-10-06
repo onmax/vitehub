@@ -60,6 +60,17 @@ describe("Server Env declaration inventory", () => {
     ])
     expect(JSON.stringify(inspection)).not.toContain("secret")
   })
+
+  it("omits origin metadata when canonical lookup is disabled", async () => {
+    const { inspectServerEnv } = await import("../src/server.ts")
+    const registry = createRuntimeRegistry({
+      channel: env({ source: env.source("CHANNEL_TOKEN", { canonical: false }) }),
+    })
+    const inspection = await inspectServerEnv(registry, { env: { CHANNEL_TOKEN: "token" } })
+    expect(inspection.entries).toEqual([
+      { masked: false, path: "env.server.channel", required: true, source: "env", status: "available" },
+    ])
+  })
 })
 
 it("manages only declared unambiguous provider paths without resolving credentials", async () => {
