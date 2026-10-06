@@ -1,4 +1,5 @@
 import { envAccessAuthority, grantEnvAccess } from "./access.ts";
+import { envBridgeError } from "../bridge-error.ts";
 import type { EnvAccessContext, EnvActor, EnvBridge } from "../bridge.ts";
 
 /**
