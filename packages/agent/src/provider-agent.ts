@@ -555,7 +555,7 @@ function providerLauncherSource(
   requirementCapture?: ProviderRequirementCapture,
 ): string {
   return `import { spawn } from "node:child_process"
-import { appendFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { setTimeout as delay } from "node:timers/promises"
 
 const child = spawn(${JSON.stringify(launch.command)}, [...${JSON.stringify([...launch.args || []])}, ...process.argv.slice(2)], {
@@ -575,9 +575,25 @@ let stderrBytes = 0
 const requirementCapture = ${JSON.stringify(requirementCapture ?? null)}
 let requirementOutput = Buffer.alloc(0)
 const secretEnvironmentKeys = ${JSON.stringify(secretEnvironmentKeys)}
-const diagnosticSecrets = [...new Set(secretEnvironmentKeys
+function credentialFileSecrets() {
+  const home = process.env.CODEX_HOME
+  if (!home) return []
+  try {
+    const value = JSON.parse(readFileSync(home + "/auth.json", "utf8"))
+    const secrets = []
+    const visit = item => {
+      if (typeof item === "string" && item.length > 0) secrets.push(item)
+      else if (Array.isArray(item)) item.forEach(visit)
+      else if (item && typeof item === "object") Object.values(item).forEach(visit)
+    }
+    visit(value)
+    return secrets
+  }
+  catch { return [] }
+}
+const diagnosticSecrets = [...new Set([...secretEnvironmentKeys
   .map(key => process.env[key])
-  .filter(item => typeof item === "string" && item.length > 0))]
+  .filter(item => typeof item === "string" && item.length > 0), ...credentialFileSecrets()])]
   .sort((left, right) => right.length - left.length)
 const diagnosticSecretBuffers = diagnosticSecrets.map(secret => Buffer.from(secret))
 const stderrRetentionBytes = ${providerLaunchStderrMaxBytes} + Math.max(0, ...diagnosticSecrets.map(secret => Buffer.byteLength(secret)))
@@ -742,13 +758,30 @@ function redactProviderDiagnostic(
   value: string,
   environment: NodeJS.ProcessEnv,
   secretEnvironmentKeys: readonly string[],
+  additionalSecrets: readonly string[] = [],
 ): string {
   let redacted = value
-  const secrets = [...new Set(secretEnvironmentKeys.map(key => environment[key])
-    .filter((item): item is string => hasRuntimeType(item, "string") && item.length > 0))]
+  const secrets = [...new Set([...secretEnvironmentKeys.map(key => environment[key])
+    .filter((item): item is string => hasRuntimeType(item, "string") && item.length > 0), ...additionalSecrets])]
     .sort((left, right) => right.length - left.length)
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "[REDACTED]")
   return redactCredentialText(redacted)
+}
+
+async function codexCredentialSecrets(homePath: string | undefined): Promise<string[]> {
+  if (!homePath) return []
+  try {
+    const value: unknown = JSON.parse(await readFile(join(homePath, "auth.json"), "utf8"))
+    const secrets: string[] = []
+    const visit = (item: unknown): void => {
+      if (typeof item === "string" && item.length > 0) secrets.push(item)
+      else if (Array.isArray(item)) item.forEach(visit)
+      else if (isRuntimeRecord(item)) Object.values(item).forEach(visit)
+    }
+    visit(value)
+    return [...new Set(secrets)]
+  }
+  catch { return [] }
 }
 
 async function providerLaunchFailure(
@@ -1329,6 +1362,8 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       ...(options.provider === "codex" && !home ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
       ...overrides,
     })
+    const launchSecretEnvironmentKeys = providerSecretEnvironmentKeys(environment, [])
+    const credentialSecrets = await codexCredentialSecrets(home?.homePath)
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
     let launchDiagnosticPath: string | undefined
@@ -1348,7 +1383,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       const providerLaunch = requirementCapture
         ? { ...launch, args: [...launch.args || [], "-c", providerRequirementPrelude, "sh", String(requirements.length), requirementCapture.prefix, ...requirements, command] }
         : launch
-      const launcher = await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)
+      const launcher = await materializeProviderLauncher(root, providerLaunch, launchSecretEnvironmentKeys, root, requirementCapture)
       binaryPath = launcher.path
       launchDiagnosticPath = launcher.diagnosticPath
     }
@@ -1364,12 +1399,12 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     })
     // A custom launcher records the child's stderr. Without it, a failed probe reports only the exit code.
     const launchFailure = snapshot.status === "error"
-      ? await providerLaunchFailure(launchDiagnosticPath, environment, providerSecretEnvironmentKeys(overrides, []), undefined)
+      ? await providerLaunchFailure(launchDiagnosticPath, environment, launchSecretEnvironmentKeys, undefined)
       : undefined
     const launchStderr = launchFailure?.details?.stderr
     const failureMessage = [
-      snapshot.message && redactProviderDiagnostic(snapshot.message, environment, providerSecretEnvironmentKeys(overrides, [])),
-      hasRuntimeType(launchStderr, "string") && launchStderr ? `Launch stderr: ${launchStderr.slice(-providerStatusStderrMaxLength)}` : undefined,
+      snapshot.message && redactProviderDiagnostic(snapshot.message, environment, launchSecretEnvironmentKeys, credentialSecrets),
+      hasRuntimeType(launchStderr, "string") && launchStderr ? `Launch stderr: ${redactProviderDiagnostic(launchStderr.slice(-providerStatusStderrMaxLength), environment, launchSecretEnvironmentKeys, credentialSecrets)}` : undefined,
     ].filter(Boolean).join(" ")
     if (requirementCapture) missingCommands = await capturedProviderRequirements(requirementCapture)
     const requirementsUnknown = requirements.length > 0 && missingCommands === undefined
