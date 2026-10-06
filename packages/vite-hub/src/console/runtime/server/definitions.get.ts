@@ -1,3 +1,4 @@
+import { withConsoleAccess, type ConsoleAccessRoute } from "./access.ts"
 import { assertConsoleRequest, consoleRequestURL } from "./request.ts"
 import { copyConsoleRecords, getConsoleDefinitions, getConsoleSchedules } from "./definitions.ts"
 import { isConsoleSectionId } from "../sections.ts"
@@ -34,7 +35,7 @@ function markRunnableSchedules(records: readonly ConsoleRecord[]): ConsoleRecord
     : record)
 }
 
-export default async function consoleDefinitionsHandler(event: ConsoleRequestEvent): Promise<ConsoleSectionContent & {
+async function consoleDefinitionsHandler(event: ConsoleRequestEvent): Promise<ConsoleSectionContent & {
   section: ConsoleSectionId
 }> {
   assertConsoleRequest(event)
@@ -58,3 +59,6 @@ export default async function consoleDefinitionsHandler(event: ConsoleRequestEve
   const records = reader ? mergeRecords(content.records, await readRuntimeRecords(reader)) : content.records
   return { kind: "record-table", records: section === "schedules" ? markRunnableSchedules(records) : records, section }
 }
+
+const guardedHandler: ConsoleAccessRoute<typeof consoleDefinitionsHandler> = withConsoleAccess(consoleDefinitionsHandler)
+export default guardedHandler

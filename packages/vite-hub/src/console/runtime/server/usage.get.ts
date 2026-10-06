@@ -1,5 +1,6 @@
 import { getConsoleAgentDefinition, getConsoleAgents } from "./agents.ts";
 import { getConsoleInvocations, getConsoleUsageIndex } from "./invocations.ts";
+import { withConsoleAccess, type ConsoleAccessRoute } from "./access.ts";
 import { assertConsoleRequest, consoleRequestURL } from "./request.ts";
 import { createUsageSummary, parseConsoleUsageStatus, parseConsoleUsageWindow } from "./usage.ts";
 
@@ -112,4 +113,5 @@ const usageHandler = async (event: ConsoleRequestEvent): Promise<Record<string, 
   );
 };
 
-export default usageHandler;
+const guardedHandler: ConsoleAccessRoute<typeof usageHandler> = withConsoleAccess(usageHandler);
+export default guardedHandler;

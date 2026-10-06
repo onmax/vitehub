@@ -8,12 +8,15 @@ import {
   installConsoleBlobScope,
   resolveConsoleBlob,
 } from "../src/console/internal.ts"
-import blobHandler from "../src/console/runtime/server/blob.get.ts"
+import blobHandlerRoute from "../src/console/runtime/server/blob.get.ts"
 import { installConsoleBlob } from "../src/console/runtime/server/blob.ts"
 
 import type { BlobListOptions, BlobObject, BlobResult, BlobStorage } from "@vite-hub/blob"
 import type { ConsoleInvocationScope } from "../src/console/internal.ts"
 import type { ConsoleRequestEvent } from "../src/console/runtime/server/request.ts"
+import { allowed } from "./support/console-access.ts"
+
+const blobHandler = allowed(blobHandlerRoute)
 
 // SAFETY: ConsoleInvocationScope only adds optional symbol-keyed test state to the global object.
 const scope = globalThis as ConsoleInvocationScope
