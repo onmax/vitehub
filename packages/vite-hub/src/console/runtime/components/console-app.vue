@@ -82,7 +82,7 @@ interface ConsoleAgentProfile {
 }
 const agentInvocationOptions = ref<Record<string, { profiles: ConsoleAgentProfile[] }>>({});
 const nowMs = ref(Date.now());
-const sessionsOpen = ref(false);
+const sessionsOpen = ref(route.query.sessions === "open");
 const detailsOpen = ref(false);
 const detailsMaximized = ref(false);
 const inspectorTab = ref<"details" | "trace" | "workspace" | "capabilities">("details");
@@ -112,6 +112,23 @@ const listPollInterval = computed(() => (sessionPollingEnabled.value ? 5_000 : f
 const isUsageRoute = computed(
   () => route.name === resolveConsoleRouteName(route.name, "vitehub-console-usage"),
 );
+
+async function openSessionsFromUsage(): Promise<void> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Query values can also be arrays or null.
+  const queryAgent = typeof route.query.returnAgent === "string" ? route.query.returnAgent.trim() : "";
+  const agent = selectedAgentName.value || (queryAgent.length <= 512 ? queryAgent : "");
+  if (agent) {
+    await router.push({
+      name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
+      params: { agent: encodeAgentRouteParam(agent) },
+      query: { sessions: "open" },
+    });
+    sessionsOpen.value = true;
+    return;
+  }
+  await router.push({ name: resolveConsoleRouteName(route.name, "vitehub-console-agents"), query: { sessions: "open" } });
+  sessionsOpen.value = true;
+}
 
 const list = useAgentInvocations({
   baseURL: props.apiBase,
@@ -1179,7 +1196,7 @@ onBeforeUnmount(() => {
       :sections-base="sectionsBase"
     />
 
-    <ConsoleUsage v-if="isUsageRoute" :base="usageBase" />
+    <ConsoleUsage v-if="isUsageRoute" :base="usageBase" @open-sessions="openSessionsFromUsage" />
 
     <UDashboardPanel
       v-else
