@@ -1,7 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { getTableColumns } from "drizzle-orm";
 import { createError, defineEventHandler } from "h3";
 import { describe, expect, it, vi } from "vitest";
 import { BlobLanding } from "../app/data/primitive-landings/blob";
+import { DatabasesLanding } from "../app/data/primitive-landings/databases";
 import { ContentLanding } from "../app/data/primitive-landings/content";
 import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-landings";
 import { stubLanding } from "../app/data/primitive-landings/stub";
@@ -114,6 +118,26 @@ describe("primitive landing placeholders", () => {
   });
 });
 
+describe("Sandbox landing projects", () => {
+  it("supplies package handlers, callers, and configured hosts", () => {
+    const landing = getPrimitiveLanding("sandbox")!;
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).toBe(false);
+      const files = new Map(variant.files.map(file => [file.path, file.content]));
+      const manifest = JSON.parse(files.get("package.json")!);
+      for (const dependency of ["vite-hub", "@vite-hub/sandbox", "@vercel/sandbox", ...(variant.framework === "nuxt" ? ["nuxt"] : ["vite", "nitro"])]) {
+        expect(manifest.dependencies[dependency]).toBeTruthy();
+      }
+      const config = files.get(variant.framework === "nuxt" ? "nuxt.config.ts" : "vite.config.ts");
+      expect(config).toContain('preset: "vercel", sandbox: true');
+      expect(files.get("server/sandboxes/release-notes/index.ts")).toContain("export default async function");
+      expect(files.get("server/sandboxes/release-notes/index.ts")).not.toContain("defineSandbox");
+      expect(files.get("server/release-notes.ts")).toContain('runSandbox("release-notes", { notes: "ship it" })');
+      expect(JSON.parse(files.get("server/sandboxes/release-notes/package.json")!).type).toBe("module");
+    }
+  });
+});
+
 describe("Browser landing examples", () => {
   it("configures supported hosts and uses the discovered Browser API", () => {
     const browser = getPrimitiveLanding("browser")!;
@@ -159,5 +183,33 @@ describe("Content landing examples", () => {
         expect(variant.files.find((file) => file.path.endsWith(".config.ts"))?.content).toContain('preset: "node"');
       }
     }
+  });
+});
+
+describe("database landing examples", () => {
+  it.each(DatabasesLanding.variants)("loads the $label schema using the database package", async (variant) => {
+    const root = await mkdtemp(new URL("../.database-landing-", import.meta.url));
+    try {
+      const definition = variant.files.find((file) => /(?:src\/database|server\/databases\/config)\.ts$/.test(file.path));
+      expect(definition).toBeDefined();
+      const path = join(root, "database.mjs");
+      await writeFile(path, definition!.content);
+      const { default: database } = await import(/* @vite-ignore */ pathToFileURL(path).href);
+      expect(database.name).toBe("default");
+      const columns = getTableColumns(database.schema.notes);
+      expect(Object.keys(columns)).toEqual(["id", "title"]);
+      expect(columns.id.primary).toBe(true);
+      expect(columns.title.notNull).toBe(true);
+      const config = variant.files.find((file) => file.path.endsWith(".config.ts"));
+      expect(config?.content).toContain("database: true");
+      expect(variant.files.map((file) => file.content).join("\n")).not.toMatch(/definePrimitive|vite-hub\/databases/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("links to the current database guide", async () => {
+    expect(DatabasesLanding.docsTo).toBe("/docs/database");
+    await expect(readFile(new URL("../content/docs/database/index.md", import.meta.url), "utf8")).resolves.toContain("title: Database");
   });
 });
