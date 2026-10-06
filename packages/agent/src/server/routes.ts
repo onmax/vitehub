@@ -1588,7 +1588,7 @@ async function executeQueuedWebhookDelivery(
     }
     // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
     let invocation = delivery.invocation as PersistedInvocation | undefined
-    if (!invocation) {
+    if (!invocation || delivery.rehydrate) {
       const resolved = await Promise.race([runWithRuntimeCloudflareEnv(context, async () => {
         const match = await findAgentWebhookRegistration(agent, context, request, delivery.webhookId)
         if (!match) throw agentDiagnostics.AGENT_R0779({ message: `[vitehub] Persisted webhook registration "${delivery.webhookId}" no longer exists.` })
@@ -1601,7 +1601,7 @@ async function executeQueuedWebhookDelivery(
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
           match.trigger.id,
           input,
-          { verifyWebhook: false },
+          { verifyWebhook: false, queuedInvocation: invocation },
         )
         if (delivery.rehydrate && isResolvedAgentTriggerHandledInvocation(replayed)) {
           throw agentDiagnostics.AGENT_R0780({ message: "[vitehub] Persisted webhook delivery requires rehydration, but its trigger handled the replayed request." })
@@ -7611,7 +7611,7 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
               { ...invocation.webhook, concurrencyLimit },
               webhookState.keyPrefix,
               routeAgentIdentity(handlerOptions)?.name || "agent",
-              !invocation.webhook.rehydrate && isJsonSafe(persistedInvocation) ? persistedInvocation : undefined,
+              isJsonSafe(persistedInvocation) ? persistedInvocation : undefined,
               Boolean(invocation.webhook.rehydrate),
             )
             if (invocation.webhook.busy === "steer") {

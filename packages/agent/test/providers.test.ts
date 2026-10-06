@@ -9181,6 +9181,105 @@ describe("server helpers", () => {
     }
   })
 
+  it.each([
+    { filterLocation: "pullRequest", event: "issue_comment" },
+    { filterLocation: "comments", event: "issue_comment" },
+    { filterLocation: "triggers", event: "issue_comment" },
+    { filterLocation: "comments", event: "pull_request_review" },
+    { filterLocation: "comments", event: "pull_request_review_comment" },
+  ] as const)("refreshes a queued GitHub $event after its $filterLocation draft filter stops matching", async ({ filterLocation, event }) => {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-github-queued-head-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    let draft = true
+    let head = "a".repeat(40)
+    let releaseFirst!: () => void
+    const first = new Promise<void>(resolve => { releaseFirst = resolve })
+    let calls = 0
+    const run = vi.fn(async (_args: { input: AgentRunInput }) => {
+      if (++calls === 1) await first
+      return "accepted"
+    })
+    const fetcher = vi.fn(async (input: string | URL | Request) => Response.json(
+      String(input).endsWith("/pulls/42")
+        ? { draft, head: { ref: "fix", sha: head, repo: { full_name: "acme/app" } } }
+        : String(input).includes("/comments")
+          ? [{ id: 10, body: draft ? "old marker" : "new marker", user: { login: "mona" } }]
+          : draft ? [{ filename: "removed.ts" }] : [],
+      { headers: { link: "" } },
+    ))
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          app: { fetch: fetcher, token: "test-token" },
+          pullRequest: {
+            ...(filterLocation === "pullRequest" ? { filter: { draft: { allow: ["true"] } } } : {}),
+            reconcile: filterLocation === "triggers"
+              ? { triggers: [{ events: ["issue_comment"], filter: { draft: { allow: ["true"] } } }] }
+              : { comments: filterLocation === "comments" ? { filter: { draft: { allow: ["true"] } } } : true },
+            reply: false,
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    // SAFETY: This fixture supplies the generated route contract exercised by the webhook queue.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const stop = handler.resume({ agentName: "review", webhookState: state })
+    const request = (id: number) => new Request("https://example.com/api/github/webhook", {
+      body: JSON.stringify({
+        action: event === "pull_request_review" ? "submitted" : "created",
+        ...(event !== "issue_comment" ? {
+          pull_request: { draft, number: 42, url: "https://api.github.test/repos/acme/app/pulls/42" },
+        } : {}),
+        ...(event === "pull_request_review" ? {
+          review: { body: "Please fix this PR", id, state: "changes_requested", user: { login: "mona", type: "User" } },
+        } : {}),
+        ...(event !== "pull_request_review" ? {
+          comment: { body: "Please fix this PR", id, user: { login: "mona", type: "User" } },
+        } : {}),
+        ...(event === "issue_comment" ? {
+          issue: { number: 42, pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" } },
+        } : {}),
+        repository: { full_name: "acme/app" },
+      }),
+      headers: { "content-type": "application/json", "x-github-delivery": `delivery-${id}`, "x-github-event": event },
+      method: "POST",
+    })
+    try {
+      expect((await handler(request(1), "github", { agentName: "review", webhookState: state })).status).toBe(200)
+      await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+      expect((await handler(request(2), "github", { agentName: "review", webhookState: state })).status).toBe(200)
+      expect(run).toHaveBeenCalledOnce()
+      fetcher.mockClear()
+      draft = false
+      head = "b".repeat(40)
+      releaseFirst()
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2), { timeout: 5_000 })
+      await Promise.all(complete.mock.results.map(result => result.value))
+      expect(fetcher).toHaveBeenCalledTimes(3)
+      expect(run.mock.calls[1]?.[0].input.context?.github).toMatchObject({ deliveryId: "delivery-2", event })
+      expect(run.mock.calls[1]?.[0].input.context?.pullRequest).toMatchObject({
+        pullRequest: { head: { sha: head }, comments: [expect.objectContaining({ body: "new marker" })] },
+      })
+      expect(run.mock.calls[1]?.[0].input.context?.pullRequest?.pullRequest.files).toBeUndefined()
+      expect(run.mock.calls[1]?.[0].input.prompt).toContain(head)
+      const filtered = await handler(request(3), "github", { agentName: "review", webhookState: state })
+      await expect(filtered.json()).resolves.toMatchObject({ accepted: false })
+      expect(run).toHaveBeenCalledTimes(2)
+    } finally {
+      releaseFirst()
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it("rehydrates queued webhook invocations before running the agent", async () => {
     const { getActiveCloudflareEnv } = await import("@vite-hub/internal/runtime/cloudflare-env")
     const { defineAgent } = await import("../src/index.ts")
@@ -9245,7 +9344,7 @@ describe("server helpers", () => {
       )
 
       expect(response.status).toBe(200)
-      expect(enqueue.mock.calls[0]?.[0].invocation).toBeUndefined()
+      expect(enqueue.mock.calls[0]?.[0].invocation).toMatchObject({ input: { prompt: "stale source data" } })
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
       expect(rehydrate).toHaveBeenCalledOnce()
       expect(run).toHaveBeenCalledWith(

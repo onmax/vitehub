@@ -715,6 +715,8 @@ export interface AgentChannelStateBinding {
 export interface AgentChannelTriggerContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > extends AgentCallbackContext<TRuntimeConfig> {
+  /** The accepted Invocation when a durable webhook delivery is replayed for rehydration. */
+  queuedInvocation?: Pick<AgentTriggerRunInvokeResult, "input" | "run">
   actor?: AgentActor
   agentCapabilities: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
   agentName?: string
