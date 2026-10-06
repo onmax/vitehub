@@ -35,6 +35,19 @@ describe("shared Console navigation layout", () => {
     expect(rail).toContain("<UDashboardSearchButton")
   })
 
+  it("shows the appearance menu between search and sign-out only in the standalone Console", () => {
+    const rail = component("console-rail")
+    expect(rail).toContain("inject(consoleAppearanceKey, undefined)")
+    expect(rail).toMatch(/<UDashboardSearchButton[\s\S]*?<UDropdownMenu\s+v-if="appearance"[\s\S]*?<UTooltip v-if="signedIn"/)
+    expect(rail).toMatch(/type: "checkbox",[\s\S]*?checked: appearance\?\.preference\.value === option/)
+    expect(component("console-search")).toContain("inject(consoleAppearanceKey, undefined)")
+    const client = readFileSync(new URL("../src/console/runtime/client/main.js", import.meta.url), "utf8")
+    // The stored appearance applies before mount, so the first render uses the chosen scheme.
+    expect(client).toMatch(/startConsoleAppearance\([\s\S]*?\.provide\(consoleAppearanceKey, appearance\)[\s\S]*?\.mount\("#app"\)/)
+    // Nuxt UI color mode would write the root class from a second, origin-wide storage key.
+    expect(readFileSync(new URL("../console.vite.config.ts", import.meta.url), "utf8")).toContain("colorMode: false")
+  })
+
   it("titles each context panel with its section and drops sidebars that only held navigation", () => {
     for (const name of ["console-definitions", "console-blob", "console-database"]) {
       expect(component(name)).toContain('class="vitehub-console__panel-title"')
