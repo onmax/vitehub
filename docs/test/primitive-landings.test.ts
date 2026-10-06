@@ -76,6 +76,26 @@ describe("primitive landing placeholders", () => {
   });
 });
 
+describe("Sandbox landing projects", () => {
+  it("supplies package handlers, callers, and configured hosts", () => {
+    const landing = getPrimitiveLanding("sandbox")!;
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).toBe(false);
+      const files = new Map(variant.files.map(file => [file.path, file.content]));
+      const manifest = JSON.parse(files.get("package.json")!);
+      for (const dependency of ["vite-hub", "@vite-hub/sandbox", "@vercel/sandbox", ...(variant.framework === "nuxt" ? ["nuxt"] : ["vite", "nitro"])]) {
+        expect(manifest.dependencies[dependency]).toBeTruthy();
+      }
+      const config = files.get(variant.framework === "nuxt" ? "nuxt.config.ts" : "vite.config.ts");
+      expect(config).toContain('preset: "vercel", sandbox: true');
+      expect(files.get("server/sandboxes/release-notes/index.ts")).toContain("export default async function");
+      expect(files.get("server/sandboxes/release-notes/index.ts")).not.toContain("defineSandbox");
+      expect(files.get("server/release-notes.ts")).toContain('runSandbox("release-notes", { notes: "ship it" })');
+      expect(JSON.parse(files.get("server/sandboxes/release-notes/package.json")!).type).toBe("module");
+    }
+  });
+});
+
 describe("Browser landing examples", () => {
   it("configures supported hosts and uses the discovered Browser API", () => {
     const browser = getPrimitiveLanding("browser")!;
