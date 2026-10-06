@@ -753,6 +753,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
           }
           catch (error) {
             // A move before cwd resolution needs another discovery pass.
+            // SAFETY: execFile rejects with an Error; its optional code identifies cwd resolution failures.
             if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
           }
         }
