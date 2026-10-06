@@ -21,6 +21,42 @@ export function envString(value: unknown): string | undefined {
   return hasRuntimeType(plain, "string") && plain.trim() ? plain.trim() : undefined;
 }
 
+/** Remove the persistent checkout pool created by older Babysitter releases. */
+export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise<number> {
+  const root = join(dataDir, "checkouts");
+  const info = await lstat(root, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  if (!info) return 0;
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new Error(`[vitehub] Refusing to clean unsafe Babysitter checkout pool: ${root}`);
+  }
+  const quarantine = await mkdtemp(join(dataDir, ".checkouts-cleanup-"));
+  const claimed = join(quarantine, "checkouts");
+  await rename(root, claimed);
+  const claimedInfo = await lstat(claimed, { bigint: true });
+  if (!claimedInfo.isDirectory() || claimedInfo.dev !== info.dev || claimedInfo.ino !== info.ino) {
+    throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
+  }
+  const entries = await readdir(claimed, { withFileTypes: true });
+  await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", `
+    import { lstat, readdir, rm } from "node:fs/promises";
+    const info = await lstat(".", { bigint: true });
+    if (String(info.dev) !== process.argv[1] || String(info.ino) !== process.argv[2]) {
+      throw new Error("Refusing to clean replaced Babysitter checkout pool");
+    }
+    for (const entry of await readdir(".")) {
+      await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
+    }
+  `, String(info.dev), String(info.ino)], { cwd: claimed });
+  const remaining = await lstat(claimed, { bigint: true });
+  if (remaining.dev !== info.dev || remaining.ino !== info.ino) {
+    throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
+  }
+  return entries.length;
+}
+
 /** GitHub App settings from `env.server.github` or the GITHUB_APP_* variables. */
 export async function readGitHubAppEnvironment(context: Pick<AgentCallbackContext, "cloudflare"> = {}) {
   // SAFETY: channelEnv reads only the Cloudflare bindings from its context; Node hosts have none.
@@ -70,6 +106,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
   const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
   const repositories = babysitterRepositories(agent.options.filter);
+  await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
