@@ -9,6 +9,7 @@ it.each([
   ["stateless parent", "const preset = defineAgent({ options: {}, configure: () => defineAgent({ driver: 'codex' }) });", "[preset, { workspace: {} }]", false],
   ["named Workspace reference", "const preset = defineAgent({ workspace: 'shared' });", "[preset, {}]", false],
   ["tuple alias", "const preset = defineAgent({ workspace: {} }); const extension = [preset, {}] as const;", "extension", true],
+  ["leading fixed tuple spread", "const preset = defineAgent({ workspace: {} }); const parent = [preset] as const;", "[...parent, {}]", true],
   ["parent alias", "const preset = defineAgent({ workspace: {} }); const parent = preset;", "[parent, {}]", true],
   ["conditional tuple", "const preset = defineAgent({ workspace: {} }); const plain = defineAgent({});", "condition ? [plain, {}] : [preset, {}]", true],
   ["imported parent", "import { preset } from './preset';", "[preset, {}]", "imported Agent parent"],
