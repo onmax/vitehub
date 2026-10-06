@@ -333,6 +333,21 @@ it("preserves nested streams through preset configuration", () => {
 })
 
 describe("module-style Agent presets", () => {
+  it("applies named options selected through a preset registry", () => {
+    const preset = defineAgent({
+      configKey: "repair",
+      options: { enabled: true },
+      configure: options => defineAgent({ driver: "codex", description: String(options.enabled) }),
+    })
+    const selected = defineAgent({ preset: "selected", presets: { selected: preset }, repair: { enabled: false } })
+    expect(selected.configKey).toBe("repair")
+    expect(selected.options.enabled).toBe(false)
+    expect(selected.description).toBe("false")
+    const child = defineAgent({ extends: selected, repair: { enabled: true } })
+    expect(child.options.enabled).toBe(true)
+    expect(() => defineAgent({ preset: "selected", presets: { selected: preset }, repair: {}, options: {} } as never)).toThrow("Select preset options")
+  })
+
   it("merges named and tuple options while retaining the config key", async () => {
     const defaults = { filter: { labels: { deny: ["blocked"] } }, enabled: true }
     const preset = defineAgent({

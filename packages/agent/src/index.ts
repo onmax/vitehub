@@ -2586,6 +2586,10 @@ type ConfiguredPresetSelection<TDefinition, TParent> =
   | ({ extends: TParent | readonly [TParent, AgentPresetOptions<NoInfer<ConfiguredAgentOptions<TDefinition>>>], options?: never } & AgentPresetConfig<NoInfer<TDefinition>>)
   | ({ extends: TParent, options?: AgentPresetOptions<NoInfer<ConfiguredAgentOptions<TDefinition>>> } & { [K in keyof AgentPresetConfig<NoInfer<TDefinition>>]?: never })
 
+type ConfiguredNamedPresetSelection<TDefinition> =
+  | ({ options?: never } & AgentPresetConfig<NoInfer<TDefinition>>)
+  | ({ options?: AgentPresetOptions<NoInfer<ConfiguredAgentOptions<TDefinition>>> } & { [K in keyof AgentPresetConfig<NoInfer<TDefinition>>]?: never })
+
 // Infer Workspace values and all spread keys separately so union members cannot hide unsupported settings.
 type ConfiguredAgentWorkspaceOptions<TOptions, TDefinition, TKeys extends PropertyKey> = TOptions & Partial<Record<TKeys, unknown>> & Record<
   Exclude<TKeys, keyof ConfiguredAgentSettings<TDefinition> | (TDefinition extends { configKey: infer TKey extends string } ? TKey : never) | "preset" | "presets" | "extends" | "options">, never>
@@ -2924,7 +2928,6 @@ export interface DefineAgent {
     Omit<Partial<ConfiguredLayerSettings<NoInfer<TPresets[TPreset]>, TSchema, TIntercept, TDriver>>, "driver" | "workspace" | "capabilities" | "channels" | "data" | "intercept" | "hooks"> & {
       preset: TPreset
       presets: TPresets & Record<TPreset, ConfiguredAgentDefinition<any, AgentDefinitionConstraint>>
-      options?: AgentPresetOptions<NoInfer<ConfiguredAgentOptions<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinitionConstraint>>>>>
       extends?: never
       driver?: TDriver & Partial<AgentDriver>
       hooks?: ConfiguredAgentHooks<NoInfer<TPresets[TPreset]>, TChannels, LayerData<TPresets[TPreset], TSchema>, LayerOutputFor<TPresets[TPreset], TIntercept, TDriver>>
@@ -2932,7 +2935,7 @@ export interface DefineAgent {
       intercept?: AgentInterceptHandler<AgentRuntimeConfig, unknown, AgentInvocationContextValues, LayerData<NoInfer<TPresets[TPreset]>, TSchema>, TIntercept>
       capabilities?: TCapabilities
       channels?: TChannels
-    } & ConfiguredAgentWorkspaceOptions<TWorkspace, TPresets[TPreset], TKeys>
+    } & ConfiguredNamedPresetSelection<TPresets[TPreset]> & ConfiguredAgentWorkspaceOptions<TWorkspace, TPresets[TPreset], TKeys>
   ): ConfiguredAgentDefinition<ConfiguredAgentOptions<Extract<TPresets[TPreset], ConfiguredAgentDefinition<object, AgentDefinitionConstraint>>>, ConfiguredAgentWorkspace<LayerDefinition<TPresets[TPreset], LayerDataInput<TPresets[TPreset], TSchema>, LayerData<TPresets[TPreset], TSchema>, TIntercept, [TIntercept] extends [never] ? false : true, TDriver>, TWorkspace["workspace"], TCapabilities, TChannels>>
 
   <

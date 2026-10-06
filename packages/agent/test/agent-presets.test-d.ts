@@ -451,3 +451,21 @@ it("rejects conflicting preset option selectors", () => {
   // @ts-expect-error Tuple options cannot also use legacy options.
   defineAgent({ extends: [preset, { enabled: true }], options: { enabled: false } })
 })
+
+it("types named blocks selected through preset registries", () => {
+  const preset = defineAgent({ configKey: "repair", options: { enabled: true, steps: ["first"] }, configure: () => defineAgent({ driver: "codex" }) })
+  const presets = { selected: preset, other: defineAgent({ driver: "codex" }) }
+  const selected = defineAgent({ preset: "selected", presets, repair: { enabled: false } })
+  expectTypeOf(selected.configKey).toEqualTypeOf<"repair">()
+  defineAgent({ extends: selected, repair: { steps: [] } })
+  defineAgent({ preset: "selected", presets, options: { enabled: false } })
+  // @ts-expect-error Named registry options use the selected preset schema.
+  defineAgent({ preset: "selected", presets, repair: { enabled: "yes" } })
+  // @ts-expect-error Unknown named registry options are rejected.
+  defineAgent({ preset: "selected", presets, repair: { typo: true } })
+  // @ts-expect-error Named and legacy option selectors conflict.
+  defineAgent({ preset: "selected", presets, repair: { enabled: false }, options: {} })
+  const invalid = { repair: { enabled: "yes" } }
+  // @ts-expect-error Spread blocks also use the selected preset schema.
+  defineAgent({ preset: "selected", presets, ...invalid })
+})
