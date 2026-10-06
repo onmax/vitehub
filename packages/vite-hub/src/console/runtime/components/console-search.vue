@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { defineShortcuts } from "@nuxt/ui/composables";
 import { useCollection } from "vite-hub/source/client";
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -12,7 +13,7 @@ import { loadConsoleNavigation, resolveConsoleSectionDetails } from "../client/s
 import type { ConsoleNavigation } from "../client/sections"
 import { relativeDuration } from "../client/time"
 import { encodeAgentRouteParam, resolveConsoleRouteName } from "../console-route"
-import { consoleSectionDetails } from "../sections"
+import { consoleOverviewShortcut, consoleSectionDetails, consoleSectionShortcut, groupConsoleSections } from "../sections"
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
 
 interface ConsoleSearchFilter {
@@ -51,6 +52,8 @@ declare global {
 }
 
 const props = defineProps<{
+  /** Commands of the current page. Search lists them first, in an "Actions" group. */
+  actions?: CommandPaletteItem[]
   agentNames?: string[]
   agentsBase: string
   definitionsBase: string
@@ -144,22 +147,33 @@ const groups = computed<CommandPaletteGroup[]>(() => [
         label: "Search status",
       }]
     : []),
+  ...(props.actions?.length
+    ? [{ id: "actions", items: props.actions, label: "Actions" }]
+    : []),
   {
-    id: "pages",
+    id: "go-to",
     items: [
       {
         icon: "i-ph-squares-four-light",
-        label: "All primitives",
+        kbds: [...consoleOverviewShortcut],
+        label: "Overview",
         onSelect: () => selectPage("vitehub-console"),
       },
-      ...sections.value.flatMap((section) => {
+      // Sections follow the rail order.
+      ...groupConsoleSections(sections.value.map(id => ({ id }))).flat().flatMap(({ id: section }) => {
         const details = resolveConsoleSectionDetails(installedNavigation.value, section)
+        const shortcut = consoleSectionShortcut(section)
         return details
-          ? [{ icon: details.icon, label: details.label, onSelect: () => selectPage(details.routeName) }]
+          ? [{
+              icon: details.icon,
+              ...(shortcut ? { kbds: [...shortcut] } : {}),
+              label: details.label,
+              onSelect: () => selectPage(details.routeName),
+            }]
           : []
       }),
     ],
-    label: "Pages",
+    label: "Go to",
   },
   ...(agentsEnabled.value && availableAgentNames.value.length
     ? [{
@@ -406,6 +420,13 @@ watch(open, async (value) => {
   else if (!searchChanged) await sessionSearch.refresh()
 });
 
+// `/` opens search, as in GitHub and Linear. It does not run while an input has focus.
+defineShortcuts({
+  "/": () => {
+    open.value = true
+  },
+})
+
 onMounted(() => void loadNavigation());
 
 onBeforeUnmount(() => {
@@ -421,10 +442,11 @@ onBeforeUnmount(() => {
     v-model:search-term="searchTerm"
     :groups="groups"
     :loading="loading"
-    description="Search pages, Agents, definitions, KV keys, and sessions."
+    description="Run actions and search pages, Agents, definitions, KV keys, and sessions."
     placeholder="Search the Console…"
     preserve-group-order
     title="Search console"
+    :ui="{ root: 'flex-1', content: 'flex-1', footer: 'px-3 py-2' }"
   >
     <template #empty="{ searchTerm: value }">
       <div class="grid justify-items-center gap-2 px-6 py-10 text-center">
@@ -440,5 +462,34 @@ onBeforeUnmount(() => {
         </p>
       </div>
     </template>
+    <template #footer>
+      <div class="vitehub-console__search-footer">
+        <span><UKbd value="arrowup" size="sm" /><UKbd value="arrowdown" size="sm" /> Navigate</span>
+        <span><UKbd value="enter" size="sm" /> Select</span>
+        <span><UKbd value="escape" size="sm" /> Close</span>
+        <span class="vitehub-console__search-footer-end"><UKbd value="g" size="sm" /> then a key to go to a page</span>
+      </div>
+    </template>
   </UDashboardSearch>
 </template>
+
+<style>
+.vitehub-console__search-footer {
+  align-items: center;
+  color: var(--ui-text-dimmed);
+  display: flex;
+  font-size: 0.75rem;
+  gap: 1rem;
+  width: 100%;
+}
+
+.vitehub-console__search-footer > span {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.vitehub-console__search-footer-end {
+  margin-inline-start: auto;
+}
+</style>

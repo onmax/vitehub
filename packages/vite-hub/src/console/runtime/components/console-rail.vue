@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { createAuthClient } from "@vite-hub/auth/vue";
+import { defineShortcuts } from "@nuxt/ui/composables";
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -7,7 +8,7 @@ import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
 import { loadConsoleNavigation, resolveConsoleSectionDetails, subscribeConsoleNavigation } from "../client/sections";
 import { resolveConsoleRouteName } from "../console-route";
-import { groupConsoleSections } from "../sections";
+import { consoleOverviewShortcut, consoleSectionShortcut, groupConsoleSections } from "../sections";
 import ConsoleMark from "./console-mark.vue";
 
 const props = defineProps<{
@@ -31,19 +32,32 @@ let authClientRequest: Promise<ReturnType<typeof createAuthClient>> | undefined;
 let unsubscribe: (() => void) | undefined;
 
 const projectName = computed(() => navigation.value?.projectName || "ViteHub");
-const groups = computed(() =>
-  groupConsoleSections(
-    (navigation.value?.sections ?? []).flatMap((section) => {
-      const details = resolveConsoleSectionDetails(navigation.value, section);
-      return details ? [{ id: section, ...details }] : [];
-    }),
-  ),
+const sections = computed(() =>
+  (navigation.value?.sections ?? []).flatMap((section) => {
+    const details = resolveConsoleSectionDetails(navigation.value, section);
+    return details ? [{ id: section, ...details, shortcut: consoleSectionShortcut(section) }] : [];
+  }),
 );
+const groups = computed(() => groupConsoleSections(sections.value));
 const signOutLabel = computed(() => (accessIdentity.value?.label ? `Sign out ${accessIdentity.value.label}` : "Sign out"));
 
 async function open(routeName: string): Promise<void> {
   await router.push({ name: resolveConsoleRouteName(route.name, routeName) });
 }
+
+// The rail is on every page, so it owns the "Go to" chords. Only enabled sections get one.
+// Chords do not run while an input, a textarea, or editable content has focus.
+defineShortcuts(
+  computed(() => {
+    const shortcuts: Record<string, () => void> = {
+      [consoleOverviewShortcut.join("-")]: () => void open("vitehub-console"),
+    };
+    for (const section of sections.value) {
+      if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => void open(section.routeName);
+    }
+    return shortcuts;
+  }),
+);
 
 async function loadNavigation(): Promise<void> {
   navigationFailed.value = false;
@@ -125,7 +139,7 @@ onBeforeUnmount(() => unsubscribe?.());
 
 <template>
   <nav class="vitehub-console__rail" aria-label="Console">
-    <UTooltip :text="`${projectName} overview`" :content="{ side: 'right' }">
+    <UTooltip :text="`${projectName} overview`" :kbds="[...consoleOverviewShortcut]" :content="{ side: 'right' }">
       <button
         type="button"
         class="vitehub-console__rail-item vitehub-console__rail-home"
@@ -152,7 +166,13 @@ onBeforeUnmount(() => unsubscribe?.());
         </button>
       </UTooltip>
       <div v-for="(group, index) in groups" :key="index" class="vitehub-console__rail-group">
-        <UTooltip v-for="section in group" :key="section.id" :text="section.label" :content="{ side: 'right' }">
+        <UTooltip
+          v-for="section in group"
+          :key="section.id"
+          :text="section.label"
+          :kbds="section.shortcut ? [...section.shortcut] : undefined"
+          :content="{ side: 'right' }"
+        >
           <button
             type="button"
             class="vitehub-console__rail-item"
