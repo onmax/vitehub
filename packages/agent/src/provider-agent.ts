@@ -768,8 +768,10 @@ function redactProviderDiagnostic(
   additionalSecrets: readonly string[] = [],
 ): string {
   let redacted = value
-  const secrets = [...new Set([...secretEnvironmentKeys.map(key => environment[key])
-    .filter((item): item is string => hasRuntimeType(item, "string") && item.length > 0), ...additionalSecrets])]
+  const secrets = [...new Set([...secretEnvironmentKeys.flatMap(key => {
+    const value = environment[key]
+    return hasRuntimeType(value, "string") && value.length > 0 ? [value] : []
+  }), ...additionalSecrets])]
     .sort((left, right) => right.length - left.length)
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "[REDACTED]")
   return redactCredentialText(redacted)
@@ -781,7 +783,7 @@ async function codexCredentialSecrets(homePath: string | undefined): Promise<str
     const value: unknown = JSON.parse(await readFile(join(homePath, "auth.json"), "utf8"))
     const secrets: string[] = []
     const visit = (item: unknown): void => {
-      if (typeof item === "string" && item.length > 0) secrets.push(item)
+      if (hasRuntimeType(item, "string") && item.length > 0) secrets.push(item)
       else if (Array.isArray(item)) item.forEach(visit)
       else if (isRuntimeRecord(item)) Object.values(item).forEach(visit)
     }
