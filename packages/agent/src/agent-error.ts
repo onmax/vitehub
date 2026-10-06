@@ -107,6 +107,7 @@ export type AgentPublicErrorCode =
   | "AUTHENTICATION_REQUIRED"
   | "CAPABILITY_DENIED"
   | "CAPABILITY_NOT_FOUND"
+  | "HOST_RESTARTED"
   | "INTERNAL"
   | "LLM_GATE_REJECTED"
   | "PROVIDER_AUTHENTICATION_FAILED"
@@ -325,6 +326,11 @@ export function toAgentPublicError(error: unknown, context: AgentPublicErrorCont
       }
     }
     const viteHubError = getViteHubErrorShape(error)
+    if (viteHubError?.code === "HOST_RESTARTED") {
+      return publicError("HOST_RESTARTED", viteHubError.details?.retry === "exhausted"
+        ? "The server restarted twice while I was working on this. Please send your message again."
+        : "The server restarted while I was working on this. I'll retry it automatically.")
+    }
     if (viteHubError?.code === "AUTHENTICATION_REQUIRED") {
       return publicError("AUTHENTICATION_REQUIRED", "Authentication required.")
     }
