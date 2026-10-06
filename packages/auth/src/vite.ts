@@ -8,7 +8,7 @@ import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 
 import { resolveAuthViteConfig } from "./config.ts"
 import { discoverAuthDefinitions } from "./discovery.ts"
-import { getAuthForDefinition, handleAuthRequest, resetAuth } from "./server.ts"
+import { resetAuth } from "./runtime-state.ts"
 import { isAuthRequestPath } from "./shared.ts"
 
 import type { ViteHubDefinitionSummary, ViteHubInspectionPluginMetadata } from "@vite-hub/internal/inspect"
@@ -374,6 +374,8 @@ export function hubAuth(options?: AuthModuleOptions, internalOptions: InternalAu
           const webRequest = createWebRequest(request)
           const hasRequestRuntime = typeof definition.options === "function"
             || typeof definition.options.runtime === "function"
+          // Load Better Auth on the first Auth request, not when the Vite config imports this plugin.
+          const { getAuthForDefinition, handleAuthRequest } = await import("./server.ts")
           const authResponse = hasRequestRuntime
             ? await handleAuthRequest(definition, webRequest)
             : await getAuthForDefinition(definition).handler(webRequest)
