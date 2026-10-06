@@ -18,7 +18,7 @@ import { createWorkspace } from "./workspace.ts"
 import { attachWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "../sources/request-execution.ts"
 import { forwardWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
-import { forwardWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
+import { attachWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { createHostedWorkspaceSession } from "../session/host.ts"
 
 import type { Tool, ToolSet } from "ai"
@@ -71,8 +71,7 @@ interface WorkspaceDefinitionSyncState {
 const workspaceDefinitionSyncStates = new WeakMap<object, WeakMap<object, WorkspaceDefinitionSyncState>>()
 
 async function workspaceDefinitionSyncState(workspace: Workspace): Promise<WorkspaceDefinitionSyncState> {
-  // SAFETY: Workspace metadata forwarding owns the private target accessor attached to Workspace facades.
-  const target = await (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.()
+  const target = await resolveWorkspaceMetadataTarget(workspace)
   const owner = target ?? workspace
   // SAFETY: Workspace creation owns the private synchronization key attached to Workspace facades.
   const key = (workspace as WorkspaceWithDefinitionSync).__workspaceDefinitionSyncKey ?? workspace
@@ -297,10 +296,6 @@ function createLazyWorkspace(name: WorkspaceName, definition?: WorkspaceDefiniti
   }
 
   const workspace = {
-    async [workspaceMetadataTarget]() {
-      const resolved = await resolveWorkspace()
-      return (resolved as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.()
-    },
     name,
     async capabilities() {
       const resolved = await resolveWorkspace()
@@ -381,6 +376,7 @@ function createLazyWorkspace(name: WorkspaceName, definition?: WorkspaceDefiniti
       return await (await resolveSyncedWorkspace()).startSession(options)
     },
   } as Workspace
+  attachWorkspaceMetadataTarget(workspace, async () => await resolveWorkspaceMetadataTarget(await resolveWorkspace()))
 
   return attachWorkspaceSourceRequestExecution(workspace, {
     async executeSourceRequest(input) {
@@ -545,29 +541,25 @@ function createReadonlyFs<Name extends WorkspaceName>(
       return await createHostedWorkspaceSession(overlay, { ...options, host: options.host })
     },
   }, getWorkspaceSourceRequestExecution(workspace))
-  // SAFETY: Workspace metadata forwarding probes only the private symbol member owned by the Workspace package.
-  const resolveMetadata = (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]
-  if (resolveMetadata) {
-    // SAFETY: This attaches the private metadata resolver to the newly created read-only facade.
-    ;(readonlyFs as ReadonlyWorkspaceFs<Name> & WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget] = async () => {
-      const metadata = await ignoreMissingWorkspace(async () => await resolveMetadata.call(workspace))
-      if (!metadata && !assets) return
-      const target = {
-        workspaceName: metadata?.workspaceName,
-        getMeta: metadata?.getMeta?.bind(metadata),
-        list: async (path: string, options?: ListOptions) => {
-          // SAFETY: The read-only facade's path belongs to this named Workspace's asset path contract.
-          const assetPath = path as WorkspaceAssetPath<Name>
-          return mergeEntries(
-            assets ? await assets.list(assetPath, options) : [],
-            await metadata?.list?.(path, options) ?? [],
-          )
-        },
-      }
-      if (metadata) forwardWorkspaceStoreTarget(metadata, target)
-      return target
+  // The read-only view has no Store writes.
+  attachWorkspaceMetadataTarget(readonlyFs, async () => {
+    const metadata = await ignoreMissingWorkspace(async () => await resolveWorkspaceMetadataTarget(workspace))
+    if (!metadata && !assets) return
+    const target = {
+      workspaceName: metadata?.workspaceName,
+      getMeta: metadata?.getMeta?.bind(metadata),
+      list: async (path: string, options?: ListOptions) => {
+        // SAFETY: The read-only facade's path belongs to this named Workspace's asset path contract.
+        const assetPath = path as WorkspaceAssetPath<Name>
+        return mergeEntries(
+          assets ? await assets.list(assetPath, options) : [],
+          await metadata?.list?.(path, options) ?? [],
+        )
+      },
     }
-  }
+    if (metadata) forwardWorkspaceStoreTarget(metadata, target)
+    return target
+  })
   return readonlyFs
 }
 
@@ -630,8 +622,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
     tools.inspect = createReadTools as WritableWorkspaceFacade<Name>["tools"]["inspect"]
     tools.write = createTools as WritableWorkspaceFacade<Name>["tools"]["write"]
     tools.none = emptyTools
-    return {
-      [workspaceMetadataTarget]: async () => await (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.(),
+    const facade = {
       [workspaceStoreTarget]: async () => {
         return await (workspace as Workspace & WorkspaceStoreTargetCarrier)[workspaceStoreTarget]?.()
       },
@@ -651,6 +642,8 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
       sync: async options => await workspace.sync(options),
       tools,
     } as WritableWorkspaceFacade<Name> & WorkspaceStoreTargetCarrier
+    forwardWorkspaceMetadataTarget(workspace, facade)
+    return facade
   }
 
   const workspace = createLazyWorkspace(name, options?.definition, { reuseStartupSnapshots: options?.refresh === false })

@@ -6,7 +6,7 @@ import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { createBasicWorkspaceSession } from "../session/basic.ts"
 import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { attachWorkspaceMetadataTarget, createWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { markLiveWorkspaceSource } from "./live.ts"
@@ -613,7 +613,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       tools: writeTools,
     }
     sourceSyncStores.set(writableWorkspace, syncStore)
-    forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, writableWorkspace)
+    attachWorkspaceMetadataTarget(writableWorkspace, () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name))
     forwardWorkspaceStoreTarget(workspace, writableWorkspace)
 
     return {
@@ -626,7 +626,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     fs,
     tools,
   }
-  forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, readonlyWorkspace)
+  attachWorkspaceMetadataTarget(readonlyWorkspace, () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name))
   forwardWorkspaceStoreTarget(workspace, readonlyWorkspace)
   const starter = workspaceSessionStarter(workspace)
   if (starter) {

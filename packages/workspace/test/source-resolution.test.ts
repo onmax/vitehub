@@ -28,7 +28,7 @@ import { createWorkspace } from "../src/core/workspace.ts"
 import { github as githubPublisher } from "../src/publish.ts"
 import { getWorkspaceSourceRequestDescriptor, isWorkspaceSourceRequestOnly, normalizeWorkspaceSources } from "../src/sources/config.ts"
 import { workspaceStoreTarget } from "../src/storage/target.ts"
-import { workspaceMetadataTarget, resolveWorkspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../src/storage/metadata-target.ts"
+import { forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget } from "../src/storage/metadata-target.ts"
 
 const invocation = {
   context: {
@@ -111,15 +111,14 @@ function facade(workspace: ReturnType<typeof createWorkspace>): ReadonlyWorkspac
   }
 }
 
-function writableFacade(workspace: ReturnType<typeof createWorkspace>): WritableWorkspaceFacade & WorkspaceMetadataTargetCarrier {
+function writableFacade(workspace: ReturnType<typeof createWorkspace>): WritableWorkspaceFacade {
   // SAFETY: This test fixture intentionally supplies only the Workspace tools exercised by these cases.
   const tools = {
     inspect: () => ({}),
     none: () => ({}),
     write: () => ({}),
   } as never
-  return {
-    [workspaceMetadataTarget]: () => resolveWorkspaceMetadataTarget(workspace),
+  const facade: WritableWorkspaceFacade = {
     capabilities: async () => await workspace.capabilities?.() ?? { conditionalWrites: false },
     diff: async options => await workspace.diff(options),
     fs: {
@@ -166,6 +165,8 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     sync: async options => await workspace.sync(options),
     tools,
   }
+  forwardWorkspaceMetadataTarget(workspace, facade)
+  return facade
 }
 
 async function runShell(workspace: ReadonlyWorkspaceFacade, command: string, sourceRequests = false): Promise<WorkspaceShellResult> {
