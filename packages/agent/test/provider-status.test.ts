@@ -289,6 +289,18 @@ process.exit(result.status ?? 1)
     expect(JSON.stringify(status)).not.toContain(secret)
   })
 
+  it("redacts values embedded in custom launch arguments", async () => {
+    const secret = "bare-private-launch-argument"
+    const launch = { command: process.execPath, args: ["-e", "process.stderr.write(process.argv.at(-1));process.exit(1)", "--", secret] }
+    inspectProvider.mockImplementation(async options => {
+      expect(() => execFileSync(options.settings.binaryPath, [], { env: options.environment, stdio: "pipe" })).toThrow()
+      return { ...ready(), status: "error" }
+    })
+    const status = await inspectAgentProvider({ provider: "codex", launch }, context())
+    expect(status.readiness).toBe("unavailable")
+    expect(JSON.stringify(status)).not.toContain(secret)
+  })
+
   it("returns missing Windows commands instead of rejecting status", async () => {
     vi.stubGlobal("process", Object.create(process, { platform: { value: "win32" } }))
     const spawn = vi.mocked(childProcess.spawn).mockImplementation((_command, args) => {
