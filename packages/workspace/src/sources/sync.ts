@@ -4,6 +4,7 @@ import { createSourceContext, normalizeWorkspaceSources, sourceMountContainsPath
 import { normalizeMetadataValue, normalizeSourceFileMetadata } from "./file-metadata.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { normalizeSourceItemPath } from "./source-items.ts"
+import { withWorkspaceStoreMutation } from "../storage/mutation.ts"
 import {
   readWorkspaceSourceSyncState,
   sourceSyncMetaKey,
@@ -383,7 +384,11 @@ export async function syncWorkspaceSources(
   }
 
   const lockKeys = runnableSources.map(source => sourceLockKey(definition, source)).sort()
-  const promise = syncWorkspaceSourcesUnlocked(definition, store, options, runnableSources, statuses, started)
+  // Keep planning and applying one sync plan in the same mutation queue as
+  // guarded workspace writes. This prevents a plan from being computed before
+  // a public write and applied afterward over that newer result.
+  const promise = withWorkspaceStoreMutation(store, () =>
+    syncWorkspaceSourcesUnlocked(definition, store, options, runnableSources, statuses, started))
   for (const key of lockKeys) sourceSyncLocks.set(key, promise)
   try {
     return await promise
