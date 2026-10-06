@@ -384,8 +384,8 @@ async function listConsoleInvocations(target: ConsoleTarget, parsed: ParsedArgs)
   const cursors = new Set<string>()
   let cursor: string | undefined
   do {
-    const query: Record<string, string> = { limit: String(Math.min(consolePageLimit, parsed.status ? consolePageLimit : wanted - invocations.length)) }
-    if (cursor !== undefined) query.cursor = cursor
+    const query = { limit: String(Math.min(consolePageLimit, parsed.status ? consolePageLimit : wanted - invocations.length)) } satisfies Record<string, string>
+    if (cursor !== undefined) Object.assign(query, { cursor })
     const page = await consoleCall(target, consoleRpcMethods.invocations, { method: "GET", query }, parseInvocationList)
     for (const record of page.invocations) {
       if (ids.has(record.id) || (parsed.status && record.status !== parsed.status)) continue
@@ -412,7 +412,9 @@ function consoleInvocationsTarget(target: ConsoleTarget, parsed: ParsedArgs): In
     detail: async (id, observations) => await consoleCall(target, consoleRpcMethods.invocation, {
       id,
       method: "GET",
-      ...(observations ? { query: { observationCount: String(observations.count), observationCursor: observations.cursor } } : {}),
+      query: observations === undefined
+        ? undefined
+        : { observationCount: String(observations.count), observationCursor: observations.cursor },
     }, parseInvocationDetail),
     list: async () => await listConsoleInvocations(target, parsed),
   }
