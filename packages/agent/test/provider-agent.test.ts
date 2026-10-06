@@ -1259,17 +1259,12 @@ describe("Provider Agent Driver", () => {
     const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
     const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
     let notifyFirstStarted!: () => void
-    let notifySecondStarted!: () => void
     const firstStarted = new Promise<void>(resolve => { notifyFirstStarted = resolve })
-    const secondStarted = new Promise<void>(resolve => { notifySecondStarted = resolve })
     const runtimes = ["first", "second"].map(suffix => runtime(`thread-session-${suffix}`, [
       event("turn.completed", `thread-session-${suffix}`, { state: "completed" }, { turnId: "turn-1" }),
     ], {
-      // Keep both invocations active, but assign the FIFO runtime mocks in order.
-      beforeEvent: async () => { await secondStarted },
       onStartSession: async () => {
         if (suffix === "first") notifyFirstStarted()
-        else notifySecondStarted()
       },
     }))
 
