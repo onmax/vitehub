@@ -3,9 +3,11 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { getTableColumns } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { createError, defineEventHandler } from "h3";
+import { describe, expect, it, vi } from "vitest";
 import { discoverQueueDefinitions } from "../../packages/queue/src/discovery";
 import { QueueLanding } from "../app/data/primitive-landings/queue";
+import { BlobLanding } from "../app/data/primitive-landings/blob";
 import { DatabasesLanding } from "../app/data/primitive-landings/databases";
 import { ContentLanding } from "../app/data/primitive-landings/content";
 import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-landings";
@@ -29,6 +31,42 @@ describe("primitive landing routes", () => {
       expect(getPrimitiveLanding(slug)).toBeUndefined();
     }
   });
+});
+
+describe("Blob landing HTTP examples", () => {
+  const variants = BlobLanding.variants.filter((variant) => variant.framework !== "vite");
+
+  for (const variant of variants) {
+    const source = variant.files.find((file) => file.path === "server/api/blob.ts")!.content;
+    const createHandler = (result: [Error | null, Blob | null | undefined]) => {
+      const get = vi.fn().mockResolvedValue(result);
+      const handler = new Function(
+        "blob",
+        "defineEventHandler",
+        "createError",
+        source.replace(/^import .*$/gm, "").replace("export default", "return"),
+      )({ get }, defineEventHandler, createError) as () => Promise<Blob>;
+      return { get, handler };
+    };
+
+    it(`${variant.label} returns the stored file body`, async () => {
+      const file = new Blob(["Hello from Blob"], { type: "text/plain" });
+      const { get, handler } = createHandler([null, file]);
+      expect(await handler()).toBe(file);
+      expect(get).toHaveBeenCalledWith("greeting.txt");
+    });
+
+    it(`${variant.label} reports missing files as 404`, async () => {
+      const { handler } = createHandler([null, null]);
+      await expect(handler()).rejects.toMatchObject({ statusCode: 404 });
+    });
+
+    it(`${variant.label} propagates storage errors`, async () => {
+      const error = new Error("Storage unavailable");
+      const { handler } = createHandler([error, undefined]);
+      await expect(handler()).rejects.toBe(error);
+    });
+  }
 });
 
 describe("primitive landing placeholders", () => {
