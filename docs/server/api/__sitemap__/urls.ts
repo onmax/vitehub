@@ -1,5 +1,5 @@
 import { queryCollection } from "@nuxt/content/server";
-import { generateSitemap, type SitemapEntry } from "../utils/sitemap";
+import { type SitemapEntry, sitemapUrls } from "../../utils/sitemap";
 
 interface ContentPage {
   path: string;
@@ -7,7 +7,8 @@ interface ContentPage {
   sitemap?: boolean;
 }
 
-export default defineEventHandler(async (event) => {
+// Replaces the Docus source: ViteHub lists docs, blog, and trust pages plus its own app pages.
+export default defineSitemapEventHandler(async (event) => {
   const [docs, blog, trust] = await Promise.all([
     queryCollection(event, "docs").all(),
     queryCollection(event, "blog").all(),
@@ -20,8 +21,5 @@ export default defineEventHandler(async (event) => {
     entries.push({ path: page.path, lastmod: page.modifiedAt });
   }
 
-  const sitemap = generateSitemap(entries, getSiteConfig(event).url || "");
-
-  setResponseHeader(event, "content-type", "application/xml");
-  return sitemap;
+  return sitemapUrls(entries);
 });
