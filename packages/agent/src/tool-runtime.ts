@@ -14,6 +14,8 @@ import type {
   AgentToolStepItem,
 } from "./types.ts"
 
+const approvalPreservingExecutors = new WeakSet<Function>()
+
 function copyWithOverrides<T extends object, Overrides extends object>(tool: T, overrides: Overrides, bindExecute: boolean): Omit<T, keyof Overrides> & Overrides {
   const descriptors: Record<PropertyKey, PropertyDescriptor> = Object.getOwnPropertyDescriptors(tool)
   const seen = new Set<PropertyKey>()
@@ -38,14 +40,17 @@ function copyWithOverrides<T extends object, Overrides extends object>(tool: T, 
       } else if (bindMethod && hasRuntimeType(descriptor.value, "function")) {
         Object.defineProperty(descriptors, key, { configurable: true, enumerable: true, writable: true, value: { ...descriptor, value: descriptor.value.bind(tool) } })
       }
-    }
+  }
   }
   const copied = Object.create(Object.getPrototypeOf(tool), {
     ...descriptors,
     ...Object.getOwnPropertyDescriptors(overrides),
   })
   const policyOwner = agentToolPolicyOwners.get(tool)
-  if (policyOwner) agentToolPolicyOwners.set(copied, policyOwner)
+  const overrideExecute = (overrides as { execute?: unknown }).execute
+  if (policyOwner && (!Object.hasOwn(overrides, "execute") || (typeof overrideExecute === "function" && approvalPreservingExecutors.has(overrideExecute)))) {
+    agentToolPolicyOwners.set(copied, policyOwner)
+  }
   return copied
 }
 
@@ -160,8 +165,7 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
   const policy = tool.policy
   const policyOwner: AgentToolPolicyOwner = Object.freeze({ toolName: tool.name })
 
-  const wrapped = copyToolWithOverrides(tool, {
-    async execute(input: unknown, context?: AgentToolExecutionContext) {
+  const approvalExecute = async (input: unknown, context?: AgentToolExecutionContext) => {
       if (consumeToolApprovalGrant(policyOwner, tool.name, input, context)) {
         context?.abortSignal?.throwIfAborted()
         return await execute.call(tool, input, context)
@@ -198,8 +202,9 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
 
       context?.abortSignal?.throwIfAborted()
       return await execute.call(tool, input, context)
-    },
-  })
+    }
+  approvalPreservingExecutors.add(approvalExecute)
+  const wrapped = copyToolWithOverrides(tool, { execute: approvalExecute })
   agentToolPolicyOwners.set(wrapped, policyOwner)
   return wrapped
 }
@@ -227,11 +232,9 @@ export function withJsonCompatibleToolOutputs<TTools extends AgentToolSet>(tools
     }
 
     const execute = (tool as { execute: (...args: unknown[]) => unknown }).execute
-    return [name, copyToolWithOverrides(tool, {
-      async execute(input: unknown, ...args: unknown[]) {
-        return toJsonCompatibleValue(await execute.call(tool, input, ...args))
-      },
-    })]
+    const wrappedExecute = async (input: unknown, ...args: unknown[]) => toJsonCompatibleValue(await execute.call(tool, input, ...args))
+    approvalPreservingExecutors.add(wrappedExecute)
+    return [name, copyToolWithOverrides(tool, { execute: wrappedExecute })]
   })) as TTools
 }
 
@@ -309,8 +312,7 @@ export function withAgentToolStepReporting<TTools extends AgentToolSet>(tools: T
     }
 
     const execute = (tool as { execute: (...args: unknown[]) => unknown }).execute
-    return [name, copyToolWithOverrides(tool, {
-      async execute(input: unknown, ...args: unknown[]) {
+    const wrappedExecute = async (input: unknown, ...args: unknown[]) => {
         const toolCall: AgentToolStepItem = {
           input,
           toolCallId: toolCallIdFromExecutionOptions(args[0]) ?? createToolCallId(name),
@@ -329,7 +331,8 @@ export function withAgentToolStepReporting<TTools extends AgentToolSet>(tools: T
           await reportToolStep({ toolErrors: [{ ...toolCall, output: formatRuntimeDiagnosticError(error) }] })
           throw error
         }
-      },
-    })]
+      }
+    approvalPreservingExecutors.add(wrappedExecute)
+    return [name, copyToolWithOverrides(tool, { execute: wrappedExecute })]
   })) as TTools
 }

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 import {
   applyAgentToolPolicies,
   approveAgentToolRequest,
+  copyToolWithOverrides,
   executeApprovedAgentTool,
   withAgentToolStepReporting,
   withJsonCompatibleToolOutputs,
@@ -83,6 +84,16 @@ describe("tool approval grants", () => {
     const { tool } = approvalTool()
     const replacementExecute = vi.fn(async (input: unknown) => input)
     const replacement: AgentToolDefinition = { execute: replacementExecute, name: tool.name }
+    const grant = approveAgentToolRequest(await requestApproval(tool, { recipient: "team@example.com" }))!
+
+    await expect(executeApprovedAgentTool(replacement, grant)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" })
+    expect(replacementExecute).not.toHaveBeenCalled()
+  })
+
+  it("does not let a grant run a copied tool with a replacement executor", async () => {
+    const { tool } = approvalTool()
+    const replacementExecute = vi.fn(async (input: unknown) => input)
+    const replacement = copyToolWithOverrides(tool, { execute: replacementExecute })
     const grant = approveAgentToolRequest(await requestApproval(tool, { recipient: "team@example.com" }))!
 
     await expect(executeApprovedAgentTool(replacement, grant)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" })
