@@ -45,7 +45,7 @@ export const buildWarningBudget = Object.freeze([
     maximum: 2,
     text: rollupAnnotationConclusion,
     source: "node_modules/.cache/nuxt/.nuxt/dist/server/_nuxt/dist-Dg8NDwTS.js",
-    sourcePattern: /^node_modules\/\.cache\/nuxt\/\.nuxt\/dist\/server\/_nuxt\/dist-[\w-]+\.js$/,
+    sourcePattern: /^node_modules\/\.cache\/nuxt\/\.nuxt\/dist\/server\/_nuxt\/(?:dist|agent-capability-inspector)-[\w-]+\.js$/,
     comment: zodRegexAnnotationComment,
     warningTokenRequired: false,
   },
