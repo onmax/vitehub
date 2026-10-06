@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
+import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts";
 import { createProcessAgentHost } from "../src/runtime/process.ts";
 
 it("starts once and drains tracked work before closing", async () => {
@@ -35,6 +36,40 @@ it("starts once and drains tracked work before closing", async () => {
     expect((await host.health()).workload.stale).toBe(0);
   } finally {
     release();
+    await host.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+it("uses a shared journal and recovers only the configured Agent", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vitehub-shared-process-host-"));
+  const store = createMemoryAgentInvocationStore();
+  for (const [id, agentName] of [["owned", "worker"], ["other", "another-agent"]] as const) {
+    await store.create({
+      agentName,
+      createdAt: "2020-01-01T00:00:00.000Z",
+      id,
+      observations: [],
+      status: "running",
+      traceId: id,
+      updatedAt: "2020-01-01T00:00:00.000Z",
+    });
+  }
+  const invocations = defineAgentInvocations({ content: "content", store });
+  const host = await createProcessAgentHost({
+    dataDir,
+    invocations,
+    invocationAgentName: "worker",
+    capacity: { concurrency: 1 },
+    run: vi.fn(),
+  });
+  try {
+    expect(host.invocations).toBe(invocations);
+    await expect(host.invocations.get("owned")).resolves.toMatchObject({ status: "failed" });
+    await expect(host.invocations.get("other")).resolves.toMatchObject({ status: "running" });
+    await expect(stat(join(dataDir, "invocations.sqlite"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(host.health()).resolves.toMatchObject({ workload: { stale: 0, total: 1 } });
+  } finally {
     await host.close();
     await rm(dataDir, { recursive: true, force: true });
   }

@@ -11,6 +11,8 @@ import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
 import { createBabysitterRuntime } from "./server.ts";
 
+const babysitterWorkerName = "babysitter-worker";
+
 /** Reads a plain or sealed Server Env value. */
 export function envString(value: unknown): string | undefined {
   const plain = isRuntimeRecord(value) && hasRuntimeType(value.unseal, "function") ? value.unseal() : value;
@@ -109,6 +111,8 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const host = await createProcessAgentHost({
     name: context.agentName,
     dataDir: context.dataDir,
+    invocations: agent.invocations,
+    invocationAgentName: babysitterWorkerName,
     // A webhook claim owns a PR until its provider pass finishes or records a
     // durable wait. Keep transient provider pressure in this host queue rather
     // than failing the claim, while bounding how long a checkout can be held.

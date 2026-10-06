@@ -39,6 +39,27 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `noFindingsReviews` | `[]` | Body prefixes of comment-only reviews that report no findings, such as `'> ✅ No new issues found.'`. They do not wake a waiting PR. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
 
+## Share the Console journal
+
+The Babysitter uses the invocation journal assigned to its discovered Agent. Set the Console journal in the ViteHub project configuration so the Console and the long-lived worker inspect the same records:
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+
+export default defineConfig({
+  plugins: [vitehub({
+    preset: 'node',
+    console: {
+      exposure: 'host-managed',
+      databaseUrl: 'file:/var/lib/babysitter/console.sqlite',
+    },
+  })],
+})
+```
+
+The worker recovers only its `babysitter-worker` records when it restarts. Other Agents can keep using the same journal without having their active Invocations failed. A standalone process host without an assigned journal keeps its private `dataDir/invocations.sqlite` file.
+
 ## Configure GitHub
 
 Create a GitHub App with read and write access to contents, pull requests, issues, and checks. Subscribe it to pull request, review, review comment, review thread, issue comment, check run, check suite, status, and push events. Set its webhook URL to `https://<host>/api/_vitehub/agents/babysitter/webhooks/github`.
