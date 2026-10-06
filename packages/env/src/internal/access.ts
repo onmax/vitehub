@@ -17,11 +17,7 @@ export interface EnvAttribution {
   invocationId?: string;
 }
 
-const authorityRegistryKey = Symbol.for("vitehub.env.authorities");
-const authorities = (() => {
-  const global = globalThis as typeof globalThis & { [key: symbol]: WeakMap<object, EnvAuthority> };
-  return (global[authorityRegistryKey] ??= new WeakMap<object, EnvAuthority>());
-})();
+const authorities = new WeakMap<object, EnvAuthority>();
 
 export function envIdentifier(value: string): void {
   // eslint-disable-next-line no-control-regex

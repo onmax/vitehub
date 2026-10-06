@@ -10,13 +10,15 @@ export default defineConfig({
       // The Env Agent mint is a private implementation detail. Bundle it into
       // the Agent runtime so application code cannot import the mint through
       // @vite-hub/env's public package surface.
-      alwaysBundle: [/^@vite-hub\/internal/, /^@vite-hub\/env\/internal\/agent$/],
+      alwaysBundle: [/^@vite-hub\/internal/],
       neverBundle: [
         "vite",
         "esbuild",
         "#vitehub/agent/registry",
         "#vitehub/agent/provider-agent",
         "#vitehub/env/server",
+        "@vite-hub/env/internal/agent",
+        "@vite-hub/env/internal/access",
         "@vercel/nft",
         "@t3tools/provider-runtime",
         "@vite-hub/rate-limit",
