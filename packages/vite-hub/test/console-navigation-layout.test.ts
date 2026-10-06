@@ -38,8 +38,8 @@ describe("shared Console navigation layout", () => {
   it("registers Go to chords in the rail and shows them in tooltips and search", () => {
     const rail = component("console-rail")
     expect(rail).toContain('import { defineShortcuts } from "@nuxt/ui/composables"')
-    expect(rail).toContain('[consoleOverviewShortcut.join("-")]: () => void open("vitehub-console")')
-    expect(rail).toContain('if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => void open(section.routeName)')
+    expect(rail).toContain('[consoleOverviewShortcut.join("-")]: () => openShortcut("vitehub-console")')
+    expect(rail).toContain('if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => openShortcut(section.routeName)')
     expect(rail).toContain(':kbds="section.shortcut ? [...section.shortcut] : undefined"')
     const search = component("console-search")
     expect(search).toContain('label: "Go to"')

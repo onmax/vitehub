@@ -193,7 +193,7 @@ function renderProviderEntry(file: string, registryFile: string, provider: "clou
   const workflowRuntime = provider === "vercel" ? workflow : undefined
   return [
     `import scheduleRegistry from ${JSON.stringify(createImportPath(file, registryFile))}`,
-    `import { executeStaticSchedule, missingScheduleDefinitionError, unwrapScheduleDefinition } from ${JSON.stringify(runtimeImport)}`,
+    `import { executeStaticSchedule, ${provider === "vercel" ? "isScheduleCronAuthorized, " : ""}missingScheduleDefinitionError, unwrapScheduleDefinition } from ${JSON.stringify(runtimeImport)}`,
     ...(workflowRuntime
       ? [
           `import workflowRegistry from ${JSON.stringify(createImportPath(file, workflowRuntime.registryFile))}`,
@@ -245,7 +245,7 @@ function renderProviderEntry(file: string, registryFile: string, provider: "clou
           "export default async function scheduleHandler(req, res) {",
           "  const cronSecret = process.env.CRON_SECRET",
           "  const authorization = req.headers?.authorization || req.headers?.Authorization",
-          "  if (cronSecret && authorization !== `Bearer ${cronSecret}`) {",
+          "  if (cronSecret && !isScheduleCronAuthorized(authorization, cronSecret)) {",
           "    res.statusCode = 401",
           "    res.end('Unauthorized.')",
           "    return",

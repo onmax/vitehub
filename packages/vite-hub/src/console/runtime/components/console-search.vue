@@ -478,6 +478,7 @@ onBeforeUnmount(() => {
   align-items: center;
   color: var(--ui-text-dimmed);
   display: flex;
+  flex-wrap: wrap;
   font-size: 0.75rem;
   gap: 1rem;
   width: 100%;

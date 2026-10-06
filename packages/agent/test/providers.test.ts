@@ -1092,6 +1092,49 @@ describe("agent Vite plugin", () => {
     }
   })
 
+  it("rejects wrong Discord Gateway secrets in the generated Netlify function", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const previousHosting = process.env.VITEHUB_HOSTING
+    const previousSecret = process.env.VITEHUB_DISCORD_GATEWAY_SECRET
+    process.env.VITEHUB_HOSTING = "netlify"
+    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-netlify-gateway-secret-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "support.ts"), "export default {}", "utf8")
+      const plugin = hubAgent({ providers: { state: { provider: "memory" } }, routes: { discordGateway: true } })
+      // SAFETY: hubAgent installs configResolved as an async Vite hook.
+      const configResolved = plugin.configResolved as (config: {
+        build?: { outDir?: string }
+        command: "build"
+        resolve: { alias: Array<{ find: string; replacement: string }> }
+        root: string
+      }) => Promise<void>
+      await configResolved({ build: { outDir: "dist/client" }, command: "build", resolve: { alias: agentProviderOutputAliases() }, root })
+      await runProviderOutputHooks(plugin)
+
+      const wrapper = await readFile(join(root, ".vitehub/agent/netlify-function.mjs"), "utf8")
+      expect(wrapper).toContain("!isViteHubBearerSecretEqual(request.headers.get('authorization'), secret)")
+      expect(wrapper).not.toContain("!== secret")
+
+      process.env.VITEHUB_DISCORD_GATEWAY_SECRET = "gateway-secret"
+      const generated: { default: (request: Request, context: { params: Record<string, string> }) => Promise<Response> } = await import(pathToFileURL(join(root, ".netlify/v1/functions/vitehub-agent.mjs")).href)
+      const gateway = (authorization?: string) => generated.default(
+        new Request("https://example.com/api/_vitehub/agents/support/discord/gateway", authorization ? { headers: { authorization } } : {}),
+        { params: { agent: "support" } },
+      )
+      for (const authorization of [undefined, "Bearer gateway", "Bearer gateway-secret-", "Bearer gateway-secreT", "Basic gateway-secret"]) {
+        expect((await gateway(authorization)).status).toBe(401)
+      }
+      expect((await gateway("Bearer gateway-secret")).status).not.toBe(401)
+    } finally {
+      if (isRuntimeString(previousHosting)) process.env.VITEHUB_HOSTING = previousHosting
+      else delete process.env.VITEHUB_HOSTING
+      if (isRuntimeString(previousSecret)) process.env.VITEHUB_DISCORD_GATEWAY_SECRET = previousSecret
+      else delete process.env.VITEHUB_DISCORD_GATEWAY_SECRET
+      await rm(root, { force: true, recursive: true })
+    }
+}, 60_000)
+
   it("publishes retained folder Agent Workspace sources before generation cleanup", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const previousHosting = process.env.VITEHUB_HOSTING
@@ -1826,6 +1869,9 @@ describe("agent Vite plugin", () => {
       expect(gatewayRoute).toContain(".replace(/(^|\\/):([^/]+)/g")
       expect(gatewayRoute).toContain("process.env.NODE_ENV === 'development'")
       expect(gatewayRoute).toContain("Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.")
+      expect(gatewayRoute).toContain('import { isViteHubBearerSecretEqual } from "@vite-hub/agent/server/internal"')
+      expect(gatewayRoute).toContain("!isViteHubBearerSecretEqual(getRequestHeader(event, 'authorization'), secret)")
+      expect(gatewayRoute).not.toContain("!== secret")
       expect(gatewayRoute).toContain("runtime: 'vite'")
       expect(gatewayRoute).toContain("waitUntil: waitUntilFromEvent(event)")
       expect(gatewayRoute).toContain("webhookUrl")

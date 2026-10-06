@@ -8,7 +8,7 @@ import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
 import { loadConsoleNavigation, resolveConsoleSectionDetails, subscribeConsoleNavigation } from "../client/sections";
 import { decodeAgentRouteParam, resolveConsoleRouteName } from "../console-route";
-import { consoleOverviewShortcut, consoleSectionShortcut, groupConsoleSections } from "../sections";
+import { consoleGoToKey, consoleOverviewShortcut, consoleSectionShortcut, groupConsoleSections } from "../sections";
 import ConsoleMark from "./console-mark.vue";
 
 const props = defineProps<{
@@ -52,13 +52,35 @@ async function open(routeName: string): Promise<void> {
 
 // The rail is on every page, so it owns the "Go to" chords. Only enabled sections get one.
 // Chords do not run while an input, a textarea, or editable content has focus.
+let goToStartedOutsideEditor = false;
+
+function editing(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && (active.matches("input, textarea") || active.isContentEditable);
+}
+
+function trackGoToStart(event: KeyboardEvent): void {
+  // Nuxt UI records chained keys before checking focus. Check the first key too.
+  if (editing() || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) goToStartedOutsideEditor = false;
+  else if (event.key === consoleGoToKey) goToStartedOutsideEditor = true;
+}
+
+function invalidateGoToStart(): void {
+  goToStartedOutsideEditor = false;
+}
+
+function openShortcut(routeName: string): void {
+  if (goToStartedOutsideEditor && !editing()) void open(routeName);
+  invalidateGoToStart();
+}
+
 defineShortcuts(
   computed(() => {
     const shortcuts: Record<string, () => void> = {
-      [consoleOverviewShortcut.join("-")]: () => void open("vitehub-console"),
+      [consoleOverviewShortcut.join("-")]: () => openShortcut("vitehub-console"),
     };
     for (const section of sections.value) {
-      if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => void open(section.routeName);
+      if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => openShortcut(section.routeName);
     }
     return shortcuts;
   }),
@@ -134,12 +156,20 @@ async function signOut(): Promise<void> {
 }
 
 onMounted(() => {
+  window.addEventListener("keydown", trackGoToStart, true);
+  window.addEventListener("focusin", invalidateGoToStart);
+  window.addEventListener("blur", invalidateGoToStart);
   unsubscribe = subscribeConsoleNavigation(props.sectionsBase, (value) => {
     navigation.value = value;
   });
   void loadNavigation();
 });
-onBeforeUnmount(() => unsubscribe?.());
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", trackGoToStart, true);
+  window.removeEventListener("focusin", invalidateGoToStart);
+  window.removeEventListener("blur", invalidateGoToStart);
+  unsubscribe?.();
+});
 </script>
 
 <template>
