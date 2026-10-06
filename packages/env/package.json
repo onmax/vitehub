@@ -112,17 +112,13 @@
   },
   "peerDependencies": {
     "vite": "catalog:vite-compat",
-    "drizzle-orm": "catalog:database",
-    "@vite-hub/agent": "^0.0.4"
+    "drizzle-orm": "catalog:database"
   },
   "peerDependenciesMeta": {
     "vite": {
       "optional": true
     },
     "drizzle-orm": {
-      "optional": true
-    },
-    "@vite-hub/agent": {
       "optional": true
     }
   },
