@@ -35,6 +35,22 @@ describe("shared Console navigation layout", () => {
     expect(rail).toContain("<UDashboardSearchButton")
   })
 
+  it("registers Go to chords in the rail and shows them in tooltips and search", () => {
+    const rail = component("console-rail")
+    expect(rail).toContain('import { defineShortcuts } from "@nuxt/ui/composables"')
+    expect(rail).toContain('[consoleOverviewShortcut.join("-")]: () => openShortcut("vitehub-console")')
+    expect(rail).toContain('if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => openShortcut(section.routeName)')
+    expect(rail).toContain(':kbds="section.shortcut ? [...section.shortcut] : undefined"')
+    const search = component("console-search")
+    expect(search).toContain('label: "Go to"')
+    expect(search).toContain("kbds: [...consoleOverviewShortcut]")
+    expect(search).toContain('"/": () => {')
+    expect(search).toContain("<template #footer>")
+    const app = component("console-app")
+    expect(app).toContain(':actions="searchActions"')
+    expect(app).toContain('label: "New chat"')
+  })
+
   it("titles each context panel with its section and drops sidebars that only held navigation", () => {
     for (const name of ["console-definitions", "console-blob", "console-database"]) {
       expect(component(name)).toContain('class="vitehub-console__panel-title"')
@@ -48,6 +64,27 @@ describe("shared Console navigation layout", () => {
       expect(component(name)).toContain(':toggle="false"')
     }
     expect(component("console-app")).toContain('v-if="!isUsageRoute"\n      id="agent-sessions"')
+  })
+
+  it("groups the Overview sections and keeps one open button for each section", () => {
+    const home = component("console-home")
+    expect(home).toContain("groupConsoleSections(availableSections.value)")
+    expect(home).toContain("consoleSectionGroupLabels[id]")
+    expect(home).toContain(':aria-label="`Open ${section.label}`"')
+    expect(home).toContain("readLastConsoleSection()")
+    expect(home).toContain('useCollection("vitehub-console-search"')
+  })
+
+  it("links Overview sections to their docs without nesting links in buttons", () => {
+    const home = component("console-home")
+    // The open button covers the cell and the Docs link sits beside it, never inside it.
+    expect(home).toMatch(/<button\s+type="button"\s+class="vitehub-console__overview-cell-target absolute inset-0"[^>]*\/>/)
+    expect(home).toContain(':href="section.docs"')
+    expect(home).toContain(':aria-label="`${section.label} documentation`"')
+    expect(home).toContain('consolePrimitives.filter((entry) => entry.id !== "usage" && !sections.value.includes(entry.id))')
+    expect(home).toContain(':aria-label="`Set up ${entry.label}`"')
+    expect(home).toContain('v-for="guide in consoleGuides"')
+    expect(home).toContain("Add your first primitive")
   })
 
   it("keeps primitive identity in the page header instead of repeating sidebar headings", () => {
@@ -77,11 +114,18 @@ describe("shared Console navigation layout", () => {
     for (const section of databaseSections) expect(enabled).toContain(section)
   })
 
-  it("marks the selected Agent with a checkbox menu item", () => {
+  it("lists Agents in the Agents panel and marks the selected Agent", () => {
     const app = component("console-app")
-    // Nuxt UI dropdown items ignore `trailingIcon`, so the selected Agent showed no check mark.
-    expect(app).not.toMatch(/agentMenuItems[\s\S]*?trailingIcon/)
-    expect(app).toMatch(/type: "checkbox",\s*label: name,\s*checked: selectedAgentName\.value === name/)
+    expect(app).toMatch(/class="vitehub-console__panel-title[^"]*">\s*<span class="min-w-0 flex-1 truncate">Agents<\/span>/)
+    expect(app).not.toContain("<UDropdownMenu")
+    expect(app).not.toContain("<UDashboardSearchButton")
+    expect(app).toContain('aria-label="Filter sessions"')
+    expect(app).toContain('<section v-if="hasMultipleAgents" class="vitehub-console__agents')
+    // The selected row exposes its state to assistive technology, not only through color.
+    expect(app).toMatch(/v-for="name in agentRows\.visible"[\s\S]*?:aria-current="name === selectedAgentName \? 'true' : undefined"[\s\S]*?@click="selectAgent\(name\)"/)
+    expect(app).toContain("Show {{ agentRows.hidden }} more")
+    expect(app).toMatch(/<span>Sessions<\/span>\s*<span v-if="selectedAgentName"/)
+    expect(app).toContain('group-by="recency"')
   })
 
   it("generates the Tailwind classes that the Console app config declares", () => {

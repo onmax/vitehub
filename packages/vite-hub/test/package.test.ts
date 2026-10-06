@@ -571,8 +571,10 @@ describe("framework package contract", () => {
     expect(consolePage).toContain("list.loadMoreError.value");
     expect(consolePage).toContain("Retry loading older sessions");
     expect(consolePage).toContain('@click="list.loadMore"');
-    expect(consolePage).toContain("Switch Agent");
-    expect(consolePage).toContain("agentMenuItems");
+    expect(consolePage).toContain('import {\n  readConsoleAgentListOpen,');
+    expect(consolePage).toContain('aria-controls="vitehub-console-agent-list"');
+    expect(consolePage).toContain('group-by="recency"');
+    expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-agent-list.ts`)).toBe(true);
     expect(consolePage).toContain("invocation.agentName !== selectedAgentName.value");
     expect(consolePage).toContain("invocation.agentName === agentName");
     expect(consolePage).toContain(
@@ -669,8 +671,10 @@ describe("framework package contract", () => {
     expect(consoleSearch).toContain(
       'resolveConsoleRouteName(route.name, "vitehub-console-invocation")',
     );
-    expect(consoleSearch).toContain('label: "All primitives"');
-    expect(consoleSearch).toContain('label: "Pages"');
+    expect(consoleSearch).toContain('[{ id: "actions", items: props.actions, label: "Actions" }]');
+    expect(consoleSearch).toContain('label: "Overview"');
+    expect(consoleSearch).toContain('label: "Go to"');
+    expect(consoleSearch).toContain("kbds: [...shortcut]");
     expect(consoleSearch).toContain(
       'label: debouncedSearchTerm.value ? "Sessions" : "Recent sessions"',
     );
@@ -704,6 +708,7 @@ describe("framework package contract", () => {
     expect(consoleRail).toContain('aria-label="Retry loading primitives"');
     expect(consoleRail).toContain("open('vitehub-console')");
     expect(consoleRail).toContain("subscribeConsoleNavigation(props.sectionsBase");
+    expect(consoleRail).toContain('import { defineShortcuts } from "@nuxt/ui/composables";');
     expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-usage.vue`)).toBe(
       true,
     );

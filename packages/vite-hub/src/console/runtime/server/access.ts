@@ -1,3 +1,5 @@
+import { defineGrant } from "@vite-hub/runtime/internal/grant"
+
 import { consoleRequestError, consoleRequestURL, type ConsoleRequestEvent } from "./request.ts"
 
 import type { ConsoleAuthorize } from "../../auth.ts"
@@ -30,7 +32,7 @@ export type ConsoleAccessRoute<THandler extends (event: never, access: ConsoleAc
 const policyKey: unique symbol = Symbol.for("vitehub.console.access")
 // SAFETY: This module owns the process slot shared by separately bundled generated plugins and Console routes.
 const scope = globalThis as typeof globalThis & { [policyKey]?: ConsoleAccessPolicy }
-const grants = new WeakSet<ConsoleAccess>()
+const consoleAccessGrant = defineGrant("vitehub.console.access", (mode: ConsoleAccessMode) => mode)
 const checkedEvents = new WeakMap<object, ConsoleAccess>()
 const modes = new Set<ConsoleAccessMode>(["auth", "cloudflare-access", "host-managed", "local"])
 
@@ -91,9 +93,7 @@ async function checkConsoleAccess(event: ConsoleRequestEvent): Promise<ConsoleAc
     const response = await policy.check(event)
     if (response) return response
   }
-  const access: ConsoleAccess = Object.freeze({ mode: policy.mode })
-  grants.add(access)
-  return access
+  return consoleAccessGrant.issue(policy.mode, { mode: policy.mode })
 }
 
 /**
@@ -123,7 +123,7 @@ export function withConsoleAccess<TEvent extends ConsoleRequestEvent, TResult>(
   if (!(handler instanceof Function)) throw new TypeError("[vitehub] withConsoleAccess() requires a handler function.")
   return async (event) => {
     const bound = checkedEvents.get(event)
-    if (bound && grants.has(bound)) return handler(event, bound)
+    if (bound && consoleAccessGrant.isValid(bound)) return handler(event, bound)
     const access = await checkConsoleAccess(event)
     if (access instanceof Response) return access
     checkedEvents.set(event, access)
@@ -136,7 +136,7 @@ export function withConsoleAccess<TEvent extends ConsoleRequestEvent, TResult>(
  * A guarded handler that receives this event uses the bound access. Rejects an access that `withConsoleAccess()` did not create.
  */
 export function bindConsoleAccess<TEvent extends ConsoleRequestEvent>(access: ConsoleAccess, event: TEvent): TEvent {
-  if (!grants.has(access)) throw consoleRequestError(403, "Forbidden")
+  if (!consoleAccessGrant.isValid(access)) throw consoleRequestError(403, "Forbidden")
   if (checkedEvents.has(event)) throw consoleRequestError(500, "Console access is already bound to this request.")
   checkedEvents.set(event, access)
   return event

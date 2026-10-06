@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
 
-import { discoverAgentChannelEnv } from "@vite-hub/agent/vite"
+import { discoverAgentChannelEnv, discoverAgentGatewayEnv } from "@vite-hub/agent/vite"
 import { env } from "@vite-hub/env/vite"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
@@ -14,7 +14,7 @@ function isDeclarationGroup(value: unknown): value is EnvRuntimeConfigOptions {
 }
 
 /**
- * Declare the Server Env of built-in Channels used by discovered Agents, before
+ * Declare the Server Env of built-in Channels and gateway presets used by discovered Agents, before
  * hubEnv() builds the registry. Application declarations win field by field.
  * Run after ordinary config hooks so discovery uses the application's root.
  */
@@ -25,11 +25,12 @@ export function agentChannelEnvPlugin(): Plugin {
     config: {
       order: "post",
       handler(config) {
-        const channelEnv = discoverAgentChannelEnv({
+        const discovery = {
           rootDir: resolve(config.root || process.cwd()),
           // SAFETY: ViteHub framework integrations set this private server-directory key.
           serverDirs: (config as typeof config & { [VITEHUB_SERVER_DIRS]?: string[] })[VITEHUB_SERVER_DIRS],
-        })
+        }
+        const channelEnv = { ...discoverAgentGatewayEnv(discovery), ...discoverAgentChannelEnv(discovery) }
         // SAFETY: hubEnv() owns the `env` Vite config extension read and written here.
         const envConfig = config as typeof config & EnvViteUserConfig
         const server: EnvRuntimeConfigOptions = { ...envConfig.env?.server }
@@ -40,9 +41,7 @@ export function agentChannelEnvPlugin(): Plugin {
           const group: EnvRuntimeConfigOptions = { ...existing }
           for (const [field, { names, required, secret }] of Object.entries(fields)) {
             if (group[field] !== undefined) continue
-            // Built-in Channels read their documented vendor names directly. Canonical
-            // aliases will be added by the gateway stack when that support lands.
-            group[field] = env({ optional: !required, secret, source: env.source(names, { canonical: false, skipEmpty: true }) })
+            group[field] = env({ optional: !required, secret, source: env.source(names, { skipEmpty: true }) })
             changed = true
           }
           server[channel] = group

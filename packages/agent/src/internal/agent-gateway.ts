@@ -21,6 +21,13 @@ function invalid(message: string): never {
   throw agentDiagnostics.AGENT_R0975({ message: `[vitehub] ${message}` })
 }
 
+function validBaseURL(name: string, driver: string, url: unknown, fail: (message: string) => never): string {
+  if (!hasRuntimeType(url, "string") || !URL.canParse(url) || !/^https?:$/.test(new URL(url).protocol)) {
+    fail(`Gateway "${name}" baseURL.${driver} must be an http or https URL.`)
+  }
+  return url.replace(/\/+$/, "")
+}
+
 function isSecretInput(value: unknown): boolean {
   return hasRuntimeType(value, "string")
     || hasRuntimeType(value, "function")
@@ -43,10 +50,12 @@ export function normalizeAgentDriverGateway(value: unknown): AgentDriverGateway 
   for (const [driver, url] of Object.entries(value.baseURL)) {
     if (driver !== "codex" && driver !== "claude-code") invalid(`Gateway "${name}" baseURL has an unknown Driver "${driver}". Use "codex" or "claude-code".`)
     if (url === undefined) continue
-    if (!hasRuntimeType(url, "string") || !URL.canParse(url) || !/^https?:$/.test(new URL(url).protocol)) {
-      invalid(`Gateway "${name}" baseURL.${driver} must be an http or https URL.`)
+    if (hasRuntimeType(url, "function") || (isRuntimeRecord(url) && hasRuntimeType(url.resolve, "function"))) {
+      // SAFETY: The resolver shape is checked above; its URL is validated when an invocation resolves it.
+      baseURL[driver] = url as NonNullable<AgentDriverGateway["baseURL"][typeof driver]>
+      continue
     }
-    baseURL[driver] = url.replace(/\/+$/, "")
+    baseURL[driver] = validBaseURL(name, driver, url, invalid)
   }
   if (!Object.keys(baseURL).length) invalid(`Gateway "${name}" must set a baseURL for "codex" or "claude-code".`)
   if (value.auth !== undefined && value.auth !== "bearer" && value.auth !== "x-api-key") invalid(`Gateway "${name}" auth must be "bearer" or "x-api-key".`)
@@ -167,8 +176,9 @@ export async function resolveAgentDriverGateway(
   context: AgentProviderCredentialContext,
 ): Promise<ResolvedAgentDriverGateway> {
   assertAgentDriverGatewaySupports(gateway, driver)
-  // SAFETY: assertAgentDriverGatewaySupports checked the Driver entry above.
-  const baseURL = gateway.baseURL[driver] as string
+  const baseURL = validBaseURL(gateway.name, driver, await resolveRuntimeValue(gateway.baseURL[driver], context), (message) => {
+    throw agentDiagnostics.AGENT_R0980({ message: `[vitehub] ${message}` })
+  })
   const [apiKey, headers] = await Promise.all([resolveApiKey(gateway, context), resolveHeaders(gateway, context)])
   return driver === "codex"
     ? codexGateway(gateway, baseURL, apiKey, headers)
