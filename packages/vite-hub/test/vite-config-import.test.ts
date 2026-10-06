@@ -10,8 +10,10 @@ import { describe, expect, it } from "vitest"
 const packageRoot = fileURLToPath(new URL("..", import.meta.url))
 const execFileAsync = promisify(execFile)
 
-// These packages serve requests, Invocations, or definition analysis. An empty project's Vite config must not load them.
-const requestTimePackages = ["typescript", "better-auth", "drizzle-orm", "@libsql/client", "effect", "unimport"]
+// Importing vite-hub and constructing plugins must not load analysis or request-time dependencies.
+const deferredPackages = ["typescript", "better-auth", "drizzle-orm", "@libsql/client", "effect", "unimport"]
+// Sandbox initializes auto-import discovery during config resolution, even in an empty project.
+const requestTimePackages = deferredPackages.filter(name => name !== "unimport")
 
 // The probe records every module that Node loads while the config imports `vite-hub` and resolves its Vite plugins.
 const probe = `
@@ -26,7 +28,7 @@ registerHooks({
 })
 const { resolveConfig } = await import(process.argv[3])
 const { vitehub } = await import(process.argv[2])
-await resolveConfig({
+const config = {
   configFile: false,
   logLevel: "silent",
   root: process.cwd(),
@@ -45,8 +47,10 @@ await resolveConfig({
     workflow: true,
     workspace: true,
   })],
-}, "serve")
-process.stdout.write(JSON.stringify(loaded))
+}
+const imported = [...loaded]
+await resolveConfig(config, "serve")
+process.stdout.write(JSON.stringify({ imported, resolved: loaded }))
 `
 
 function packageName(url: string): string | undefined {
@@ -54,6 +58,13 @@ function packageName(url: string): string | undefined {
   if (index < 0) return undefined
   const [scope, name] = url.slice(index + "/node_modules/".length).split("/")
   return scope?.startsWith("@") ? `${scope}/${name}` : scope
+}
+
+function loadedUrls(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every(url => typeof url === "string")) {
+    throw new TypeError("Expected the probe to print loaded module URLs.")
+  }
+  return value
 }
 
 describe("vite-hub config import", () => {
@@ -71,11 +82,15 @@ describe("vite-hub config import", () => {
         timeout: 60_000,
       })
       const loaded: unknown = JSON.parse(stdout)
-      if (!Array.isArray(loaded)) throw new TypeError("Expected the probe to print loaded module URLs.")
-      const urls = loaded.filter((url): url is string => typeof url === "string")
-
-      expect(urls).toContain(entry)
-      const packages = new Set(urls.map(packageName))
+      if (!loaded || typeof loaded !== "object" || !("imported" in loaded) || !("resolved" in loaded)) {
+        throw new TypeError("Expected module-load snapshots for import and config resolution.")
+      }
+      const imported = loadedUrls(loaded.imported)
+      const resolved = loadedUrls(loaded.resolved)
+      expect(imported).toContain(entry)
+      const importedPackages = new Set(imported.map(packageName))
+      expect(deferredPackages.filter(name => importedPackages.has(name))).toEqual([])
+      const packages = new Set(resolved.map(packageName))
       expect(requestTimePackages.filter(name => packages.has(name))).toEqual([])
       await access(join(root, ".vitehub/nitro/console/plugin.mjs"))
     }
