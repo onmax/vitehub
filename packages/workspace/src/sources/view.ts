@@ -674,7 +674,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     const resolution = resolveWorkspacePath(definition, path)
     if (isDescriptorPath(resolution.workspacePath)
       || allSources.some(source => (source.materialize === "lazy" || source.materialize === "startup")
-        && sourceMountIntersectsPath(source, resolution.workspacePath))) {
+        && sourceMountContainsPath(source, resolution.workspacePath))) {
       throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
     }
     await assertWritableResolvedStorePath(path, resolution.workspacePath, resolution.type)
@@ -718,8 +718,13 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       }
       for (const [index, path] of takeRemote.entries()) {
         const grant = grants[index]
-        if (!grant || writeGrants.get(grant) !== normalizeWorkspacePath(path)) {
+        const normalizedPath = normalizeWorkspacePath(path)
+        if (!grant || writeGrants.get(grant) !== normalizedPath) {
           throw workspaceError(`[vitehub] Workspace rebase to take remote ${path} requires a Source write grant for that path.`)
+        }
+        if (allSources.some(source => (source.materialize === "lazy" || source.materialize === "startup")
+          && sourceMountIntersectsPath(source, normalizedPath))) {
+          throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
         }
       }
       await withWorkspaceStoreMutation(store, async () => {
