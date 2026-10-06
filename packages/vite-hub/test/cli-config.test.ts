@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { runViteHubCli } from "@vite-hub/cli"
 
 import { loadViteHubCliConfig } from "../src/internal/cli-config.ts"
+import { isAgentCliEnabled } from "../src/internal/runtime-feature-guard.ts"
 
 const roots: string[] = []
 
@@ -25,6 +26,16 @@ async function createProject(config: "nuxt" | "vite") {
 }
 
 describe("ViteHub CLI config loading", () => {
+  it.each([
+    "export default { vitehub: { agent: false } }\n",
+    "export default { vitehub: { agent: { cli: false } } }\n",
+  ])("honors an Agent CLI opt-out without evaluating config", async source => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), source, "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(false)
+  })
+
   it("loads Nuxt Vite options when Nuxt is the project config owner", async () => {
     const root = await createProject("nuxt")
     const close = vi.fn()
