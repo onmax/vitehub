@@ -174,7 +174,7 @@ function grantFindings(file: string, source: string): GrantFinding[] {
 }
 
 async function packageSourceFindings(): Promise<GrantFinding[]> {
-  const tracked = new Set(execFileSync("git", ["ls-files", "-z", "--", "packages"], { cwd: repoRoot, encoding: "utf8" }).split("\0"))
+  const tracked = new Set(execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD", "--", "packages"], { cwd: repoRoot, encoding: "utf8" }).split("\n"))
   const findings: GrantFinding[] = []
   for (const entry of await readdir(join(repoRoot, "packages"), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
