@@ -188,6 +188,22 @@ export default defineConfig({
         from: "src/console/runtime/components/console-usage.vue",
         to: "dist/console/runtime/components",
       },
+      {
+        from: "src/console/runtime/components/console-usage-chart.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-model-detail.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-model.ts",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-share-bar.vue",
+        to: "dist/console/runtime/components",
+      },
       { from: "src/console/runtime/pages/agents.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/blob.vue", to: "dist/console/runtime/pages" },
       { from: "src/console/runtime/pages/databases.vue", to: "dist/console/runtime/pages" },
