@@ -22,7 +22,12 @@ function matchingBrace(source: string, open: number): number {
 function hasAgentOptOut(source: string): boolean {
   const clean = stripCommentsAndStrings(source)
   const pluginNames = new Set<string>()
-  for (const match of source.matchAll(/\bimport\s*\{([\s\S]*?)\}\s*from\s*["']vite-hub["']/gu)) {
+  for (const match of clean.matchAll(/\bimport\s*\{([\s\S]*?)\}\s*from\s*/gu)) {
+    // `clean` keeps source positions while removing comments and strings. Check
+    // the original source only at the module-specifier position so import-like
+    // text in a comment or string cannot create a ViteHub binding.
+    const moduleStart = match.index! + match[0].length
+    if (!/^[\s]*["']vite-hub["']/u.test(source.slice(moduleStart))) continue
     for (const specifier of match[1].split(",")) {
       const parts = specifier.trim().split(/\s+as\s+/u)
       if (parts[0] === "vitehub") pluginNames.add(parts[1] || parts[0])

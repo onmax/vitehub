@@ -71,6 +71,18 @@ describe("ViteHub CLI config loading", () => {
     await expect(isAgentCliEnabled(root)).resolves.toBe(true)
   })
 
+  it("ignores import-like text in comments and strings when finding the ViteHub binding", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), `
+      // import { vitehub } from "vite-hub"
+      const text = 'import { vitehub } from "vite-hub"'
+      const vitehub = (options: unknown) => options
+      export default { plugins: [vitehub({ agent: false })] }
+    `, "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(true)
+  })
+
   it("uses the effective Nuxt config owner for the opt-out guard", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
     roots.push(root)
