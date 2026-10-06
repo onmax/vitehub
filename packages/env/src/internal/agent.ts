@@ -4,7 +4,7 @@ import { grantEnvAccess, type EnvAttribution } from "./access.ts";
 import type { EnvAccessContext } from "../bridge.ts";
 
 /** Mint only for an identity registered by Agent Definition resolution. Names and copies are untrusted. */
-export function agentEnvAccess(agent: object, attribution: EnvAttribution = {}): EnvAccessContext {
+export function agentEnvAccess(agent: unknown, attribution: EnvAttribution = {}): EnvAccessContext {
   const name = readAgentEnvIdentity(agent);
   if (name === undefined) throw envBridgeError("untrusted");
   return grantEnvAccess(

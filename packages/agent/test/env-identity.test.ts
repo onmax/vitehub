@@ -16,7 +16,7 @@ it("rejects caller-created Agent identities and copies through the exported mint
   expect(identity).toBeDefined()
   expect(readAgentEnvIdentity(identity!)).toBe("owner")
   expect(agentEnvAccess(identity as { name: string }).actor).toEqual({ kind: "agent", id: "owner" })
-  for (const forged of [{ name: "owner" }, { ...identity }, Object.create(identity!), JSON.parse(JSON.stringify(identity))]) {
+  for (const forged of [undefined, null, "owner", 1, { name: "owner" }, { ...identity }, Object.create(identity!), JSON.parse(JSON.stringify(identity))]) {
     expect(readAgentEnvIdentity(forged)).toBeUndefined()
     expect(() => agentEnvAccess(forged)).toThrow(expect.objectContaining({ code: "ENV_BRIDGE_UNTRUSTED" }))
   }

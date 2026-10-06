@@ -849,6 +849,11 @@ type CheckedInvocationTools<TTools> = {
 const agentWorkflowHandles = new WeakMap<object, Map<string, WorkflowHandle<AgentWorkflowInvocationPayload, unknown>>>()
 const agentWorkflowNames = new Set<string>()
 const agentIdentityOwner = Symbol("vitehub.agentIdentityOwner")
+const agentWorkflowDiscovery = Symbol("vitehub.agentWorkflowDiscovery")
+type IdentityRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> = AgentRuntimeContext<TRuntimeConfig> & {
+  [agentIdentityOwner]?: object
+  [agentWorkflowDiscovery]?: boolean
+}
 
 // Name journal records like the Console lists them: explicit name, host identity, then discovered file name.
 function agentInvocationName(agent: { name?: string }, context: Pick<AgentRuntimeContext, "agentIdentity">): string | undefined {
@@ -861,19 +866,22 @@ interface DefaultAgentWorkflowRuntimeBinding extends AgentWorkflowRuntimeBinding
 
 function withAgentIdentityOwner<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
-  context: AgentRuntimeContext<TRuntimeConfig>,
-): AgentRuntimeContext<TRuntimeConfig> {
+  context: IdentityRuntimeContext<TRuntimeConfig>,
+): IdentityRuntimeContext<TRuntimeConfig> {
   if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
   // Only reuse identity for the same Definition. An unnamed child cannot inherit its parent's grants.
-  const owner = (context as AgentRuntimeContext & { [agentIdentityOwner]?: object })[agentIdentityOwner]
+  const owner = context[agentIdentityOwner]
   if (owner === agent) return context
+  // Keep host discovery separate from the identity minted for Connection access.
+  const discovered = context[agentWorkflowDiscovery] ?? Boolean(context.agentIdentity)
+  context = { ...context, [agentWorkflowDiscovery]: discovered }
   const name = agent.name || readDiscoveredAgentName(agent) || (!owner ? context.agentIdentity?.name : undefined)
-  if (!name) return { ...context, agentIdentity: undefined, [agentIdentityOwner]: agent } as AgentRuntimeContext<TRuntimeConfig>
+  if (!name) return { ...context, agentIdentity: undefined, [agentIdentityOwner]: agent }
   return {
     ...context,
     agentIdentity: createAgentEnvIdentity({ ...(!owner ? context.agentIdentity : {}), name }),
-    [agentIdentityOwner]: agent as object,
-  } as AgentRuntimeContext<TRuntimeConfig>
+    [agentIdentityOwner]: agent,
+  }
 }
 
 function hasAgentDefinition(value: unknown): value is AgentDefinition {
@@ -895,9 +903,10 @@ function resolveAgentWorkflowRuntimeBinding<
 
 function canDispatchAgentWorkflow(
   binding: AgentWorkflowRuntimeBinding | undefined,
-  context: AgentRuntimeContext,
+  context: IdentityRuntimeContext,
 ): binding is AgentWorkflowRuntimeBinding {
-  return Boolean(binding && (!("discoveryDefault" in binding) || context.agentIdentity))
+  const discovered = context[agentWorkflowDiscovery] ?? Boolean(context.agentIdentity)
+  return Boolean(binding && (!("discoveryDefault" in binding) || (discovered && context.agentIdentity)))
 }
 
 function resolveAgentWorkflowName<TRuntimeConfig extends AgentRuntimeConfig>(
