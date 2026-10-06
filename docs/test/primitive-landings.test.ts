@@ -1,9 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { getTableColumns } from "drizzle-orm";
 import { createError, defineEventHandler } from "h3";
 import { describe, expect, it, vi } from "vitest";
+import { discoverQueueDefinitions } from "../../packages/queue/src/discovery";
+import { QueueLanding } from "../app/data/primitive-landings/queue";
 import { BlobLanding } from "../app/data/primitive-landings/blob";
 import { DatabasesLanding } from "../app/data/primitive-landings/databases";
 import { ContentLanding } from "../app/data/primitive-landings/content";
@@ -115,6 +118,26 @@ describe("primitive landing placeholders", () => {
     );
     expect(source).toContain('v-if="currentVariant?.illustrative"');
     expect(source).toContain("Illustrative pseudocode. This layout is not an executable starter.");
+  });
+});
+
+describe("Queue starter projects", () => {
+  it.each(QueueLanding.variants)("discovers the documented Queue name for $label", async (variant) => {
+    const root = await mkdtemp(join(tmpdir(), "queue-landing-"));
+    try {
+      for (const file of variant.files) {
+        const path = join(root, file.path);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, file.content);
+      }
+      const definitions = discoverQueueDefinitions({ rootDir: root });
+      expect(definitions.map((definition) => definition.name)).toEqual(["welcome-email"]);
+      const definition = await readFile(definitions[0]!.handler, "utf8");
+      expect(definition).toContain('import { defineQueue } from "vite-hub/queue"');
+      expect(variant.files.map((file) => file.content).join("\n")).not.toContain("definePrimitive");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
