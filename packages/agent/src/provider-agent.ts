@@ -14,6 +14,7 @@ import { createServer } from "node:http"
 import { hostname, tmpdir } from "node:os"
 import { basename, delimiter, dirname, extname, join, posix, relative, resolve } from "node:path"
 
+import { isViteHubBearerSecretEqual } from "@vite-hub/internal/secret"
 import { formatRuntimeDiagnosticError, getViteHubErrorShape, normalizeExecutionAuthority, resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
 import { normalizeWorkspaceSourcesMetadata } from "@vite-hub/workspace/source-metadata"
@@ -547,15 +548,20 @@ function providerSecretEnvironmentKeys(environment: AgentProviderEnvironment | u
   return [...new Set([...Object.keys(environment || {}), ...requiredEnvironment])].filter(key => key !== "VITEHUB_BROWSER_ACTIVE")
 }
 
+function providerLaunchSecretValues(launch: AgentProviderLaunchCommand): string[] {
+  return [...new Set([launch.command, ...(launch.args || [])])].filter(value => value.length > 0)
+}
+
 function providerLauncherSource(
   launch: AgentProviderLaunchCommand,
   diagnosticPath: string,
   secretEnvironmentKeys: readonly string[],
+  launchSecrets: readonly string[],
   cwd: string,
   requirementCapture?: ProviderRequirementCapture,
 ): string {
   return `import { spawn } from "node:child_process"
-import { appendFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs"
 import { setTimeout as delay } from "node:timers/promises"
 
 const child = spawn(${JSON.stringify(launch.command)}, [...${JSON.stringify([...launch.args || []])}, ...process.argv.slice(2)], {
@@ -575,9 +581,26 @@ let stderrBytes = 0
 const requirementCapture = ${JSON.stringify(requirementCapture ?? null)}
 let requirementOutput = Buffer.alloc(0)
 const secretEnvironmentKeys = ${JSON.stringify(secretEnvironmentKeys)}
-const diagnosticSecrets = [...new Set(secretEnvironmentKeys
+function credentialFileSecrets() {
+  const home = process.env.CODEX_HOME
+  if (!home) return []
+  try {
+    const value = JSON.parse(readFileSync(home + "/auth.json", "utf8"))
+    const secrets = []
+    const visit = item => {
+      if (typeof item === "string" && item.length > 0) secrets.push(item)
+      else if (Array.isArray(item)) item.forEach(visit)
+      else if (item && typeof item === "object") Object.values(item).forEach(visit)
+    }
+    visit(value)
+    return secrets
+  }
+  catch { return [] }
+}
+const diagnosticSecrets = [...new Set([...secretEnvironmentKeys
   .map(key => process.env[key])
-  .filter(item => typeof item === "string" && item.length > 0))]
+  .filter(item => typeof item === "string" && item.length > 0), ...credentialFileSecrets()])]
+  .concat(${JSON.stringify([...launchSecrets])})
   .sort((left, right) => right.length - left.length)
 const diagnosticSecretBuffers = diagnosticSecrets.map(secret => Buffer.from(secret))
 const stderrRetentionBytes = ${providerLaunchStderrMaxBytes} + Math.max(0, ...diagnosticSecrets.map(secret => Buffer.byteLength(secret)))
@@ -723,6 +746,7 @@ async function materializeProviderLauncher(
   root: string,
   launch: AgentProviderLaunchCommand,
   secretEnvironmentKeys: readonly string[],
+  launchSecrets: readonly string[],
   cwd: string,
   requirementCapture?: ProviderRequirementCapture,
 ): Promise<MaterializedProviderLauncher> {
@@ -733,7 +757,7 @@ async function materializeProviderLauncher(
   const path = join(root, "provider-launcher")
   const diagnosticPath = join(root, "provider-launch-failure.json")
   const shellArgument = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
-  await writeFile(sourcePath, providerLauncherSource(launch, diagnosticPath, secretEnvironmentKeys, cwd, requirementCapture), { mode: 0o600 })
+  await writeFile(sourcePath, providerLauncherSource(launch, diagnosticPath, secretEnvironmentKeys, launchSecrets, cwd, requirementCapture), { mode: 0o600 })
   await writeFile(path, `#!/bin/sh\nexec ${shellArgument(process.execPath)} ${shellArgument(sourcePath)} "$@"\n`, { mode: 0o700 })
   return { diagnosticPath, path }
 }
@@ -742,19 +766,39 @@ function redactProviderDiagnostic(
   value: string,
   environment: NodeJS.ProcessEnv,
   secretEnvironmentKeys: readonly string[],
+  additionalSecrets: readonly string[] = [],
 ): string {
   let redacted = value
-  const secrets = [...new Set(secretEnvironmentKeys.map(key => environment[key])
-    .filter((item): item is string => hasRuntimeType(item, "string") && item.length > 0))]
+  const secrets = [...new Set([...secretEnvironmentKeys.flatMap(key => {
+    const value = environment[key]
+    return hasRuntimeType(value, "string") && value.length > 0 ? [value] : []
+  }), ...additionalSecrets])]
     .sort((left, right) => right.length - left.length)
   for (const secret of secrets) redacted = redacted.replaceAll(secret, "[REDACTED]")
   return redactCredentialText(redacted)
+}
+
+async function codexCredentialSecrets(homePath: string | undefined): Promise<string[]> {
+  if (!homePath) return []
+  try {
+    const value: unknown = JSON.parse(await readFile(join(homePath, "auth.json"), "utf8"))
+    const secrets: string[] = []
+    const visit = (item: unknown): void => {
+      if (hasRuntimeType(item, "string") && item.length > 0) secrets.push(item)
+      else if (Array.isArray(item)) item.forEach(visit)
+      else if (isRuntimeRecord(item)) Object.values(item).forEach(visit)
+    }
+    visit(value)
+    return [...new Set(secrets)]
+  }
+  catch { return [] }
 }
 
 async function providerLaunchFailure(
   diagnosticPath: string | undefined,
   environment: NodeJS.ProcessEnv | undefined,
   secretEnvironmentKeys: readonly string[],
+  additionalSecrets: readonly string[],
   cause: unknown,
 ): Promise<ViteHubError<"PROVIDER_LAUNCH_FAILED"> | undefined> {
   if (!diagnosticPath || !environment) return
@@ -769,7 +813,7 @@ async function providerLaunchFailure(
     return
   }
   const stderr = hasRuntimeType(diagnostic.stderr, "string")
-    ? redactProviderDiagnostic(diagnostic.stderr, environment, secretEnvironmentKeys).trim()
+    ? redactProviderDiagnostic(diagnostic.stderr, environment, secretEnvironmentKeys, additionalSecrets).trim()
     : undefined
   const requestId = `provider-${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`
   return new ViteHubError("PROVIDER_LAUNCH_FAILED", "[vitehub] Provider launch command failed.", {
@@ -778,7 +822,7 @@ async function providerLaunchFailure(
       phase: "launch",
       ...(hasRuntimeType(diagnostic.exitCode, "number") ? { exitCode: diagnostic.exitCode } : {}),
       ...(hasRuntimeType(diagnostic.signal, "string") ? { signal: diagnostic.signal } : {}),
-      ...(hasRuntimeType(diagnostic.spawnError, "string") ? { spawnError: redactProviderDiagnostic(diagnostic.spawnError, environment, secretEnvironmentKeys) } : {}),
+      ...(hasRuntimeType(diagnostic.spawnError, "string") ? { spawnError: redactProviderDiagnostic(diagnostic.spawnError, environment, secretEnvironmentKeys, additionalSecrets) } : {}),
       ...(stderr ? { stderr } : {}),
       ...(hasRuntimeType(diagnostic.stderrBytes, "number") ? { stderrBytes: diagnostic.stderrBytes } : {}),
       ...(diagnostic.stderrTruncated === true ? { stderrTruncated: true } : {}),
@@ -1273,6 +1317,7 @@ async function missingProviderCommands(
     : await check(["-c", providerRequirementScript, "sh", ...commands])
 }
 const providerStatusCacheMs = 30_000
+const providerStatusStderrMaxLength = 1_500
 const recentProviderQuotaFailures = new Map<string, { message: string, expiresAt: number }>()
 
 /** Uses the invocation credential and launcher paths, without opening a provider session. */
@@ -1328,8 +1373,13 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       ...(options.provider === "codex" && !home ? { CODEX_HOME: process.env.CODEX_HOME } : {}),
       ...overrides,
     })
+    const launchSecretEnvironmentKeys = providerSecretEnvironmentKeys(environment, [])
+    const credentialSecrets = await codexCredentialSecrets(home?.homePath)
+    const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
+    let launchDiagnosticPath: string | undefined
+    let launchDiagnosticSecrets: readonly string[] = []
     let requirementCapture: ProviderRequirementCapture | undefined
     if (options.launch !== undefined) {
       root = await mkdtemp(join(tmpdir(), "vitehub-provider-inspection-"))
@@ -1338,6 +1388,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: [...(home ? ["CODEX_HOME"] : []), ...Object.keys(gateway?.environment || {})],
       }), signal))
       signal?.throwIfAborted()
+      launchDiagnosticSecrets = [...providerLaunchSecretValues(launch), ...shellArgTokens(launchArgs)]
       if (requirements.length) requirementCapture = {
         path: join(root, "provider-requirements.jsonl"),
         prefix: `vitehub-requirements-${crypto.randomUUID()}:`,
@@ -1346,9 +1397,10 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       const providerLaunch = requirementCapture
         ? { ...launch, args: [...launch.args || [], "-c", providerRequirementPrelude, "sh", String(requirements.length), requirementCapture.prefix, ...requirements, command] }
         : launch
-      binaryPath = (await materializeProviderLauncher(root, providerLaunch, providerSecretEnvironmentKeys(overrides, []), root, requirementCapture)).path
+      const launcher = await materializeProviderLauncher(root, providerLaunch, launchSecretEnvironmentKeys, launchDiagnosticSecrets, root, requirementCapture)
+      binaryPath = launcher.path
+      launchDiagnosticPath = launcher.diagnosticPath
     }
-    const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
     let missingCommands = options.launch === undefined
       ? await missingProviderCommands(requirements, environment, root || process.cwd(), signal)
@@ -1358,6 +1410,15 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       provider: options.provider, environment, signal,
       settings: { ...options.providerSettings, ...(binaryPath ? { binaryPath } : {}), ...(home ? { homePath: home.homePath } : {}), ...(launchArgs ? { launchArgs } : {}) },
     })
+    // A custom launcher records the child's stderr. Without it, a failed probe reports only the exit code.
+    const launchFailure = snapshot.status === "error"
+      ? await providerLaunchFailure(launchDiagnosticPath, environment, launchSecretEnvironmentKeys, launchDiagnosticSecrets, undefined)
+      : undefined
+    const launchStderr = launchFailure?.details?.stderr
+    const failureMessage = [
+      snapshot.message && redactProviderDiagnostic(snapshot.message, environment, launchSecretEnvironmentKeys, [...credentialSecrets, ...launchDiagnosticSecrets]),
+      hasRuntimeType(launchStderr, "string") && launchStderr ? `Launch stderr: ${redactProviderDiagnostic(launchStderr.slice(-providerStatusStderrMaxLength), environment, launchSecretEnvironmentKeys, [...credentialSecrets, ...launchDiagnosticSecrets])}` : undefined,
+    ].filter(Boolean).join(" ")
     if (requirementCapture) missingCommands = await capturedProviderRequirements(requirementCapture)
     const requirementsUnknown = requirements.length > 0 && missingCommands === undefined
     const authenticated = snapshot.auth.status === "unknown" ? undefined : snapshot.auth.status === "authenticated"
@@ -1369,7 +1430,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       ...(home?.scope ? { account: { id: home.scope, kind: "credential" as const } } : {}),
       checkedAt: snapshot.checkedAt, stale: false, installed: snapshot.installed, authenticated, readiness,
       ...(requirements.length && missingCommands !== undefined ? { missingCommands } : {}),
-      reason: missingCommands?.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : requirementsUnknown ? "Driver requirements could not be verified." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
+      reason: missingCommands?.length ? `Driver commands are missing: ${missingCommands.join(", ")}.` : exhausted ? "Subscription quota is exhausted." : !snapshot.installed ? "Provider executable is unavailable." : authenticated === false ? "Provider is signed out." : unavailable ? `Provider status check failed${failureMessage ? `: ${failureMessage}` : "."}` : requirementsUnknown ? "Driver requirements could not be verified." : readiness === "unknown" ? "Provider readiness could not be fully verified." : "Reported subscription quota is available. Workspace spending limits are not reported by this provider probe.",
       ...(snapshot.usageLimits ? { usageLimits: {
         checkedAt: snapshot.usageLimits.checkedAt,
         windows: snapshot.usageLimits.windows,
@@ -1635,7 +1696,7 @@ async function startToolServer(
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: () => crypto.randomUUID() })
   await mcp.connect(transport)
   const http = createServer((request, response) => {
-    if (request.headers.authorization !== `Bearer ${token}`) {
+    if (!isViteHubBearerSecretEqual(request.headers.authorization, token)) {
       response.writeHead(401).end()
       return
     }
@@ -2683,6 +2744,7 @@ async function* runProvider<
   const providerBoxHomeFiles: Record<string, string | Uint8Array> = {}
   let claudeBoxPromptFile: string | undefined
   let providerLaunchSecretEnvironmentKeys: readonly string[] = []
+  let providerLaunchDiagnosticSecrets: readonly string[] = []
   let providerRuntimeEnvironment: NodeJS.ProcessEnv | undefined
   let sessionStore: PartitionedProviderSessionStore | undefined
   let codexCredentialHome: CodexCredentialHome | undefined
@@ -3071,10 +3133,11 @@ async function* runProvider<
         Promise.resolve(resolveRuntimeValue(options.launch, launchContext)),
         effectiveSignal,
       ))
+      providerLaunchDiagnosticSecrets = providerLaunchSecretValues(launch)
       onProviderExit = launch.onExit
       if (!launchRoot) throw agentDiagnostics.AGENT_R0717({ message: "[vitehub] Provider launcher root was not prepared." })
       const materializedLauncher = await waitForProviderOperation(
-        materializeProviderLauncher(launchRoot, launch, providerLaunchSecretEnvironmentKeys, root),
+        materializeProviderLauncher(launchRoot, launch, providerLaunchSecretEnvironmentKeys, providerLaunchDiagnosticSecrets, root),
         effectiveSignal,
       )
       providerLauncher = materializedLauncher.path
@@ -3380,6 +3443,7 @@ async function* runProvider<
       providerLaunchDiagnosticPath,
       providerRuntimeEnvironment,
       providerLaunchSecretEnvironmentKeys,
+      providerLaunchDiagnosticSecrets,
       error,
     )
     caught = launchFailure ?? error
