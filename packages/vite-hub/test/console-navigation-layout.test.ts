@@ -10,16 +10,44 @@ const component = (name: string) => readFileSync(
 )
 
 describe("shared Console navigation layout", () => {
-  it("uses one branded header and one aligned search row across primitive modules", () => {
-    expect(component("console-brand")).toContain('<ConsoleMark class="size-4 shrink-0" />')
-    for (const name of ["console-home", "console-definitions", "console-blob", "console-database", "console-kv"]) {
-      expect(component(name)).toContain("<ConsoleBrand")
-      expect(component(name)).toContain("vitehub-console__search")
+  it("renders one navigation rail on every Console page", () => {
+    const frame = component("console-frame")
+    expect(frame).toContain('<ConsoleRail :active="active" :sections-base="sectionsBase" />')
+    const pages = {
+      "console-home": '<ConsoleFrame :sections-base="sectionsBase">',
+      "console-env": '<ConsoleFrame active="env" :sections-base="sectionsBase">',
+      "console-kv": '<ConsoleFrame active="kv" :sections-base="sectionsBase">',
+      "console-connections": '<ConsoleFrame active="connections" :sections-base="sectionsBase">',
+      "console-blob": '<ConsoleFrame active="blob" :sections-base="sectionsBase">',
+      "console-database": '<ConsoleFrame active="databases" :sections-base="sectionsBase">',
+      "console-definitions": '<ConsoleFrame :active="section" :sections-base="sectionsBase">',
+      "console-app": `<ConsoleFrame :active="isUsageRoute ? 'usage' : 'agents'" :sections-base="sectionsBase">`,
+    }
+    for (const [name, frameTag] of Object.entries(pages)) {
+      expect(component(name)).toContain(frameTag)
+      expect(component(name)).not.toContain("ConsolePrimitiveSwitcher")
+      expect(component(name)).not.toContain("ConsoleSectionNav")
+    }
+    const rail = component("console-rail")
+    expect(rail).toContain('aria-label="Console"')
+    expect(rail).toContain("groupConsoleSections(")
+    expect(rail).toContain(":aria-current=\"section.id === active ? 'page' : undefined\"")
+    expect(rail).toContain("<UDashboardSearchButton")
+  })
+
+  it("titles each context panel with its section and drops sidebars that only held navigation", () => {
+    for (const name of ["console-definitions", "console-blob", "console-database"]) {
+      expect(component(name)).toContain('class="vitehub-console__panel-title"')
       expect(component(name)).toContain('class="vitehub-console__nav"')
       // A bound `:id` evaluates `console - navigation` and stores the sidebar size under "NaN".
       expect(component(name)).toMatch(/\sid="console-navigation"/)
       expect(component(name)).not.toContain(':id="console-navigation"')
     }
+    for (const name of ["console-home", "console-env", "console-kv", "console-connections"]) {
+      expect(component(name)).not.toContain("<UDashboardSidebar")
+      expect(component(name)).toContain(':toggle="false"')
+    }
+    expect(component("console-app")).toContain('v-if="!isUsageRoute"\n      id="agent-sessions"')
   })
 
   it("keeps primitive identity in the page header instead of repeating sidebar headings", () => {
@@ -47,13 +75,6 @@ describe("shared Console navigation layout", () => {
     const databaseSections = [...routes.matchAll(/consoleSection: "(databases?)"/g)].map(match => match[1])
     expect(databaseSections).toHaveLength(2)
     for (const section of databaseSections) expect(enabled).toContain(section)
-  })
-
-  it("renders Usage as the same accessible icon primitive everywhere", () => {
-    const switcher = component("console-primitive-switcher")
-    expect(switcher).toContain(':text="consoleSectionDetails.usage.label"')
-    expect(switcher).toContain(':icon="consoleSectionDetails.usage.icon"')
-    expect(switcher).not.toContain('label="Usage"')
   })
 
   it("marks the selected Agent with a checkbox menu item", () => {

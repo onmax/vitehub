@@ -73,10 +73,6 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
-        from: "src/console/runtime/components/console-brand.vue",
-        to: "dist/console/runtime/components",
-      },
-      {
         from: "src/console/runtime/components/console-app.vue",
         to: "dist/console/runtime/components",
       },
@@ -137,15 +133,11 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
-        from: "src/console/runtime/components/console-primitive-switcher.vue",
+        from: "src/console/runtime/components/console-rail.vue",
         to: "dist/console/runtime/components",
       },
       {
         from: "src/console/runtime/components/console-search.vue",
-        to: "dist/console/runtime/components",
-      },
-      {
-        from: "src/console/runtime/components/console-section-nav.vue",
         to: "dist/console/runtime/components",
       },
       {

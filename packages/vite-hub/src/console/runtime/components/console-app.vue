@@ -28,7 +28,6 @@ import { useConsoleConnectionUnavailable } from "./console-connection";
 import { rememberConsoleSection } from "../sections";
 import ConsoleFrame from "./console-frame.vue";
 import ConsoleConnectionState from "./console-connection-state.vue";
-import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
 import ConsoleInvocationComposer from "./console-invocation-composer.vue";
 import ConsoleMark from "./console-mark.vue";
 import ConsoleSessionLoading from "./console-session-loading.vue";
@@ -83,7 +82,7 @@ interface ConsoleAgentProfile {
 }
 const agentInvocationOptions = ref<Record<string, { profiles: ConsoleAgentProfile[] }>>({});
 const nowMs = ref(Date.now());
-const sessionsOpen = ref(false);
+const sessionsOpen = ref(route.query.sessions === "open");
 const detailsOpen = ref(false);
 const detailsMaximized = ref(false);
 const inspectorTab = ref<"details" | "trace" | "workspace" | "capabilities">("details");
@@ -113,6 +112,23 @@ const listPollInterval = computed(() => (sessionPollingEnabled.value ? 5_000 : f
 const isUsageRoute = computed(
   () => route.name === resolveConsoleRouteName(route.name, "vitehub-console-usage"),
 );
+
+async function openSessionsFromUsage(): Promise<void> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Query values can also be arrays or null.
+  const queryAgent = typeof route.query.returnAgent === "string" ? route.query.returnAgent.trim() : "";
+  const agent = selectedAgentName.value || (queryAgent.length <= 512 ? queryAgent : "");
+  if (agent) {
+    await router.push({
+      name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
+      params: { agent: encodeAgentRouteParam(agent) },
+      query: { sessions: "open" },
+    });
+    sessionsOpen.value = true;
+    return;
+  }
+  await router.push({ name: resolveConsoleRouteName(route.name, "vitehub-console-agents"), query: { sessions: "open" } });
+  sessionsOpen.value = true;
+}
 
 const list = useAgentInvocations({
   baseURL: props.apiBase,
@@ -582,21 +598,6 @@ function loadMoreSessions(): void {
   void list.loadMore();
 }
 
-async function toggleUsage(): Promise<void> {
-  sessionsOpen.value = false;
-  if (isUsageRoute.value) {
-    await router.push(
-      selectedAgentName.value
-        ? {
-            name: resolveConsoleRouteName(route.name, "vitehub-console-agent"),
-            params: { agent: encodeAgentRouteParam(selectedAgentName.value) },
-          }
-        : { name: resolveConsoleRouteName(route.name, "vitehub-console-agents") },
-    );
-    return;
-  }
-  await router.push({ name: resolveConsoleRouteName(route.name, "vitehub-console-usage") });
-}
 function clearAgentsRetry(): void {
   if (agentsRetry) clearTimeout(agentsRetry);
   agentsRetry = undefined;
@@ -928,8 +929,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ConsoleFrame>
+  <ConsoleFrame :active="isUsageRoute ? 'usage' : 'agents'" :sections-base="sectionsBase">
     <UDashboardSidebar
+      v-if="!isUsageRoute"
       id="agent-sessions"
       class="vitehub-console__sessions"
       v-model:open="sessionsOpen"
@@ -941,7 +943,6 @@ onBeforeUnmount(() => {
         root: 'md:flex',
         header: 'p-0',
         body: 'gap-0 overflow-hidden p-0',
-        footer: 'shrink-0 border-t border-default px-2 py-1.5',
         content: 'md:hidden w-[calc(100vw-0.75rem)] max-w-none',
         overlay: 'md:hidden',
       }"
@@ -1184,27 +1185,6 @@ onBeforeUnmount(() => {
         </AgentInvocationList>
       </template>
 
-      <template #footer>
-        <div class="grid min-w-0 gap-1">
-          <UButton
-            v-if="isUsageRoute"
-            block
-            class="justify-start"
-            icon="i-lucide-arrow-left"
-            label="Back"
-            color="neutral"
-            variant="ghost"
-            size="xs"
-            aria-label="Back to sessions"
-            @click="toggleUsage"
-          />
-          <ConsolePrimitiveSwitcher
-            :active="isUsageRoute ? 'usage' : 'agents'"
-            :sections-base="sectionsBase"
-            @navigate="sessionsOpen = false"
-          />
-        </div>
-      </template>
     </UDashboardSidebar>
 
     <ConsoleSearch
@@ -1216,7 +1196,7 @@ onBeforeUnmount(() => {
       :sections-base="sectionsBase"
     />
 
-    <ConsoleUsage v-if="isUsageRoute" :base="usageBase" @open-sessions="sessionsOpen = true" />
+    <ConsoleUsage v-if="isUsageRoute" :base="usageBase" @open-sessions="openSessionsFromUsage" />
 
     <UDashboardPanel
       v-else
