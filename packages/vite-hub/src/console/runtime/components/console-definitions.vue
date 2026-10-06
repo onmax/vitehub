@@ -224,6 +224,11 @@ onBeforeUnmount(() => request?.abort());
             />
           </UTooltip>
         </div>
+        <div v-else class="flex justify-center">
+          <UTooltip text="Refresh definitions">
+            <UButton aria-label="Refresh definitions" color="neutral" icon="i-ph-arrows-clockwise-light" size="xs" variant="ghost" :loading="loading" @click="loadDefinitions" />
+          </UTooltip>
+        </div>
       </template>
 
       <template #default="{ collapsed }">

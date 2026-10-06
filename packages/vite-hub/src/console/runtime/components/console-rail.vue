@@ -8,7 +8,7 @@ import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
 import { consoleAppearanceKey, consoleAppearanceOptions, consoleAppearances } from "../client/appearance";
 import { loadConsoleNavigation, resolveConsoleSectionDetails, subscribeConsoleNavigation } from "../client/sections";
-import { resolveConsoleRouteName } from "../console-route";
+import { decodeAgentRouteParam, resolveConsoleRouteName } from "../console-route";
 import { groupConsoleSections } from "../sections";
 import ConsoleMark from "./console-mark.vue";
 
@@ -58,7 +58,12 @@ const appearanceItems = computed<DropdownMenuItem[]>(() => [
 const signOutLabel = computed(() => (accessIdentity.value?.label ? `Sign out ${accessIdentity.value.label}` : "Sign out"));
 
 async function open(routeName: string): Promise<void> {
-  await router.push({ name: resolveConsoleRouteName(route.name, routeName) });
+  const name = resolveConsoleRouteName(route.name, routeName);
+  const agent = decodeAgentRouteParam(route.params.agent);
+  await router.push({
+    name,
+    ...(name === resolveConsoleRouteName(route.name, "vitehub-console-usage") && agent ? { query: { returnAgent: agent } } : {}),
+  });
 }
 
 async function loadNavigation(): Promise<void> {

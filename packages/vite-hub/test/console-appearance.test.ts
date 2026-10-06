@@ -74,6 +74,28 @@ describe("Console appearance", () => {
     expect([...root.classes]).toEqual(["light"])
   })
 
+  it("uses one explicit theme-color tag and restores media queries for System", () => {
+    const metas = [
+      { dataset: { vitehubConsoleTheme: "light" }, media: "(prefers-color-scheme: light)" },
+      { dataset: { vitehubConsoleTheme: "dark" }, media: "(prefers-color-scheme: dark)" },
+    ]
+    const document = { querySelectorAll: () => metas }
+
+    const query = systemQuery(false)
+    const appearance = startConsoleAppearance({
+      root: classRoot(), query, storage: memoryStorage("dark"), themeColorDocument: document,
+    })
+    expect(metas.map(meta => meta.media)).toEqual(["not all", ""])
+    query.change(true)
+    appearance.select("light")
+    expect(metas.map(meta => meta.media)).toEqual(["", "not all"])
+    query.change(false)
+    query.change(true)
+    expect(metas.map(meta => meta.media)).toEqual(["", "not all"])
+    appearance.select("system")
+    expect(metas.map(meta => meta.media)).toEqual(["(prefers-color-scheme: light)", "(prefers-color-scheme: dark)"])
+  })
+
   it("stores the choice and keeps working when storage is unavailable", () => {
     const storage = memoryStorage()
     expect(readConsoleAppearance(storage)).toBe("system")

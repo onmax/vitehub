@@ -221,6 +221,7 @@ subscribeConsoleNavigation(sectionsBase, addContributedRoutes);
 const appearance = startConsoleAppearance({
   query: window.matchMedia(consoleDarkSchemeQuery),
   root: document.documentElement,
+  themeColorDocument: document,
 });
 
 router.beforeEach(async (to) => {

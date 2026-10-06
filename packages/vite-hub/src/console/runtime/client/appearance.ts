@@ -31,6 +31,15 @@ interface ConsoleAppearanceRoot {
   readonly classList: { toggle(token: string, force?: boolean): boolean }
 }
 
+interface ConsoleThemeColorMeta {
+  readonly dataset?: { readonly vitehubConsoleTheme?: string }
+  media: string
+}
+
+interface ConsoleThemeColorDocument {
+  querySelectorAll(selector: string): ArrayLike<ConsoleThemeColorMeta>
+}
+
 const consoleAppearanceStorageKey = "vitehub-console:appearance"
 
 /** Media query that reports a dark system color scheme. */
@@ -72,6 +81,21 @@ export function applyConsoleColorScheme(root: ConsoleAppearanceRoot, scheme: Con
   root.classList.toggle("light", scheme === "light")
 }
 
+/** Keeps browser chrome and PWA title bars in sync with the selected scheme. */
+export function applyConsoleThemeColor(
+  document: ConsoleThemeColorDocument | undefined,
+  scheme: ConsoleColorScheme | "system",
+): void {
+  if (!document) return
+  for (const meta of Array.from(document.querySelectorAll('meta[name="theme-color"][data-vitehub-console-theme]'))) {
+    const theme = meta.dataset?.vitehubConsoleTheme
+    if (theme !== "light" && theme !== "dark") continue
+    meta.media = scheme === "system"
+      ? `(prefers-color-scheme: ${theme})`
+      : theme === scheme ? "" : "not all"
+  }
+}
+
 /**
  * Applies the stored preference to `root` and keeps it current.
  * The "system" preference follows `query` when the system scheme changes.
@@ -80,9 +104,17 @@ export function startConsoleAppearance(options: {
   query: ConsoleColorSchemeQuery
   root: ConsoleAppearanceRoot
   storage?: ConsoleAppearanceStorage
+  themeColorDocument?: ConsoleThemeColorDocument
 }): ConsoleAppearanceController {
   const preference = ref(readConsoleAppearance(options.storage))
-  const apply = () => applyConsoleColorScheme(options.root, resolveConsoleColorScheme(preference.value, options.query.matches))
+  const apply = () => {
+    const scheme = resolveConsoleColorScheme(preference.value, options.query.matches)
+    applyConsoleColorScheme(options.root, scheme)
+    applyConsoleThemeColor(
+      options.themeColorDocument,
+      preference.value,
+    )
+  }
   apply()
   options.query.addEventListener("change", apply)
   return {
