@@ -171,6 +171,7 @@ describe("hubConnections", () => {
     await (hubConnections().config as unknown as ConfigHook)(config, { command: "serve", mode: "development" });
     const handlers = (config.nitro as { handlers: Array<{ handler: string }> }).handlers;
     const source = await readFile(handlers[0]!.handler, "utf8");
+    expect(source).not.toContain('from "node:stream"');
     // Execute the generated adapter with a recording handler at its Web Request boundary.
     const handle = vi.fn((request: Request, event: unknown) => ({ request, event }));
     const code = source.replace(/^import .*\n/gm, "").replace(/^const handle = .*\n/m, "").replace("export default", "const generated =");
