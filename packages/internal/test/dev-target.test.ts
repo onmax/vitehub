@@ -13,7 +13,7 @@ import { assertViteHubDevRequestGrant, isViteHubDevHostAllowed, isViteHubDevSecr
 
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
 import type { ViteHubDevTargetArgs } from "../src/cli.ts"
-import type { ViteHubDevEndpointServer } from "../src/dev-endpoint.ts"
+import type { ViteHubDevEndpointOptions, ViteHubDevEndpointServer } from "../src/dev-endpoint.ts"
 
 const endpoint = { header: "x-test-dev", headerValue: "1", route: "/__test/dev" }
 
@@ -183,7 +183,7 @@ describe("guarded dev endpoint", () => {
     http = undefined
   })
 
-  async function listen(options: { methods?: readonly string[], server?: ViteHubDevEndpointServer["config"]["server"] }): Promise<{ handled: string[], url: string }> {
+  async function listen(options: { authorize?: ViteHubDevEndpointOptions["authorize"], methods?: readonly string[], server?: ViteHubDevEndpointServer["config"]["server"] }): Promise<{ handled: string[], url: string }> {
     const handlers: Array<(req: IncomingMessage, res: ServerResponse, next: () => void) => void> = []
     const handled: string[] = []
     const server: ViteHubDevEndpointServer = {
@@ -192,6 +192,7 @@ describe("guarded dev endpoint", () => {
       resolvedUrls: null,
     }
     registerViteHubDevEndpoint(server, {
+      ...(options.authorize ? { authorize: options.authorize } : {}),
       handle: (req, res, grant) => {
         handled.push(req.method || "")
         try {
@@ -248,6 +249,31 @@ describe("guarded dev endpoint", () => {
     const post = await fetch(`${url}${endpoint.route}`, { body: "{}", headers: { "content-type": "application/json", [endpoint.header]: "1" }, method: "POST" })
     expect(await post.text()).toBe("handled")
     expect(handled).toEqual(["GET", "POST"])
+  })
+
+  it("runs owner authorization before the handler gets the grant", async () => {
+    const { handled, url } = await listen({
+      authorize: async req => isViteHubDevSecretEqual(req.headers["x-test-token"] as string | undefined, "secret")
+        ? undefined
+        : new Response("Forbidden Test Dev token.", { status: 403 }),
+    })
+    const route = `${url}${endpoint.route}`
+    const missing = await fetch(route, { headers: { [endpoint.header]: "1" } })
+    expect([missing.status, await missing.text()]).toEqual([403, "Forbidden Test Dev token."])
+    const wrong = await fetch(route, { headers: { [endpoint.header]: "1", "x-test-token": "secreT" } })
+    expect([wrong.status, await wrong.text()]).toEqual([403, "Forbidden Test Dev token."])
+    expect(handled).toEqual([])
+    const allowed = await fetch(route, { headers: { [endpoint.header]: "1", "x-test-token": "secret" } })
+    expect(await allowed.text()).toBe("handled")
+    expect(handled).toEqual(["GET"])
+  })
+
+  it("returns a redacted 500 when owner authorization fails", async () => {
+    const { handled, url } = await listen({ authorize: () => { throw new Error("Bearer private-secret") } })
+    const response = await fetch(`${url}${endpoint.route}`, { headers: { [endpoint.header]: "1" } })
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: { message: "Test Dev request failed: Bearer [redacted]" } })
+    expect(handled).toEqual([])
   })
 
   it("compares secrets in full and rejects missing values", () => {
