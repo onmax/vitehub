@@ -1258,29 +1258,31 @@ describe("Provider Agent Driver", () => {
   it("reuses one session store concurrently for equivalent paths", async () => {
     const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
     const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
-    let notifyFirstStarted!: () => void
-    const firstStarted = new Promise<void>(resolve => { notifyFirstStarted = resolve })
+    const createStore = createSqliteProviderRuntimeSessionStore.getMockImplementation()!
+    let notifyOpening!: () => void
+    const opening = new Promise<void>(resolve => { notifyOpening = resolve })
+    let releaseStore!: () => void
+    const pendingStore = new Promise<void>(resolve => { releaseStore = resolve })
+    createSqliteProviderRuntimeSessionStore.mockImplementationOnce(async (path) => {
+      notifyOpening()
+      await pendingStore
+      return await createStore(path)
+    })
     const runtimes = ["first", "second"].map(suffix => runtime(`thread-session-${suffix}`, [
       event("turn.completed", `thread-session-${suffix}`, { state: "completed" }, { turnId: "turn-1" }),
-    ], {
-      onStartSession: async () => {
-        if (suffix === "first") notifyFirstStarted()
-      },
-    }))
+    ]))
 
-    await Promise.all([
+    // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
+    const first = createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never)
+    await opening
+    const second = createProviderAgentAdapter({
+      provider: "codex",
+      sessionStorePath: resolve(path),
       // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never),
-      // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({
-        provider: "codex",
-        sessionStorePath: resolve(path),
-        env: async () => {
-          await firstStarted
-          return {}
-        },
-      }).generate(context("thread-session-second") as never),
-    ])
+    }).generate(context("thread-session-second") as never)
+    await vi.waitFor(() => expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1))
+    releaseStore()
+    await Promise.all([first, second])
 
     expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1)
     expect(runtimes.every(value => value.close.mock.calls.length === 1)).toBe(true)
