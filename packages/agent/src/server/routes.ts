@@ -1,7 +1,7 @@
 import { isDurableAgentState, requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
-import { createExecutionContext, createRuntimeContext as createHostRuntimeContext } from "@vite-hub/runtime"
+import { consoleInvocationUrl, createExecutionContext, createRuntimeContext as createHostRuntimeContext, resolvePublicUrl } from "@vite-hub/runtime"
 import { Chat, StreamingPlan, ThreadImpl, convertEmojiPlaceholders } from "chat"
 
 import {
@@ -116,6 +116,7 @@ import type {
   PublishedAgentDeliveryArtifact,
   AgentInput,
   AgentHostIdentity,
+  AgentInvocationReference,
   AgentInvoker,
   AgentMessageDeliveryKind,
   AgentRunInput,
@@ -1424,9 +1425,61 @@ async function queuedWebhookInvocationCancelled(
   error: unknown,
 ): Promise<boolean> {
   if (!runId) return false
-  const agentName = (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
-  const id = await agentInvocationId(runId, agentName)
+  const id = await agentInvocationId(runId, routeAgentInvocationName(agent, routeAgentIdentity(handlerOptions)))
   return isAgentInvocationCancellationError(error, id)
+}
+
+/** The name that identifies this Agent's Invocations. It matches the name of the Invocation journal. */
+function routeAgentInvocationName(agent: AgentInput<ViteAgentRouteRuntimeContext>, identity: AgentHostIdentity | undefined): string | undefined {
+  return (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || identity?.name
+}
+
+/** The Invocation ID and Console URL of a run. */
+async function runInvocationReference(agentName: string | undefined, run: AgentRunMetadata | undefined): Promise<AgentInvocationReference | undefined> {
+  if (!run?.runId) return
+  try {
+    const id = await agentInvocationId(run.runId, agentName)
+    const origin = agentName ? resolvePublicUrl({ agentName }) : undefined
+    return { id, ...(origin && agentName ? { consoleUrl: consoleInvocationUrl(origin, agentName, id) } : {}) }
+  }
+  catch {
+    return undefined
+  }
+}
+
+/**
+ * Calls the trigger's `failed` callback when the queue stops retrying a delivery.
+ * The callback cannot change the delivery outcome. Its errors are logged.
+ */
+async function notifyQueuedWebhookFailure(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  delivery: AgentWebhookQueueDelivery,
+  error: unknown,
+  attempts: number,
+  invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
+): Promise<void> {
+  try {
+    const request = requestFromPersistedWebhook(delivery)
+    const identity = routeAgentIdentity(handlerOptions)
+    const context = createRuntimeContext(request, invocation?.run, undefined, handlerOptions.cloudflare, handlerOptions.runtime, handlerOptions.capabilities, identity)
+    const match = await runWithRuntimeCloudflareEnv(context, () => findAgentWebhookRegistration(agent, context, request, delivery.webhookId))
+    const failed = match?.trigger.definition.failed
+    if (!isRuntimeFunction(failed)) return
+    const reference = await runInvocationReference(routeAgentInvocationName(agent, identity), invocation?.run)
+    await failed({
+      attempts,
+      deliveryId: delivery.deliveryId,
+      error,
+      publicError: toAgentPublicError(error, "http"),
+      ...(invocation?.input ? { input: invocation.input } : {}),
+      ...(reference ? { invocation: reference } : {}),
+      ...(invocation?.run ? { run: invocation.run } : {}),
+    })
+  }
+  catch (callbackError) {
+    console.error(`[vitehub] The failed callback of webhook delivery "${delivery.deliveryId}" threw an error.`, callbackError)
+  }
 }
 
 async function executeQueuedWebhookDelivery(
@@ -1462,6 +1515,15 @@ async function executeQueuedWebhookDelivery(
         })
         .catch(() => undefined)
       console.error(`[vitehub] Queued webhook delivery "${delivery.deliveryId}" exhausted ${maxWebhookQueueAttempts} execution leases and will not be retried.`)
+      await notifyQueuedWebhookFailure(
+        agent,
+        handlerOptions,
+        delivery,
+        new Error(`[vitehub] Queued webhook delivery exhausted ${maxWebhookQueueAttempts} execution leases.`),
+        delivery.attempts,
+        // SAFETY: The queue persists this value from the asserted route contract.
+        delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
+      )
     }
     return
   }
@@ -1528,6 +1590,8 @@ async function executeQueuedWebhookDelivery(
   let context: ViteAgentRouteRuntimeContext
   let channelDelivery: Awaited<ReturnType<typeof resumeAgentChannelDelivery>>
   let invocationRunId: string | undefined
+  // SAFETY: The queue persists this value from the asserted route contract.
+  let failedInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
   try {
     if (delivery.concurrencyKey) {
       const fenceAcquisition = state.acquireLock(webhookConcurrencyFenceKey(delivery.concurrencyKey), delivery.leaseTtlMs)
@@ -1624,6 +1688,7 @@ async function executeQueuedWebhookDelivery(
       }
     }
     if (invocation) {
+      failedInvocation = invocation
       armExecutionTimeout(webhookQueueExecutionTimeout(agent, invocation.input))
       invocationRunId = invocation.run?.runId
       const baseRunContext = createRuntimeContext(
@@ -1800,6 +1865,8 @@ async function executeQueuedWebhookDelivery(
           `[vitehub] Queued webhook delivery "${delivery.deliveryId}" failed after ${maxWebhookQueueAttempts} attempts and will not be retried.`,
           error,
         )
+        const run = failedInvocation?.run ?? (invocationRunId ? { runId: invocationRunId } : undefined)
+        await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.attempts + 1, { ...failedInvocation, ...(run ? { run } : {}) })
       }
       return
     }
@@ -3677,6 +3744,7 @@ async function postDurableSteerErrorFallback(
   maximumInvocationDeadline: number,
   verifyOwnership?: () => Promise<void>,
 ): Promise<void> {
+  const invocation = runInvocationReference(routeAgentInvocationName(agent, context.agentIdentity), delivery.run)
   const baseOptions = getAgentChatOptions(agent)
   const options = getChannelChatOptions(agent, registration.channelId, baseOptions)
   const deliveryContext: ViteAgentRouteRuntimeContext = {
@@ -3708,6 +3776,7 @@ async function postDurableSteerErrorFallback(
     [],
     undefined,
     maximumInvocationDeadline,
+    await invocation,
   )
   if (!delivered) throw agentDiagnostics.AGENT_R0806({ message: "[vitehub] Durable steered Channel error fallback was not delivered before its deadline." })
 }
@@ -4508,6 +4577,7 @@ function chatErrorHookArgs(
   toolResults: AgentToolStepItem[],
   abortSignal?: AbortSignal,
   onPost?: () => void,
+  invocation?: AgentInvocationReference,
 ): AgentChatErrorHookArgs<ViteAgentRouteRuntimeConfig> {
   const inputMessage = input?.messages.at(-1)
   // SAFETY: The surrounding route guards establish this record shape before the value crosses the internal boundary.
@@ -4522,6 +4592,7 @@ function chatErrorHookArgs(
       text: message.text,
     },
     run,
+    ...(invocation ? { invocation } : {}),
     toolResults: [...toolResults],
     thread: {
       post: async (postedMessage) => {
@@ -4661,6 +4732,7 @@ export async function postChatErrorFallback(
   toolResults: AgentToolStepItem[],
   manualDelivery?: ManualChatDeliveryState,
   maximumInvocationDeadline?: number,
+  invocation?: AgentInvocationReference,
 ): Promise<boolean> {
   console.error({
     component: "@vite-hub/agent",
@@ -4684,7 +4756,7 @@ export async function postChatErrorFallback(
     chatErrorHookArgs(thread, message, input, run, error, toolResults, fallbackResolutionAbort?.signal, () => {
       callbackDelivered = true
       resolveCallbackDelivery?.()
-    }),
+    }, invocation),
     () => callbackDelivered,
     (resolution) => enforceChatInvocationTimeout(resolution, fallbackResolutionTimeout, fallbackResolutionAbort),
   )
@@ -5233,6 +5305,7 @@ async function handleChatSdkMessage(
   thread = observeChatThread(thread, delivery)
   let input: AgentChatMessageTriggerInput | undefined
   let run: AgentRunMetadata | undefined
+  let invocationReference: Promise<AgentInvocationReference | undefined> | undefined
   let typing: ChatTypingRefresh | undefined
   let progress: ReturnType<typeof createManualDeliveryProgressUpdater> | undefined
   const manualDeliveryState: ManualChatDeliveryState = {}
@@ -5430,6 +5503,8 @@ async function handleChatSdkMessage(
     typing = streamsPhasedReplies || bufferedDelivery ? startChatTypingRefresh(thread, context) : undefined
     assertChatDeliveryOptions(options || {})
     run = invocation.run
+    // Hash the Invocation ID now, so an error reply does not wait for it.
+    invocationReference = runInvocationReference(routeAgentInvocationName(agent, context.agentIdentity), run)
     if (inlineTurn) inlineTurn.runId = run?.runId
     await recordChannelDeliveryEvidence(delivery, { type: "accepted", runId: run?.runId })
     await recordChannelDeliveryEvidence(delivery, {
@@ -6219,7 +6294,7 @@ async function handleChatSdkMessage(
       })
     typing?.stop()
     await progress?.finish()
-    await postChatErrorFallback(error, thread, message, options, input, run, toolResults, manualDeliveryState, maximumInvocationDeadline)
+    await postChatErrorFallback(error, thread, message, options, input, run, toolResults, manualDeliveryState, maximumInvocationDeadline, await invocationReference)
     throw error
   } finally {
     if (inlineTurn) {

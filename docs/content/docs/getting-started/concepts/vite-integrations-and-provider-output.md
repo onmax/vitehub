@@ -61,7 +61,7 @@ The host must provide a persistent, writable filesystem at this path. The option
 
 ## Public URL
 
-Set `publicUrl` in `vitehub()` to the public origin of the deployed application. Console invocation links, GitHub activity links, telemetry `session_url` values, and the default Auth `baseURL` use it:
+Set `publicUrl` in `vitehub()` to the public origin of the deployed application. Console invocation links, GitHub activity links, Chat error links, trigger `failed` events, telemetry `session_url` values, and the default Auth `baseURL` use it:
 
 ```ts
 vitehub({

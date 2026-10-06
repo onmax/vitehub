@@ -149,6 +149,28 @@ The Trigger translates the validated event and attaches trusted context. Keep mo
 
 When the Channel declares message methods, also return `message`: JSON data that identifies the provider message. Hooks use it through `event.message`. See [Act on the Channel message in hooks](/docs/agents/channels#act-on-the-channel-message-in-hooks).
 
+### Report a failed webhook delivery
+
+When a Trigger result sets `webhook: { deliveryId, concurrencyLimit }` and the Agent has a state provider, ViteHub queues the webhook delivery and retries a failed execution. A delivery gets three execution attempts. Add `failed` to the Trigger to report the failure to the provider when the queue stops retrying.
+
+```ts
+defineChannelTrigger({
+  input: ticketOpened,
+  invoke: (context, event) => ({
+    input: { prompt: `Triage ticket ${event.ticketId}: ${event.summary}` },
+    run: { runId: event.ticketId },
+    webhook: { concurrencyLimit: 1, deliveryId: event.ticketId },
+  }),
+  async failed(event) {
+    await commentOnTicket(event.run?.runId, `Triage failed: ${event.publicError.error} ${event.invocation?.consoleUrl ?? ''}`)
+  },
+})
+```
+
+ViteHub calls `failed` once per delivery: after the last failed attempt, after an execution timeout, or when the delivery used all its execution leases because the process stopped during each attempt. It does not call `failed` for an attempt that the queue retries, or for a cancelled Invocation. The event has `attempts`, `deliveryId`, `error`, `publicError`, and, when they are known, `input`, `run`, and `invocation: { id, consoleUrl? }`. `consoleUrl` needs a [public URL](/docs/getting-started/concepts/vite-integrations-and-provider-output#public-url).
+
+The delivery is already marked as failed when `failed` runs. ViteHub logs an error from `failed` and does not retry the delivery or change its outcome. Keep the callback short, because the queue worker waits for it.
+
 ## Choose how to call the Agent
 
 | Situation | Use |
