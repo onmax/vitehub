@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest"
 
-import { custom, defineWorkspace, useWorkspace, type WorkspaceDefinition, type WritableWorkspaceFacade } from "../src/index.ts"
+import { custom, defineWorkspace, useWorkspace, type ReadonlyWorkspaceFacade, type WorkspaceDefinition, type WritableWorkspaceFacade } from "../src/index.ts"
 import { resetWorkspaceRegistry } from "../src/core/registry.ts"
 import { createWorkspace } from "../src/core/workspace.ts"
 import { createWorkspaceSourceResolutionFacade, forwardWorkspaceMetadataView } from "../src/runtime.ts"
@@ -85,7 +85,9 @@ describe("Workspace metadata target", () => {
     await store.setMeta!("app:state", { ok: true })
     registerWorkspace("support", defineWorkspace({ store }))
     const writable: WritableWorkspaceFacade = useWorkspace("support", { mode: "write" })
-    const target = {}
+    // A new facade, as the Agent access capability creates one.
+    const readonly = useWorkspace("support")
+    const target: ReadonlyWorkspaceFacade = { fs: readonly.fs, tools: readonly.tools }
     forwardWorkspaceMetadataView(writable, target, entries => entries.filter(entry => entry.path.startsWith("docs")))
 
     const view = await resolveWorkspaceMetadataTarget(target)
@@ -99,7 +101,7 @@ describe("Workspace metadata target", () => {
     expectNoGlobalCarrier(target)
 
     // A source without a target gives nothing.
-    const empty = {}
+    const empty: ReadonlyWorkspaceFacade = { fs: readonly.fs, tools: readonly.tools }
     forwardWorkspaceMetadataView({}, empty)
     await expect(resolveWorkspaceMetadataTarget(empty)).resolves.toBeUndefined()
   })

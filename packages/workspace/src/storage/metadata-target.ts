@@ -1,6 +1,7 @@
 import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { forwardWorkspaceStoreTarget } from "./target.ts"
-import type { ListOptions, MkdirOptions, RmOptions, WorkspaceEntry, WorkspaceFile } from "../core/types.ts"
+import type { ListOptions, MkdirOptions, RmOptions, Workspace, WorkspaceEntry, WorkspaceFile } from "../core/types.ts"
+import type { ReadonlyWorkspaceFacade, ReadonlyWorkspaceFs, WritableWorkspaceFacade, WritableWorkspaceFs } from "../core/use.ts"
 
 export interface WorkspaceMetadataTarget {
   workspaceName?: string
@@ -14,11 +15,15 @@ export interface WorkspaceMetadataTarget {
   list?(path: string, options?: ListOptions): Promise<WorkspaceEntry[]>
 }
 
+/** An object that can carry a metadata target: a Workspace, a Workspace facade, or the `fs` of a facade. */
+export type WorkspaceMetadataCarrier = Workspace | ReadonlyWorkspaceFacade | WritableWorkspaceFacade | ReadonlyWorkspaceFs | WritableWorkspaceFs
+
 type WorkspaceMetadataTargetResolver = () => Promise<WorkspaceMetadataTarget | undefined> | WorkspaceMetadataTarget | undefined
 
 // A metadata target can write to the raw Store and skip every write grant.
 // Keep the resolvers in this module. Do not export them from a package entry.
-const metadataTargetResolvers = new WeakMap<object, WorkspaceMetadataTargetResolver>()
+// Lookups accept any object, because callers pass unknown values. Only carriers are registered.
+const metadataTargetResolvers = new WeakMap<WeakKey, WorkspaceMetadataTargetResolver>()
 
 const metadataTargetsByStore = new WeakMap<WorkspaceMetadataTarget, Map<string, WorkspaceMetadataTarget>>()
 
@@ -42,11 +47,11 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataTarget, wo
   return target
 }
 
-export function attachWorkspaceMetadataTarget(carrier: object, resolve: WorkspaceMetadataTargetResolver): void {
+export function attachWorkspaceMetadataTarget(carrier: WorkspaceMetadataCarrier, resolve: WorkspaceMetadataTargetResolver): void {
   metadataTargetResolvers.set(carrier, resolve)
 }
 
-export function forwardWorkspaceMetadataTarget(source: unknown, target: object): void {
+export function forwardWorkspaceMetadataTarget(source: unknown, target: WorkspaceMetadataCarrier): void {
   const resolve = metadataTargetResolver(source)
   if (resolve) metadataTargetResolvers.set(target, resolve)
 }
@@ -61,7 +66,7 @@ export async function resolveWorkspaceMetadataTarget(source: unknown): Promise<W
  * `filterEntries` limits the listed entries, for example to an access scope.
  * Internal: `@vite-hub/agent` uses this for its Workspace facades.
  */
-export function forwardWorkspaceMetadataView(source: unknown, target: object, filterEntries?: (entries: WorkspaceEntry[]) => WorkspaceEntry[]): void {
+export function forwardWorkspaceMetadataView(source: unknown, target: WorkspaceMetadataCarrier, filterEntries?: (entries: WorkspaceEntry[]) => WorkspaceEntry[]): void {
   const resolve = metadataTargetResolver(source)
   if (!resolve) return
   metadataTargetResolvers.set(target, async () => {

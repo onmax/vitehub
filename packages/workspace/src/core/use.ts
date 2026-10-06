@@ -622,7 +622,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
     tools.inspect = createReadTools as WritableWorkspaceFacade<Name>["tools"]["inspect"]
     tools.write = createTools as WritableWorkspaceFacade<Name>["tools"]["write"]
     tools.none = emptyTools
-    const facade = {
+    const facade: WritableWorkspaceFacade<Name> & WorkspaceStoreTargetCarrier = {
       [workspaceStoreTarget]: async () => {
         return await (workspace as Workspace & WorkspaceStoreTargetCarrier)[workspaceStoreTarget]?.()
       },
@@ -641,7 +641,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
       startSession: async options => await workspace.startSession(options),
       sync: async options => await workspace.sync(options),
       tools,
-    } as WritableWorkspaceFacade<Name> & WorkspaceStoreTargetCarrier
+    }
     forwardWorkspaceMetadataTarget(workspace, facade)
     return facade
   }
