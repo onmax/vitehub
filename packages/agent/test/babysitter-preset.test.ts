@@ -120,16 +120,16 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ merged: true }), stderr: "" };
     if (text.includes("--slurp") && text.includes("/protection/required_status_checks"))
       return { stdout: JSON.stringify([{ contexts: [], checks: [] }]), stderr: "" };
-    if (text.includes("/rules/branches/"))
+    if (text.includes("/rules/branches/")) {
+      const rule = {
+        type: "required_status_checks",
+        parameters: { required_status_checks: [{ context: "test" }] },
+      };
       return {
-        stdout: JSON.stringify([
-          {
-            type: "required_status_checks",
-            parameters: { required_status_checks: [{ context: "test" }] },
-          },
-        ]),
+        stdout: JSON.stringify(args.includes("--slurp") ? [rule] : rule),
         stderr: "",
       };
+    }
     if (text.includes("-X PATCH")) return { stdout: JSON.stringify(pr()), stderr: "" };
     const path = args.find((arg) => arg.startsWith("repos/")) ?? "";
     if (path.includes("pulls?state=all&head="))
@@ -140,7 +140,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
         : path.includes("/reviews?")
-          ? [
+          ? preset.merge ? [] : [
               {
                 id: 41,
                 body: "Fix value",
