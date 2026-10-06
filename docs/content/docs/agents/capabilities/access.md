@@ -75,7 +75,7 @@ Capabilities run their setup phases in array order, so later Capabilities see th
 1. ViteHub calls `workspace.resolve`, or uses its static value. When it returns nothing valid, ViteHub uses `defaultScope`. When neither produces a scope, the invocation fails.
 2. A selection is a scope name or `{ scope, role, ...grants }`. Inline grants replace the named definition in `scopes`. The role defaults to `"viewer"`.
 3. ViteHub resolves path and Source grants to Workspace paths, then replaces the active Workspace with a scoped facade.
-4. ViteHub records the scope in invocation context as `access.workspaceScope` with `all`, `paths`, `role`, `scope`, and `sources`.
+4. ViteHub records the scope in invocation context as `access.workspaceScope` with `all`, `paths`, `role`, `scope`, and `sources`. This value is a copy for your code to read. ViteHub keeps the scope that `access()` resolved and enforces only that scope. A value that you or a Capability writes to the `access` key does not change the scope.
 
 The scoped facade hides paths outside the scope. Reads, lists, searches, globs, Source materialization, and Workspace Sessions see only the granted paths. A hidden path behaves as not found.
 

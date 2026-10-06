@@ -19,7 +19,7 @@ import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
 import { normalizeWorkspaceSourcesMetadata } from "@vite-hub/workspace/source-metadata"
 import { createProviderRuntime, createSqliteProviderRuntimeSessionStore, inspectProvider } from "@t3tools/provider-runtime"
 
-import { hasTrustedWorkspaceAccessScope } from "./access-runtime.ts"
+import { trustedWorkspaceAccessScope } from "./access-runtime.ts"
 import { setActiveAgentWorkspaceCommands, setActiveAgentWorkspaceFiles, setAgentWorkspaceDiff } from "./agent-workspace-runtime.ts"
 import { appendLatestFinalText, streamAgentOutputToEvents } from "./agent-output.ts"
 import { composeInstructionDocument } from "./instruction-composition.ts"
@@ -1814,8 +1814,7 @@ function workspaceSessionStarter(workspace: ReadonlyWorkspaceFacade) {
 
 function selectedWorkspacePaths(context: AgentAdapterRunContext): readonly string[] | undefined {
   const required = [...new Set(context.workspaceMaterializationPaths || [])]
-  if (!hasTrustedWorkspaceAccessScope(context.context)) return undefined
-  const scope = context.context.get("access")?.workspaceScope
+  const scope = trustedWorkspaceAccessScope(context.context)
   if (!scope || scope.all) return undefined
   const paths = [...new Set([...(scope.paths || []), ...required])]
   return paths.length ? paths : []

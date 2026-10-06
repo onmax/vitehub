@@ -13,6 +13,9 @@ import { defineWorkspace } from "vite-hub/workspace"
 import type { History, HistoryCheckpoint, HistoryCheckpointOptions } from "vite-hub/workspace"
 
 import { defineCollection, table } from "vite-hub/source"
+import { defineCollectionHandler } from "vite-hub/source/server"
+import type { CollectionAuthorizationGuard } from "vite-hub/source/server"
+import { withAuthorization } from "vite-hub/auth/server"
 import type { CollectionItem, CollectionQuery, CollectionRequestQuery } from "vite-hub/source"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 
@@ -273,3 +276,9 @@ const fixedTupleFilteredMeals = defineCollection({
   }),
 })
 expectTypeOf<CollectionQuery<typeof fixedTupleFilteredMeals>>().toEqualTypeOf<never>()
+
+// Generated Collection routes pass Auth's guard. The page handler runs only inside it.
+expectTypeOf(withAuthorization).toMatchTypeOf<CollectionAuthorizationGuard>()
+defineCollectionHandler(privateMeals, { withAuthorization })
+// @ts-expect-error The old option returned `Response | undefined` and let the page load after a missed check.
+defineCollectionHandler(privateMeals, { authorizeRequest: async () => undefined })

@@ -7,9 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEnvBridge } from "../src/bridge.ts";
 import { createDatabaseEnvStore } from "../src/database.ts";
+import { connectionEnvAccess } from "../src/internal/connections.ts";
 import type { EnvAccessContext } from "../src/bridge.ts";
+import { adminContext } from "./helpers.ts";
 
-const admin: EnvAccessContext = { actor: { kind: "user", id: "owner" }, admin: true };
+const admin = await adminContext();
 const agent: EnvAccessContext = {
   actor: { kind: "agent", id: "review" },
   traceId: "trace-1",
@@ -221,4 +223,52 @@ it("sanitizes access-store failures in SDK authorization and history", async () 
   for (const operation of [() => bridge.permissions(agent, "key"), () => bridge.read({ env: {}, keys: ["key"] }), () => bridge.activity(admin, "key"), () => bridge.grants(admin, "key")]) {
     await expect(operation()).rejects.toThrow("Env operation failed.");
   }
+});
+
+describe("Env access grants", () => {
+  it("rejects administrator contexts that Env did not create", async () => {
+    const { bridge, emit, store } = setup();
+    const forged = [
+      { actor: admin.actor, admin: true },
+      { ...admin },
+      { ...admin, actor: { kind: "user", id: "other" } },
+      JSON.parse(JSON.stringify(admin)),
+    ] as unknown as EnvAccessContext[];
+    for (const context of forged) {
+      for (const operation of [
+        () => bridge.replace(context, { key: "github", value: "secret", expectedRevision: null }),
+        () => bridge.use(context, "github", "call", () => undefined),
+        () => bridge.permissions(context, "github"),
+        () => bridge.activity(context, "github"),
+        () => bridge.grant(context, { actor: agent.actor, key: "github", permissions: ["use"] }),
+        () => bridge.read({ env: {}, keys: ["github"], access: context }),
+        () => createEnvBridge({ ...store, runtimeContext: () => context }).read({ env: {}, keys: ["github"] }),
+      ]) {
+        await expect(operation()).rejects.toMatchObject({ code: "ENV_BRIDGE_UNTRUSTED" });
+      }
+    }
+    expect(Object.isFrozen(admin) && Object.isFrozen(admin.actor)).toBe(true);
+    expect(await bridge.activity(admin, "github")).toEqual([]);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("limits a Connections context to its bridge, key, and permission", async () => {
+    const { bridge, store } = setup();
+    const other = createEnvBridge({ ...store, runtimeContext: () => agent });
+    const actor = { kind: "user", id: "connector" } as const;
+    const replace = connectionEnvAccess(bridge, { actor, name: "gmail", permission: "replace" });
+    const created = await bridge.replace(replace, { key: "connection/gmail", value: "token", expectedRevision: null });
+    await expect(bridge.replace(replace, { key: "connection/other", value: "token", expectedRevision: null })).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" });
+    await expect(other.replace(replace, { key: "connection/gmail", value: "token", expectedRevision: created.revision })).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" });
+    await expect(bridge.use(replace, "connection/gmail", "call", () => undefined)).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" });
+    await expect(bridge.activity(replace, "connection/gmail")).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" });
+    await expect(bridge.grants(replace, "connection/gmail")).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" });
+    const use = connectionEnvAccess(bridge, { actor, name: "gmail", permission: "use", traceId: "trace-1" });
+    expect(await bridge.use(use, "connection/gmail", "call", (secret) => secret.unseal())).toBe("token");
+    await expect(bridge.use({ ...use }, "connection/gmail", "call", () => undefined)).rejects.toMatchObject({ code: "ENV_BRIDGE_UNTRUSTED" });
+    const activity = connectionEnvAccess(bridge, { actor, name: "gmail", permission: "activity" });
+    expect(await bridge.activity(activity, "connection/gmail")).toContainEqual(
+      expect.objectContaining({ action: "use", actor, outcome: "succeeded", traceId: "trace-1" }),
+    );
+  });
 });
