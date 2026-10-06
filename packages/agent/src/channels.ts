@@ -1324,7 +1324,9 @@ function githubCommandFromUnknown(value: unknown): GitHubPullRequestCommand | un
     commentId,
     ...(maybeString(value.commentNodeId) ? { commentNodeId: maybeString(value.commentNodeId) } : {}),
     ...(maybeString(value.deliveryId) ? { deliveryId: maybeString(value.deliveryId) } : {}),
-    event: maybeString(value.event) === "pull_request" ? "pull_request" : "issue_comment",
+    event: value.event === "pull_request" || value.event === "pull_request_review" || value.event === "pull_request_review_comment"
+      ? value.event
+      : "issue_comment",
     ...(maybeNumber(value.installationId) ? { installationId: maybeNumber(value.installationId) } : {}),
     issueNumber,
     owner,

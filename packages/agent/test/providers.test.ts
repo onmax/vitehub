@@ -9181,7 +9181,13 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["pullRequest", "comments", "triggers"] as const)("refreshes a queued GitHub PR after its %s draft filter stops matching", async (filterLocation) => {
+  it.each([
+    { filterLocation: "pullRequest", event: "issue_comment" },
+    { filterLocation: "comments", event: "issue_comment" },
+    { filterLocation: "triggers", event: "issue_comment" },
+    { filterLocation: "comments", event: "pull_request_review" },
+    { filterLocation: "comments", event: "pull_request_review_comment" },
+  ] as const)("refreshes a queued GitHub $event after its $filterLocation draft filter stops matching", async ({ filterLocation, event }) => {
     const { defineAgent } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
     const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
@@ -9227,12 +9233,22 @@ describe("server helpers", () => {
     const stop = handler.resume({ agentName: "review", webhookState: state })
     const request = (id: number) => new Request("https://example.com/api/github/webhook", {
       body: JSON.stringify({
-        action: "created",
-        comment: { body: "Please fix this PR", id, user: { login: "mona", type: "User" } },
-        issue: { number: 42, pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" } },
+        action: event === "pull_request_review" ? "submitted" : "created",
+        ...(event !== "issue_comment" ? {
+          pull_request: { draft, number: 42, url: "https://api.github.test/repos/acme/app/pulls/42" },
+        } : {}),
+        ...(event === "pull_request_review" ? {
+          review: { body: "Please fix this PR", id, state: "changes_requested", user: { login: "mona", type: "User" } },
+        } : {}),
+        ...(event !== "pull_request_review" ? {
+          comment: { body: "Please fix this PR", id, user: { login: "mona", type: "User" } },
+        } : {}),
+        ...(event === "issue_comment" ? {
+          issue: { number: 42, pull_request: { url: "https://api.github.test/repos/acme/app/pulls/42" } },
+        } : {}),
         repository: { full_name: "acme/app" },
       }),
-      headers: { "content-type": "application/json", "x-github-delivery": `delivery-${id}`, "x-github-event": "issue_comment" },
+      headers: { "content-type": "application/json", "x-github-delivery": `delivery-${id}`, "x-github-event": event },
       method: "POST",
     })
     try {
@@ -9247,7 +9263,7 @@ describe("server helpers", () => {
       await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2), { timeout: 5_000 })
       await Promise.all(complete.mock.results.map(result => result.value))
       expect(fetcher).toHaveBeenCalledTimes(3)
-      expect(run.mock.calls[1]?.[0].input.context?.github).toMatchObject({ deliveryId: "delivery-2", event: "issue_comment" })
+      expect(run.mock.calls[1]?.[0].input.context?.github).toMatchObject({ deliveryId: "delivery-2", event })
       expect(run.mock.calls[1]?.[0].input.context?.pullRequest).toMatchObject({
         pullRequest: { head: { sha: head }, comments: [expect.objectContaining({ body: "new marker" })] },
       })
