@@ -40,10 +40,13 @@ function copyWithOverrides<T extends object, Overrides extends object>(tool: T, 
       }
     }
   }
-  return Object.create(Object.getPrototypeOf(tool), {
+  const copied = Object.create(Object.getPrototypeOf(tool), {
     ...descriptors,
     ...Object.getOwnPropertyDescriptors(overrides),
   })
+  const policyOwner = agentToolPolicyOwners.get(tool)
+  if (policyOwner) agentToolPolicyOwners.set(copied, policyOwner)
+  return copied
 }
 
 export function copyToolWithOverrides<T extends object, Overrides extends object>(tool: T, overrides: Overrides): Omit<T, keyof Overrides> & Overrides {
@@ -83,6 +86,8 @@ interface AgentToolApprovalBinding {
 const issuedToolApprovalRequests = new WeakMap<object, AgentToolApprovalBinding>()
 /** Grants that `approveAgentToolRequest` created and that no execution consumed yet. */
 const toolApprovalGrants = new WeakMap<AgentToolApprovalGrant, AgentToolApprovalBinding>()
+/** Policy ownership propagated through wrappers around a policy-protected tool. */
+const agentToolPolicyOwners = new WeakMap<object, AgentToolPolicyOwner>()
 const toolApprovalGrantContextKey: unique symbol = Symbol("vitehub.agent.tool-approval-grant")
 
 type AgentToolApprovalExecutionContext = AgentToolExecutionContext & { [toolApprovalGrantContextKey]?: AgentToolApprovalGrant }
@@ -109,7 +114,7 @@ export async function executeApprovedAgentTool(
   context: AgentToolExecutionContext = {},
 ): Promise<unknown> {
   const binding = toolApprovalGrants.get(grant)
-  if (!binding || binding.toolName !== tool.name || !tool.execute) {
+  if (!binding || binding.toolName !== tool.name || agentToolPolicyOwners.get(tool) !== binding.policy || !tool.execute) {
     throw new ViteHubError("APPROVAL_REQUIRED", `[vitehub:runtime] Approval grant is not valid for "${tool.name}".`, {
       details: { capability: tool.name },
     })
@@ -155,7 +160,7 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
   const policy = tool.policy
   const policyOwner: AgentToolPolicyOwner = Object.freeze({ toolName: tool.name })
 
-  return copyToolWithOverrides(tool, {
+  const wrapped = copyToolWithOverrides(tool, {
     async execute(input: unknown, context?: AgentToolExecutionContext) {
       if (consumeToolApprovalGrant(policyOwner, tool.name, input, context)) {
         context?.abortSignal?.throwIfAborted()
@@ -195,6 +200,8 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
       return await execute.call(tool, input, context)
     },
   })
+  agentToolPolicyOwners.set(wrapped, policyOwner)
+  return wrapped
 }
 
 export function applyAgentToolPolicies<TTools extends Record<string, unknown>>(tools: TTools | undefined): TTools | undefined {
