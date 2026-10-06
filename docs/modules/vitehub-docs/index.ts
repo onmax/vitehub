@@ -37,6 +37,7 @@ export default defineNuxtModule({
   async setup(_options, nuxt) {
     const docsRoot = nuxt.options.rootDir;
     const outputDir = resolve(docsRoot, ".generated");
+    const agentErrorHandler = resolve(docsRoot, "server/error-handler.ts");
     const llmsRawLinksPlugin = resolve(docsRoot, "modules/vitehub-docs/runtime/server/llms-raw-links.ts");
 
     const capabilityReferences = await createCapabilityReferences();
@@ -57,6 +58,10 @@ export default defineNuxtModule({
       }
     });
     nuxt.hook("nitro:config", (config) => {
+      const configuredHandlers = config.errorHandler
+        ? Array.isArray(config.errorHandler) ? config.errorHandler : [config.errorHandler]
+        : [];
+      config.errorHandler = [agentErrorHandler, ...configuredHandlers];
       config.publicAssets ||= [];
       config.publicAssets.push({
         baseURL: "/raw",
@@ -65,9 +70,6 @@ export default defineNuxtModule({
         fallthrough: true,
         maxAge: 300,
       });
-      // Negotiated pages and `.md` twins read the same files through `server/routes/raw`.
-      config.serverAssets ||= [];
-      config.serverAssets.push({ baseName: "vitehub-raw", dir: resolve(outputDir, "raw") });
       config.plugins ||= [];
       config.plugins.push(llmsRawLinksPlugin);
     });

@@ -36,7 +36,7 @@ import { ownedAgentInvocationControlId } from "./internal/agent-invocation-respo
 import { isAuxiliaryAgentAdapterContext, markAuxiliaryMessageChannelInstructionContext, resolveMessageChannelInstructions } from "./internal/channels.ts"
 import { attachmentStringBytes, currentInputAttachments, getMessageText, isAttachmentPart, resolveAttachmentData } from "./messages.ts"
 import { workspaceAutoCommitDisabled, workspaceDefinitionWithAutoCommitRules } from "./workspace-agent.ts"
-import { agentToolPolicyApproveSymbol } from "./tool-runtime.ts"
+import { approveAgentToolRequest, executeApprovedAgentTool } from "./tool-runtime.ts"
 import { agentInvocationTraceIdContextKey, createAgentStreamEventTracer } from "./trace.ts"
 
 import type {
@@ -1613,12 +1613,10 @@ async function startToolServer(
             // the user's approval into a side effect.
             await new Promise<void>(resolve => setImmediate(resolve))
             executionSignal.throwIfAborted()
-            // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
-            const approve = (tool as AgentToolDefinition & { [agentToolPolicyApproveSymbol]?: (input: unknown) => void })[agentToolPolicyApproveSymbol]
-            if (approve) {
-              approve(approvalRequest.input)
+            const grant = approveAgentToolRequest(approvalRequest)
+            if (grant) {
               try {
-                return toolResult(await tool.execute!(approvalRequest.input, { abortSignal: executionSignal }))
+                return toolResult(await executeApprovedAgentTool(tool, grant, { abortSignal: executionSignal }))
               }
               catch (approvedError) {
                 if (executionSignal.aborted) throw approvedError

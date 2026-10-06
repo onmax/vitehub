@@ -58,7 +58,73 @@ function isAgentToolDefinition(value: unknown): value is AgentToolDefinition {
   return typeof value === "object" && value !== null && "name" in value && typeof (value as { name?: unknown }).name === "string"
 }
 
-export const agentToolPolicyApproveSymbol: unique symbol = Symbol("vitehub.agent.tool-policy-approve")
+declare const agentToolApprovalGrantBrand: unique symbol
+
+/** Proof that the user approved one tool call that a tool policy held for approval. */
+export interface AgentToolApprovalGrant {
+  readonly [agentToolApprovalGrantBrand]: true
+  readonly requestId: string
+  readonly toolName: string
+}
+
+/** Identifies one policy wrapper, so a grant cannot run a different tool with the same name. */
+interface AgentToolPolicyOwner {
+  readonly toolName: string
+}
+
+interface AgentToolApprovalBinding {
+  input: unknown
+  policy: AgentToolPolicyOwner
+  requestId: string
+  toolName: string
+}
+
+/** Approval requests that a policy wrapper issued and that no grant consumed yet. */
+const issuedToolApprovalRequests = new WeakMap<object, AgentToolApprovalBinding>()
+/** Grants that `approveAgentToolRequest` created and that no execution consumed yet. */
+const toolApprovalGrants = new WeakMap<AgentToolApprovalGrant, AgentToolApprovalBinding>()
+const toolApprovalGrantContextKey: unique symbol = Symbol("vitehub.agent.tool-approval-grant")
+
+type AgentToolApprovalExecutionContext = AgentToolExecutionContext & { [toolApprovalGrantContextKey]?: AgentToolApprovalGrant }
+
+/**
+ * Create a single-use grant for an approval request that a tool policy issued.
+ * Returns `undefined` when the request was not issued by a policy or already has a grant.
+ */
+export function approveAgentToolRequest(request: unknown): AgentToolApprovalGrant | undefined {
+  if (request === null || !hasRuntimeType(request, "object")) return
+  const binding = issuedToolApprovalRequests.get(request)
+  if (!binding) return
+  issuedToolApprovalRequests.delete(request)
+  // SAFETY: The brand is type-only; the WeakMap entry below is the runtime proof.
+  const grant = Object.freeze({ requestId: binding.requestId, toolName: binding.toolName }) as AgentToolApprovalGrant
+  toolApprovalGrants.set(grant, binding)
+  return grant
+}
+
+/** Run the approved call once. The grant supplies the approved input, so the caller cannot change it. */
+export async function executeApprovedAgentTool(
+  tool: AgentToolDefinition,
+  grant: AgentToolApprovalGrant,
+  context: AgentToolExecutionContext = {},
+): Promise<unknown> {
+  const binding = toolApprovalGrants.get(grant)
+  if (!binding || binding.toolName !== tool.name || !tool.execute) {
+    throw new ViteHubError("APPROVAL_REQUIRED", `[vitehub:runtime] Approval grant is not valid for "${tool.name}".`, {
+      details: { capability: tool.name },
+    })
+  }
+  const approvedContext: AgentToolApprovalExecutionContext = { ...context, [toolApprovalGrantContextKey]: grant }
+  return await tool.execute(binding.input, approvedContext)
+}
+
+function consumeToolApprovalGrant(policy: AgentToolPolicyOwner, toolName: string, input: unknown, context: AgentToolApprovalExecutionContext | undefined): boolean {
+  const grant = context?.[toolApprovalGrantContextKey]
+  const binding = grant && toolApprovalGrants.get(grant)
+  if (!grant || !binding || binding.policy !== policy || binding.toolName !== toolName || binding.input !== input) return false
+  toolApprovalGrants.delete(grant)
+  return true
+}
 
 export function toJsonCompatibleValue(value: unknown): unknown {
   if (value === undefined) return null
@@ -87,15 +153,11 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
 
   const execute = tool.execute
   const policy = tool.policy
-  const approvedInputs = new Set<unknown>()
+  const policyOwner: AgentToolPolicyOwner = Object.freeze({ toolName: tool.name })
 
-  // SAFETY: The wrapper preserves the tool fields and execute signature, and adds an internal approval symbol.
   return copyToolWithOverrides(tool, {
-    [agentToolPolicyApproveSymbol](input: unknown) {
-      approvedInputs.add(input)
-    },
     async execute(input: unknown, context?: AgentToolExecutionContext) {
-      if (approvedInputs.delete(input)) {
+      if (consumeToolApprovalGrant(policyOwner, tool.name, input, context)) {
         context?.abortSignal?.throwIfAborted()
         return await execute.call(tool, input, context)
       }
@@ -118,6 +180,7 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
         })
       }
       if (decision === "require-approval") {
+        issuedToolApprovalRequests.set(approvalRequest, { input, policy: policyOwner, requestId: approvalRequest.id, toolName: tool.name })
         throw new ViteHubError("APPROVAL_REQUIRED", `[vitehub:runtime] Approval is required for "${tool.name}".`, {
           cause: approvalRequest,
           details: { capability: tool.name, requestId: approvalRequest.id },

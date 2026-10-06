@@ -748,7 +748,6 @@ function applicationInventory(docsRoot, contentRoutes) {
     "/llms.txt",
     "/llms-full.txt",
     "/mcp",
-    "/sitemap.xml", // Provided by @nuxtjs/sitemap through Docus.
   ]) routeAnchors.set(route, new Set());
   const matrixAnchors = supportMatrixAnchors(docsRoot);
   if (matrixAnchors) routeAnchors.set("/docs/frameworks-hosts/support-matrix", matrixAnchors);

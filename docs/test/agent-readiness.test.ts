@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { viteHubOpenApi } from "../server/utils/openapi";
+import {
+  acceptsAgentFriendlyError,
+  notFoundMarkdown,
+  withVary,
+} from "../server/utils/markdown-negotiation";
 import { rawMarkdownUrl, rewriteLlmsRawLinks } from "../modules/vitehub-docs/runtime/utils/llms-links";
 import { createCapabilityReferences } from "../modules/vitehub-docs/capability-references";
 
@@ -9,15 +14,21 @@ const docsRoot = resolve(import.meta.dirname, "..");
 const trustPages = ["about", "contact", "privacy"];
 
 describe("agent-ready HTTP contracts", () => {
-  it("negotiates Markdown through nuxt-agent-discovery from Docus", () => {
+  it("selects agent-friendly 404 responses from the Accept header", () => {
+    expect(acceptsAgentFriendlyError(undefined)).toBe(true);
+    expect(acceptsAgentFriendlyError("*/*")).toBe(true);
+    expect(acceptsAgentFriendlyError("text/markdown")).toBe(true);
+    expect(acceptsAgentFriendlyError("text/markdown;q=0, */*")).toBe(false);
+    expect(acceptsAgentFriendlyError("text/html, */*")).toBe(false);
+    expect(acceptsAgentFriendlyError("text/html;q=0, */*")).toBe(true);
+    expect(acceptsAgentFriendlyError("application/json, */*")).toBe(false);
+  });
+
+  it("uses the Docus preview package for Markdown negotiation", () => {
     const config = readFileSync(resolve(docsRoot, "nuxt.config.ts"), "utf8");
     const workspace = readFileSync(resolve(docsRoot, "../pnpm-workspace.yaml"), "utf8");
 
-    // Docus main includes nuxt-agent-discovery (nuxt-content/docus#1435), which is not released yet.
-    expect(workspace).toContain("docus: https://pkg.pr.new/docus@c229a86");
-    // Local patch until nuxt-agent-discovery routes negotiated pages through the Cloudflare Worker.
-    expect(workspace).toContain("nuxt-agent-discovery@0.7.0: patches/nuxt-agent-discovery@0.7.0.patch");
-    expect(config).toContain('routes: ["/", "/docs", "/docs/**", "/blog/**", "/about", "/contact", "/privacy"]');
+    expect(workspace).toContain("docus: https://pkg.pr.new/docus@986a334");
     expect(config).not.toContain("routeRules:");
     expect(config).not.toContain("run_worker_first");
     expect(config).toContain("contentRawMarkdown: false");
@@ -28,7 +39,6 @@ describe("agent-ready HTTP contracts", () => {
 
     expect(module).toContain('baseURL: "/raw"');
     expect(module).toContain('dir: resolve(outputDir, "raw")');
-    expect(module).toContain('config.serverAssets.push({ baseName: "vitehub-raw", dir: resolve(outputDir, "raw") })');
     expect(module).toContain("config.plugins.push(llmsRawLinksPlugin)");
     expect(module).toContain("const manifest = writeDocsArtifacts({ capabilityReferences, docsRoot, outputDir });");
     expect(module).toContain("const capabilityReferences = await createCapabilityReferences();");
@@ -113,6 +123,18 @@ describe("agent-ready HTTP contracts", () => {
     expect(cliPackage.peerDependencies.nuxt).toBe("catalog:nuxt-compat");
     expect(cliPackage.peerDependenciesMeta.nuxt).toEqual({ optional: true });
   });
+
+  it("adds Accept to Vary once and gives missing routes recovery links", () => {
+    expect(withVary(undefined, "Accept")).toBe("Accept");
+    expect(withVary("Accept-Encoding", "Accept")).toBe("Accept-Encoding, Accept");
+    expect(withVary("accept, Accept-Encoding", "Accept")).toBe("accept, Accept-Encoding");
+
+    const markdown = notFoundMarkdown("/missing");
+    expect(markdown).toContain("# ViteHub page not found");
+    expect(markdown).toContain("https://vitehub.dev/docs");
+    expect(markdown).toContain("https://vitehub.dev/llms.txt");
+    expect(markdown).toContain("https://vitehub.dev/sitemap.xml");
+  });
 });
 
 describe("ViteHub OpenAPI document", () => {
@@ -163,11 +185,17 @@ describe("trust and developer discovery content", () => {
   it("links trust pages from the shared footer and the 404 page", () => {
     const footer = readFileSync(resolve(docsRoot, "app/components/AppFooter.vue"), "utf8");
     const error = readFileSync(resolve(docsRoot, "app/error.vue"), "utf8");
+    const errorHandler = readFileSync(resolve(docsRoot, "server/error-handler.ts"), "utf8");
+    const module = readFileSync(resolve(docsRoot, "modules/vitehub-docs/index.ts"), "utf8");
 
     for (const page of trustPages) expect(footer).toContain(`to: "/${page}"`);
     expect(error).toContain("Documentation index");
     expect(error).toContain("llms.txt");
     expect(error).toContain("Sitemap");
+    expect(errorHandler).toContain('"content-type": "text/markdown; charset=utf-8"');
+    expect(errorHandler).toContain('"vary": vary');
+    expect(errorHandler).toContain('withVary(getResponseHeader(event, "vary")?.toString(), "Accept")');
+    expect(module).toContain('config.errorHandler = [agentErrorHandler, ...configuredHandlers]');
   });
 
   it("names the OpenAPI, skill, MCP, and npm CLI entry points", () => {
