@@ -13236,6 +13236,105 @@ describe("server helpers", () => {
     }
   })
 
+  it("tells the thread about a host restart and retries the interrupted inline chat once", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { defineChatCapability } = await import("../src/chat-trigger.ts")
+    const { drainInlineChatInvocations } = await import("../src/server.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-inline-chat-restart-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const prompts: string[] = []
+    const createAgent = (adapter: ReturnType<typeof createTestChatAdapter>) => defineAgent({
+      name: "support",
+      capabilities: [
+        defineChatCapability({
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          platforms: { telegram: () => adapter as never },
+          webhooks: { telegram: {} },
+        }),
+      ],
+      driver: {
+        run: async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
+          prompts.push(JSON.stringify(input))
+          // The first attempt runs until the host restarts.
+          if (prompts.length === 1) {
+            await new Promise<never>((_resolve, reject) => {
+              input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
+            })
+          }
+          return "done"
+        },
+      },
+    })
+    const firstAdapter = createTestChatAdapter({ deferMessageProcessing: true })
+    const waitUntilTasks: Promise<unknown>[] = []
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const firstHandler = createChannelWebhookRouteHandler(createAgent(firstAdapter) as never)
+    let stop: (() => Promise<void>) | undefined
+
+    try {
+      await state.connect()
+      const response = await firstHandler(
+        new Request("https://example.com/api/_vitehub/agents/support/webhooks/telegram", {
+          body: JSON.stringify({
+            update_id: 2001,
+            message: {
+              chat: { id: 2001456, type: "private" },
+              date: 1781092800,
+              from: { first_name: "Maxi", id: 123, username: "maxi" },
+              message_id: 2001,
+              text: "review the pull request",
+            },
+          }),
+          method: "POST",
+        }),
+        "telegram",
+        { agentIdentity: { name: "support" }, state, waitUntil: task => waitUntilTasks.push(task) },
+      )
+      expect(response.status).toBe(200)
+      await vi.waitFor(() => expect(prompts).toHaveLength(1), { timeout: 10_000 })
+
+      await expect(drainInlineChatInvocations({ timeoutMs: 0 })).resolves.toEqual({ active: 1, interrupted: 1, unsettled: 0 })
+      await Promise.allSettled(waitUntilTasks)
+      const restartNotice = "The server restarted while I was working on this. I'll retry it automatically."
+      expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
+
+      const secondAdapter = createTestChatAdapter({ deferMessageProcessing: true })
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      stop = createChannelWebhookRouteHandler(createAgent(secondAdapter) as never).resume({
+        agentIdentity: { name: "support" },
+        recoverInterruptedBefore: Date.now(),
+        state,
+        webhookState: state,
+      })
+
+      await vi.waitFor(() => expect(prompts).toHaveLength(2), { timeout: 10_000 })
+      expect(prompts[1]).toContain("[Retry after interruption]")
+      expect(prompts[1]).toContain("review the pull request")
+      expect([...secondAdapter.postMessage.mock.calls, ...secondAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
+      // The first start consumes the record, so the next start does not retry again.
+      await stop()
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      stop = createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+        agentIdentity: { name: "support" },
+        recoverInterruptedBefore: Date.now(),
+        state,
+        webhookState: state,
+      })
+      await new Promise(resolveWait => setTimeout(resolveWait, 500))
+      expect(prompts).toHaveLength(2)
+    } finally {
+      // Release a run that a failed assertion left blocked, so it cannot hold the thread lock for later tests.
+      await drainInlineChatInvocations({ timeoutMs: 0 })
+      await stop?.()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+    }
+  }, 30_000)
+
   it("posts the sanitized rate-limit message to chat", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
