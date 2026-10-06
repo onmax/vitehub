@@ -29,6 +29,7 @@ import { github as githubPublisher } from "../src/publish.ts"
 import { getWorkspaceSourceRequestDescriptor, isWorkspaceSourceRequestOnly, normalizeWorkspaceSources } from "../src/sources/config.ts"
 import { workspaceStoreTarget } from "../src/storage/target.ts"
 import { workspaceMetadataTarget, resolveWorkspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../src/storage/metadata-target.ts"
+import { setWorkspaceRawWriteTarget } from "../src/storage/raw-write-target.ts"
 
 const invocation = {
   context: {
@@ -118,7 +119,7 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     none: () => ({}),
     write: () => ({}),
   } as never
-  return {
+  const facade: WritableWorkspaceFacade & WorkspaceMetadataTargetCarrier = {
     [workspaceMetadataTarget]: () => resolveWorkspaceMetadataTarget(workspace),
     capabilities: async () => await workspace.capabilities?.() ?? { conditionalWrites: false },
     diff: async options => await workspace.diff(options),
@@ -166,6 +167,8 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     sync: async options => await workspace.sync(options),
     tools,
   }
+  setWorkspaceRawWriteTarget(facade, facade.fs)
+  return facade
 }
 
 async function runShell(workspace: ReadonlyWorkspaceFacade, command: string, sourceRequests = false): Promise<WorkspaceShellResult> {
