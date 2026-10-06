@@ -369,7 +369,7 @@ vitehub agent invocations show INVOCATION_ID
 vitehub agent invocations tail INVOCATION_ID
 ```
 
-The CLI defaults to `http://localhost:5173/api/invocations`. Use `--url` or `VITEHUB_AGENT_INVOCATIONS_URL` for another local endpoint, and `--json` for automation-safe output. `vitehub agent invocations cancel INVOCATION_ID` sends a cancel request into the Nitro runtime of a Vite + Nitro Development Server. See [Cancel an Agent Invocation](/docs/development/cli#cancel-an-agent-invocation).
+The CLI defaults to `http://localhost:5173/api/invocations`. Use `--url` or `VITEHUB_AGENT_INVOCATIONS_URL` for another local endpoint, and `--json` for automation-safe output. `vitehub agent invocations cancel INVOCATION_ID` sends a cancel request into the Nitro runtime of a Vite + Nitro Development Server. A deployed URL, such as `--url https://app.example.com`, uses that deployment's Console for `list`, `show`, `tail`, and `cancel`. See [Cancel an Agent Invocation](/docs/development/cli#cancel-an-agent-invocation) and [Inspect and cancel on a deployed app](/docs/development/cli#inspect-and-cancel-on-a-deployed-app).
 
 Delete and prune open a SQLite or libSQL journal directly:
 
