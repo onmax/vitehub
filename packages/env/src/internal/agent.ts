@@ -1,4 +1,4 @@
-import { readAgentEnvIdentity } from "@vite-hub/runtime/internal/agent-identity";
+import { readAgentEnvIdentity } from "@vite-hub/agent/env-identity";
 import { envBridgeError } from "../bridge-error.ts";
 import { grantEnvAccess, type EnvAttribution } from "./access.ts";
 import type { EnvAccessContext } from "../bridge.ts";
