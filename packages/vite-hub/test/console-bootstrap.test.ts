@@ -24,11 +24,16 @@ const sessionNavbar = readFileSync(
   "utf8",
 );
 
+it("uses the Usage Agent filter when opening the sessions panel", () => {
+  expect(consolePage).toContain("resolveUsageSessionsAgent(route.query, selectedAgentName.value)");
+  expect(consolePage).toContain('@open-sessions="openSessionsFromUsage"');
+});
+
 it("opens the inspector on its launcher and keeps terminal session chrome quiet", () => {
   expect(consolePage).toContain('const inspectorActiveSurface = ref("");');
   expect(consolePage).toContain('ref<Array<"details" | "trace" | "workspace" | "capabilities">>([])');
   expect(consolePage).toContain("selectedDisplay.value?.status === \"pending\"");
-  expect(consolePage).toContain('trailing-icon="i-lucide-chevron-down"');
+  expect(consolePage).toContain(':aria-expanded="agentListOpen"');
   expect(consolePage).not.toContain("i-ph-caret-up-down-light");
   expect(sessionNavbar).toContain('v-if="refreshable" text="Refresh session"');
 });

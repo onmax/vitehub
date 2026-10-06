@@ -1348,8 +1348,28 @@ describe("schedule provider output", () => {
 
     const source = await readFile(join(rootDir, ".vercel", "output", "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs"), "utf8")
     expect(source).toContain("process.env.CRON_SECRET")
-    expect(source).toContain("authorization !== `Bearer ${cronSecret}`")
+    expect(source).toContain("if (cronSecret && !isScheduleCronAuthorized(authorization, cronSecret))")
+    expect(source).not.toContain("!== `Bearer ${cronSecret}`")
     expect(source).toContain("res.statusCode = 401")
+
+    const { default: handler }: { default: (req: { headers: Record<string, string>, url: string }, res: { end: (body?: string) => void, statusCode?: number }) => Promise<void> } = await import(pathToFileURL(join(rootDir, ".vercel", "output", "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs")).href)
+    const run = async (authorization?: string) => {
+      const res: { end: (body?: string) => void, statusCode?: number } = { end: () => {} }
+      await handler({ headers: authorization ? { authorization } : {}, url: "/api/vitehub/schedules/vercel/cleanup" }, res)
+      return res.statusCode
+    }
+    const previousSecret = process.env.CRON_SECRET
+    process.env.CRON_SECRET = "cron-secret"
+    try {
+      for (const authorization of [undefined, "Bearer cron", "Bearer cron-secret-", "Bearer cron-secreT", "Basic cron-secret"]) {
+        expect(await run(authorization)).toBe(401)
+      }
+      expect(await run("Bearer cron-secret")).toBe(404)
+    }
+    finally {
+      if (previousSecret === undefined) delete process.env.CRON_SECRET
+      else process.env.CRON_SECRET = previousSecret
+    }
   })
 
   it("emits Vercel handlers that load unsanitized schedule names", async () => {

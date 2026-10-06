@@ -82,12 +82,13 @@ export function summarizeAgentInvocationWorkload(
 export async function readAgentInvocationWorkload(
   invocations: Pick<AgentInvocations, "list">,
   processStartedAt: number,
+  options: { agentName?: string } = {},
 ): Promise<{ active: number, completed: number, failed: number, stale: number, total: number }> {
-  const recent = await invocations.list({ limit: 100 })
+  const recent = await invocations.list({ limit: 100, ...(options.agentName ? { agentName: options.agentName } : {}) })
   const records = new Map(recent.invocations.map(invocation => [invocation.id, invocation]))
   let cursor: string | undefined
   do {
-    const active = await invocations.list({ cursor, limit: 100, status: ["pending", "running"] })
+    const active = await invocations.list({ cursor, limit: 100, status: ["pending", "running"], ...(options.agentName ? { agentName: options.agentName } : {}) })
     for (const invocation of active.invocations) records.set(invocation.id, invocation)
     cursor = active.cursor
   } while (cursor)

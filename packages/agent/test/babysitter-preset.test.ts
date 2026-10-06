@@ -30,7 +30,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -234,7 +234,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
     agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
-    ...(discovered ? { agentName: "babysitter" } : {}),
+    ...(discovered ? { agentName: preset.agentName ?? "babysitter" } : {}),
     github,
     inboxPath: join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
@@ -726,6 +726,19 @@ describe("Babysitter preset runtime", () => {
     } finally {
       await f.runtime.inbox.close();
       vi.unstubAllGlobals();
+      createRun.mockRestore();
+    }
+  });
+
+  it.each(["first-babysitter", "second-babysitter"])("scopes the repair worker to discovered Agent %s", async (agentName) => {
+    const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun");
+    const f = await fixture(false, true, { agentName });
+    try {
+      await f.reconcile();
+      expect(createRun).toHaveBeenCalledOnce();
+      expect(createRun.mock.calls[0]![2].agentName).toBe(`${agentName}-worker`);
+    } finally {
+      await f.runtime.inbox.close();
       createRun.mockRestore();
     }
   });

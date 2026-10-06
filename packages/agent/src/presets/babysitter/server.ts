@@ -859,7 +859,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 | (CodexDriverOptions<BabysitterPassResult> & { kind: "codex" })
                 | (ClaudeCodeDriverOptions<BabysitterPassResult> & { kind: "claude-code" });
               const activityEnabled = !!verifiedHostIdentity;
-              const workerName = "babysitter-worker";
+              const workerName = `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`;
               const baseSettings = getAgentLayerOptions(baseAgent);
               if (!baseSettings) throw new Error("Babysitter base Agent settings are unavailable.");
               // Build the worker from the base settings while replacing only
