@@ -70,7 +70,7 @@ icon: i-lucide-shield-check
 
 ::product-features
   :::product-feature-item{title="Read the session in any server route" icon="i-lucide-user-check" to="/docs/auth/server-api"}
-  Better Auth at `/api/auth/**`; guard routes with `requireAuth()`.
+  Better Auth at `/api/auth/**`; guard routes with `withAuth()`.
   :::
 
   :::product-feature-item{title="Guard listed routes, decide roles in code" icon="i-lucide-shield-check" to="/docs/auth/server-api#authorize-access-routes"}
