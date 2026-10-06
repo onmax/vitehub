@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import { readFile, readdir } from "node:fs/promises"
 import { join, relative, resolve } from "node:path"
 
@@ -173,6 +174,7 @@ function grantFindings(file: string, source: string): GrantFinding[] {
 }
 
 async function packageSourceFindings(): Promise<GrantFinding[]> {
+  const tracked = new Set(execFileSync("git", ["ls-files", "-z", "--", "packages"], { cwd: repoRoot, encoding: "utf8" }).split("\0"))
   const findings: GrantFinding[] = []
   for (const entry of await readdir(join(repoRoot, "packages"), { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
@@ -180,6 +182,8 @@ async function packageSourceFindings(): Promise<GrantFinding[]> {
     const files = await readdir(sourceDir, { recursive: true }).catch(() => [])
     for (const path of files) {
       if (!/\.[cm]?tsx?$/.test(path) || path.endsWith(".d.ts")) continue
+      const relativePath = relative(repoRoot, join(sourceDir, path)).replaceAll("\\", "/")
+      if (!tracked.has(relativePath)) continue
       const absolute = join(sourceDir, path)
       findings.push(...grantFindings(relative(repoRoot, absolute).replaceAll("\\", "/"), await readFile(absolute, "utf8")))
     }
