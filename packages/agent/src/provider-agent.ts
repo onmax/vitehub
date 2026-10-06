@@ -1927,6 +1927,8 @@ async function prepareWorkspace(
   if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
+    // The Driver owns this temporary root and removes it after the run, so close() must not restore it.
+    disposableTarget: true,
     host: localWorkspaceHost({ path }),
     ...(materializedSources?.ready ? { materializeSources: false } : {}),
     onProgress: createWorkspaceSetupObservers(workspaceSetupObserverOptions(context)).preparation,
