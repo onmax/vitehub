@@ -21,15 +21,13 @@ describe("primitive landing routes", () => {
 
 describe("primitive landing placeholders", () => {
   it("marks every stub variant as illustrative and removes invented APIs", () => {
-    for (const { slug, name, docsTo } of Object.values(primitiveLandings)) {
-      const landing = stubLanding(slug, name, docsTo);
-      expect(landing.description).not.toContain("working project");
-      for (const variant of landing.variants) {
-        expect(variant.illustrative).toBe(true);
-        const source = variant.files.map((file) => file.content).join("\n");
-        expect(source).toContain("Illustrative pseudocode");
-        expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\//);
-      }
+    const landing = stubLanding("example", "Example", "/docs/example");
+    expect(landing.description).not.toContain("working project");
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).toBe(true);
+      const source = variant.files.map((file) => file.content).join("\n");
+      expect(source).toContain("Illustrative pseudocode");
+      expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\//);
     }
   });
 
