@@ -849,7 +849,9 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      await cleanupCheckout()
+      // Cleanup is best effort. Preserve the callback result or error when
+      // the checkout moved or filesystem discovery fails.
+      await cleanupCheckout().catch(() => undefined)
     }
   }
 

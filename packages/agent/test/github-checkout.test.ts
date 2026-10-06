@@ -9,7 +9,7 @@ import { createGitHubHost, prepareGitHubPullRequestWorkspace } from '../src/serv
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...original, lstat: vi.fn(original.lstat) }
+  return { ...original, lstat: vi.fn(original.lstat), readdir: vi.fn(original.readdir) }
 })
 
 const exec = promisify(execFile)
@@ -207,5 +207,31 @@ process.exit(result.status ?? 1);
   expect(raced).toBe(true)
   expect(await readFile(join(candidate, 'replacement'), 'utf8')).toBe('preserve')
   expect(await readdir(`${candidate}-moved`)).toEqual([])
-
+  vi.mocked(fs.lstat).mockImplementation(original.lstat)
+  // Moving outside the discovery parent must preserve both callback outcomes.
+  for (const fails of [false, true]) {
+    const failure = new Error('callback failure')
+    const moved = join(root, `outside-${fails}`)
+    const result = host.withPullRequestCheckout({ repository: pr.repository, number: 128, headSha: baseHead }, async checkout => {
+      await rename(checkout.path, moved)
+      if (fails) throw failure
+      return 'callback result'
+    })
+    if (fails) await expect(result).rejects.toBe(failure)
+    else await expect(result).resolves.toBe('callback result')
+    expect(await readFile(join(moved, 'file.txt'), 'utf8')).toBe('external update\n')
+  }
+  // A discovery error must not replace either callback outcome.
+  for (const fails of [false, true]) {
+    const failure = new Error('callback failure')
+    const result = host.withPullRequestCheckout({ repository: pr.repository, number: 129, headSha: baseHead }, async checkout => {
+      roots.push(checkout.path)
+      vi.mocked(fs.readdir).mockRejectedValue(Object.assign(new Error('discovery failed'), { code: 'EACCES' }))
+      if (fails) throw failure
+      return 'callback result'
+    })
+    if (fails) await expect(result).rejects.toBe(failure)
+    else await expect(result).resolves.toBe('callback result')
+    vi.mocked(fs.readdir).mockImplementation(original.readdir)
+  }
 }, 30_000)
