@@ -5,6 +5,7 @@ import { createWorkspaceWritePolicy } from "../core/rules.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { createBasicWorkspaceSession } from "../session/basic.ts"
 import { createMemoryWorkspaceStore } from "../storage/memory.ts"
+import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
@@ -414,6 +415,9 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
   if (isWritableWorkspaceFacade(workspace)) {
     const writePolicy = createWorkspaceWritePolicy(resolvedDefinition)
     const syncStore = createWritableFacadeStore(workspace, true)
+    // Source Sync must share the overlay's mutation queue with guarded writes
+    // and materialization, even though it uses a facade Store wrapper.
+    registerWorkspaceStoreAlias(syncStore, overlayStore)
     let writeWorkspace!: Workspace
 
     async function previousStat(path: string) {
