@@ -57,7 +57,7 @@ const sessionStatusDots: Readonly<Record<AgentInvocationStatus, string>> = {
   completed: "bg-success",
   failed: "bg-error",
   pending: "bg-warning",
-  running: "bg-info animate-pulse",
+  running: "bg-info",
 };
 
 // The search endpoint lists the newest sessions when the request has no search term, like the palette.
@@ -314,12 +314,12 @@ onBeforeUnmount(() => request++);
                           type="button"
                           class="vitehub-console__overview-row grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-2.5 text-left disabled:cursor-default"
                           :disabled="!session.agentName"
-                          :aria-label="`Open ${session.agentName || 'Agent'} session ${session.context}`"
+                          :aria-label="`Open ${session.agentName || 'Agent'} session ${session.context}, status ${session.status}${session.time ? `, ${session.time}` : ''}`"
                           @click="session.agentName && openSession(session.agentName, session.id)"
                         >
                           <span class="size-1.5 rounded-full" :class="session.dot" aria-hidden="true" />
                           <span class="flex min-w-0 items-baseline gap-2">
-                            <span class="shrink-0 text-sm font-medium text-highlighted">{{ session.agentName || "Agent Invocation" }}</span>
+                            <span class="min-w-0 truncate text-sm font-medium text-highlighted">{{ session.agentName || "Agent Invocation" }}</span>
                             <span class="truncate font-mono text-xs text-muted">{{ session.context }}</span>
                           </span>
                           <span class="flex items-center gap-3 text-xs text-muted">
