@@ -17,8 +17,11 @@
       "@vite-hub/runtime": [
         "packages/runtime/src/index.ts"
       ],
-      "@vite-hub/env/internal/agent": [
-        "packages/env/dist/internal/agent.d.ts"
+      "@vite-hub/env/*": [
+        "packages/env/src/*.ts"
+      ],
+      "@vite-hub/agent/env-identity": [
+        "packages/agent/src/env-identity.ts"
       ]
     }
   },

@@ -1,3 +1,4 @@
+import { createAgentEnvIdentity } from "../src/internal/env-identity.ts"
 import { describe, expect, it, vi } from "vitest"
 
 import { validateAgentCapabilityComposition, workspaceRetirementPathsSymbol } from "../src/capability-runtime.ts"
@@ -34,7 +35,7 @@ const event = { id: "event_1" }
 
 function context(primitive: unknown) {
   return {
-    agentIdentity: { name: "labeller" },
+    agentIdentity: createAgentEnvIdentity({ name: "labeller" }),
     capabilities: { connections: primitive },
     context: new Map([[agentInvocationTraceIdContextKey, "trace_1"]]),
     event,

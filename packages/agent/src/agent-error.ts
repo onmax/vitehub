@@ -307,6 +307,10 @@ function aiSdkProviderPublicError(error: unknown): AgentPublicError | undefined 
   }
 }
 
+// A spending limit or cap counts only when the same sentence says it was reached.
+// Messages that only mention one, such as probe notes, are not quota failures.
+const providerQuotaMessage = /usage limit|quota (?:is )?(?:exhausted|exceeded)|insufficient (?:quota|credits)|credit balance.*(?:low|exhausted)|spend(?:ing)?[\s_-]?(?:limit|cap)s?\b[^.]*\b(?:reached|exceeded|hit)\b|\b(?:reached|exceeded|hit)\b[^.]*\bspend(?:ing)?[\s_-]?(?:limit|cap)|(?:billing|spending) budget (?:is )?exceeded/i
+
 export function toAgentPublicError(error: unknown, context: AgentPublicErrorContext): AgentPublicError {
   try {
     const providerError = aiSdkProviderPublicError(error)
@@ -316,7 +320,7 @@ export function toAgentPublicError(error: unknown, context: AgentPublicErrorCont
     if (readAgentErrorProperty(error, "code") === "AGENT_R0726") {
       const message = readAgentErrorProperty(error, "message")
       if (hasRuntimeType(message, "string")
-        && /usage limit|quota (?:is )?(?:exhausted|exceeded)|insufficient (?:quota|credits)|credit balance.*(?:low|exhausted)|spend(?:ing)? limit|spend.?cap|(?:billing|spending) budget (?:is )?exceeded/i.test(message)) {
+        && providerQuotaMessage.test(message)) {
         return quotaExhausted(message)
       }
     }

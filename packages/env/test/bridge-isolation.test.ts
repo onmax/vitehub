@@ -8,7 +8,7 @@ import { env } from "../src/core/declarations.ts";
 import { createRuntimeRegistry } from "../src/core/resolve.ts";
 import { loadServerEnv } from "../src/server.ts";
 import { SecretEnv } from "../src/secret.ts";
-import { agentEnvAccess } from "../src/internal/agent.ts";
+import { agentEnvAccess } from "./agent-access.ts";
 import { adminContext, agentTokenContext } from "./helpers.ts";
 
 const admin = await adminContext();

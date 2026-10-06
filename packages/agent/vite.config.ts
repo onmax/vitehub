@@ -7,9 +7,6 @@ export default defineConfig({
   pack: {
     tsconfig: "tsconfig.build.json",
     deps: {
-      // The Env Agent mint is a private implementation detail. Bundle it into
-      // the Agent runtime so application code cannot import the mint through
-      // @vite-hub/env's public package surface.
       alwaysBundle: [/^@vite-hub\/internal/],
       neverBundle: [
         "vite",
@@ -38,6 +35,7 @@ export default defineConfig({
       "src/capabilities.ts",
       "src/channels.ts",
       "src/index.ts",
+      "src/env-identity.ts",
       "src/messages.ts",
       "src/mcp.ts",
       "src/mcp/stdio.ts",

@@ -10,6 +10,9 @@
       ],
       "@vite-hub/runtime": [
         "packages/runtime/src/index.ts"
+      ],
+      "@vite-hub/agent/env-identity": [
+        "packages/agent/src/env-identity.ts"
       ]
     }
   },

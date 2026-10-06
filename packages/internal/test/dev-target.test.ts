@@ -9,11 +9,12 @@ import {
   resolveViteHubDevServerUrl,
   viteHubDevEndpointUrl,
 } from "../src/cli.ts"
-import { assertViteHubDevRequestGrant, isViteHubDevHostAllowed, isViteHubDevSecretEqual, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
+import { assertViteHubDevRequestGrant, isViteHubDevHostAllowed, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
+import { isViteHubSecretEqual } from "../src/secret.ts"
 
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
 import type { ViteHubDevTargetArgs } from "../src/cli.ts"
-import type { ViteHubDevEndpointServer } from "../src/dev-endpoint.ts"
+import type { ViteHubDevEndpointOptions, ViteHubDevEndpointServer } from "../src/dev-endpoint.ts"
 
 const endpoint = { header: "x-test-dev", headerValue: "1", route: "/__test/dev" }
 
@@ -88,6 +89,7 @@ describe("dev server discovery", () => {
       body: "{}",
       headers: { "content-type": "application/json", "x-test-dev": "1" },
       method: "POST",
+      redirect: "manual",
     })
   })
 
@@ -102,7 +104,7 @@ describe("dev server discovery", () => {
       stderr: output.stderr,
     })
     expect(target).toEqual({ discovery: { items: ["a"], root: "/app" }, url: "http://localhost:5173/__test/dev" })
-    expect(fetchImpl).toHaveBeenCalledWith("http://localhost:5173/__test/dev", { headers: { accept: "application/json", "x-test-dev": "1" } })
+    expect(fetchImpl).toHaveBeenCalledWith("http://localhost:5173/__test/dev", { headers: { accept: "application/json", "x-test-dev": "1" }, redirect: "manual" })
     expect(output.text()).toBe("")
   })
 
@@ -183,7 +185,7 @@ describe("guarded dev endpoint", () => {
     http = undefined
   })
 
-  async function listen(options: { methods?: readonly string[], server?: ViteHubDevEndpointServer["config"]["server"] }): Promise<{ handled: string[], url: string }> {
+  async function listen(options: { authorize?: ViteHubDevEndpointOptions["authorize"], methods?: readonly string[], server?: ViteHubDevEndpointServer["config"]["server"] }): Promise<{ handled: string[], url: string }> {
     const handlers: Array<(req: IncomingMessage, res: ServerResponse, next: () => void) => void> = []
     const handled: string[] = []
     const server: ViteHubDevEndpointServer = {
@@ -192,6 +194,7 @@ describe("guarded dev endpoint", () => {
       resolvedUrls: null,
     }
     registerViteHubDevEndpoint(server, {
+      ...(options.authorize ? { authorize: options.authorize } : {}),
       handle: (req, res, grant) => {
         handled.push(req.method || "")
         try {
@@ -250,16 +253,29 @@ describe("guarded dev endpoint", () => {
     expect(handled).toEqual(["GET", "POST"])
   })
 
-  it("compares secrets in full and rejects missing values", () => {
-    expect(isViteHubDevSecretEqual("token", "token")).toBe(true)
-    expect(isViteHubDevSecretEqual("tokem", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("toke", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("token-", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("tökén", "tökén")).toBe(true)
-    expect(isViteHubDevSecretEqual(undefined, "token")).toBe(false)
-    expect(isViteHubDevSecretEqual(null, "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("", "")).toBe(false)
-    expect(isViteHubDevSecretEqual("token", undefined)).toBe(false)
+  it("runs owner authorization before the handler gets the grant", async () => {
+    const { handled, url } = await listen({
+      authorize: async req => isViteHubSecretEqual(req.headers["x-test-token"] as string | undefined, "secret")
+        ? undefined
+        : new Response("Forbidden Test Dev token.", { status: 403 }),
+    })
+    const route = `${url}${endpoint.route}`
+    const missing = await fetch(route, { headers: { [endpoint.header]: "1" } })
+    expect([missing.status, await missing.text()]).toEqual([403, "Forbidden Test Dev token."])
+    const wrong = await fetch(route, { headers: { [endpoint.header]: "1", "x-test-token": "secreT" } })
+    expect([wrong.status, await wrong.text()]).toEqual([403, "Forbidden Test Dev token."])
+    expect(handled).toEqual([])
+    const allowed = await fetch(route, { headers: { [endpoint.header]: "1", "x-test-token": "secret" } })
+    expect(await allowed.text()).toBe("handled")
+    expect(handled).toEqual(["GET"])
+  })
+
+  it("returns a redacted 500 when owner authorization fails", async () => {
+    const { handled, url } = await listen({ authorize: () => { throw new Error("Bearer private-secret") } })
+    const response = await fetch(`${url}${endpoint.route}`, { headers: { [endpoint.header]: "1" } })
+    expect(response.status).toBe(500)
+    expect(await response.json()).toEqual({ error: { message: "Test Dev request failed: Bearer [redacted]" } })
+    expect(handled).toEqual([])
   })
 
   it("rejects methods outside the allowed list before the guard", async () => {

@@ -1,3 +1,4 @@
+import { createAgentEnvIdentity } from "../src/internal/env-identity.ts"
 import { createClient } from "@libsql/client"
 import { drizzle } from "drizzle-orm/libsql"
 import { expect, it } from "vitest"
@@ -48,7 +49,7 @@ async function fixture(rule: { read?: boolean, write?: readonly string[], approv
     if (typeof capability.tools !== "function") throw new Error("Missing Gmail tools")
     // SAFETY: Gmail reads only these fields from the Invocation context.
     return await capability.tools({
-      agentIdentity: { name },
+      agentIdentity: createAgentEnvIdentity({ name }),
       capabilities: { connections: { runtime: () => active } },
       context: new Map([[agentInvocationTraceIdContextKey, "invocation-1"]]),
     } as never) as Record<string, AgentToolDefinition>

@@ -183,7 +183,11 @@
       "types": "./dist/vue.d.ts",
       "import": "./dist/vue.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./env-identity": {
+      "types": "./dist/env-identity.d.ts",
+      "import": "./dist/env-identity.js"
+    }
   },
   "scripts": {
     "build": "vp pack",

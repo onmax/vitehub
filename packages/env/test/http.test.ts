@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { createEnvBridge, type EnvAccessContext } from "../src/bridge.ts"
 import { createDatabaseEnvStore } from "../src/database.ts"
 import { createEnvBridgeHandler } from "../src/http.ts"
-import { agentEnvAccess } from "../src/internal/agent.ts"
+import { agentEnvAccess } from "./agent-access.ts"
 import { adminContext, agentTokenContext } from "./helpers.ts"
 
 const origin = "https://console.example"

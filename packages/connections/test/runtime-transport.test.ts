@@ -1,5 +1,5 @@
 import { expect, it } from "vitest"
-import { agentEnvAccess } from "@vite-hub/env/internal/agent"
+import { agentEnvAccess } from "../../env/test/agent-access.ts"
 
 import { apiKey } from "../src/api-key.ts"
 import { defineConnection } from "../src/definition.ts"

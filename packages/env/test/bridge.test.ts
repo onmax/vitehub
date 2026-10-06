@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEnvBridge } from "../src/bridge.ts";
 import { createDatabaseEnvStore } from "../src/database.ts";
-import { agentEnvAccess } from "../src/internal/agent.ts";
+import { agentEnvAccess } from "./agent-access.ts";
 import { connectionEnvAccess } from "../src/internal/connections.ts";
 import type { EnvAccessContext } from "../src/bridge.ts";
 import { adminContext, agentTokenContext } from "./helpers.ts";

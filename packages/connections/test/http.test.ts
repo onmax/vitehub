@@ -26,7 +26,6 @@ function streamedPost(body: ReadableStream<Uint8Array>): Request {
 
 describe("createConnectionsHandler", () => {
   it.each([
-    undefined,
     () => undefined,
     () => "agent:worker",
     () => "user:",
@@ -249,6 +248,15 @@ describe("createConnectionsHandler", () => {
       new Request(`${origin}/_vitehub/connections/callback?code=code-1&state=${state}`),
     );
     expect(mismatch.status).toBe(400);
+    const sameLength = `${state.slice(0, -1)}${state.endsWith("A") ? "B" : "A"}`;
+    for (const cookieState of [state.slice(0, -1), `${state}x`, sameLength]) {
+      const wrong = await handler(
+        new Request(`${origin}/_vitehub/connections/callback?code=code-1&state=${state}`, {
+          headers: { cookie: `vitehub_connection_state=${cookieState}` },
+        }),
+      );
+      expect(wrong.status).toBe(400);
+    }
 
     test.provider.tokenResponses.push({
       body: {

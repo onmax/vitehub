@@ -35,23 +35,34 @@ export function useAgentConnectionClient(context: AgentCapabilityContext, name: 
   if (!runtime.success) {
     throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires the Connections runtime to expose client().` })
   }
-  if (!context.agentIdentity) {
-    throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires a resolved Agent Definition identity.` })
+  const connectionRuntime = runtime.output
+  // Static tool inspection does not consume credentials. Mint authority only when a tool runs.
+  let client: AgentConnectionClient | undefined
+  function getClient(): AgentConnectionClient {
+    if (client) return client
+    if (!context.agentIdentity) {
+      throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires a resolved Agent Definition identity.` })
+    }
+    const invocationId = optionalString(context.context.get(agentInvocationTraceIdContextKey))
+    const clientOptions: AgentConnectionClientOptions = {
+      ...options,
+      // The host resolves the Agent Definition. Env creates its actor context here, never from a caller value.
+      access: agentEnvAccess(context.agentIdentity, invocationId ? { invocationId } : {}),
+      ...(invocationId ? { invocationId } : {}),
+    }
+    const value: unknown = connectionRuntime.client(name, clientOptions)
+    const parsed = v.safeParse(v.object({ call: v.function(), fetch: v.function() }), value)
+    if (!parsed.success) {
+      throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires a Connections client with call() and fetch().` })
+    }
+    // SAFETY: The structural schema checks the runtime client. Its methods match the Connections public contract.
+    client = parsed.output as AgentConnectionClient
+    return client
   }
-  const invocationId = optionalString(context.context.get(agentInvocationTraceIdContextKey))
-  const clientOptions: AgentConnectionClientOptions = {
-    ...options,
-    // The host resolves the Agent Definition. Env creates its actor context here, never from a caller value.
-    access: agentEnvAccess(context.agentIdentity, invocationId ? { invocationId } : {}),
-    ...(invocationId ? { invocationId } : {}),
+  return {
+    call: (...args) => getClient().call(...args),
+    fetch: (...args) => getClient().fetch(...args),
   }
-  const client: unknown = runtime.output.client(name, clientOptions)
-  const parsed = v.safeParse(v.object({ call: v.function(), fetch: v.function() }), client)
-  if (!parsed.success) {
-    throw agentDiagnostics.AGENT_R0080({ message: `[vitehub] ${capability}() requires a Connections client with call() and fetch().` })
-  }
-  // SAFETY: The structural schema checks the runtime client. Its methods match the Connections public contract.
-  return parsed.output as AgentConnectionClient
 }
 
 function optionalString(value: unknown): string | undefined {

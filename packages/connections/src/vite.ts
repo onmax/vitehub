@@ -228,14 +228,20 @@ async function recordGeneratedOwners(projectRoot: string, origin: string, hash: 
 }
 
 export interface ConnectionsVitePluginOptions {
+  /**
+   * Module whose default export is the access policy of the management API, in development and
+   * production. Export a function that authenticates the `Request` and returns `user:<id>`, or
+   * `undefined` to deny it. Export `"development"` to allow the development server without Auth.
+   * Without this module, development uses `"development"`.
+   */
+  actor?: string;
   /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
   database?: string | false;
   /** Package that the generated handler imports from. */
   importBase?: string;
   /**
    * Mount the management API in production. The development server always mounts it.
-   * Production requires an actor module whose default export authenticates each Request
-   * and returns `user:<id>` or `undefined` to deny access.
+   * Production requires an actor module, from `actor` or `management.actor`.
    */
   management?: boolean | { actor: string };
   projectRoot?: string;
@@ -449,7 +455,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
 
       if (environment.command === "serve" || options.management) {
         const actorModule =
-          options.management && options.management !== true ? options.management.actor : undefined;
+          (options.management && options.management !== true ? options.management.actor : undefined) ?? options.actor;
         if (environment.command !== "serve" && !actorModule?.trim()) {
           throw new Error(
             "Connections management in production requires management: { actor: <authentication module> }.",
@@ -460,14 +466,34 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
           handlerFile,
           [
             `import { createConnectionsHandler } from ${JSON.stringify(`${importBase}/server`)}`,
+            `import type { IncomingMessage } from "node:http"`,
             "",
             ...(actorModule ? [`import actor from ${JSON.stringify(actorImport)}`] : []),
             "",
+            // Without an actor module, only a development server allows management.
             actorModule
               ? `const handle = createConnectionsHandler({ actor, basePath: ${JSON.stringify(managementRoute)} })`
-              : `const handle = createConnectionsHandler({ actor: () => "user:local", basePath: ${JSON.stringify(managementRoute)} })`,
+              : `const handle = createConnectionsHandler({ actor: "development", basePath: ${JSON.stringify(managementRoute)} })`,
             "",
-            "export default (event: { req: Request }) => handle(event.req, event)",
+            "export default (event: { req?: Request, node?: { req?: IncomingMessage & { socket: { encrypted?: boolean } } } }) => {",
+            "  const raw = event.req ?? event.node?.req",
+            "  if (!raw) return handle(new Request('http://localhost/'), event)",
+            "  if (raw instanceof Request) return handle(raw, event)",
+            "  const headers = new Headers()",
+            "  for (const [name, value] of Object.entries(raw.headers ?? {})) { if (typeof value === 'string') headers.set(name, value); else if (Array.isArray(value)) for (const item of value) headers.append(name, item) }",
+            "  const firstHeader = (name: string) => headers.get(name)?.split(',')[0]?.trim()",
+            "  const host = firstHeader('x-forwarded-host') ?? firstHeader('host') ?? 'localhost'",
+            "  const protocol = firstHeader('x-forwarded-proto') ?? (raw.socket?.encrypted ? 'https' : 'http')",
+            "  const method = raw.method ?? 'GET'",
+            "  const init: RequestInit & { duplex?: 'half' } = { method, headers }",
+            "  if (method !== 'GET' && method !== 'HEAD') {",
+            "    const iterator = raw[Symbol.asyncIterator]()",
+            "    init.body = new ReadableStream({ async pull(controller) { try { const next = await iterator.next(); if (next.done) controller.close(); else controller.enqueue(next.value) } catch (error) { controller.error(error) } } })",
+            "    init.duplex = 'half'",
+            "  }",
+            "  const request = new Request(new URL(raw.url ?? '/', `${protocol === 'https' ? 'https' : 'http'}://${host}`), init)",
+            "  return handle(request, event)",
+            "}",
             "",
           ].join("\n"),
         );

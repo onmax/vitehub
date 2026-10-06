@@ -48,10 +48,39 @@ export const consoleSectionDetails: Readonly<Record<ConsoleBuiltinSectionId, Con
   },
   kv: {
     description: "Inspect configured KV stores without changing data.",
-    icon: "i-ph-key-light",
+    icon: "i-lucide-book-key",
     label: "KV",
     routeName: "vitehub-console-kv",
   },
+}
+
+/** Navigation groups in rail order. A contributed section with an unknown id goes to `more`. */
+export const consoleSectionGroupIds = ["agents", "data", "runtime", "platform", "more"] as const
+
+export type ConsoleSectionGroupId = (typeof consoleSectionGroupIds)[number]
+
+const consoleSectionGroupBySection: Readonly<Record<string, ConsoleSectionGroupId>> = {
+  agents: "agents",
+  usage: "agents",
+  databases: "data",
+  kv: "data",
+  blob: "data",
+  workspaces: "data",
+  workflows: "runtime",
+  queues: "runtime",
+  schedules: "runtime",
+  sandboxes: "runtime",
+  env: "platform",
+  connections: "platform",
+  email: "platform",
+  "rate-limits": "platform",
+}
+
+/** Splits enabled sections into navigation groups. Keeps the given order inside each group and drops empty groups. */
+export function groupConsoleSections<T extends { id: ConsoleSectionId }>(sections: readonly T[]): T[][] {
+  return consoleSectionGroupIds
+    .map(group => sections.filter(section => (Object.hasOwn(consoleSectionGroupBySection, section.id) ? consoleSectionGroupBySection[section.id] : "more") === group))
+    .filter(group => group.length > 0)
 }
 
 interface ConsoleSectionStorage {

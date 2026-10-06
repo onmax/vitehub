@@ -1,14 +1,14 @@
+import { readAgentEnvIdentity } from "@vite-hub/agent/env-identity";
+import { envBridgeError } from "../bridge-error.ts";
 import { grantEnvAccess, type EnvAttribution } from "./access.ts";
 import type { EnvAccessContext } from "../bridge.ts";
 
-/**
- * Internal to `@vite-hub/agent`. Call it only where the Agent Definition that runs is resolved, with that
- * Definition's identity. Never pass a name from a caller. The context names `agent:<name>` and gets only
- * the durable grants of that Agent.
- */
-export function agentEnvAccess(agent: { readonly name: string }, attribution: EnvAttribution = {}): EnvAccessContext {
+/** Mint only for an identity registered by Agent Definition resolution. Names and copies are untrusted. */
+export function agentEnvAccess(agent: object, attribution: EnvAttribution = {}): EnvAccessContext {
+  const name = readAgentEnvIdentity(agent);
+  if (name === undefined) throw envBridgeError("untrusted");
   return grantEnvAccess(
-    { actor: { kind: "agent", id: agent.name }, traceId: attribution.traceId, invocationId: attribution.invocationId },
+    { actor: { kind: "agent", id: name }, traceId: attribution.traceId, invocationId: attribution.invocationId },
     { kind: "agent" },
   );
 }

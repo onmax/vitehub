@@ -1,9 +1,11 @@
+import { createAgentEnvIdentity } from "../src/internal/env-identity.ts"
 import { describe, expect, it, vi } from "vitest"
 
 import type { Mock } from "vitest"
 import type { JSONRPCMessage, MCPClient, MCPTransport } from "@ai-sdk/mcp"
 
 const runtime = () => ({
+  agentIdentity: createAgentEnvIdentity({ name: "agent" }),
   capabilities: {},
   memo: vi.fn(),
   runtime: "unknown" as const,
@@ -266,10 +268,10 @@ describe("mcp capability", () => {
       expect(config).not.toHaveProperty("connection")
       const transport = config?.transport as { fetch: typeof globalThis.fetch, type: string, url: string }
       expect(transport).toMatchObject({ type: "http", url: "https://executor.test/mcp" })
-      expect(connections.client).toHaveBeenCalledWith("executor", { access: expect.objectContaining({ actor: { id: "agent", kind: "agent" } }), rejectApprovals: true })
       const controller = new AbortController()
       const body = JSON.stringify({ id: 1, jsonrpc: "2.0", method: "tools/call", params: { arguments: {}, name: "search" } })
       await transport.fetch("https://executor.test/mcp", { body, method: "POST" })
+      expect(connections.client).toHaveBeenCalledWith("executor", { access: expect.objectContaining({ actor: { id: "agent", kind: "agent" } }), rejectApprovals: true })
       await transport.fetch(new URL("https://executor.test/mcp"), { method: "GET" })
       await transport.fetch(new Request("https://executor.test/mcp", { body, headers: { "mcp-session-id": "s1" }, method: "POST", signal: controller.signal }), { headers: { "mcp-session-id": "s2" }, redirect: "manual" })
       expect(client.fetch.mock.calls.map(([url]) => String(url))).toEqual(Array(3).fill("https://executor.test/mcp"))

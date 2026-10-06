@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest"
-import { agentEnvAccess } from "@vite-hub/env/internal/agent"
+import { agentEnvAccess } from "../../env/test/agent-access.ts"
 
 import { isConnectionError } from "../src/errors.ts"
 import { createConnectionsRuntime } from "../src/runtime.ts"

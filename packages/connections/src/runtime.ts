@@ -92,8 +92,11 @@ export interface ConnectionsRuntime {
   /** Start an authorization code flow with PKCE. Returns the provider URL. */
   authorize: (input: { actor?: string, name: string, redirectUri: string }) => Promise<{ state: string, url: string }>
   client: (name: string, options: UseConnectionOptions) => ConnectionRuntimeClient
-  /** Exchange the authorization code and store the token. */
-  complete: (input: { code: string, state: string }) => Promise<ConnectionInspection>
+  /**
+   * Exchange the authorization code and store the token. `state` is single-use. `actor` must be the
+   * actor that started the flow with `authorize()`. Both default to `user:local`.
+   */
+  complete: (input: { actor?: string, code: string, state: string }) => Promise<ConnectionInspection>
   definition: (name: string) => Promise<ConnectionDefinition>
   deny: (input: { actor?: string, id: string }) => Promise<ConnectionApproval>
   inspect: (name: string) => Promise<ConnectionInspection>
@@ -693,10 +696,12 @@ export function createConnectionsRuntime(options: ConnectionsRuntimeOptions): Co
     return { state, url: url.toString() }
   }
 
-  async function complete(input: { code: string, state: string }): Promise<ConnectionInspection> {
+  async function complete(input: { actor?: string, code: string, state: string }): Promise<ConnectionInspection> {
     const connections = await getStore()
+    // Taking the state consumes it, so a rejected callback cannot be replayed.
     const authorization = await connections.authorizations.take(input.state)
     if (!authorization || authorization.expiresAt < now()) throw new ConnectionError("invalid", "The authorization request is unknown or expired. Start the connection again.")
+    if (authorization.actor !== (input.actor ?? "user:local")) throw new ConnectionError("denied", "Another user started this authorization request. Start the connection again.")
     const name = authorization.name
     const loaded = await definition(name)
     const provider = oauthProvider(loaded, name)

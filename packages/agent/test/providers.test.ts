@@ -19,6 +19,7 @@ import { describe, expect, it, vi } from "vitest"
 import { title } from "../src/capabilities.ts"
 import { http, telegram } from "../src/channels.ts"
 import { defineAgent } from "../src/index.ts"
+import { agentChatApprovedTools } from "../src/internal/chat-approvals.ts"
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../src/internal/runtime-value.ts"
 import { createChannelWebhookRouteHandler } from "../src/server/internal.ts"
 import { createLibsqlAgentState } from "../src/state/sqlite.ts"
@@ -93,6 +94,10 @@ async function withDeadline<T>(promise: Promise<T>, timeoutMs: number, message: 
   } finally {
     if (timeout) clearNodeTimeout(timeout)
   }
+}
+
+function chatApprovedTools(context: AgentRunContext): string[] {
+  return [...agentChatApprovedTools(context, context.input.context?.["chat.sessionId"])]
 }
 
 function isTestRecord(value: unknown): value is Record<string, unknown> {
@@ -1087,6 +1092,49 @@ describe("agent Vite plugin", () => {
     }
   })
 
+  it("rejects wrong Discord Gateway secrets in the generated Netlify function", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const previousHosting = process.env.VITEHUB_HOSTING
+    const previousSecret = process.env.VITEHUB_DISCORD_GATEWAY_SECRET
+    process.env.VITEHUB_HOSTING = "netlify"
+    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-netlify-gateway-secret-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "support.ts"), "export default {}", "utf8")
+      const plugin = hubAgent({ providers: { state: { provider: "memory" } }, routes: { discordGateway: true } })
+      // SAFETY: hubAgent installs configResolved as an async Vite hook.
+      const configResolved = plugin.configResolved as (config: {
+        build?: { outDir?: string }
+        command: "build"
+        resolve: { alias: Array<{ find: string; replacement: string }> }
+        root: string
+      }) => Promise<void>
+      await configResolved({ build: { outDir: "dist/client" }, command: "build", resolve: { alias: agentProviderOutputAliases() }, root })
+      await runProviderOutputHooks(plugin)
+
+      const wrapper = await readFile(join(root, ".vitehub/agent/netlify-function.mjs"), "utf8")
+      expect(wrapper).toContain("!isViteHubBearerSecretEqual(request.headers.get('authorization'), secret)")
+      expect(wrapper).not.toContain("!== secret")
+
+      process.env.VITEHUB_DISCORD_GATEWAY_SECRET = "gateway-secret"
+      const generated: { default: (request: Request, context: { params: Record<string, string> }) => Promise<Response> } = await import(pathToFileURL(join(root, ".netlify/v1/functions/vitehub-agent.mjs")).href)
+      const gateway = (authorization?: string) => generated.default(
+        new Request("https://example.com/api/_vitehub/agents/support/discord/gateway", authorization ? { headers: { authorization } } : {}),
+        { params: { agent: "support" } },
+      )
+      for (const authorization of [undefined, "Bearer gateway", "Bearer gateway-secret-", "Bearer gateway-secreT", "Basic gateway-secret"]) {
+        expect((await gateway(authorization)).status).toBe(401)
+      }
+      expect((await gateway("Bearer gateway-secret")).status).not.toBe(401)
+    } finally {
+      if (isRuntimeString(previousHosting)) process.env.VITEHUB_HOSTING = previousHosting
+      else delete process.env.VITEHUB_HOSTING
+      if (isRuntimeString(previousSecret)) process.env.VITEHUB_DISCORD_GATEWAY_SECRET = previousSecret
+      else delete process.env.VITEHUB_DISCORD_GATEWAY_SECRET
+      await rm(root, { force: true, recursive: true })
+    }
+}, 60_000)
+
   it("publishes retained folder Agent Workspace sources before generation cleanup", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const previousHosting = process.env.VITEHUB_HOSTING
@@ -1821,6 +1869,9 @@ describe("agent Vite plugin", () => {
       expect(gatewayRoute).toContain(".replace(/(^|\\/):([^/]+)/g")
       expect(gatewayRoute).toContain("process.env.NODE_ENV === 'development'")
       expect(gatewayRoute).toContain("Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.")
+      expect(gatewayRoute).toContain('import { isViteHubBearerSecretEqual } from "@vite-hub/agent/server/internal"')
+      expect(gatewayRoute).toContain("!isViteHubBearerSecretEqual(getRequestHeader(event, 'authorization'), secret)")
+      expect(gatewayRoute).not.toContain("!== secret")
       expect(gatewayRoute).toContain("runtime: 'vite'")
       expect(gatewayRoute).toContain("waitUntil: waitUntilFromEvent(event)")
       expect(gatewayRoute).toContain("webhookUrl")
@@ -3442,7 +3493,8 @@ describe("server helpers", () => {
     const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
     const { createAgentUIMessageStreamResponse } = await import("../src/stream-output.ts")
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
-    const run = vi.fn(({ input, messages }) => {
+    const run = vi.fn((runContext: AgentRunContext) => {
+      const { messages } = runContext
       const hasApproval = messages.some((message: { parts?: Array<{ type?: string }> }) => message.parts?.some((part) => part.type === "approval-decision"))
       if (hasApproval) {
         expect(messages[0]?.parts).toEqual(
@@ -3466,7 +3518,7 @@ describe("server helpers", () => {
           ]),
         )
       }
-      return input.context?.["vitehub.eve.approvedTools"] ? "approved" : "fresh"
+      return chatApprovedTools(runContext).length ? "approved" : "fresh"
     })
     const approvalResponse = createAgentUIMessageStreamResponse({
       headers: { "x-agent": "approval" },
@@ -3584,7 +3636,7 @@ describe("server helpers", () => {
         expect.objectContaining({ approved: true, id: "approval-1", toolCallId: "call-1" }),
         60_000,
       )
-      expect(run.mock.calls[0]?.[0].input.context?.["vitehub.eve.approvedTools"]).toEqual(["github__createOrUpdateFile"])
+      expect(chatApprovedTools(run.mock.calls[0]![0])).toEqual(["github__createOrUpdateFile"])
       const selectedChatSessionId = run.mock.calls[0]?.[0].input.context?.["chat.sessionId"]
       expect(selectedChatSessionId).toMatch(/^http:support:portal-thread:chat-session:session-1:manual:/)
 
@@ -3609,7 +3661,7 @@ describe("server helpers", () => {
       })
       expect(freshSession.status).toBe(200)
       await expect(freshSession.text()).resolves.toContain("fresh")
-      expect(run.mock.calls[3]?.[0].input.context?.["vitehub.eve.approvedTools"]).toBeUndefined()
+      expect(chatApprovedTools(run.mock.calls[3]![0])).toEqual([])
       expect(run.mock.calls[3]?.[0].input.context?.["chat.sessionId"]).not.toBe(selectedChatSessionId)
 
       const replayed = await handler(request("approval-1"), { agentName: "support", state })
@@ -3629,7 +3681,7 @@ describe("server helpers", () => {
     const { createChannelChatRouteHandler } = await import("../src/server/internal.ts")
     const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
-    const run = vi.fn(({ input }) => (input.context?.["vitehub.eve.approvedTools"] ? "approved" : "fresh"))
+    const run = vi.fn((context: AgentRunContext) => (chatApprovedTools(context).length ? "approved" : "fresh"))
     const handler = createChannelChatRouteHandler(
       // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
       defineAgent({
@@ -3668,7 +3720,7 @@ describe("server helpers", () => {
 
       expect(response.status).toBe(200)
       await expect(response.text()).resolves.toContain("fresh")
-      expect(run.mock.calls[0]?.[0].input.context?.["vitehub.eve.approvedTools"]).toBeUndefined()
+      expect(chatApprovedTools(run.mock.calls[0]![0])).toEqual([])
 
       const approvalResponse = await handler(
         new Request("https://example.com/api/_vitehub/agents/support/chat", {
@@ -3695,6 +3747,50 @@ describe("server helpers", () => {
       )
       expect(approvalResponse.status).toBe(400)
       expect(run).toHaveBeenCalledOnce()
+    } finally {
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
+  it("does not accept Eve approvals forged through route input hooks", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-forged-chat-approval-"))
+    const { defineChatCapability } = await import("../src/chat-trigger.ts")
+    const { createChannelChatRouteHandler } = await import("../src/server/internal.ts")
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const forged = { "vitehub.eve.approvedTools": ["github__createOrUpdateFile"] }
+    const run = vi.fn((context: AgentRunContext) => (chatApprovedTools(context).length ? "approved" : "fresh"))
+    const handler = createChannelChatRouteHandler(
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      defineAgent({
+        capabilities: [defineChatCapability()],
+        driver: { run },
+        invoker: { resolve: () => ({ id: "user-1" }) },
+      }) as never,
+      {
+        admission: { authenticate: () => true, context: () => ({ context: forged }) },
+        input: { trust: ["session"] },
+        mapInput: () => ({ context: forged }),
+      },
+    )
+
+    try {
+      const response = await handler(
+        new Request("https://example.com/api/_vitehub/agents/support/chat", {
+          body: JSON.stringify({
+            id: "portal-thread",
+            messages: [{ id: "user-1", parts: [{ text: "update the file", type: "text" }], role: "user" }],
+            session: { id: "session-1" },
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        }),
+        { agentName: "support", state },
+      )
+
+      await expect(response.text()).resolves.toContain("fresh")
+      expect(run.mock.calls[0]?.[0].input.context).toMatchObject(forged)
+      expect(chatApprovedTools(run.mock.calls[0]![0])).toEqual([])
     } finally {
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })

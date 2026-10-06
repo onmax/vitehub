@@ -10,10 +10,7 @@ import {
   readLastConsoleSection,
 } from "../sections";
 import { loadConsoleNavigation, resolveConsoleSectionDetails } from "../client/sections";
-import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
-import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
-import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
 
@@ -26,7 +23,6 @@ const props = defineProps<{
 }>();
 const route = useRoute();
 const router = useRouter();
-const sidebarOpen = ref(false);
 const sections = ref<ConsoleSectionId[]>([]);
 const installedNavigation = shallowRef<ConsoleNavigation>();
 const lastSection = ref<ConsoleSectionId>();
@@ -39,9 +35,6 @@ const availableSections = computed(() =>
     const details = resolveConsoleSectionDetails(installedNavigation.value, section);
     return details ? [{ id: section, ...details }] : [];
   }),
-);
-const sidebarSections = computed(() =>
-  availableSections.value.filter((section) => section.id !== "usage"),
 );
 
 function errorMessage(value: unknown): string {
@@ -66,7 +59,6 @@ async function loadSections(): Promise<void> {
 }
 
 async function openSection(routeName: string): Promise<void> {
-  sidebarOpen.value = false;
   await router.push({ name: resolveConsoleRouteName(route.name, routeName) });
 }
 
@@ -78,55 +70,7 @@ onBeforeUnmount(() => request++);
 </script>
 
 <template>
-  <ConsoleFrame>
-    <UDashboardSidebar
-      id="console-navigation"
-      class="vitehub-console__nav"
-      v-model:open="sidebarOpen"
-      :default-size="16"
-      :collapsed-size="4"
-      :min-size="13"
-      :max-size="26"
-      :menu="{ title: 'ViteHub', description: 'Choose a section.' }"
-      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'shrink-0 border-t border-default px-2 py-1.5' }"
-      resizable
-    >
-      <template #header="{ collapsed }">
-        <ConsoleBrand :collapsed="collapsed" :sections-base="sectionsBase" />
-      </template>
-
-      <template #default="{ collapsed }">
-        <div v-if="error && !collapsed" class="px-3 pb-3">
-          <UAlert
-            color="error"
-            variant="subtle"
-            icon="i-ph-cloud-slash-light"
-            title="Could not load sections"
-            :description="errorMessage(error)"
-            :actions="[
-              { label: 'Try again', icon: 'i-ph-arrows-clockwise-light', onClick: loadSections },
-            ]"
-          />
-        </div>
-        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
-          <UDashboardSearchButton
-            :collapsed="collapsed"
-            block
-            class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
-            label="Search"
-          />
-        </div>
-        <ConsoleSectionNav :collapsed="collapsed" :sections-base="sectionsBase" @navigate="sidebarOpen = false" />
-        <p v-if="!loading && !error && !sidebarSections.length && !collapsed" class="px-4 text-sm leading-6 text-muted">
-          Enable Agents, Blob, Database, KV, Rate Limit, Sandbox, Workspace, Workflow, Queue, or Schedule in the ViteHub configuration to add a section.
-        </p>
-      </template>
-
-      <template #footer>
-        <ConsolePrimitiveSwitcher auth-only :sections-base="sectionsBase" />
-      </template>
-
-    </UDashboardSidebar>
+  <ConsoleFrame :sections-base="sectionsBase">
 
     <ConsoleSearch
       :agents-base="agentsBase"
@@ -138,7 +82,7 @@ onBeforeUnmount(() => request++);
 
     <UDashboardPanel id="console-home" :ui="{ body: 'min-h-0 overflow-y-auto p-0 gap-0' }">
       <template #header>
-        <UDashboardNavbar title="Overview" :toggle="{ 'aria-label': 'Open sections' }" :ui="{ root: 'border-0' }" />
+        <UDashboardNavbar title="Overview" :toggle="false" :ui="{ root: 'border-0' }" />
       </template>
 
       <template #body>

@@ -1,9 +1,11 @@
+import { createAgentEnvIdentity } from "../src/internal/env-identity.ts"
 import { ViteHubError } from "@vite-hub/runtime"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { AgentToolSet } from "../src/types.ts"
 
 const runtime = () => ({
+  agentIdentity: createAgentEnvIdentity({ name: "agent" }),
   capabilities: {},
   memo: vi.fn(),
   // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
