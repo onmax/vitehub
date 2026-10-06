@@ -158,7 +158,7 @@ export const AgentInvocationList = defineComponent({
   setup(props, { emit, slots }) {
     const viewport = ref<HTMLElement | null>(null);
     const requestedLength = ref<number>();
-    let focusedItemBeforeUpdate: { element: HTMLButtonElement; id: string; status: string | undefined } | undefined;
+    let focusedItemBeforeUpdate: { element: HTMLButtonElement; id: string } | undefined;
     const paginationKey = computed(() => props.items.map(item => `${item.id}:${item.status}`).join("\0"));
     let resizeObserver: ResizeObserver | undefined;
     const requestMoreIfNeeded = () => {
@@ -186,7 +186,9 @@ export const AgentInvocationList = defineComponent({
       requestedLength.value = undefined;
       requestMoreAutomatically();
     });
+    const mounted = ref(false);
     onMounted(() => {
+      mounted.value = true;
       requestMoreAutomatically();
       if ("ResizeObserver" in globalThis && viewport.value) {
         resizeObserver = new ResizeObserver(requestMoreAutomatically);
@@ -201,7 +203,7 @@ export const AgentInvocationList = defineComponent({
         && element.classList.contains("vh-invocation-list__item")
         && viewport.value?.contains(element)
         && element.dataset.invocationId
-        ? { element, id: element.dataset.invocationId, status: element.dataset.status }
+        ? { element, id: element.dataset.invocationId }
         : undefined;
     };
     const restoreMovedItemFocus = async () => {
@@ -211,14 +213,14 @@ export const AgentInvocationList = defineComponent({
       await nextTick();
       const element = [...(viewport.value?.querySelectorAll<HTMLButtonElement>("[data-invocation-id]") ?? [])]
         .find(candidate => candidate.dataset.invocationId === focused.id);
-      if (!element || element.dataset.status === focused.status) return;
+      if (!element) return;
       element.focus();
     };
 
     const renderRow = (item: AgentInvocationListItem) => renderItem(item, props.selectedId, props.now, select, slots.projectIcon, slots.harness);
     const renderRows = () => {
       const busy = props.loading ? "true" : undefined;
-      if (props.groupBy !== "recency" || props.now === undefined) {
+      if (props.groupBy !== "recency" || props.now === undefined || !mounted.value) {
         return h("ul", { "aria-busy": busy, class: "vh-invocation-list__group-items" }, props.items.map(renderRow));
       }
       return h("div", { "aria-busy": busy, class: "vh-invocation-list__groups" }, groupByRecency(props.items, props.now).map(group =>

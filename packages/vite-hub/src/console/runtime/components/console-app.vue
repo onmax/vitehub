@@ -1067,7 +1067,12 @@ onBeforeUnmount(() => {
               />
             </button>
           </h2>
-          <ul v-show="agentListOpen" id="vitehub-console-agent-list" class="grid gap-px" aria-label="Agents">
+          <ul
+            v-show="agentListOpen"
+            id="vitehub-console-agent-list"
+            class="grid max-h-48 gap-px overflow-y-auto"
+            aria-label="Agents"
+          >
             <li v-for="name in agentRows.visible" :key="name">
               <button
                 type="button"

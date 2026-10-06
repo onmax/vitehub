@@ -393,7 +393,7 @@ describe("Agent Invocation UI", () => {
     expect(wrapper.findAll(".vh-invocation-list__title").map(title => title.text())).toEqual(items.map(item => item.title));
   });
 
-  it("groups sessions by recency in local calendar days when asked", () => {
+  it("groups sessions by recency in local calendar days when asked", async () => {
     const now = new Date(2026, 9, 6, 10, 0).getTime();
     const at = (day: number, hour = 12) => new Date(2026, 9, day, hour).toISOString();
     const items = [
@@ -405,6 +405,7 @@ describe("Agent Invocation UI", () => {
       { id: "today-early", status: "completed" as const, title: "Today early", updatedAt: at(6, 0) },
     ];
     const wrapper = mount(AgentInvocationList, { props: { groupBy: "recency", items, now, selectedId: "week" } });
+    await nextTick();
     const groups = wrapper.findAll(".vh-invocation-list__group");
     expect(groups.map(group => group.get("h3").text())).toEqual(["Today", "Yesterday", "Previous 7 days", "Older"]);
     expect(groups.map(group => group.findAll(".vh-invocation-list__item").map(row => row.attributes("data-invocation-id"))))
