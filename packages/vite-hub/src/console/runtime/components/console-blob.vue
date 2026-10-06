@@ -237,6 +237,9 @@ onBeforeUnmount(() => {
           <span class="min-w-0 flex-1 truncate">Blob</span>
           <UTooltip text="Refresh objects"><UButton aria-label="Refresh objects" color="neutral" icon="i-lucide-refresh-cw" size="xs" variant="ghost" :loading="loading || loadingMore" @click="refresh" /></UTooltip>
         </div>
+        <div v-else class="flex justify-center">
+          <UTooltip text="Refresh objects"><UButton aria-label="Refresh objects" color="neutral" icon="i-lucide-refresh-cw" size="xs" variant="ghost" :loading="loading || loadingMore" @click="refresh" /></UTooltip>
+        </div>
       </template>
 
       <template #default="{ collapsed }">

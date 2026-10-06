@@ -7,7 +7,7 @@ import { useRoute, useRouter } from "vue-router";
 import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
 import { loadConsoleNavigation, resolveConsoleSectionDetails, subscribeConsoleNavigation } from "../client/sections";
-import { resolveConsoleRouteName } from "../console-route";
+import { decodeAgentRouteParam, resolveConsoleRouteName } from "../console-route";
 import { consoleOverviewShortcut, consoleSectionShortcut, groupConsoleSections } from "../sections";
 import ConsoleMark from "./console-mark.vue";
 
@@ -42,7 +42,12 @@ const groups = computed(() => groupConsoleSections(sections.value));
 const signOutLabel = computed(() => (accessIdentity.value?.label ? `Sign out ${accessIdentity.value.label}` : "Sign out"));
 
 async function open(routeName: string): Promise<void> {
-  await router.push({ name: resolveConsoleRouteName(route.name, routeName) });
+  const name = resolveConsoleRouteName(route.name, routeName);
+  const agent = decodeAgentRouteParam(route.params.agent);
+  await router.push({
+    name,
+    ...(name === resolveConsoleRouteName(route.name, "vitehub-console-usage") && agent ? { query: { returnAgent: agent } } : {}),
+  });
 }
 
 // The rail is on every page, so it owns the "Go to" chords. Only enabled sections get one.
