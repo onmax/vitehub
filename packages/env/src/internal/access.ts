@@ -7,6 +7,8 @@ export const envAccessGrant: unique symbol = Symbol("vitehub.env.access-grant");
 export type EnvKeyPermission = EnvPermission | "activity";
 export type EnvAuthority =
   | { readonly kind: "admin" }
+  /** An Agent runtime context. Unlike authenticated Agent tokens, it may establish Agent Connection identity. */
+  | { readonly kind: "agent"; readonly bridge?: EnvBridge; readonly scope?: EnvAccessScope }
   /** The durable grants of the context actor, with an optional ceiling. A `bridge` limits the context to that bridge. */
   | { readonly kind: "actor"; readonly bridge?: EnvBridge; readonly scope?: EnvAccessScope }
   | { readonly kind: "key"; readonly bridge: EnvBridge; readonly key: string; readonly permissions: readonly EnvKeyPermission[] };

@@ -9,6 +9,6 @@ import type { EnvAccessContext } from "../bridge.ts";
 export function agentEnvAccess(agent: { readonly name: string }, attribution: EnvAttribution = {}): EnvAccessContext {
   return grantEnvAccess(
     { actor: { kind: "agent", id: agent.name }, traceId: attribution.traceId, invocationId: attribution.invocationId },
-    { kind: "actor" },
+    { kind: "agent" },
   );
 }
