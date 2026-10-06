@@ -1,4 +1,5 @@
 import { envBridgeError, sanitizeEnvBridgeError } from "./bridge-error.ts";
+import { envAccessAuthority, type envAccessGrant } from "./internal/access.ts";
 import { SecretEnv } from "./secret.ts";
 import type { EnvProvider, EnvProviderValues } from "./types.ts";
 
@@ -7,15 +8,26 @@ export interface EnvActor {
   id: string;
   kind: "user" | "agent" | "service";
 }
-export interface EnvAccessContext {
+/** Attribution from trusted server code. Durable grants decide what the actor can do. */
+export interface EnvActorAccessContext {
   actor: EnvActor;
-  /** Set only by trusted authentication or application code. */
-  admin?: boolean;
+  /** Administrator access needs a context from `createEnvAuthenticator()`. */
+  admin?: false;
   /** Optional credential/permission ceiling from a verified agent token. */
   scope?: readonly { key: string; permissions: readonly EnvPermission[] }[];
   traceId?: string;
   invocationId?: string;
 }
+/** A frozen, request-scoped context that only Env creates after its own check. Do not persist it. */
+export interface EnvGrantedAccessContext {
+  readonly [envAccessGrant]: true;
+  readonly actor: Readonly<EnvActor>;
+  readonly admin?: true;
+  readonly scope?: undefined;
+  readonly traceId?: string;
+  readonly invocationId?: string;
+}
+export type EnvAccessContext = EnvActorAccessContext | EnvGrantedAccessContext;
 export interface EnvGrant {
   actor: EnvActor;
   key: string;
@@ -127,18 +139,26 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
   async function allowed(
     context: EnvAccessContext,
     key: string,
-    permission: EnvPermission | "admin",
+    permission: EnvPermission | "activity" | "admin",
   ): Promise<boolean> {
     identifier(key);
     validateActor(context.actor);
+    // Only Env-created contexts carry authority beyond durable grants.
+    const authority = envAccessAuthority(context);
+    if (authority)
+      return (
+        "admin" in authority ||
+        (authority.bridge === bridge &&
+          authority.key === key &&
+          permission !== "admin" &&
+          authority.permissions.includes(permission))
+      );
+    if (permission === "admin" || permission === "activity") return false;
     if (
       context.scope &&
-      (permission === "admin" ||
-        !context.scope.some((grant) => grant.key === key && grant.permissions.includes(permission)))
+      !context.scope.some((grant) => grant.key === key && grant.permissions.includes(permission))
     )
       return false;
-    if (context.admin) return true;
-    if (permission === "admin") return false;
     const grants = await safe(() => options.access.grants(key));
     return grants.some(
       (grant) =>
@@ -151,7 +171,7 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
     context: EnvAccessContext,
     key: string,
     action: EnvActivity["action"],
-    permission: EnvPermission | "admin",
+    permission: EnvPermission | "activity" | "admin",
     run: () => Promise<T>,
     operation?: string,
     metadata?: {
@@ -280,7 +300,7 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
       );
     },
     async activity(context, key, before) {
-      if (!(await allowed(context, key, "admin"))) throw envBridgeError("denied");
+      if (!(await allowed(context, key, "activity"))) throw envBridgeError("denied");
       return await safe(() => options.access.activity({ key, before, limit: 100 }));
     },
     async grants(context, key) {

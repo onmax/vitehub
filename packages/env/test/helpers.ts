@@ -1,3 +1,13 @@
+import { createEnvAuthenticator } from "../src/auth.ts"
+
+/** Create an administrator context through the same check that production uses. */
+export async function adminContext(id = "owner") {
+  const authenticate = createEnvAuthenticator({ getSession: async () => ({ user: { id } }), isAdmin: () => true })
+  const context = await authenticate(new Request("https://example.com"))
+  if (!context) throw new Error("Expected an administrator context.")
+  return context
+}
+
 export function stringSchema() {
   return {
     safeParse(input: unknown) {

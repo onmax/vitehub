@@ -100,7 +100,7 @@ export default defineConfig({
 An administrator stores the first value and grants `use` to the service principal. Run this from trusted server code, or use the Console.
 
 ```ts
-// owner is an EnvAccessContext returned by your server authentication policy.
+// owner is the administrator context that authenticate(request) returns.
 await bridge.replace(owner, {
   key: 'github/token',
   value: newToken,
@@ -130,7 +130,7 @@ const token = env.githubToken.unseal()
 | --- | --- |
 | `createEnvBridge` from `vite-hub/env/bridge` | Build a bridge from a secret store, an access store, and a runtime context. |
 | `createDatabaseEnvStore` from `vite-hub/env/database` | Store encrypted values, grants, and activity in a SQLite Drizzle database. |
-| `createEnvAuthenticator` from `vite-hub/env/auth` | Turn a management request into a trusted `EnvAccessContext` from a Better Auth session or a verified Agent session. |
+| `createEnvAuthenticator` from `vite-hub/env/auth` | Turn a management request into a trusted `EnvAccessContext` from a Better Auth session or a verified Agent session. It is the only way to get an administrator context. |
 | `createEnvBridgeHandler` from `vite-hub/env/http` | Handle management requests on a server route. The Console uses it through the generated Server Env module. |
 | `importSealKey`, `seal`, `unseal`, `sealKeyId` from `@vite-hub/env/seal` | AES-GCM helpers in the database store format, for owner packages that store sealed values. |
 
@@ -142,7 +142,7 @@ Types such as `EnvAccessContext`, `EnvPermission`, `EnvGrant`, `EnvActivity`, `E
 | --- | --- | --- |
 | `secrets` | `EnvSecretStore` | Reads, inspects, and conditionally replaces stored values. |
 | `access` | `EnvAccessStore` | Stores grants and appends activity. |
-| `runtimeContext` | `() => EnvAccessContext \| Promise<EnvAccessContext>` | Supplies attribution when `loadServerEnv()` has no explicit access context. Derive it from trusted invocation or request context. |
+| `runtimeContext` | `() => EnvAccessContext \| Promise<EnvAccessContext>` | Supplies attribution when `loadServerEnv()` has no explicit access context. Derive it from trusted invocation or request context. An actor context gets only the durable grants of its actor. |
 | `emit` | `(event: EnvActivity) => void \| Promise<void>` | Optional. Exports each event after it is persisted. See [Export persisted events to evlog](#export-persisted-events-to-evlog). |
 
 `createDatabaseEnvStore()` returns `secrets` and `access`, so you can spread it into `createEnvBridge()`. It accepts these options:
@@ -182,7 +182,9 @@ Each grant targets one actor kind (`user`, `agent`, or `service`), one actor ID,
 | `replace` | Replace the stored value conditionally. |
 | `use` | Resolve the value at runtime, or run a trusted `bridge.use()` operation. |
 
-- Only administrators manage grants and read activity. An administrator context without a `scope` passes every permission check.
+- Only administrators manage grants and read activity. An administrator context passes every permission check.
+- Only Env creates an administrator context: `createEnvAuthenticator()` returns one when your `isAdmin` policy returns `true`. The context is frozen and is valid for one request. Do not store it.
+- The bridge rejects an administrator context that Env did not create, for example `{ actor, admin: true }` or a copy of a real one, with `ENV_BRIDGE_UNTRUSTED`. TypeScript also rejects `admin: true` in a context that you build.
 - A verified Agent token can add a `scope`. The scope is a ceiling over the Agent's durable grants. A context with a `scope` never gets administrator access.
 - Revocation applies to the next permission check. It cannot retract a secret that an operation already resolved.
 - Never accept actor IDs, administrator flags, or token scopes from a request body.
@@ -237,6 +239,7 @@ Bridge operations throw `ViteHubError` with a fixed public message. Other failur
 | `ENV_BRIDGE_MISSING` | The credential is unavailable. |
 | `ENV_BRIDGE_INVALID` | The request, actor, grant, or store option is invalid. |
 | `ENV_BRIDGE_AUDIT_FAILED` | Activity could not be persisted. |
+| `ENV_BRIDGE_UNTRUSTED` | The context claims administrator access, but Env did not create it. The management route returns `503`. |
 | `ENV_BRIDGE_OPERATION_FAILED` | Any other failure, including a store or callback error. |
 
 ## Limits
