@@ -21,6 +21,7 @@ import {
 } from "./materialization.ts"
 import { resolveWorkspacePath } from "./resolver.ts"
 import { readWorkspaceSourceSyncState, sourceSyncMetaKey } from "./sync-state.ts"
+import { withWorkspaceStoreMutation } from "../storage/mutation.ts"
 
 import type {
   GlobOptions,
@@ -637,6 +638,21 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     return false
   }
 
+  // This check runs inside the Store mutation queue. It must not materialize
+  // Sources because materialization uses the same queue.
+  async function assertWritableCurrentPath(path: string) {
+    if (isDescriptorPath(path)) {
+      throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
+    }
+    const resolution = resolveWorkspacePath(definition, path)
+    if (resolution.type === "source" || isLazySourcePath(resolution.workspacePath)
+      || isSyncSourceMountPath(resolution.workspacePath)
+      || await isSyncedStatePath(resolution.workspacePath)
+      || await isSourceBackedStorePath(resolution.workspacePath)) {
+      throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
+    }
+  }
+
   async function assertWritableResolvedStorePath(path: string, workspacePath: string, type: "source" | "store") {
     assertWritableStorePath(path, workspacePath, type)
     await materializeRootSourceForPath(workspacePath)
@@ -679,7 +695,10 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       if (writeGrants.get(grant) !== workspacePath) {
         throw workspaceError(`[vitehub] Workspace write to ${path} requires a Source write grant for that path.`)
       }
-      return await write(workspacePath, ...args)
+      return await withWorkspaceStoreMutation(store, async () => {
+        await assertWritableCurrentPath(workspacePath)
+        return await write(workspacePath, ...args)
+      })
     }
   }
 
