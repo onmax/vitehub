@@ -437,9 +437,13 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
  * The owner authorization callback is required. The Node dev entry supplies private project-token verification.
  */
 export async function handleScheduleDevRequest(request: Request, options: { authorize?: (request: Request) => Promise<boolean> } = {}): Promise<Response> {
-  const rejection = validateViteHubNitroDevRequest(request, { header: scheduleDevHeader, headerValue: scheduleDevHeaderValue, label: "Schedule Dev" })
+  const { rejection } = await validateViteHubNitroDevRequest(request, {
+    authorize: async request => await options.authorize?.(request) ? undefined : new Response("Forbidden Schedule Dev token.", { status: 403 }),
+    header: scheduleDevHeader,
+    headerValue: scheduleDevHeaderValue,
+    label: "Schedule Dev",
+  })
   if (rejection) return rejection
-  if (!await options.authorize?.(request)) return new Response("Forbidden Schedule Dev token.", { status: 403 })
   const body = await readBody(request)
   if (!body) return failure("The Schedule Dev request body is invalid.", 400)
   try {

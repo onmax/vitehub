@@ -18,7 +18,6 @@ import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { validateWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 
-import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
 import {
   agentInvocationsDevGuard,
   agentInvocationsDevRoute,
@@ -2177,18 +2176,13 @@ async function generateAgentNetlifyFunctionRouteHandler(
   return [
     ...deploymentCatalog.imports,
     ...(options.libsqlState ? [`import { createLibsqlAgentState } from ${JSON.stringify(subpath(agentImportBase, "state/sqlite"))}`] : []),
-    `import { createDiscordGatewayRouteHandler } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
+    `import { createDiscordGatewayRouteHandler, isViteHubBearerSecretEqual } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
     ...workflowRuntime.imports,
     ...workspaceDependencyRuntime.imports,
     ...routeCapabilities.imports,
     "",
     ...workflowRuntime.setup,
     ...workspaceDependencyRuntime.setup,
-    "function bearerToken(value) {",
-    "  const match = /^Bearer\\s+(.+)$/i.exec(value || '')",
-    "  return match?.[1]",
-    "}",
-    "",
     "function routePath(route, values) {",
     "  return route",
     "    .replace(/\\[([^\\]]+)\\]/g, (_, key) => encodeURIComponent(Object.hasOwn(values, key) ? values[key] : ''))",
@@ -2239,7 +2233,7 @@ async function generateAgentNetlifyFunctionRouteHandler(
     "    if (!secret && !localDevelopment) {",
     "      return Response.json({ message: 'Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.', status: 500 }, { status: 500 })",
     "    }",
-    "    if (secret && bearerToken(request.headers.get('authorization')) !== secret) {",
+    "    if (secret && !isViteHubBearerSecretEqual(request.headers.get('authorization'), secret)) {",
     "      return Response.json({ message: 'Unauthorized', status: 401 }, { status: 401 })",
     "    }",
     "    const requestUrl = new URL(request.url)",
@@ -2422,6 +2416,7 @@ async function generateAgentDiscordGatewayRouteHandler(
   return [
     ...deploymentCatalog.imports,
     `import { createDiscordGatewayRouteHandler } from ${JSON.stringify(subpath(agentImportBase, "server"))}`,
+    `import { isViteHubBearerSecretEqual } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
     ...workflowRuntime.imports,
     ...workspaceDependencyRuntime.imports,
     ...routeCapabilities.imports,
@@ -2431,11 +2426,6 @@ async function generateAgentDiscordGatewayRouteHandler(
     ...workspaceDependencyRuntime.setup,
     ...deploymentCatalog.setup,
     ...generatedRuntimeHelpers(),
-    "",
-    "function bearerToken(value) {",
-    "  const match = /^Bearer\\s+(.+)$/i.exec(value || '')",
-    "  return match?.[1]",
-    "}",
     "",
     "function runtimeEnvValue(cloudflare, key) {",
     "  return cloudflare?.env?.[key] ?? (typeof process === 'object' ? process.env[key] : undefined)",
@@ -2459,7 +2449,7 @@ async function generateAgentDiscordGatewayRouteHandler(
     "  if (!secret && !localDevelopment) {",
     "    throw createError({ statusCode: 500, statusMessage: 'Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.' })",
     "  }",
-    "  if (secret && bearerToken(getRequestHeader(event, 'authorization')) !== secret) {",
+    "  if (secret && !isViteHubBearerSecretEqual(getRequestHeader(event, 'authorization'), secret)) {",
     "    throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })",
     "  }",
     "  const agent = getRouterParam(event, 'agent') || (agentNames.length === 1 ? agentNames[0] : undefined)",
@@ -3027,6 +3017,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       server.watcher?.on("add", refreshDiscovery)
       server.watcher?.on("unlink", refreshDiscovery)
       if (agent !== false) {
+        // The Dev Loop runs Agents in this process. Load the Agent runtime with the dev server, not with the Vite config.
+        const { registerAgentInvocationStreamEndpoint } = await import("./vite/invocation-stream-endpoint.ts")
         await registerAgentInvocationStreamEndpoint(server, {
           runtimeCapabilities,
           schedule: hasScheduleVitePlugin(resolved ?? server.config),

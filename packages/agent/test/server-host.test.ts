@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto"
-import { access, chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -896,9 +896,10 @@ describe("GitHub host", () => {
       return "complete"
     })).resolves.toBe("complete")
 
-    await expect(access(checkout)).rejects.toMatchObject({ code: "ENOENT" })
+    expect(await readdir(checkout)).toEqual([])
+    temporaryDirectories.add(checkout)
     await expect(readFile(commandLog, "utf8")).resolves.toContain(
-      "git clone --filter=blob:none --no-checkout -- https://github.com/vite-hub/vitehub.git",
+      "git clone --no-checkout -- https://github.com/vite-hub/vitehub.git",
     )
     await expect(readFile(commandLog, "utf8")).resolves.toContain(
       "fetch --no-tags -- https://github.com/contributor/vitehub.git refs/heads/feature|token",
@@ -917,7 +918,8 @@ describe("GitHub host", () => {
       checkout = checkoutAccess.path
       throw new Error("callback failed")
     })).rejects.toThrow("callback failed")
-    await expect(access(checkout)).rejects.toMatchObject({ code: "ENOENT" })
+    expect(await readdir(checkout)).toEqual([])
+    temporaryDirectories.add(checkout)
   })
 
   it("refreshes credentials for a host-owned pull-request push", async () => {
@@ -980,7 +982,7 @@ describe("GitHub host", () => {
     })
 
     const log = await readFile(commandLog, "utf8")
-    expect(log).toContain("git clone --filter=blob:none --no-checkout -- https://github.com/vite-hub/vitehub.git")
+    expect(log).toContain("git clone --no-checkout -- https://github.com/vite-hub/vitehub.git")
     expect(log).toContain("|base-token")
     expect(log).toContain("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:refs/heads/feature|head-token")
   })
@@ -1030,7 +1032,13 @@ describe("GitHub host", () => {
       number: 125,
       repository: "vite-hub/vitehub",
     }, async () => undefined, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" })
-    expect((await readdir(tmpdir())).filter(path => path.startsWith(prefix) && !before.has(path))).toEqual([])
+    const remaining = (await readdir(tmpdir())).filter(path => path.startsWith(prefix) && !before.has(path))
+    expect(remaining).toHaveLength(1)
+    for (const entry of remaining) {
+      const path = join(tmpdir(), entry)
+      temporaryDirectories.add(path)
+      expect(await readdir(path)).toEqual([])
+    }
   })
 
   it.each(["abort", "timeout"] as const)("cancels the checkout callback on %s", async (control) => {

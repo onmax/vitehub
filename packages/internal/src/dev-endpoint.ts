@@ -1,4 +1,5 @@
 import { redactInspectionText } from "./inspect.ts"
+import { isViteHubSecretEqual } from "./secret.ts"
 
 import type { IncomingMessage, ServerResponse } from "node:http"
 
@@ -37,10 +38,15 @@ export interface ViteHubDevEndpointServer {
 
 export interface ViteHubDevEndpointOptions extends ViteHubDevEndpointGuard {
   /**
-   * Handles a request that passed the route, method, and guard checks.
-   * The handler writes the response.
+   * Owner authorization, for example a dev token check. It runs after the guard checks and before `handle`.
+   * Return a rejection response to stop the request. `handle` gets the grant only when this check passes.
    */
-  handle: (req: IncomingMessage, res: ServerResponse) => void
+  authorize?: (req: IncomingMessage) => Response | undefined | Promise<Response | undefined>
+  /**
+   * Handles a request that passed the route, method, guard, and `authorize` checks.
+   * The handler writes the response. `grant` proves that this request passed these checks.
+   */
+  handle: (req: IncomingMessage, res: ServerResponse, grant: ViteHubDevRequestGrant) => void
   /**
    * Methods that the endpoint accepts. Other methods get `405` before the guard runs.
    * When omitted, the handler checks the method.
@@ -51,6 +57,46 @@ export interface ViteHubDevEndpointOptions extends ViteHubDevEndpointGuard {
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
+}
+
+const viteHubDevRequestGrantBrand: unique symbol = Symbol("vitehub.devRequestGrant")
+
+/**
+ * Proof that one request passed a dev endpoint guard. Only {@link validateViteHubDevRequest} and
+ * {@link validateViteHubNitroDevRequest} create grants. A grant is bound to its request object and is valid only for
+ * that request. Never store a grant.
+ */
+export interface ViteHubDevRequestGrant {
+  readonly [viteHubDevRequestGrantBrand]: true
+  /** Label of the guard that the request passed. */
+  readonly label: string
+}
+
+/** Result of a dev request check: a grant for the request, or the rejection response. */
+export type ViteHubDevRequestCheck =
+  | { readonly grant: ViteHubDevRequestGrant, readonly rejection?: undefined }
+  | { readonly grant?: undefined, readonly rejection: Response }
+
+const devRequestGrants = new WeakMap<ViteHubDevRequestGrant, IncomingMessage | Request>()
+
+function grantDevRequest(request: IncomingMessage | Request, label: string): ViteHubDevRequestCheck {
+  const grant: ViteHubDevRequestGrant = Object.freeze({ [viteHubDevRequestGrantBrand]: true as const, label })
+  devRequestGrants.set(grant, request)
+  return { grant }
+}
+
+function rejectDevRequest(rejection: Response): ViteHubDevRequestCheck {
+  return { rejection }
+}
+
+/**
+ * Checks that `grant` came from a dev request check of `request`. Throws for a missing, forged, or other-request
+ * grant. Call it in the operation that the grant authorizes.
+ */
+export function assertViteHubDevRequestGrant(grant: ViteHubDevRequestGrant, request: IncomingMessage | Request): void {
+  if (devRequestGrants.get(grant) !== request) {
+    throw new TypeError("[vitehub] This dev-only operation requires the grant of a checked dev request.")
+  }
 }
 
 const fileOrExtensionProtocol = /^(?:file|.+-extension):/i
@@ -130,29 +176,27 @@ export function viteHubDevRequestOrigin(server: Pick<ViteHubDevEndpointServer, "
 
 /**
  * Checks the `Host` header, the guard header, the request origin, and the JSON content
- * type of `POST` requests. Returns the rejection response, or `undefined` when the
- * request can continue.
+ * type of `POST` requests. Returns a grant bound to `req`, or the rejection response.
  */
 export function validateViteHubDevRequest(
   server: Pick<ViteHubDevEndpointServer, "config" | "resolvedUrls">,
   req: IncomingMessage,
   guard: ViteHubDevEndpointGuard,
-): Response | undefined {
+): ViteHubDevRequestCheck {
   if (!isViteHubDevHostAllowed(server, req)) {
-    return new Response(`Forbidden ${guard.label} host.`, { status: 403 })
+    return rejectDevRequest(new Response(`Forbidden ${guard.label} host.`, { status: 403 }))
   }
-  if (firstHeader(req.headers[guard.header]) !== guard.headerValue) {
-    return new Response(`Forbidden ${guard.label} request.`, { status: 403 })
+  if (!isViteHubSecretEqual(firstHeader(req.headers[guard.header]), guard.headerValue)) {
+    return rejectDevRequest(new Response(`Forbidden ${guard.label} request.`, { status: 403 }))
   }
   const origin = firstHeader(req.headers.origin)
   if (origin && origin !== viteHubDevRequestOrigin(server, req)) {
-    return new Response(`Forbidden ${guard.label} origin.`, { status: 403 })
+    return rejectDevRequest(new Response(`Forbidden ${guard.label} origin.`, { status: 403 }))
   }
-  if (req.method !== "POST") return
-  const contentType = firstHeader(req.headers["content-type"])
-  if (!contentType?.toLowerCase().startsWith("application/json")) {
-    return new Response(`${guard.label} requests must use application/json.`, { status: 415 })
+  if (req.method === "POST" && !firstHeader(req.headers["content-type"])?.toLowerCase().startsWith("application/json")) {
+    return rejectDevRequest(new Response(`${guard.label} requests must use application/json.`, { status: 415 }))
   }
+  return grantDevRequest(req, guard.label)
 }
 
 export function isViteHubDevRoute(req: IncomingMessage, route: string): boolean {
@@ -202,8 +246,8 @@ async function writeResponse(res: ServerResponse, response: Response, stream = f
  * Registers a guarded dev endpoint on a Vite development server.
  *
  * The middleware skips other routes, rejects methods outside `methods`, and
- * runs {@link validateViteHubDevRequest} before it calls `handle`. Dev
- * endpoints exist only on the development server. They are not an
+ * runs {@link validateViteHubDevRequest} and the optional `authorize` callback before it calls `handle` with the
+ * request grant. Dev endpoints exist only on the development server. They are not an
  * authenticated path to a deployed stage.
  */
 export function registerViteHubDevEndpoint(server: ViteHubDevEndpointServer, options: ViteHubDevEndpointOptions): void {
@@ -216,12 +260,33 @@ export function registerViteHubDevEndpoint(server: ViteHubDevEndpointServer, opt
       void writeResponse(res, new Response("Method not allowed.", { status: 405 }))
       return
     }
-    const blocked = validateViteHubDevRequest(server, req, options)
-    if (blocked) {
-      void writeResponse(res, blocked)
+    const { grant, rejection } = validateViteHubDevRequest(server, req, options)
+    if (!grant) {
+      void writeResponse(res, rejection)
       return
     }
-    options.handle(req, res)
+    const { authorize } = options
+    if (!authorize) {
+      options.handle(req, res, grant)
+      return
+    }
+    let closed = req.aborted || res.destroyed
+    const onAborted = () => { closed = true }
+    const onClose = () => { closed = true }
+    req.once("aborted", onAborted)
+    res.once("close", onClose)
+    void (async () => await authorize(req))()
+      .then((rejected) => {
+        if (rejected) return writeResponse(res, rejected)
+        if (!closed && !res.destroyed) options.handle(req, res, grant)
+      })
+      .catch((error: unknown) => res.headersSent ? undefined : writeResponse(res, Response.json({
+        error: { message: redactInspectionText(`${options.label} request failed: ${error instanceof Error ? error.message : String(error)}`) },
+      }, { status: 500 })))
+      .finally(() => {
+        req.off("aborted", onAborted)
+        res.off("close", onClose)
+      })
   })
 }
 
@@ -310,17 +375,21 @@ async function readRequestBody(req: IncomingMessage): Promise<string> {
 /**
  * Forwards a guarded `POST` from the Vite middleware into the Nitro dev environment.
  *
- * The request goes to `runtimeRoute` under the Nitro `baseURL`, with the JSON body, the JSON content type, and the
- * guard header. The Nitro handler must check the request again with {@link validateViteHubNitroDevRequest}. Returns
- * `501` with a clear message when the Vite process has no Nitro environment. `signal` cancels runtime work when
- * the client disconnects.
+ * `grant` must come from the guard check of `req`, because the forwarded request carries the guard header and the
+ * trusted `runtimeHeaders`. The request goes to `runtimeRoute` under the Nitro `baseURL`, with the JSON body, the JSON
+ * content type, and the guard header. The Nitro handler checks the request again with
+ * {@link validateViteHubNitroDevRequest} and runs its operation only with the grant of that check. Returns `501` with
+ * a clear message when the Vite process has no Nitro environment. `signal` cancels runtime work when the client
+ * disconnects.
  */
 export async function forwardViteHubDevRequestToNitro(
   server: Pick<ViteHubNitroDevServer, "environments">,
   req: IncomingMessage,
+  grant: ViteHubDevRequestGrant,
   options: ViteHubNitroDevForwardOptions,
   signal?: AbortSignal,
 ): Promise<Response> {
+  assertViteHubDevRequestGrant(grant, req)
   const environment = findViteHubNitroDevEnvironment(server)
   if (!environment) return unavailableResponse(options)
   const headers = new Headers(options.runtimeHeaders)
@@ -346,7 +415,7 @@ export async function forwardViteHubDevRequestToNitro(
  * `cache-control: no-store`, and forwarding errors return `500` with credentials redacted.
  */
 export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, options: ViteHubNitroDevEndpointOptions): void {
-  const respond = async (req: IncomingMessage, signal: AbortSignal): Promise<Response> => {
+  const respond = async (req: IncomingMessage, grant: ViteHubDevRequestGrant, signal: AbortSignal): Promise<Response> => {
     if (req.method === "GET") {
       return Response.json(findViteHubNitroDevEnvironment(server)
         ? { root: server.config.root, runtime: "nitro", ...options.discovery }
@@ -354,7 +423,7 @@ export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, o
     }
     const rejected = await options.authorize?.(req)
     if (rejected) return rejected
-    return await forwardViteHubDevRequestToNitro(server, req, options, signal)
+    return await forwardViteHubDevRequestToNitro(server, req, grant, options, signal)
   }
   const write = (res: ServerResponse, response: Response, signal: AbortSignal) => {
     if (signal.aborted || res.destroyed) return response.body?.cancel(signal.reason)
@@ -362,7 +431,7 @@ export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, o
     return writeResponse(res, response, options.streamResponse, signal)
   }
   registerViteHubDevEndpoint(server, {
-    handle: (req, res) => {
+    handle: (req, res, grant) => {
       const controller = new AbortController()
       const abort = () => controller.abort()
       const close = () => {
@@ -371,7 +440,7 @@ export function registerViteHubNitroDevEndpoint(server: ViteHubNitroDevServer, o
       req.once("aborted", abort)
       res.once("close", close)
       if (req.aborted || res.destroyed) abort()
-      respond(req, controller.signal)
+      respond(req, grant, controller.signal)
         .then(response => write(res, response, controller.signal))
         .catch(error => controller.signal.aborted || res.destroyed ? undefined : write(res, Response.json({
           error: { message: redactInspectionText(`${options.label} request failed: ${error instanceof Error ? error.message : String(error)}`) },
@@ -402,28 +471,39 @@ export function isViteHubNitroDevHostAllowed(request: Request): boolean {
   return hostHeaderAllowed(new URL(request.url).host, []) && (host === null || hostHeaderAllowed(host, []))
 }
 
+export interface ViteHubNitroDevRequestGuard extends ViteHubDevEndpointGuard {
+  /**
+   * Owner authorization, for example a dev token check. It runs after the guard checks and before the grant exists.
+   * Return a rejection response to stop the request.
+   */
+  authorize?: (request: Request) => Response | undefined | Promise<Response | undefined>
+}
+
 /**
- * Checks a request inside the Nitro dev handler: the host, the guard header, the request origin, `POST`, and the JSON
- * content type. Returns the rejection response, or `undefined` when the request can continue. The Nitro route exists
- * only in `vite dev`, but it is reachable on the dev server origin, so it checks the same guard as the Vite endpoint.
+ * Checks a request inside the Nitro dev handler: the host, the guard header, the request origin, `POST`, the JSON
+ * content type, and the optional owner `authorize` callback. Returns a grant bound to `request`, or the rejection
+ * response. The Nitro route exists only in `vite dev`, but it is reachable on the dev server origin, so it checks the
+ * same guard as the Vite endpoint.
  */
-export function validateViteHubNitroDevRequest(request: Request, guard: ViteHubDevEndpointGuard): Response | undefined {
+export async function validateViteHubNitroDevRequest(request: Request, guard: ViteHubNitroDevRequestGuard): Promise<ViteHubDevRequestCheck> {
   if (!isViteHubNitroDevHostAllowed(request)) {
-    return new Response(`Forbidden ${guard.label} host.`, { status: 403 })
+    return rejectDevRequest(new Response(`Forbidden ${guard.label} host.`, { status: 403 }))
   }
-  if (request.headers.get(guard.header) !== guard.headerValue) {
-    return new Response(`Forbidden ${guard.label} request.`, { status: 403 })
+  if (!isViteHubSecretEqual(request.headers.get(guard.header), guard.headerValue)) {
+    return rejectDevRequest(new Response(`Forbidden ${guard.label} request.`, { status: 403 }))
   }
   const origin = request.headers.get("origin")
   if (origin && origin !== new URL(request.url).origin) {
-    return new Response(`Forbidden ${guard.label} origin.`, { status: 403 })
+    return rejectDevRequest(new Response(`Forbidden ${guard.label} origin.`, { status: 403 }))
   }
   if (request.method !== "POST") {
-    return new Response("Method not allowed.", { headers: { allow: "POST" }, status: 405 })
+    return rejectDevRequest(new Response("Method not allowed.", { headers: { allow: "POST" }, status: 405 }))
   }
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
-    return new Response(`${guard.label} requests must use application/json.`, { status: 415 })
+    return rejectDevRequest(new Response(`${guard.label} requests must use application/json.`, { status: 415 }))
   }
+  const rejection = await guard.authorize?.(request)
+  return rejection ? rejectDevRequest(rejection) : grantDevRequest(request, guard.label)
 }
 
 export interface ViteHubNitroDevHandlerSource {

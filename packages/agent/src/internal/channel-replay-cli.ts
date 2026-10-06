@@ -1,9 +1,11 @@
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../invocation-stream.ts"
+import { readAgentDevLoopTokenHeaders } from "./agent-info-cli.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 
 interface ChannelReplayCliContext {
   env: NodeJS.ProcessEnv
+  rootDir: string
   stderr: { write: (chunk: string | Uint8Array) => unknown }
   stdout: { write: (chunk: string | Uint8Array) => unknown }
 }
@@ -253,6 +255,12 @@ export async function runAgentChannelReplayCli(
     if (!channel) throw cliError("channels replay requires --channel <name>.")
     const fetchImpl = options.fetch || globalThis.fetch
     const target = replayTarget({ ...parsed, agent }, context.env)
+    if (!target.remote) {
+      const tokenHeaders = await readAgentDevLoopTokenHeaders(target.url, context.rootDir, fetchImpl, AbortSignal.timeout(30_000)).catch(() => {
+        throw cliError(`No Compatible Vite Development Server found at ${new URL(target.url).origin}.`)
+      })
+      for (const [name, value] of Object.entries(tokenHeaders)) target.headers.set(name, value)
+    }
     const description = await sendReplay(target, { channel, describe: true }, fetchImpl)
     if (parsed.help) {
       writeUsage(context, channelReplayQueryHelp(description.query))

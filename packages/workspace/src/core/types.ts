@@ -148,6 +148,12 @@ export interface WorkspaceSyncOptions {
 export interface WorkspaceSessionOptions {
   abortSignal?: AbortSignal
   attach?: boolean
+  /**
+   * Set when the caller owns `target` and deletes it after `close()`.
+   * A hosted Session then leaves the target as it is on close and on failed setup.
+   * It does not restore the Workspace tree or excluded paths there. Commits are unchanged.
+   */
+  disposableTarget?: boolean
   host?: WorkspaceSessionHost
   materializeSources?: false
   onProgress?: (event: WorkspacePrepareSessionProgressEvent) => void | Promise<void>

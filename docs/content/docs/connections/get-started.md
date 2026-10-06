@@ -32,7 +32,7 @@ Set the result as the secret `VITEHUB_CONNECTIONS_KEY` on the host. If the key c
 
 ### Define a Connection
 
-The file name is the Connection name. `google()` adds the `openid` and `email` scopes to show the connected account. Register an OAuth client at the provider with the redirect URI `<origin>/_vitehub/connections/<name>/callback`.
+The file name is the Connection name. `google()` adds the `openid` and `email` scopes to show the connected account. Register an OAuth client at the provider with the redirect URI `<origin>/_vitehub/connections/callback`.
 
 ```ts [server/connections/google.ts]
 import { useServerEnv } from '#vitehub/env/server'

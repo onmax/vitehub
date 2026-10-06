@@ -252,7 +252,8 @@ function renderKvRuntimeModule(file: string, config: false | ResolvedKVModuleOpt
   ]
 
   if (config.store.driver === "cloudflare-kv-binding") {
-    imports.push(`import createDriver from ${JSON.stringify(createImportPath(file, resolvePackageDependency(kvPackageDir, "unstorage/drivers/cloudflare-kv-binding")))}`)
+    // Use the KV package's Cloudflare storage so the local run proves how it resolves the request binding.
+    imports.push(`import { createCloudflareKVStorage } from ${JSON.stringify(createImportPath(file, resolvePackageRuntime(kvPackageDir, "runtime/cloudflare-kv")))}`)
   }
   else if (config.store.driver === "upstash") {
     imports.push(`import createDriver from ${JSON.stringify(createImportPath(file, resolvePackageDependency(kvPackageDir, "unstorage/drivers/upstash")))}`)
@@ -271,7 +272,9 @@ function renderKvRuntimeModule(file: string, config: false | ResolvedKVModuleOpt
     "",
     `const kvConfig = ${JSON.stringify(config, null, 2)}`,
     `const resolvedKvConfig = ${resolvedConfigExpression}`,
-    "const storage = createStorage({ driver: createDriver(resolvedKvConfig.store) })",
+    config.store.driver === "cloudflare-kv-binding"
+      ? "const storage = createCloudflareKVStorage(resolvedKvConfig.store)"
+      : "const storage = createStorage({ driver: createDriver(resolvedKvConfig.store) })",
     "export const kv = {",
     "  async clear(base, options) { return kvResult(\"clear\", \"default\", async () => { await storage.clear(base, options) }) },",
     "  async del(key, options) { return kvResult(\"del\", \"default\", async () => { await storage.removeItem(key, options) }) },",
@@ -1188,13 +1191,14 @@ function renderVercelScheduleWrapper(file: string, scheduleRegistryFile: string,
     `import { waitUntil as vercelWaitUntil } from ${JSON.stringify(createImportPath(file, resolvePackageDependency(queuePackageDir, "@vercel/functions")))}`,
     `import { runWithQueueRuntimeEvent } from ${JSON.stringify(createImportPath(file, resolve(queuePackageDir, "src/internal/runtime/state.ts")))}`,
     `import { executeStaticSchedule } from ${JSON.stringify(createImportPath(file, resolve(schedulePackageDir, "src/runtime/execute.ts")))}`,
+    `import { isScheduleCronAuthorized } from ${JSON.stringify(createImportPath(file, resolve(schedulePackageDir, "src/runtime/static.ts")))}`,
     `import { runWithWorkflowRuntimeEvent } from ${JSON.stringify(createImportPath(file, resolve(workflowPackageDir, "src/runtime/state.ts")))}`,
     `import scheduleRegistry from ${JSON.stringify(createImportPath(file, scheduleRegistryFile))}`,
     "",
     "export default async function scheduleHandler(req, res) {",
     "  const cronSecret = process.env.CRON_SECRET",
     "  const authorization = req.headers?.authorization || req.headers?.Authorization",
-    "  if (cronSecret && authorization !== `Bearer ${cronSecret}`) {",
+    "  if (cronSecret && !isScheduleCronAuthorized(authorization, cronSecret)) {",
     "    res.statusCode = 401",
     "    res.end('Unauthorized.')",
     "    return",

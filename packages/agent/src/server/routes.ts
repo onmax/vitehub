@@ -57,7 +57,7 @@ import { isWorkflowRun } from "../http-response.ts"
 import { messageChannelStateContextKey } from "../internal/channels.ts"
 import { chatFinalReplyContextKey, chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
 import type { ChatFinalReplyMode, ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
-import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl } from "../internal/chat-approvals.ts"
+import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl, withAgentChatApprovalGrant } from "../internal/chat-approvals.ts"
 import { agentChatInvocationIdHeader } from "../internal/routes.ts"
 import { requireAtomicAgentStateQueue } from "../internal/state-queue.ts"
 import { isAmbiguousAgentWorkflowStartFailure } from "../internal/workflow-start.ts"
@@ -1034,9 +1034,19 @@ function webhookConcurrencyFenceKey(concurrencyKey: string): string {
 
 const defaultWebhookQueueRetryMs = 1_000
 const maxWebhookQueueAttempts = 3
-const maxWebhookQueueExecutionMs = 900_000
+const defaultWebhookQueueExecutionMs = 900_000
+const maxWebhookQueueExecutionMs = 2_147_483_647
 const maxWebhookLateReconciliationMs = 60_000
 const webhookLateReconciliationPollMs = 1_000
+
+function webhookQueueExecutionTimeout(agent: unknown, input: unknown): number {
+  const options = getAgentChatOptions(agent)
+  const messages = isRecord(agent) && isRecord(agent.messages) ? agent.messages : undefined
+  const requested = (isRecord(input) ? input.timeout : undefined) ?? options?.timeout ?? messages?.timeout
+  return isRuntimeNumber(requested) && Number.isFinite(requested) && requested > 0 && requested <= maxWebhookQueueExecutionMs
+    ? requested
+    : defaultWebhookQueueExecutionMs
+}
 
 function positiveWebhookConcurrencyLimit(value: number | undefined): number | undefined {
   if (value === undefined) return
@@ -1461,14 +1471,24 @@ async function executeQueuedWebhookDelivery(
   const ownershipAbort = new AbortController()
   let executionTimedOut = false
   let executionTimeoutTimer: ReturnType<typeof setTimeout> | undefined
+  const executionStartedAt = Date.now()
+  let rejectExecutionTimeout!: (reason: unknown) => void
   const executionTimeout = new Promise<never>((_, reject) => {
-    executionTimeoutTimer = setTimeout(() => {
-      executionTimedOut = true
-      const reason = agentDiagnostics.AGENT_R0820({ message: "[vitehub] Queued webhook invocation timed out after 900000ms." })
-      ownershipAbort.abort(reason)
-      reject(reason)
-    }, maxWebhookQueueExecutionMs)
+    rejectExecutionTimeout = reject
   })
+  const expireExecution = (timeoutMs: number) => {
+    executionTimedOut = true
+    const reason = agentDiagnostics.AGENT_R0820({ message: `[vitehub] Queued webhook invocation timed out after ${timeoutMs}ms.` })
+    ownershipAbort.abort(reason)
+    return reason
+  }
+  const armExecutionTimeout = (timeoutMs: number) => {
+    if (executionTimeoutTimer !== undefined) clearTimeout(executionTimeoutTimer)
+    const remainingMs = timeoutMs - (Date.now() - executionStartedAt)
+    if (remainingMs <= 0) throw expireExecution(timeoutMs)
+    executionTimeoutTimer = setTimeout(() => rejectExecutionTimeout(expireExecution(timeoutMs)), remainingMs)
+  }
+  armExecutionTimeout(webhookQueueExecutionTimeout(agent, delivery.invocation?.input))
   const stopHeartbeat = startWebhookQueueHeartbeat(state, delivery, () => {
     ownershipAbort.abort(agentDiagnostics.AGENT_R0777({ message: "[vitehub] Webhook queue lease was lost during Agent execution." }))
   })
@@ -1568,8 +1588,8 @@ async function executeQueuedWebhookDelivery(
     }
     // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
     let invocation = delivery.invocation as PersistedInvocation | undefined
-    if (!invocation) {
-      const resolved = await runWithRuntimeCloudflareEnv(context, async () => {
+    if (!invocation || delivery.rehydrate) {
+      const resolved = await Promise.race([runWithRuntimeCloudflareEnv(context, async () => {
         const match = await findAgentWebhookRegistration(agent, context, request, delivery.webhookId)
         if (!match) throw agentDiagnostics.AGENT_R0779({ message: `[vitehub] Persisted webhook registration "${delivery.webhookId}" no longer exists.` })
         const input = createAgentWebhookTriggerInput(request, match.registration, delivery.request.body)
@@ -1581,7 +1601,7 @@ async function executeQueuedWebhookDelivery(
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
           match.trigger.id,
           input,
-          { verifyWebhook: false },
+          { verifyWebhook: false, queuedInvocation: invocation },
         )
         if (delivery.rehydrate && isResolvedAgentTriggerHandledInvocation(replayed)) {
           throw agentDiagnostics.AGENT_R0780({ message: "[vitehub] Persisted webhook delivery requires rehydration, but its trigger handled the replayed request." })
@@ -1595,7 +1615,7 @@ async function executeQueuedWebhookDelivery(
             : replayed
         await context.flushWaitUntil?.()
         return resolved
-      })
+      }), executionTimeout])
       if (!isResolvedAgentTriggerHandledInvocation(resolved)) {
         if (!resolved.webhook || resolved.webhook.deliveryId !== delivery.deliveryId) {
           throw agentDiagnostics.AGENT_R0782({ message: "[vitehub] Persisted webhook delivery no longer resolves to the same deliveryId." })
@@ -1604,6 +1624,7 @@ async function executeQueuedWebhookDelivery(
       }
     }
     if (invocation) {
+      armExecutionTimeout(webhookQueueExecutionTimeout(agent, invocation.input))
       invocationRunId = invocation.run?.runId
       const baseRunContext = createRuntimeContext(
         request,
@@ -7270,14 +7291,9 @@ export function createChannelChatRouteHandler(
         : undefined
       if (approvalCustody) {
         const authorized = await approvalCustody.authorize(triggerInput.messages)
-        triggerInput = {
-          ...triggerInput,
-          context: {
-            ...triggerInput.context,
-            ...(authorized.approvedTools.length ? { "vitehub.eve.approvedTools": authorized.approvedTools } : {}),
-          },
-          messages: authorized.messages,
-        }
+        // The grant rides on this request's runtime context, not on the Invocation context that hooks can write.
+        context = withAgentChatApprovalGrant(context, authorized.grant)
+        triggerInput = { ...triggerInput, messages: authorized.messages }
       }
       await recordChannelDeliveryEvidence(delivery, {
         type: "accepted",
@@ -7590,7 +7606,7 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
               { ...invocation.webhook, concurrencyLimit },
               webhookState.keyPrefix,
               routeAgentIdentity(handlerOptions)?.name || "agent",
-              !invocation.webhook.rehydrate && isJsonSafe(persistedInvocation) ? persistedInvocation : undefined,
+              isJsonSafe(persistedInvocation) ? persistedInvocation : undefined,
               Boolean(invocation.webhook.rehydrate),
             )
             if (invocation.webhook.busy === "steer") {

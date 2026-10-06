@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ensureWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 
 const modelGenerate = vi.hoisted(() => vi.fn())
 const registry = vi.hoisted((): Record<string, () => Promise<unknown>> => ({}))
@@ -40,6 +40,28 @@ function devRequest(body: unknown, headers: Record<string, string> = { [agentInv
     headers: { "content-type": "application/json", ...headers },
     method: "POST",
   })
+}
+
+const devServerId = "test-server"
+let devRoot = ""
+let devToken = ""
+
+beforeAll(async () => {
+  devRoot = await mkdtemp(join(tmpdir(), "vitehub-agent-dev-token-"))
+  devToken = await ensureWorkspaceDevToken(devRoot, { serverId: devServerId })
+})
+
+afterAll(async () => {
+  await rm(devRoot, { recursive: true, force: true })
+})
+
+function tokenHeaders(token = devToken, serverId = devServerId): Record<string, string> {
+  return { [agentInvocationsDevHeader]: "1", [agentInvocationsDevTokenServerHeader]: serverId, [workspaceDevTokenHeader]: token }
+}
+
+/** Calls the handler as the generated Nitro handler does, with the project root and the server ID. */
+async function cancelRequest(body: unknown, headers: Record<string, string> = tokenHeaders()): Promise<Response> {
+  return await handleAgentInvocationsDevRequest(devRequest(body, headers), { rootDir: devRoot, serverId: devServerId })
 }
 
 async function runningId(invocations: AgentInvocations, runId: string): Promise<string> {
@@ -94,7 +116,7 @@ describe("Agent Invocations Nitro dev handler", () => {
     const failing = { ...healthy, getSummary: vi.fn(async () => { throw new Error("Unavailable journal") }) }
     registry.first = async () => ({ default: defineAgent({ invocations: failing, driver: { run: () => "done" } }) })
     registry.second = async () => ({ default: defineAgent({ invocations: owning, driver: { run: () => "done" } }) })
-    const response = await handleAgentInvocationsDevRequest(devRequest({ id: "healthy-id", operation: "cancel" }))
+    const response = await cancelRequest({ id: "healthy-id", operation: "cancel" })
     expect(response.status).toBe(500)
     expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("Unavailable journal") } })
     expect(owning.cancel).not.toHaveBeenCalled()
@@ -113,7 +135,7 @@ describe("Agent Invocations Nitro dev handler", () => {
     await secondStore.create({ createdAt: timestamp, id, observations: [], status: "running", traceId: "second", updatedAt: timestamp })
     registry.first = async () => ({ default: defineAgent({ invocations: unreadablePosition === "first" ? unreadable : first, driver: { run: () => "done" } }) })
     registry.second = async () => ({ default: defineAgent({ invocations: unreadablePosition === "first" ? first : unreadable, driver: { run: () => "done" } }) })
-    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    const response = await cancelRequest({ id, operation: "cancel" })
     expect(response.status).toBe(500)
     expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("Unavailable journal") } })
     expect((await first.getSummary(id))?.cancelRequestedAt).toBeUndefined()
@@ -131,7 +153,7 @@ describe("Agent Invocations Nitro dev handler", () => {
     await secondStore.create({ createdAt: timestamp, id, observations: [], status: secondStatus, traceId: "second", updatedAt: timestamp })
     registry.first = async () => ({ default: defineAgent({ invocations: first, driver: { run: () => "done" } }) })
     registry.second = async () => ({ default: defineAgent({ invocations: second, driver: { run: () => "done" } }) })
-    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    const response = await cancelRequest({ id, operation: "cancel" })
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ error: { message: expect.stringContaining("multiple Agent invocation journals") } })
     expect((await first.getSummary(id))?.cancelRequestedAt).toBeUndefined()
@@ -146,7 +168,7 @@ describe("Agent Invocations Nitro dev handler", () => {
     const invocations = defineAgentInvocations({ store })
     registry.first = async () => ({ default: defineAgent({ invocations, driver: { run: () => "done" } }) })
     registry.second = async () => ({ default: defineAgent({ invocations, driver: { run: () => "done" } }) })
-    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    const response = await cancelRequest({ id, operation: "cancel" })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ id, outcome: "requested" })
     expect((await invocations.getSummary(id))?.cancelRequestedAt).toEqual(expect.any(String))
@@ -165,27 +187,49 @@ describe("Agent Invocations Nitro dev handler", () => {
     const run = runAgent(agent, runtime("dev-cancel"), { prompt: "Summarize the release." })
     const id = await runningId(invocations, "dev-cancel")
 
-    const response = await handleAgentInvocationsDevRequest(devRequest({ id, operation: "cancel" }))
+    const response = await cancelRequest({ id, operation: "cancel" })
 
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ delivery: "local", id, outcome: "requested", status: "running" })
     await expect(run).rejects.toThrow(`Cancellation was requested for Agent Invocation "${id}"`)
     expect((await invocations.get(id))?.status).toBe("cancelled")
 
-    const missing = await handleAgentInvocationsDevRequest(devRequest({ id: "ainv_missing", operation: "cancel" }))
+    const missing = await cancelRequest({ id: "ainv_missing", operation: "cancel" })
     expect(await missing.json()).toEqual({ id: "ainv_missing", outcome: "not-found" })
   })
 
+  it("rejects a missing, wrong, or other-server token, and every request without a server ID", async () => {
+    const cancel = vi.fn(async (id: string) => ({ id, outcome: "terminal" as const, status: "completed" as const }))
+    const store = createMemoryAgentInvocationStore()
+    const timestamp = new Date().toISOString()
+    await store.create({ createdAt: timestamp, id: "ainv_1", observations: [], status: "completed", traceId: "token", updatedAt: timestamp })
+    registry.owner = async () => ({ default: defineAgent({ invocations: { ...defineAgentInvocations({ store }), cancel }, driver: { run: () => "done" } }) })
+    const body = { id: "ainv_1", operation: "cancel" }
+    const forbidden = [
+      await cancelRequest(body, { [agentInvocationsDevHeader]: "1" }),
+      await cancelRequest(body, tokenHeaders(`${devToken.slice(0, -1)}${devToken.endsWith("0") ? "1" : "0"}`)),
+      await cancelRequest(body, tokenHeaders(devToken, "other-server")),
+      await handleAgentInvocationsDevRequest(devRequest(body, tokenHeaders())),
+      await handleAgentInvocationsDevRequest(devRequest(body, tokenHeaders()), { rootDir: devRoot }),
+    ]
+    for (const response of forbidden) {
+      expect([response.status, await response.text()]).toEqual([403, "Forbidden Agent Invocations Dev token."])
+    }
+    expect(cancel).not.toHaveBeenCalled()
+    expect((await cancelRequest(body)).status).toBe(200)
+    expect(cancel).toHaveBeenCalledWith("ainv_1")
+  })
+
   it("rejects requests without the guard, with an invalid body, or without a journal", async () => {
-    expect((await handleAgentInvocationsDevRequest(devRequest({ id: "ainv_1", operation: "cancel" }, {}))).status).toBe(403)
-    expect((await handleAgentInvocationsDevRequest(devRequest({ id: "ainv_1", operation: "cancel" }, {
-      [agentInvocationsDevHeader]: "1",
+    expect((await cancelRequest({ id: "ainv_1", operation: "cancel" }, {})).status).toBe(403)
+    expect((await cancelRequest({ id: "ainv_1", operation: "cancel" }, {
+      ...tokenHeaders(),
       origin: "https://attacker.example",
-    }))).status).toBe(403)
-    expect((await handleAgentInvocationsDevRequest(devRequest({ operation: "cancel" }))).status).toBe(400)
+    })).status).toBe(403)
+    expect((await cancelRequest({ operation: "cancel" })).status).toBe(400)
 
     registry.plain = async () => ({ default: defineAgent({ driver: modelDriver, name: "plain" }) })
-    const response = await handleAgentInvocationsDevRequest(devRequest({ id: "ainv_1", operation: "cancel" }))
+    const response = await cancelRequest({ id: "ainv_1", operation: "cancel" })
     expect(response.status).toBe(404)
     expect(await response.json()).toEqual({ error: { message: "No Agent invocation journal is configured." } })
   })

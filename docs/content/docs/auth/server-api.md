@@ -14,9 +14,9 @@ icon: i-lucide-code-2
 | `hubAuth` from `@vite-hub/auth/vite` | Register Auth discovery, route exposure, and generated server aliases. |
 | `auth`, `getAuth`, `getAuthForRequest` from `@vite-hub/auth/server` | Access the Better Auth instance from server code. |
 | `handleAuth`, `handleAuthRequest`, `createAuthHandler` from `@vite-hub/auth/server` | Mount or call the Auth handler manually. |
-| `requireAuth` from `@vite-hub/auth/server` | Guard server routes with an Auth Session. |
+| `withAuth` from `@vite-hub/auth/server` | Run a server handler only with an Auth Session. |
 | `requireAuthAccessRoutes` from `@vite-hub/auth/server` | Guard selected configured access routes. |
-| `authorizeRequest` from `@vite-hub/auth/server` | Authorize one resource request with `true` or an `authorize` callback. Never redirects to sign-in. |
+| `withAuthorization` from `@vite-hub/auth/server` | Run a resource handler only after `true` or an `authorize` callback accepts the request. Never redirects to sign-in. |
 | `useUserSession`, `useSession`, `createAuthClient` from `@vite-hub/auth/vue` | Read session state and call Better Auth from Vue. |
 | `authenticated` from `@vite-hub/auth/agent` | Map a Better Auth session into an Agent Invoker. |
 | `getViteHubErrorShape` from `@vite-hub/runtime` | Handle missing authentication and provider failures by stable Auth code. |
@@ -47,6 +47,14 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
+To protect a route, wrap its handler. The guard checks the request first. Your handler runs only when the check passes, and it receives the checked `authorization`. You do not branch on the check result yourself, so a missing `if` cannot run the protected action.
+
+```ts [server/api/profile.get.ts]
+import { withAuth } from '@vite-hub/auth/server'
+
+export default defineEventHandler(withAuth((event, { user }) => ({ id: user.id })))
+```
+
 ## Server helpers
 
 | Helper | Description |
@@ -58,8 +66,10 @@ export default defineEventHandler(async (event) => {
 | `handleAuthRequest(definition, request, runtimeOptions?, event?)` | Handles an Auth request for an explicit Auth Definition. |
 | `createAuthHandler(definition, runtimeOptions?)` | Creates a Better Auth handler from a Definition. |
 | `createAuthAccessHandler(routes, definition?)` | Creates a handler that matches discovered route metadata, then authenticates and runs every matching authorization rule. |
-| `requireAuth(input, definition?)` | Returns `undefined` when a session exists. Otherwise returns an unauthorized or sign-in response. |
-| `authorizeRequest(input, authorize, definition?)` | Returns `undefined` when allowed, JSON `401` without a session, `403` when `authorize` returns `false`, or the callback's `Response`. |
+| `withAuth(handler, definition?)` | Returns a handler that calls `handler(input, authorization)` when a session exists. Otherwise it returns an unauthorized or sign-in response. |
+| `withAuthorization(authorize, handler, definition?)` | Returns a handler that calls `handler(input, authorization)` when allowed. Otherwise it returns JSON `401` without a session, `403` when `authorize` returns `false`, or the callback's `Response`. |
+
+The `authorization` argument is a frozen `{ request, session, user }` object. Only the guard creates it. A caller cannot pass its own value to the returned handler.
 
 ### Authorize access routes
 
@@ -92,7 +102,7 @@ export default defineAuth({
 
 The callback receives the authenticated `user`, `session`, and request. ViteHub does not define an admin role. Map your own role or permission model here.
 
-The same callback signature protects [Blob serve routes](/docs/blob/configure#protect-served-objects) and [Collections](/docs/source/server-api#protect-a-collection). Their generated routes call `authorizeRequest(input, authorize)`. Unlike `requireAuth()`, it does not start a sign-in redirect, so image and fetch requests receive a status code.
+The same callback signature protects [Blob serve routes](/docs/blob/configure#protect-served-objects) and [Collections](/docs/source/server-api#protect-a-collection). Their generated routes wrap the protected read with `withAuthorization(authorize, handler)`. Unlike `withAuth()`, it does not start a sign-in redirect, so image and fetch requests receive a status code.
 
 Generated access middleware calls `createAuthAccessHandler(routes, definition?)`. Manual hosts can use it with a Web `Request` or `{ req: Request }`. Pass `{ route, method?, authorize?: true }` metadata in the same order as the Definition's `access.routes`. A route ending in `/**` matches its base path and descendants. Exact routes match only that path. All matching rules apply, and `authorize: true` requires the corresponding runtime callback. Unmatched requests do not load the Auth Definition or session.
 

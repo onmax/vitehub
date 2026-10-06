@@ -13,16 +13,6 @@ function isDeclarationGroup(value: unknown): value is EnvRuntimeConfigOptions {
     && Reflect.get(Object(value), "kind") !== "env-variable"
 }
 
-function canonicalEnvName(group: string, field: string): string {
-  const parts = (value: string) => value
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean)
-    .map(part => part.toUpperCase())
-  return ["VITEHUB", ...parts(group), ...parts(field)].join("_")
-}
-
 /**
  * Declare the Server Env of built-in Channels and gateway presets used by discovered Agents, before
  * hubEnv() builds the registry. Application declarations win field by field.
@@ -51,7 +41,7 @@ export function agentChannelEnvPlugin(): Plugin {
           const group: EnvRuntimeConfigOptions = { ...existing }
           for (const [field, { names, required, secret }] of Object.entries(fields)) {
             if (group[field] !== undefined) continue
-            group[field] = env({ optional: !required, secret, source: env.source([canonicalEnvName(channel, field), ...names], { skipEmpty: true }) })
+            group[field] = env({ optional: !required, secret, source: env.source(names, { skipEmpty: true }) })
             changed = true
           }
           server[channel] = group

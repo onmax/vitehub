@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { describe, expect, it } from "vitest"
 
 import {
+  groupConsoleSections,
   consoleBuiltinSectionIds,
   consoleSectionDetails,
   consoleSectionRouteName,
@@ -118,5 +119,27 @@ describe("Console section routes", () => {
     expect(client).toContain("subscribeConsoleNavigation(sectionsBase, addContributedRoutes)")
     expect(client).toContain("const name = consoleSectionRouteName(section)")
     expect(client).toContain('return router.resolve(to.fullPath).matched.length > 0 ? to.fullPath : { name: "vitehub-console" }')
+  })
+})
+
+describe("Console section groups", () => {
+  it("groups the rail by purpose, keeps the navigation order, and puts unknown sections last", () => {
+    const ids = ["env", "connections", "agents", "usage", "blob", "databases", "email", "kv", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules", "custom-tool"]
+    const groups = groupConsoleSections(ids.map(id => ({ id }))).map(group => group.map(section => section.id))
+    expect(groups).toEqual([
+      ["agents", "usage"],
+      ["blob", "databases", "kv", "workspaces"],
+      ["sandboxes", "workflows", "queues", "schedules"],
+      ["env", "connections", "email", "rate-limits"],
+      ["custom-tool"],
+    ])
+  })
+
+  it("drops empty groups", () => {
+    expect(groupConsoleSections([{ id: "kv" }, { id: "env" }]).map(group => group.map(section => section.id))).toEqual([["kv"], ["env"]])
+  })
+
+  it("does not read inherited keys as groups", () => {
+    expect(groupConsoleSections([{ id: "constructor" }]).map(group => group.map(section => section.id))).toEqual([["constructor"]])
   })
 })
