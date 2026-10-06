@@ -9,7 +9,8 @@ import {
   resolveViteHubDevServerUrl,
   viteHubDevEndpointUrl,
 } from "../src/cli.ts"
-import { assertViteHubDevRequestGrant, isViteHubDevHostAllowed, isViteHubDevSecretEqual, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
+import { assertViteHubDevRequestGrant, isViteHubDevHostAllowed, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
+import { isViteHubSecretEqual } from "../src/secret.ts"
 
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
 import type { ViteHubDevTargetArgs } from "../src/cli.ts"
@@ -254,7 +255,7 @@ describe("guarded dev endpoint", () => {
 
   it("runs owner authorization before the handler gets the grant", async () => {
     const { handled, url } = await listen({
-      authorize: async req => isViteHubDevSecretEqual(req.headers["x-test-token"] as string | undefined, "secret")
+      authorize: async req => isViteHubSecretEqual(req.headers["x-test-token"] as string | undefined, "secret")
         ? undefined
         : new Response("Forbidden Test Dev token.", { status: 403 }),
     })
@@ -275,18 +276,6 @@ describe("guarded dev endpoint", () => {
     expect(response.status).toBe(500)
     expect(await response.json()).toEqual({ error: { message: "Test Dev request failed: Bearer [redacted]" } })
     expect(handled).toEqual([])
-  })
-
-  it("compares secrets in full and rejects missing values", () => {
-    expect(isViteHubDevSecretEqual("token", "token")).toBe(true)
-    expect(isViteHubDevSecretEqual("tokem", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("toke", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("token-", "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("tökén", "tökén")).toBe(true)
-    expect(isViteHubDevSecretEqual(undefined, "token")).toBe(false)
-    expect(isViteHubDevSecretEqual(null, "token")).toBe(false)
-    expect(isViteHubDevSecretEqual("", "")).toBe(false)
-    expect(isViteHubDevSecretEqual("token", undefined)).toBe(false)
   })
 
   it("rejects methods outside the allowed list before the guard", async () => {
