@@ -5338,6 +5338,8 @@ interface InterruptedChatRecord {
   channelId?: string
   message: ReturnType<Message["toJSON"]>
   placeholderId?: string
+  /** Durable, one-shot replay reservation. It must never expire into another dispatch. */
+  recoveryToken?: string
   runId: string
   startedAt: string
   threadId: string
@@ -5379,6 +5381,9 @@ async function updateInterruptedChatIndex(
   keyPrefix: string,
   update: (records: Record<string, InterruptedChatRecord>) => void | Promise<void>,
 ): Promise<void> {
+  const atomic = requireAtomicAgentStateLock(state)
+  state = atomic.forCacheLocks?.() ?? atomic
+  const mutationState = requireAtomicAgentStateLock(state)
   const key = interruptedChatIndexKey(keyPrefix)
   let lock: Awaited<ReturnType<StateAdapter["acquireLock"]>> | undefined
   for (let attempt = 0; attempt < 50 && !lock; attempt++) {
@@ -5391,8 +5396,10 @@ async function updateInterruptedChatIndex(
     // SAFETY: This private index is written only with InterruptedChatRecord values below.
     const records = isRecord(current) ? { ...current } as Record<string, InterruptedChatRecord> : {}
     await update(records)
-    if (Object.keys(records).length) await state.set(key, records)
-    else await state.delete(key)
+    const committed = await mutationState.mutateWithLock(lock, [Object.keys(records).length
+      ? { type: "set", key, value: records }
+      : { type: "delete", key }])
+    if (!committed) throw new Error("Lost the interrupted chat index lock before committing.")
   }
   finally {
     await state.releaseLock(lock).catch(() => undefined)
@@ -5511,10 +5518,9 @@ async function resumeInterruptedChatInvocation(options: {
   chat: Chat
   chatOptions: AgentChatOptions | undefined
   record: InterruptedChatRecord
-  ownsRecovery: () => boolean
   waitUntil: ViteAgentRouteRuntimeContext["waitUntil"]
 }): Promise<boolean> {
-  const { adapter, agent, agentName, chat, chatOptions, record, waitUntil, ownsRecovery } = options
+  const { adapter, agent, agentName, chat, chatOptions, record, waitUntil } = options
   if (!isRecord(record) || !isRuntimeString(record.threadId) || !isRecord(record.message) || !isRuntimeString(record.message.id)) return false
   // SAFETY: Agent Definitions expose the invocation journal; only its optional summary reader is used.
   const invocations = isRecord(agent) && isRecord(agent.invocations) ? agent.invocations as { getSummary?: (id: string) => unknown } : undefined
@@ -5525,16 +5531,14 @@ async function resumeInterruptedChatInvocation(options: {
   if (isRecord(summary) && summary.status === "completed") return true
   const message = Message.fromJSON(record.message)
   const thread = chat.thread(record.threadId)
-  const exhausted = interruptedChatRetryAttempt(record.message.id) >= 1
+  const exhausted = Boolean(record.recoveryToken) || interruptedChatRetryAttempt(record.message.id) >= 1
   const notice = await interruptedChatFallbackText(chatOptions, thread, message, exhausted ? "exhausted" : "pending")
-  if (!ownsRecovery()) return false
   if (notice) {
     const edited = isRuntimeString(record.placeholderId)
       ? await Promise.resolve(adapter.editMessage(record.threadId, record.placeholderId, notice)).then(() => true, () => false)
       : false
     if (!edited) await thread.post(notice)
   }
-  if (!ownsRecovery()) return false
   if (exhausted) return true
   const retry = Message.fromJSON({
     ...record.message,
@@ -5584,30 +5588,27 @@ async function resumeInterruptedChatInvocations(
     const chat = await createChannelChat(agent, context, registration, adapterName, adapter, chatOptions, handlerOptions, undefined, state)
     await chat.initialize()
     await Promise.all(records.map(async (record) => {
-      // Each replay owns a renewable state lock. A crashed owner leaves the record
-      // intact and its lease expires, so a later startup can recover it.
-      const leaseMs = 60_000
-      const lock = await state.state.acquireLock(`${interruptedChatIndexKey(state.titleKeyPrefix)}:recovery:${record.runId}`, leaseMs)
-      if (!lock) return
-      let ownershipLost = false
-      const stopHeartbeat = startWebhookLockHeartbeat(state.state, lock, leaseMs, () => { ownershipLost = true })
-      try {
-        // Another handler may have finished recovery since the initial scan.
-        const current = await state.state.get<Record<string, InterruptedChatRecord>>(interruptedChatIndexKey(state.titleKeyPrefix))
-        if (current?.[record.runId]?.startedAt !== record.startedAt || ownershipLost) return
-        const accepted = await resumeInterruptedChatInvocation({ adapter, agent, agentName, chat, chatOptions, record, waitUntil: context.waitUntil, ownsRecovery: () => !ownershipLost })
-          .catch(error => console.error("[vitehub] Interrupted chat invocation could not be resumed.", error))
-        if (accepted && !ownershipLost) {
-          await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
-            const currentRecord = current[record.runId]
-            if (isRecord(currentRecord) && currentRecord.startedAt === record.startedAt) delete current[record.runId]
-          })
-        }
-      }
-      finally {
-        stopHeartbeat()
-        await state.state.releaseLock(lock).catch(() => undefined)
-      }
+      // Persist ownership before any Chat side effects. Unlike a renewable lease,
+      // this reservation cannot expire and permit a second dispatch. A startup
+      // that finds a reserved attempt can only report retry exhaustion.
+      const recoveryToken = randomToken()
+      let claimed = false
+      await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
+        const existing = current[record.runId]
+        if (existing?.startedAt !== record.startedAt || existing.recoveryToken !== record.recoveryToken) return
+        current[record.runId] = { ...existing, recoveryToken, startedAt: new Date().toISOString() }
+        claimed = true
+      })
+      if (!claimed) return
+      const accepted = await resumeInterruptedChatInvocation({ adapter, agent, agentName, chat, chatOptions, record, waitUntil: context.waitUntil })
+        .catch(error => console.error("[vitehub] Interrupted chat invocation could not be resumed.", error))
+      await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
+        // The retry's admission or another startup may already own this record.
+        // Check its version inside the same fenced transaction as the mutation.
+        if (current[record.runId]?.recoveryToken !== recoveryToken) return
+        if (accepted) delete current[record.runId]
+        else current[record.runId] = record
+      })
     }))
   }
 }

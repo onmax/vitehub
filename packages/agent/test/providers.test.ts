@@ -13495,7 +13495,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
+  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "expired recovery lease", "claim lease loss", "cleanup lease loss", "replacement recovery owner", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13505,14 +13505,22 @@ describe("server helpers", () => {
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-inline-chat-restart-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const persistenceGate = deferred<void>()
-    const originalSet = state.set.bind(state)
+    const originalMutate = state.mutateWithLock.bind(state)
     let delayedWrite = false
-    const setSpy = vi.spyOn(state, "set").mockImplementation(async (key, value, ttl) => {
-      if (scenario === "slow persistence" && key.endsWith("vitehub:interrupted-chat") && !delayedWrite) {
+    let expireMutation = false
+    let observeMutation: (() => void) | undefined
+    const setSpy = vi.spyOn(state, "mutateWithLock").mockImplementation(async (lock, mutations) => {
+      if (scenario === "slow persistence" && mutations.some(mutation => mutation.key.endsWith("vitehub:interrupted-chat")) && !delayedWrite) {
         delayedWrite = true
         await persistenceGate.promise
       }
-      await originalSet(key, value, ttl)
+      if (expireMutation && mutations.some(mutation => mutation.key.endsWith("vitehub:interrupted-chat") && (scenario === "claim lease loss" || mutation.type === "delete"))) {
+        expireMutation = false
+        await state.forceReleaseLock(lock.threadId)
+      }
+      const committed = await originalMutate(lock, mutations)
+      observeMutation?.()
+      return committed
     })
     const processStartedAt = Date.now()
     const prompts: string[] = []
@@ -13588,15 +13596,25 @@ describe("server helpers", () => {
       const restartNotice = "The server restarted while I was working on this. I'll retry it automatically."
       expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
 
-      if (scenario === "concurrent recovery" || scenario === "index contention") {
-        const indexKey = setSpy.mock.calls.find(([key]) => key.endsWith("vitehub:interrupted-chat"))![0]
+      if (scenario === "concurrent recovery" || scenario === "expired recovery lease" || scenario === "claim lease loss" || scenario === "cleanup lease loss" || scenario === "replacement recovery owner" || scenario === "index contention") {
+        const indexKey = setSpy.mock.calls.flatMap(([, mutations]) => mutations).find(mutation => mutation.key.endsWith("vitehub:interrupted-chat"))!.key
         const originalRecord = await state.get(indexKey)
+        expireMutation = scenario === "claim lease loss" || scenario === "cleanup lease loss"
         const replayGate = deferred<void>()
         const dispatch = vi.spyOn(Chat.prototype, "processMessage").mockImplementation(() => replayGate.promise)
         const initialize = vi.spyOn(Chat.prototype, "initialize")
         const acquire = state.acquireLock.bind(state)
-        const acquireSpy = vi.spyOn(state, "acquireLock").mockImplementation((key, ttl) =>
-          scenario === "index contention" && key === `${indexKey}:lock` ? Promise.resolve(null) : acquire(key, ttl))
+        let replacement: unknown
+        const acquireSpy = vi.spyOn(state, "acquireLock").mockImplementation(async (key, ttl) => {
+          if (scenario === "index contention" && key === `${indexKey}:lock`) return null
+          const lock = await acquire(key, ttl)
+          if (lock && scenario === "replacement recovery owner" && key === `${indexKey}:lock` && dispatch.mock.calls.length) {
+            const current = await state.get<Record<string, Record<string, unknown>>>(indexKey)
+            replacement = Object.fromEntries(Object.entries(current ?? {}).map(([id, record]) => [id, { ...record, recoveryToken: "replacement" }]))
+            await state.set(indexKey, replacement)
+          }
+          return lock
+        })
         const stops: (() => Promise<void>)[] = []
         try {
           for (let index = 0; index < (scenario === "concurrent recovery" ? 2 : 1); index++) {
@@ -13606,10 +13624,36 @@ describe("server helpers", () => {
             }))
           }
           await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(stops.length))
-          await vi.waitFor(() => expect(dispatch).toHaveBeenCalled())
+          if (scenario !== "index contention" && scenario !== "claim lease loss") await vi.waitFor(() => expect(dispatch).toHaveBeenCalled())
           await new Promise(resolveWait => setTimeout(resolveWait, 250))
-          expect(dispatch).toHaveBeenCalledTimes(1)
+          expect(dispatch).toHaveBeenCalledTimes(scenario === "index contention" || scenario === "claim lease loss" ? 0 : 1)
+          if (scenario === "expired recovery lease") {
+            const records = await state.get<Record<string, { runId: string }>>(indexKey)
+            for (const record of Object.values(records ?? {})) await state.forceReleaseLock(`${indexKey}:recovery:${record.runId}`)
+            // A different startup arrives while the original dispatch is still running.
+            // SAFETY: The test Agent supplies the route contract through defineAgent.
+            stops.push(createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+              agentIdentity: { name: "support" }, recoverInterruptedBefore: Date.now() + 1, state, webhookState: state,
+            }))
+            await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(2))
+            await new Promise(resolveWait => setTimeout(resolveWait, 250))
+            expect(dispatch).toHaveBeenCalledTimes(1)
+          }
+          const beforeCleanup = await state.get(indexKey)
+          const cleanupCommitted = deferred<void>()
+          if (scenario === "replacement recovery owner") observeMutation = () => cleanupCommitted.resolve()
           replayGate.resolve()
+          if (scenario === "replacement recovery owner") {
+            await cleanupCommitted.promise
+            expect(replacement).toBeDefined()
+            expect(await state.get(indexKey)).toEqual(replacement)
+            return
+          }
+          if (scenario === "claim lease loss" || scenario === "cleanup lease loss") {
+            await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.some(value => value instanceof Error && value.message.includes("Lost the interrupted chat index lock")))).toBe(true))
+            expect(await state.get(indexKey)).toEqual(scenario === "claim lease loss" ? originalRecord : beforeCleanup)
+            return
+          }
           if (scenario === "index contention") {
             await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.some(value => value instanceof Error && value.message.includes("interrupted chat index lock")))).toBe(true), { timeout: 8_000 })
             expect(await state.get(indexKey)).toEqual(originalRecord)
