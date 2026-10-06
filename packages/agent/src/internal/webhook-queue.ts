@@ -24,6 +24,8 @@ export interface AgentWebhookQueueDelivery {
   }
   scope: string
   webhookId: string
+  /** A terminal failure notification waiting to be delivered after a worker restart. */
+  failure?: { error: string, attempts: number }
 }
 
 export interface AgentWebhookQueueLease extends AgentWebhookQueueDelivery {
@@ -36,6 +38,7 @@ export interface AgentWebhookQueueStateAdapter extends StateAdapter {
   claimWebhookDelivery(scope: string): Promise<AgentWebhookQueueLease | null>
   claimWebhookSteering(delivery: AgentWebhookQueueDelivery, leaseToken: string, leaseExpiresAt: number): Promise<boolean>
   completeWebhookDelivery(scope: string, deliveryId: string, leaseToken: string): Promise<boolean>
+  markWebhookDeliveryFailure?: (scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }) => Promise<boolean>
   enqueueWebhookDelivery(delivery: AgentWebhookQueueDelivery): Promise<boolean>
   extendWebhookDeliveryLease(scope: string, deliveryId: string, leaseToken: string, ttlMs: number): Promise<boolean>
   retryWebhookDelivery(scope: string, deliveryId: string, leaseToken: string, availableAt: number, options?: { incrementAttempts?: boolean }): Promise<boolean>

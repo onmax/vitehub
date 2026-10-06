@@ -1482,6 +1482,26 @@ async function notifyQueuedWebhookFailure(
   }
 }
 
+async function deliverQueuedWebhookFailure(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  state: AgentWebhookQueueStateAdapter,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  delivery: AgentWebhookQueueLease,
+  error: unknown,
+  attempts: number,
+  invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
+): Promise<boolean> {
+  const failure = { error: error instanceof Error ? error.message : String(error), attempts }
+  if (state.markWebhookDeliveryFailure) {
+    if (!await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
+    await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+    return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+  }
+  if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
+  await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+  return true
+}
+
 async function executeQueuedWebhookDelivery(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   state: AgentWebhookQueueStateAdapter,
@@ -1491,6 +1511,12 @@ async function executeQueuedWebhookDelivery(
   handlerOptions: AgentChannelWebhookRouteOptions,
   lifecycleSignal: AbortSignal,
 ): Promise<number | undefined> {
+  if (delivery.failure) {
+    const error = new Error(delivery.failure.error)
+    await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)
+    await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+    return
+  }
   const steeringClaim = await state.get(webhookOwnershipKey(delivery.scope, "steer", delivery.deliveryId))
   if (steeringClaim === "invalid-state" || steeringClaim === "steered") {
     await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
@@ -1504,7 +1530,7 @@ async function executeQueuedWebhookDelivery(
   }
   if (delivery.attempts >= maxWebhookQueueAttempts) {
     const channelDelivery = delivery.channelDeliveryId ? await resumeAgentChannelDelivery(state, delivery.channelDeliveryId) : undefined
-    if (await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
+    if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(`[vitehub] Queued webhook delivery exhausted ${maxWebhookQueueAttempts} execution leases.`), delivery.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)) {
       await channelDelivery
         ?.event({
           attempt: delivery.attempts,
@@ -1515,15 +1541,6 @@ async function executeQueuedWebhookDelivery(
         })
         .catch(() => undefined)
       console.error(`[vitehub] Queued webhook delivery "${delivery.deliveryId}" exhausted ${maxWebhookQueueAttempts} execution leases and will not be retried.`)
-      await notifyQueuedWebhookFailure(
-        agent,
-        handlerOptions,
-        delivery,
-        new Error(`[vitehub] Queued webhook delivery exhausted ${maxWebhookQueueAttempts} execution leases.`),
-        delivery.attempts,
-        // SAFETY: The queue persists this value from the asserted route contract.
-        delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
-      )
     }
     return
   }
@@ -1852,7 +1869,8 @@ async function executeQueuedWebhookDelivery(
       return
     }
     if (executionTimedOut || (!lifecycleSignal.aborted && delivery.attempts + 1 >= maxWebhookQueueAttempts)) {
-      if (await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
+      const run = failedInvocation?.run ?? (invocationRunId ? { runId: invocationRunId } : undefined)
+      if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, error, delivery.attempts + 1, { ...failedInvocation, ...(run ? { run } : {}) })) {
         if (channelDelivery)
           await settleChannelDeliveryInvocation(channelDelivery, "failed", "failed", {
             attempt: delivery.attempts + 1,
@@ -1865,8 +1883,6 @@ async function executeQueuedWebhookDelivery(
           `[vitehub] Queued webhook delivery "${delivery.deliveryId}" failed after ${maxWebhookQueueAttempts} attempts and will not be retried.`,
           error,
         )
-        const run = failedInvocation?.run ?? (invocationRunId ? { runId: invocationRunId } : undefined)
-        await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.attempts + 1, { ...failedInvocation, ...(run ? { run } : {}) })
       }
       return
     }
@@ -4578,6 +4594,7 @@ function chatErrorHookArgs(
   abortSignal?: AbortSignal,
   onPost?: () => void,
   invocation?: AgentInvocationReference,
+  errorConsoleLink = false,
 ): AgentChatErrorHookArgs<ViteAgentRouteRuntimeConfig> {
   const inputMessage = input?.messages.at(-1)
   // SAFETY: The surrounding route guards establish this record shape before the value crosses the internal boundary.
@@ -4596,8 +4613,15 @@ function chatErrorHookArgs(
     toolResults: [...toolResults],
     thread: {
       post: async (postedMessage) => {
+        const consoleUrl = errorConsoleLink ? invocation?.consoleUrl : undefined
+        const posted = postedMessage as AgentChatMessage
+        const message = consoleUrl && isRuntimeString(postedMessage) && !postedMessage.includes(consoleUrl)
+          ? `${postedMessage}\n\nDetails: ${consoleUrl}`
+          : consoleUrl && isTextChatMessage(posted) && !posted.text.includes(consoleUrl)
+            ? { ...posted, text: `${posted.text}\n\nDetails: ${consoleUrl}` }
+            : postedMessage
         // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
-        await postChatMessage(thread, postedMessage as AgentChatMessage, abortSignal)
+        await postChatMessage(thread, message as AgentChatMessage, abortSignal)
         // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
         onPost?.()
       },
@@ -4756,7 +4780,7 @@ export async function postChatErrorFallback(
     chatErrorHookArgs(thread, message, input, run, error, toolResults, fallbackResolutionAbort?.signal, () => {
       callbackDelivered = true
       resolveCallbackDelivery?.()
-    }, invocation),
+    }, invocation, options?.errorConsoleLink),
     () => callbackDelivered,
     (resolution) => enforceChatInvocationTimeout(resolution, fallbackResolutionTimeout, fallbackResolutionAbort),
   )
