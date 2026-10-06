@@ -10985,7 +10985,13 @@ describe("server helpers", () => {
     }
   })
 
-  it("expires a queued webhook invocation that exceeds the execution deadline", async () => {
+  it.each([
+    { timeout: undefined, inputTimeout: undefined, deadline: 900_000 },
+    { timeout: 1_800_000, inputTimeout: undefined, deadline: 1_800_000 },
+    { timeout: 1_800_000, inputTimeout: 1_200_000, deadline: 1_200_000 },
+    { timeout: 2_147_483_648, inputTimeout: undefined, deadline: 900_000 },
+    { timeout: 1_800_000, inputTimeout: 2_147_483_648, deadline: 900_000 },
+  ])("expires a queued webhook invocation at its configured deadline $deadline", async ({ timeout, inputTimeout, deadline }) => {
     vi.useFakeTimers()
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
@@ -11000,7 +11006,7 @@ describe("server helpers", () => {
         input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
       })
     })
-    const agent = defineAgent({ driver: { run } })
+    const agent = defineAgent({ driver: { run }, messages: timeout === undefined ? undefined : { timeout } })
     await state.connect()
     await state.enqueueWebhookDelivery({
       concurrencyKey: "review:timeout",
@@ -11008,7 +11014,7 @@ describe("server helpers", () => {
       concurrencyLimit: 1,
       deliveryId: "delivery-execution-timeout",
       enqueuedAt: Date.now(),
-      invocation: { input: { prompt: "persisted" } },
+      invocation: { input: { prompt: "persisted", timeout: inputTimeout } },
       leaseTtlMs: 3_600_000,
       request: { body: "{}", headers: {}, method: "POST", url: "https://example.com" },
       scope: "webhook:review:github:timeout:",
@@ -11022,9 +11028,100 @@ describe("server helpers", () => {
 
     try {
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
-      await vi.advanceTimersByTimeAsync(900_000)
+      await vi.advanceTimersByTimeAsync(899_000)
+      expect(complete).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1_000)
+      if (deadline > 900_000) {
+        expect(complete).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(deadline - 900_000)
+      }
       await vi.waitFor(() => expect(complete).toHaveBeenCalled())
       expect(retry).not.toHaveBeenCalled()
+    } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    { rehydrate: true, deadline: 1_800_000, setupMs: 60_000 },
+    { rehydrate: true, deadline: 120_000, setupMs: 60_000 },
+    { rehydrate: false, deadline: 1_800_000, setupMs: 60_000 },
+    { rehydrate: false, deadline: 120_000, setupMs: 60_000 },
+    { rehydrate: true, deadline: 30_000, setupMs: 60_000 },
+  ])("honors replayed webhook timeout $deadline after $setupMs setup (rehydrate: $rehydrate)", async ({ rehydrate, deadline, setupMs }) => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-replay-timeout-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    let replayStartedAt = 0
+    const replay = () => {
+      replayStartedAt = Date.now()
+      vi.setSystemTime(replayStartedAt + setupMs)
+      return {
+        input: { prompt: "fresh", timeout: deadline },
+        webhook: { concurrencyLimit: 1, deliveryId: "delivery-replay-timeout" },
+      }
+    }
+    const run = vi.fn(async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
+      await new Promise<never>((_resolve, reject) => {
+        input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
+      })
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              invoke: () => rehydrate
+                ? { input: { prompt: "stale" }, webhook: { concurrencyLimit: 1, deliveryId: "delivery-replay-timeout", rehydrate: replay } }
+                : replay(),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    await state.connect()
+    await state.enqueueWebhookDelivery({
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: "delivery-replay-timeout",
+      enqueuedAt: Date.now(),
+      leaseTtlMs: 3_600_000,
+      ...(rehydrate ? { rehydrate: true as const } : {}),
+      request: {
+        body: "{}",
+        headers: { "content-type": "application/json", "x-github-event": "pull_request", "x-github-delivery": "delivery-replay-timeout" },
+        method: "POST",
+        url: "https://example.com/api/github/webhook",
+      },
+      scope: "webhook:review:github:replay-timeout:",
+      webhookId: "github",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const stop = createChannelWebhookRouteHandler(agent as never).resume({ agentName: "review", webhookState: state })
+    try {
+      if (deadline > setupMs) {
+        await vi.waitFor(() => expect(run).toHaveBeenCalledOnce())
+        await vi.advanceTimersByTimeAsync(replayStartedAt + deadline - Date.now() - 1_000)
+        expect(complete).not.toHaveBeenCalled()
+        await vi.advanceTimersByTimeAsync(1_000)
+      }
+      await vi.waitFor(() => expect(complete).toHaveBeenCalled())
+      if (deadline <= setupMs) expect(run).not.toHaveBeenCalled()
+      expect(retry).not.toHaveBeenCalled()
+      expect(consoleError.mock.calls.flat().map(String).join(" ")).toContain(`timed out after ${deadline}ms`)
     } finally {
       await stop()
       await state.disconnect()

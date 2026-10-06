@@ -202,8 +202,8 @@ export const defaultAgentProviderPermissions: AgentProviderPermissions = "ask"
 
 function normalizeProviderPermissions(value: unknown): AgentProviderPermissions {
   if (value === undefined) return defaultAgentProviderPermissions
-  if (value !== "ask" && value !== "allow-edits" && value !== "allow-all") {
-    throw agentDiagnostics.AGENT_R0470({ message: '[vitehub] defineAgent({ driver.permissions }) must be "ask", "allow-edits", or "allow-all".' })
+  if (value !== "ask" && value !== "allow-edits" && value !== "allow-edits-unattended" && value !== "allow-all") {
+    throw agentDiagnostics.AGENT_R0470({ message: '[vitehub] defineAgent({ driver.permissions }) must be "ask", "allow-edits", "allow-edits-unattended", or "allow-all".' })
   }
   return value
 }

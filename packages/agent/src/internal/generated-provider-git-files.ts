@@ -13,8 +13,6 @@ export async function protectGeneratedProviderGitFiles(root: string, paths: read
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_LITERAL_PATHSPECS: "1" },
   })).stdout
   const top = (await git(["rev-parse", "--show-toplevel"])).trim()
-  // Pooled checkouts are handed out through descriptor-anchored paths, which
-  // Git reports by their real location; compare the directories, not strings.
   if (await realpath(top) !== await realpath(root)) throw new Error("Generated provider files require the pull request repository root.")
   const names = [...new Set(paths.map(path => relative(root, path).replaceAll("\\", "/")))]
   if (names.some(name => /[\r\n]/.test(name))) throw new Error("Generated provider Git paths must not contain line breaks.")
