@@ -5,6 +5,9 @@
     "rootDir": "..",
     "baseUrl": "../..",
     "paths": {
+      "@vite-hub/runtime/internal/grant": [
+        "packages/runtime/src/internal/grant.ts"
+      ],
       "@vite-hub/internal/*": [
         "packages/internal/src/*.ts"
       ],

@@ -1726,6 +1726,13 @@ describe("agent Vite plugin", () => {
     expect(() => configHook.call({} as never, config, { command: "build", mode: "production" })).not.toThrow()
   })
 
+  it("registers the development invocation route next to the Console page and an application fallback", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const handlers = [{ route: "/_vitehub/**", handler: "/console/page.get.js" }, { route: "/**", handler: "/app/fallback.ts" }]
+    const result = await resolveAgentViteConfig(hubAgent({}), { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot, nitro: { handlers } }, { command: "serve", mode: "development" })
+    expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([...handlers, expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
+  })
+
   it.each([
     { version: 2, file: "routes/_vitehub/agent/invocations/dev.ts", command: "serve", conflict: true },
     { version: 3, file: "routes/_vitehub/agent/invocations/dev.ts", command: "serve", conflict: true },

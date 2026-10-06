@@ -21,6 +21,7 @@ import { validateWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenSe
 import {
   agentInvocationsDevGuard,
   agentInvocationsDevRoute,
+  agentInvocationsDevRuntimeNamespace,
   agentInvocationsDevRuntimeRoute,
   agentInvocationsDevRuntimeUnavailableCode,
   agentInvocationsDevRuntimeUnavailableMessage,
@@ -861,7 +862,7 @@ function guardAgentDevelopmentRoutes(nitro: NitroConfig, handlers: Array<{ route
         runtime.hooks.hook("build:before", () => {
           const scanned = runtime.scannedHandlers.flatMap(handler =>
             hasRuntimeType(handler.route, "string") ? [{ route: handler.route, middleware: handler.middleware }] : [])
-          for (const handler of handlers) validateAgentStaticRoute(handler.route, scanned, "development invocation")
+          for (const handler of handlers) validateAgentStaticRoute(handler.route, scanned, "development invocation", agentInvocationsDevRuntimeNamespace)
         })
       },
     }],
@@ -3342,7 +3343,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             ...routes,
             ...nitroHandlers,
             ...devNitroHandlers.filter(candidate => candidate !== handler),
-          ], "development invocation")
+          ], "development invocation", agentInvocationsDevRuntimeNamespace)
         }
       }
       const mergedAgentNitro = (nitroContext ? mergeAgentNitroExternals : cloneNitroConfig)(mergeNitroPlugins(

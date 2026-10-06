@@ -157,6 +157,30 @@ details. Never put secrets in those fields; keep raw provider failures in `cause
 A `cause` is excluded from `toJSON()`, but remains available to code and loggers
 that inspect the Error instance.
 
+### Grants
+
+ViteHub packages use `defineGrant()` from the internal `@vite-hub/runtime/internal/grant` entry. It is not a public API. A grant connects a check to the sensitive action that it guards: the check issues a frozen grant, and the action requires the grant and verifies it at runtime.
+
+```ts
+const sourceWrite = defineGrant("vitehub.workspace.source-write", (path: string) => path)
+
+export function checkSourceWrite(path: string) {
+  // ...the owner check...
+  return sourceWrite.issue(path)
+}
+
+export function writeSource(grant: ReturnType<typeof checkSourceWrite>, data: string) {
+  const path = sourceWrite.verify(grant)
+  // ...write `data` to `path`...
+}
+```
+
+- Keep the definition module-private. Only the module that owns the check issues grants.
+- Bind the grant to what it authorizes, for example a path, a tool call, or a request. The second argument of `defineGrant()` copies or freezes that value.
+- `verify()` returns the bound value or throws a `ViteHubError` with code `GRANT_REQUIRED`. `check()` returns `undefined` instead; use `isValid()` when a bound value may itself be `undefined`. `consume()` makes a grant single-use. `attach(owner, grant)` and `attached(owner)` keep a grant with a request or context object.
+- Each definition has its own registry. A grant from another definition, another bundled copy of the package, or a forged object fails closed. The kind string brands the grant type, so use a unique `vitehub.<package>.<name>` kind.
+- Grants are request-scoped. Never persist one. Durable or resumed work must run the check again.
+
 ### Developer diagnostics
 
 Runtime-owned API and contract defects use Nostics diagnostics with stable `RUNTIME_R####` codes. Expected portable failures keep the `ViteHubError` public contract. See [Errors and diagnostics](https://vitehub.dev/docs/reference/errors-diagnostics).

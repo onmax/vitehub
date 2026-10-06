@@ -1,7 +1,9 @@
+import { defineGrant } from "@vite-hub/runtime/internal/grant";
+
 import { envBridgeError } from "../bridge-error.ts";
 import type { EnvAccessContext, EnvAccessScope, EnvActor, EnvBridge, EnvPermission } from "../bridge.ts";
 
-/** Marks the type of contexts that Env creates. The bridge trusts only `authorities`, not this marker. */
+/** Marks the type of contexts that Env creates. The bridge trusts only the `envAccess` grant registry, not this marker. */
 export const envAccessGrant: unique symbol = Symbol("vitehub.env.access-grant");
 
 export type EnvKeyPermission = EnvPermission | "activity";
@@ -17,7 +19,10 @@ export interface EnvAttribution {
   invocationId?: string;
 }
 
-const authorities = new WeakMap<object, EnvAuthority>();
+const envAccess = defineGrant("vitehub.env.access", (authority: EnvAuthority): EnvAuthority =>
+  authority.kind === "key"
+    ? Object.freeze({ ...authority, permissions: Object.freeze([...authority.permissions]) })
+    : Object.freeze({ ...authority }));
 
 export function envIdentifier(value: string): void {
   // eslint-disable-next-line no-control-regex
@@ -40,7 +45,7 @@ export function grantEnvAccess(
     authority.kind === "actor" && authority.scope
       ? Object.freeze(authority.scope.map((grant) => Object.freeze({ key: grant.key, permissions: Object.freeze([...grant.permissions]) })))
       : undefined;
-  const context: EnvAccessContext = Object.freeze({
+  return envAccess.issue({ ...authority, ...(scope ? { scope } : {}) }, {
     [envAccessGrant]: true as const,
     actor: Object.freeze({ id: attribution.actor.id, kind: attribution.actor.kind }),
     ...(authority.kind === "admin" ? { admin: true as const } : {}),
@@ -48,18 +53,11 @@ export function grantEnvAccess(
     ...(attribution.traceId ? { traceId: attribution.traceId } : {}),
     ...(attribution.invocationId ? { invocationId: attribution.invocationId } : {}),
   });
-  authorities.set(
-    context,
-    authority.kind === "key"
-      ? Object.freeze({ ...authority, permissions: Object.freeze([...authority.permissions]) })
-      : Object.freeze({ ...authority, ...(scope ? { scope } : {}) }),
-  );
-  return context;
 }
 
 /** Return the authority that Env recorded. A context that Env did not create fails closed. */
 export function envAccessAuthority(context: EnvAccessContext): EnvAuthority {
-  const authority = authorities.get(context);
+  const authority = envAccess.check(context);
   if (!authority) throw envBridgeError("untrusted");
   return authority;
 }
