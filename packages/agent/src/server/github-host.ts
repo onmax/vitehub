@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { lstat, mkdtemp, readdir, realpath, rename } from "node:fs/promises"
+import { lstat, mkdtemp, readdir, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
@@ -729,36 +729,37 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     const cleanupCheckout = async () => {
       const parent = dirname(checkout)
-      const claim = `${checkout}.cleanup-${process.pid}-${Date.now()}`
-      let candidate: string | undefined
-      if (await isCheckout(checkout)) candidate = checkout
-      else {
-        for (const entry of await readdir(parent)) {
-          const path = join(parent, entry)
-          if (await isCheckout(path)) {
-            candidate = path
-            break
+      // Candidate paths are only hints. The worker pins its cwd first, then
+      // validates that inode before touching any contents. Do not rename a
+      // candidate: it may have been replaced since discovery.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const candidates = [checkout, ...(await readdir(parent)).map(entry => join(parent, entry))]
+        for (const candidate of candidates) {
+          if (!await isCheckout(candidate)) continue
+          try {
+            const result = await exec(process.execPath, ["--input-type=module", "--eval", `
+              import { lstat, readdir, rm } from "node:fs/promises"
+              const info = await lstat(".", { bigint: true })
+              if (String(info.dev) === process.argv[1] && String(info.ino) === process.argv[2]) {
+                for (const entry of await readdir(".")) {
+                  await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
+                }
+                process.stdout.write("cleaned")
+              }
+            `, String(checkoutIdentity.dev), String(checkoutIdentity.ino)], { cwd: candidate, maxBuffer })
+            // Retain the empty inode. Node has no inode-conditional rmdir;
+            // removing its pathname could delete an empty replacement.
+            if (result.stdout === "cleaned") return
+          }
+          catch (error) {
+            // A move before cwd resolution needs another discovery pass.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
           }
         }
       }
-      if (!candidate) return
-      try {
-        await rename(candidate, claim)
-      }
-      catch {
-        return
-      }
-      if (await isCheckout(claim)) {
-        // Keep the recursive deletion attached to the claimed directory inode.
-        // A pathname-based rm can delete a replacement created after the
-        // identity check. The child process keeps this inode as its cwd even
-        // if the claim is renamed while its contents are being removed.
-        await exec(process.execPath, ["-e", `
-          const { readdir, rm } = await import("node:fs/promises")
-          for (const entry of await readdir(".")) await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
-        `], { cwd: claim, maxBuffer })
-      }
+      throw new Error(`[vitehub] Could not locate disposable checkout for cleanup: ${checkout}`)
     }
+
     const operation = controlledOperation(options)
     try {
       const baseAuth = await access({

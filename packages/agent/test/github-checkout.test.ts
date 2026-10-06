@@ -1,15 +1,22 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, expect, it, vi } from 'vitest'
 import { createGitHubHost, prepareGitHubPullRequestWorkspace } from '../src/server/github.ts'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...original, lstat: vi.fn(original.lstat) }
+})
+
 const exec = promisify(execFile)
 const roots: string[] = []
 afterEach(async () => {
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 const git = async (cwd: string, ...args: string[]) => (await exec('git', args, { cwd })).stdout.trim()
@@ -174,6 +181,31 @@ process.exit(result.status ?? 1);
     await writeFile(join(checkout.path, 'replacement'), 'preserve\n')
   })
   expect(await readFile(join(replacement!, 'replacement'), 'utf8')).toBe('preserve\n')
-  await rm(replacement!, { recursive: true, force: true })
+  roots.push(replacement!, `${replacement!}-moved`)
+  expect(await readdir(`${replacement!}-moved`)).toEqual([])
+
+  // Swap the candidate after the parent receives its matching identity, but
+  // before the worker resolves cwd. The replacement must stay at its path,
+  // and rediscovery must still clean the moved checkout.
+  const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  let raced = false
+  let candidate = ''
+  await host.withPullRequestCheckout({ repository: pr.repository, number: 127, headSha: baseHead }, async checkout => {
+    candidate = checkout.path
+    roots.push(candidate, `${candidate}-moved`)
+    vi.mocked(fs.lstat).mockImplementation(async (path, options) => {
+      const identity = await original.lstat(path, options)
+      if (!raced && path === candidate) {
+        raced = true
+        await rename(candidate, `${candidate}-moved`)
+        await mkdir(candidate)
+        await writeFile(join(candidate, 'replacement'), 'preserve')
+      }
+      return identity
+    })
+  })
+  expect(raced).toBe(true)
+  expect(await readFile(join(candidate, 'replacement'), 'utf8')).toBe('preserve')
+  expect(await readdir(`${candidate}-moved`)).toEqual([])
 
 }, 30_000)
