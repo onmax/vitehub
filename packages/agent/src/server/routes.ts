@@ -1517,14 +1517,31 @@ async function executeQueuedWebhookDelivery(
     // Keep the recovered terminal notification fenced while the callback runs. A callback
     // may outlive the normal queue lease, and an expired lease would let another worker
     // claim and invoke the once-per-delivery notification concurrently.
-    const stopHeartbeat = startWebhookQueueHeartbeat(state, delivery, () => undefined)
+    let leaseLost = false
+    let rejectLeaseLost!: (reason: unknown) => void
+    const leaseLostSignal = new Promise<never>((_, reject) => {
+      rejectLeaseLost = reject
+    })
+    const stopHeartbeat = startWebhookQueueHeartbeat(state, delivery, () => {
+      leaseLost = true
+      rejectLeaseLost(agentDiagnostics.AGENT_R0783({ message: "[vitehub] Recovered webhook failure notification lost its lease." }))
+    })
     try {
-      await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)
+      // SAFETY: The queue persists invocation input and run metadata from this route contract.
+      const recoveredInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
+      const notification = notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, recoveredInvocation)
+      await Promise.race([notification, leaseLostSignal])
+      if (leaseLost) return
+      if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
+        throw agentDiagnostics.AGENT_R0783({ message: "[vitehub] Recovered webhook failure notification lost its lease before completion." })
+      }
+    }
+    catch (notificationError) {
+      if (!leaseLost) throw notificationError
     }
     finally {
       stopHeartbeat()
     }
-    await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
     return
   }
   const steeringClaim = await state.get(webhookOwnershipKey(delivery.scope, "steer", delivery.deliveryId))
