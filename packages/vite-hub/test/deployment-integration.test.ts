@@ -185,7 +185,7 @@ describe("built-in deployment preset integration", () => {
         env: {
           server: {
             nested: {
-              required: env({ secret: true, source: env.source("VITEHUB_TOKEN") }),
+              required: env({ secret: true, source: env.source("VITEHUB_NESTED_REQUIRED") }),
               optional: env({ optional: true, secret: true, source: env.source("OPTIONAL_TOKEN") }),
               alternatives: env({ secret: true, source: env.source(["PRIMARY_TOKEN", "FALLBACK_TOKEN"]) }),
               external: env({ secret: true, source: env.provider("credentials", "github/token") }),
@@ -206,7 +206,7 @@ describe("built-in deployment preset integration", () => {
 
       expect((config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
-      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["APP_SECRET", "VITEHUB_TOKEN"])
+      }).nitro?.cloudflare?.wrangler?.secrets?.required).toEqual(["APP_SECRET", "VITEHUB_NESTED_REQUIRED"])
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -284,7 +284,7 @@ describe("built-in deployment preset integration", () => {
       expect(description).toContain("env.server.telegram.botToken")
 
       const renamed = await resolve({ telegram: { botToken: env({ secret: true, source: env.source("TELEGRAM_TOKEN") }) } })
-      expect(requiredSecrets(renamed)).toEqual(["TELEGRAM_TOKEN"])
+      expect(requiredSecrets(renamed)).toBeUndefined()
 
       await writeFile(join(root, "server", "agents", "support.ts"), [
         `import { defineAgent } from "vite-hub/agent"`,
@@ -538,7 +538,7 @@ describe("built-in deployment preset integration", () => {
     }
   }, 300_000)
 
-  it("emits prefixed secrets from a standalone Env plugin through Nitro", async () => {
+  it("omits fallback secret names from a standalone Env plugin with a custom prefix through Nitro", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-prefixed-standalone-secrets-build-"))
     try {
       await mkdir(join(root, "server", "routes"), { recursive: true })
@@ -555,7 +555,8 @@ describe("built-in deployment preset integration", () => {
       await builder.buildApp()
 
       const wrangler: unknown = JSON.parse(await readFile(join(root, ".output", "server", "wrangler.json"), "utf8"))
-      expect(wrangler).toMatchObject({ secrets: { required: ["APP_TOKEN"] } })
+      // Either APP_TOKEN or TOKEN satisfies the declaration; Wrangler cannot require either one alone.
+      expect(wrangler).not.toHaveProperty("secrets.required")
     }
     finally {
       await rm(root, { force: true, recursive: true })
@@ -578,7 +579,7 @@ describe("built-in deployment preset integration", () => {
           {
             name: "app/server-env",
             enforce: "pre",
-            config: () => ({ env: { server: { token: env({ secret: true, source: env.source("LATE_TOKEN") }) } } }),
+            config: () => ({ env: { server: { token: env({ secret: true, source: env.source("VITEHUB_TOKEN") }) } } }),
           },
           nitro() as never,
         ],
@@ -586,12 +587,30 @@ describe("built-in deployment preset integration", () => {
       await builder.buildApp()
 
       const wrangler: unknown = JSON.parse(await readFile(join(root, ".output", "server", "wrangler.json"), "utf8"))
-      expect(wrangler).toMatchObject({ secrets: { required: ["LATE_TOKEN"] } })
+      expect(wrangler).toMatchObject({ secrets: { required: ["VITEHUB_TOKEN"] } })
     }
     finally {
       await rm(root, { force: true, recursive: true })
     }
   }, 30_000)
+
+  it.each([undefined, "APP_", false] as const)("uses exact Wrangler requirements with prefix %s", async (prefix) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-secret-aliases-"))
+    try {
+      const config = await resolveConfig({
+        env: { server: { token: env({ secret: true }) } },
+        root,
+        plugins: [vitehub({ env: false, preset: "cloudflare" }), hubEnv({ prefix })],
+      } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build")
+      const required = (config as typeof config & {
+        nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
+      }).nitro?.cloudflare?.wrangler?.secrets?.required
+      expect(required).toEqual(prefix === false ? ["TOKEN"] : undefined)
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
 
   it("declares required secrets from a standalone Env plugin", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-standalone-required-secrets-"))
@@ -645,12 +664,12 @@ describe("built-in deployment preset integration", () => {
 
       const [first, second] = await Promise.all([
         resolveConfig({
-          env: { server: { first: env({ secret: true, source: env.source("FIRST_TOKEN") }) } },
+          env: { server: { first: env({ secret: true, source: env.source("VITEHUB_FIRST") }) } },
           root,
           plugins: [vitehub({ env: false, preset: "cloudflare" }), envPlugin],
         } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build"),
         resolveConfig({
-          env: { server: { second: env({ secret: true, source: env.source("SECOND_TOKEN") }) } },
+          env: { server: { second: env({ secret: true, source: env.source("VITEHUB_SECOND") }) } },
           root,
           plugins: [vitehub({ env: false, preset: "cloudflare" }), envPlugin],
         } as Parameters<typeof resolveConfig>[0] & EnvViteUserConfig, "build"),
@@ -658,8 +677,8 @@ describe("built-in deployment preset integration", () => {
       const required = (config: typeof first) => (config as typeof config & {
         nitro?: { cloudflare?: { wrangler?: { secrets?: { required?: string[] } } } }
       }).nitro?.cloudflare?.wrangler?.secrets?.required
-      expect(required(first)).toEqual(["FIRST_TOKEN"])
-      expect(required(second)).toEqual(["SECOND_TOKEN"])
+      expect(required(first)).toEqual(["VITEHUB_FIRST"])
+      expect(required(second)).toEqual(["VITEHUB_SECOND"])
     }
     finally {
       await rm(root, { force: true, recursive: true })
