@@ -71,6 +71,16 @@ describe("ViteHub CLI config loading", () => {
     await expect(isAgentCliEnabled(root)).resolves.toBe(true)
   })
 
+  it("recognizes a ViteHub import with comments around the module clause", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), `
+      import { vitehub } /* gap */ from /* gap */ "vite-hub"
+      export default { plugins: [vitehub({ agent: { cli: false } })] }
+    `, "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(false)
+  })
+
   it("ignores import-like text in comments and strings when finding the ViteHub binding", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
     roots.push(root)
