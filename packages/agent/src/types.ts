@@ -715,6 +715,8 @@ export interface AgentChannelStateBinding {
 export interface AgentChannelTriggerContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > extends AgentCallbackContext<TRuntimeConfig> {
+  /** The accepted Invocation when a durable webhook delivery is replayed for rehydration. */
+  queuedInvocation?: Pick<AgentTriggerRunInvokeResult, "input" | "run">
   actor?: AgentActor
   agentCapabilities: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
   agentName?: string
@@ -1443,7 +1445,7 @@ export interface AgentModelExecutionOptions<
   }
 }
 
-export type AgentProviderPermissions = "allow-all" | "allow-edits" | "ask"
+export type AgentProviderPermissions = "allow-all" | "allow-edits" | "allow-edits-unattended" | "ask"
 
 type SingleAttemptAgentOutputDefinition<TOutput> = Omit<AgentOutputDefinition<TOutput>, "maxAttempts"> & {
   maxAttempts?: never
@@ -1493,11 +1495,17 @@ export interface AgentProviderDriverOptions<
   execution?: {
     attachments?: AgentAttachmentExecutionOptions
   }
+  /**
+   * Send model requests to an LLM proxy or gateway, such as `cliproxy({ url })` from `@vite-hub/agent/gateways`.
+   * ViteHub writes the provider configuration and passes the key and headers in the provider environment.
+   * A gateway replaces Codex `credentials`.
+   */
+  gateway?: AgentDriverGateway
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   launch?: AgentProviderLaunchResolver<TRuntimeConfig>
   model?: string
   output?: SingleAttemptAgentOutputDefinition<TOutput>
-  /** Provider approval policy. Defaults to `"ask"`; `"allow-all"` requires an explicit opt-in. */
+  /** Provider approval policy. Defaults to `"ask"`. `"allow-edits-unattended"` denies escalation without prompting; `"allow-all"` removes provider restrictions. */
   permissions?: AgentProviderPermissions
   providerSettings?: Record<string, unknown>
   /**
@@ -1575,6 +1583,35 @@ export type AgentProviderCredentialResolver<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > = MaybeResolvable<AgentProviderCredentialValue, AgentProviderCredentialContext<TRuntimeConfig>>
 
+/**
+ * A gateway API key or header value: a string, a sealed Server Env value, or an invocation-time resolver.
+ * `undefined` or an empty string fails the invocation, so optional Server Env values can be passed directly.
+ */
+export type AgentDriverGatewaySecret = MaybeResolvable<AgentProviderCredentialValue | undefined, AgentProviderCredentialContext>
+
+/**
+ * An HTTP endpoint that receives the model requests of a provider Driver, such as an LLM proxy or gateway.
+ * Build one with a preset from `@vite-hub/agent/gateways` or with `defineGateway()`.
+ */
+export interface AgentDriverGateway {
+  /** Name shown in Agent inspection and diagnostics. */
+  name: string
+  /**
+   * Base URL for each Driver. Codex sends OpenAI Responses requests to `<url>/responses`.
+   * Claude Code sends Anthropic Messages requests to `<url>/v1/messages`.
+   * A Driver without an entry cannot use this gateway.
+   */
+  baseURL: Partial<Record<BuiltInAgentDriverName, string>>
+  /** API key. When it is not set, ViteHub reads the first non-empty variable in `apiKeyEnv`. */
+  apiKey?: AgentDriverGatewaySecret
+  /** Process environment variables that supply the API key, in lookup order. */
+  apiKeyEnv?: readonly string[]
+  /** How the gateway receives the API key. `"bearer"` (default) sends `Authorization: Bearer`. `"x-api-key"` sends `x-api-key`. */
+  auth?: "bearer" | "x-api-key"
+  /** Extra request headers, such as Cloudflare Access service-token headers. Values are treated as secrets. */
+  headers?: Record<string, AgentDriverGatewaySecret>
+}
+
 type KnownCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 /** A non-empty reasoning effort advertised by the selected Codex model. */
 export type CodexReasoningEffort = KnownCodexReasoningEffort | (string & Record<never, never>)
@@ -1615,6 +1652,7 @@ export interface AgentModelDriver<
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   kind?: never
+  gateway?: never
   launch?: never
   maxRetries?: number
   model: AgentModelResolver<TRuntimeConfig>
@@ -1645,6 +1683,7 @@ export interface AgentRunDriver<
   execution?: never
   instructions?: never
   kind?: never
+  gateway?: never
   launch?: never
   model?: never
   output?: SingleAttemptAgentOutputDefinition<TOutput>
@@ -1692,6 +1731,7 @@ export interface AgentAskDriver<
   execution?: never
   instructions?: never
   kind?: never
+  gateway?: never
   launch?: never
   model?: never
   permissionMode?: never
@@ -2574,6 +2614,8 @@ export interface AgentInspectionProviderMetadata {
   /** Present when driver.cwd runs the provider in an existing directory. The path is not exposed. */
   cwd?: "dynamic" | "static"
   environment?: "dynamic" | "static"
+  /** Name of the gateway that receives model requests. */
+  gateway?: string
   launch?: "dynamic" | "static"
   model?: string
   permissions: AgentProviderPermissions

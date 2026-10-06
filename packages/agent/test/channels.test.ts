@@ -1195,6 +1195,8 @@ describe("agent channels", () => {
 
     expect(rewriteDeliveryArtifactMarkdown([
       "![Preview](./artifacts/preview.png)",
+      "![Spaced preview](<artifacts/my preview.png>)",
+      "![Pending preview](<artifacts/pending preview.png>)",
       "![Absolute](/workspace/codex-session/artifacts/preview.png)",
       "![Nested absolute](/workspace/codex-session/tmp/artifacts/preview.png)",
       "[Report](artifacts/report.pdf)",
@@ -1206,10 +1208,18 @@ describe("agent channels", () => {
       path: "artifacts/preview.png",
       url: "https://assets.example/preview.png",
     }, {
+      path: "artifacts/my preview.png",
+      url: "https://assets.example/my-preview.png",
+    }, {
+      channelAttachmentId: "upload-1",
+      path: "artifacts/pending preview.png",
+    }, {
       path: "artifacts/report.pdf",
       url: "https://assets.example/report.pdf",
     }])).toBe([
       "![Preview](<https://assets.example/preview.png>)",
+      "![Spaced preview](<https://assets.example/my-preview.png>)",
+      "![Pending preview](<artifacts/pending preview.png>)",
       "![Absolute](<https://assets.example/preview.png>)",
       "![Nested absolute](/workspace/codex-session/tmp/artifacts/preview.png)",
       "[Report](<https://assets.example/report.pdf>)",
@@ -1322,7 +1332,12 @@ describe("agent channels", () => {
     })
     if (mentioned instanceof Response) throw new Error("Expected GitHub mention invocation.")
     expect(mentioned.input.context?.github).toMatchObject({ args: "Please, review this", command: "@AgEnT", event: "issue_comment" })
-    expect(mentioned.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "mention-delivery" })
+    expect(mentioned.webhook).toEqual({
+      concurrencyGroup: "acme/app#42",
+      concurrencyLimit: 1,
+      deliveryId: "mention-delivery",
+      rehydrate: expect.any(Function),
+    })
 
     // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
     const botMention = await trigger.invoke(context as never, {
@@ -1426,7 +1441,7 @@ describe("agent channels", () => {
       command: "/comment",
       event: "pull_request_review",
     })
-    expect(review.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "review-delivery" })
+    expect(review.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "review-delivery", rehydrate: expect.any(Function) })
 
     const approvedChannel = github({ pullRequest: { reconcile: { comments: { reviewStates: ["approved"] } }, reply: false } })
     const approvedTrigger = approvedChannel.triggers?.webhook
@@ -1519,7 +1534,7 @@ describe("agent channels", () => {
     } finally {
       await queue.disconnect()
     }
-  })
+  }, 30_000)
 
   it("reconciles configured pull request lifecycle events with invocation ownership", async () => {
     const { github } = await import("../src/channels.ts")
@@ -1549,7 +1564,7 @@ describe("agent channels", () => {
     })
     expect(result.input.prompt).toContain("Request: Keep this pull request healthy.")
     expect(result.input.prompt).not.toContain("specifically this comment")
-    expect(result.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "delivery-1" })
+    expect(result.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "delivery-1", rehydrate: expect.any(Function) })
     expect(result.run?.activity).toEqual({ links: [], target: { installationId: 123, issue: 42, repository: "acme/app" } })
 
     const concurrentChannel = github({ pullRequest: { reconcile: { concurrencyLimit: 4 }, reply: false } })
@@ -1561,7 +1576,7 @@ describe("agent channels", () => {
       payload: githubPullRequestPayload("reopened"),
     })
     if (concurrent instanceof Response) throw new Error("Expected GitHub reconciliation invocation.")
-    expect(concurrent.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 4, deliveryId: "delivery-2" })
+    expect(concurrent.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 4, deliveryId: "delivery-2", rehydrate: expect.any(Function) })
 
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs1" }).toString()

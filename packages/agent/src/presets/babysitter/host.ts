@@ -1,6 +1,8 @@
-import { lstat, readdir, readFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, mkdtemp, readdir, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
 import type { AgentInput, AgentCallbackContext } from "../../index.ts";
@@ -71,7 +73,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
-  const github = createGitHubHost({ credentials: credentials.credentials, identity, checkouts: { root: join(context.dataDir, "checkouts") } });
+  const github = createGitHubHost({ credentials: credentials.credentials, identity });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
   const driver = getAgentLayerOptions(agent)?.driver;
   const admission = createBabysitterAdmission({

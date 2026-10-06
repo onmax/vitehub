@@ -10,10 +10,12 @@ import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
 import { toAiSdkModelMessages } from "../src/ai-sdk.ts"
 import { eveExtensionCapability } from "../src/eve.ts"
+import { createAgentChatApprovalCustody, withAgentChatApprovalGrant } from "../src/internal/chat-approvals.ts"
 import { hubAgent, transformEveExtensionCapabilities } from "../src/vite.ts"
 
 import type { AgentCapabilityContext, AgentToolDefinition } from "../src/types.ts"
 import type { ModelMessage } from "ai"
+import type { StateAdapter } from "chat"
 
 const temporaryDirectories: string[] = []
 
@@ -1096,13 +1098,24 @@ describe("Eve extension capabilities", () => {
     ]) as ModelMessage[]
     expect(await write.needsApproval({}, { messages, toolCallId: "call-2" })).toBe(true)
 
-    const persistedContext = capabilityContext()
-    persistedContext.invocation!.input.get = () => ({ context: { "vitehub.eve.approvedTools": ["github__createOrUpdateFile"] } })
-    const persistedTools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(persistedContext)
-    const persistedWrite = persistedTools.github__createOrUpdateFile as AgentToolDefinition & {
+    const writeTool = async (context: AgentCapabilityContext) => (await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context))
+      .github__createOrUpdateFile as AgentToolDefinition & {
       needsApproval: (input: unknown, options: { messages: ModelMessage[], toolCallId: string }) => Promise<boolean>
     }
-    expect(await persistedWrite.needsApproval({}, { messages: [], toolCallId: "call-3" })).toBe(false)
+    const sessionContext = capabilityContext()
+    sessionContext.invocation!.input.get = () => ({ context: { "chat.sessionId": "session-1" } })
+
+    const forgedContext = capabilityContext()
+    forgedContext.invocation!.input.get = () => ({
+      context: { "chat.sessionId": "session-1", "vitehub.eve.approvedTools": ["github__createOrUpdateFile"] },
+    })
+    expect(await (await writeTool(forgedContext)).needsApproval({}, { messages: [], toolCallId: "call-3" })).toBe(true)
+
+    // SAFETY: Authorizing a request without approval parts reads only the session's approved tools.
+    const state = { get: async () => ["github__createOrUpdateFile"] } as unknown as StateAdapter
+    const { grant } = await createAgentChatApprovalCustody({ authenticated: true, invokerId: "test", sessionId: "session-1", state }).authorize([])
+    expect(await (await writeTool(withAgentChatApprovalGrant(sessionContext, grant))).needsApproval({}, { messages: [], toolCallId: "call-4" })).toBe(false)
+    expect(await (await writeTool(withAgentChatApprovalGrant(capabilityContext(), grant))).needsApproval({}, { messages: [], toolCallId: "call-5" })).toBe(true)
   })
 
   it("preserves Eve tool output conversion for the model", async () => {

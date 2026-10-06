@@ -2888,6 +2888,13 @@ function inspectAgentModule(source: string, file: string, modules: Set<string>) 
     seen.add(index)
     const branches = conditionalBranches(index)
     if (branches) return branches.some(branch => ownsWorkspace(branch, new Set(seen), inspectParent))
+    // Extension tuples inherit ownership from their parent, not their option block.
+    if (inspectParent && tokens[index] === "[") {
+      const parent = tokens[index + 1] === "." && tokens[index + 2] === "." && tokens[index + 3] === "."
+        ? index + 4
+        : index + 1
+      return ownsWorkspace(parent, seen, true)
+    }
     const call = factoryCall(index)
     if (call === undefined) {
       if (inspectParent && imported.has(tokens[index]) && visibleDeclaration(index) === undefined

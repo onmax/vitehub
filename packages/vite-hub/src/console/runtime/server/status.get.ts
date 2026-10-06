@@ -1,5 +1,6 @@
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics.ts"
 import { getConsoleAgentDefinition, getConsoleAgents } from "./agents.ts"
+import { withConsoleAccess, type ConsoleAccessRoute } from "./access.ts"
 import { assertConsoleRequest, consoleRequestURL } from "./request.ts"
 import { createAgentStatusReader } from "@vite-hub/agent/server"
 import { observabilityStatus } from "@vite-hub/agent/server/internal"
@@ -16,7 +17,7 @@ function statusError(statusCode: number, statusMessage: string, diagnostic: Erro
 }
 
 /** `observability` is `null` when `vitehub({ observability })` is not set. */
-export default async function statusHandler(event: ConsoleRequestEvent): Promise<{ agents: AgentProviderStatus[], observability: ObservabilityStatus | null }> {
+async function statusHandler(event: ConsoleRequestEvent): Promise<{ agents: AgentProviderStatus[], observability: ObservabilityStatus | null }> {
   assertConsoleRequest(event)
   const name = consoleRequestURL(event).searchParams.get("agent")?.trim()
   if (name && name.length > 512) {
@@ -34,3 +35,6 @@ export default async function statusHandler(event: ConsoleRequestEvent): Promise
   }))
   return { agents, observability: observabilityStatus() }
 }
+
+const guardedHandler: ConsoleAccessRoute<typeof statusHandler> = withConsoleAccess(statusHandler)
+export default guardedHandler

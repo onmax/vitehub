@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 
+import { isPlainObject } from "@vite-hub/internal/object"
 import { getCloudflareEnv, setActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 import type { QueueClient, QueueDefinition, QueueDefinitionRegistry, QueueProviderOptions, ResolvedQueueOptions } from "../../types.ts"
 import { queueErrorDiagnostics } from "../../error-diagnostics.ts"
@@ -74,7 +76,9 @@ export function getOrCreateQueueClient(name: string, createClient: () => Promise
 }
 
 function isQueueDefinition(value: unknown): value is QueueDefinition {
-  return Boolean(value) && typeof value === "object" && typeof (value as QueueDefinition).handler === "function"
+  return isPlainObject(value)
+    && Object.hasOwn(value, "handler")
+    && hasRuntimeType(value.handler, "function")
 }
 
 export async function loadQueueDefinition(name: string): Promise<QueueDefinition | undefined> {
@@ -90,7 +94,7 @@ export async function loadQueueDefinition(name: string): Promise<QueueDefinition
     return loaded
   }
 
-  if (loaded && typeof loaded === "object" && "default" in loaded && isQueueDefinition(loaded.default)) {
+  if (isPlainObject(loaded) && Object.hasOwn(loaded, "default") && isQueueDefinition(loaded.default)) {
     return loaded.default
   }
 

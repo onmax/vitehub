@@ -38,6 +38,8 @@ export default defineNuxtConfig({
 
 The module installs Nuxt UI, loads `@vite-hub/ui/styles.css`, and auto-imports every public component, for example `AgentChat`, `AgentMarkdown`, and `AgentInvocation`. You do not register a Vue plugin.
 
+For explicit imports, each public component also has a kebab-case entry such as `@vite-hub/ui/agent-chat`. These entries export the same component objects as `@vite-hub/ui` and keep the development import graph focused.
+
 ## Vue with Vite
 
 Install the package, its peers, and the Vite tooling:

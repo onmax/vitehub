@@ -205,6 +205,11 @@ export async function readCurrentSourceSnapshot(store: Pick<WorkspaceStore, "get
   return snapshot?.configHash === configHash ? snapshot : undefined
 }
 
+export async function readSourceSnapshotPaths(store: Pick<WorkspaceStore, "getMeta">, workspace: string, sourceKey: string) {
+  const snapshot = await readSourceSnapshotMetadata(store, workspace, sourceKey)
+  return Object.keys(snapshot?.items || {})
+}
+
 export async function sourceSnapshotOwnsAnyPath(store: WorkspaceStore, workspace: string, sourceKey: string, paths: Iterable<string>): Promise<boolean | undefined> {
   const meta = await readSourceSnapshotMetadata(store, workspace, sourceKey)
   if (!meta || meta.status !== "ready") return undefined
