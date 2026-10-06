@@ -443,6 +443,46 @@ describe("SQLite Agent State Provider", () => {
     await restored.disconnect()
   })
 
+  it("keeps terminal notifications leased and recovers them after a worker exits", async () => {
+    vi.useFakeTimers()
+    const { state, url } = await createState()
+    await state.connect()
+    // SAFETY: createState constructs the SQLite adapter with the webhook queue methods.
+    const queue = state as ViteHubSqliteAgentStateAdapter
+    const delivery = webhookDelivery("pending-failure")
+    await queue.enqueueWebhookDelivery(delivery)
+    const lease = (await queue.claimWebhookDelivery(delivery.scope))!
+    const failure = { error: "terminal failure", attempts: 3 }
+    await expect(queue.markWebhookDeliveryFailure(lease.scope, lease.deliveryId, lease.leaseToken, failure)).resolves.toBe(true)
+    await expect(queue.claimWebhookDelivery(delivery.scope)).resolves.toBeNull()
+    await state.disconnect()
+
+    vi.advanceTimersByTime(1_001)
+    const restored = createLibsqlAgentState({ tablePrefix: "test_agent_state_", url })
+    await restored.connect()
+    const recovered = (await restored.claimWebhookDelivery(delivery.scope))!
+    expect(recovered.failure).toEqual(failure)
+    expect(recovered.request).toEqual(delivery.request)
+    await expect(restored.completeWebhookDelivery(lease.scope, lease.deliveryId, lease.leaseToken)).resolves.toBe(false)
+    await expect(restored.completeWebhookDelivery(recovered.scope, recovered.deliveryId, recovered.leaseToken)).resolves.toBe(true)
+    await expect(restored.claimWebhookDelivery(delivery.scope)).resolves.toBeNull()
+    await restored.disconnect()
+  })
+
+  it("completes terminal notifications with the original worker lease", async () => {
+    const { state } = await createState()
+    await state.connect()
+    // SAFETY: createState constructs the SQLite adapter with the webhook queue methods.
+    const queue = state as ViteHubSqliteAgentStateAdapter
+    const delivery = webhookDelivery("delivered-failure")
+    await queue.enqueueWebhookDelivery(delivery)
+    const lease = (await queue.claimWebhookDelivery(delivery.scope))!
+    await queue.markWebhookDeliveryFailure(lease.scope, lease.deliveryId, lease.leaseToken, { error: "failed", attempts: 3 })
+    await expect(queue.completeWebhookDelivery(lease.scope, lease.deliveryId, lease.leaseToken)).resolves.toBe(true)
+    await expect(queue.claimWebhookDelivery(delivery.scope)).resolves.toBeNull()
+    await state.disconnect()
+  })
+
   it("terminally completes an expired third webhook execution lease", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-08-04T10:00:00.000Z"))

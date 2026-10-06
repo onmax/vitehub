@@ -1513,6 +1513,7 @@ async function executeQueuedWebhookDelivery(
 ): Promise<number | undefined> {
   if (delivery.failure) {
     const error = new Error(delivery.failure.error)
+    // SAFETY: The queue persists invocation input and run metadata from this route contract.
     await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, delivery.failure.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)
     await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
     return
@@ -1530,6 +1531,7 @@ async function executeQueuedWebhookDelivery(
   }
   if (delivery.attempts >= maxWebhookQueueAttempts) {
     const channelDelivery = delivery.channelDeliveryId ? await resumeAgentChannelDelivery(state, delivery.channelDeliveryId) : undefined
+    // SAFETY: The queue persists invocation input and run metadata from this route contract.
     if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(`[vitehub] Queued webhook delivery exhausted ${maxWebhookQueueAttempts} execution leases.`), delivery.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)) {
       await channelDelivery
         ?.event({
@@ -1869,8 +1871,9 @@ async function executeQueuedWebhookDelivery(
       return
     }
     if (executionTimedOut || (!lifecycleSignal.aborted && delivery.attempts + 1 >= maxWebhookQueueAttempts)) {
-      const run = failedInvocation?.run ?? (invocationRunId ? { runId: invocationRunId } : undefined)
-      if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, error, delivery.attempts + 1, { ...failedInvocation, ...(run ? { run } : {}) })) {
+      const failedInvocationWithRun = { ...failedInvocation }
+      if (failedInvocationWithRun.run === undefined && invocationRunId) failedInvocationWithRun.run = { runId: invocationRunId }
+      if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, error, delivery.attempts + 1, failedInvocationWithRun)) {
         if (channelDelivery)
           await settleChannelDeliveryInvocation(channelDelivery, "failed", "failed", {
             attempt: delivery.attempts + 1,
@@ -4614,6 +4617,7 @@ function chatErrorHookArgs(
     thread: {
       post: async (postedMessage) => {
         const consoleUrl = errorConsoleLink ? invocation?.consoleUrl : undefined
+        // SAFETY: The error hook accepts the same chat message payloads as postChatMessage.
         const posted = postedMessage as AgentChatMessage
         const message = consoleUrl && isRuntimeString(postedMessage) && !postedMessage.includes(consoleUrl)
           ? `${postedMessage}\n\nDetails: ${consoleUrl}`

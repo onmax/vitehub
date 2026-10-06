@@ -247,7 +247,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             candidate.concurrency_key, candidate.concurrency_limit, candidate.lease_ttl_ms, candidate.attempts
           FROM ${this.tables.webhookQueue} AS candidate
           WHERE candidate.scope = ? AND candidate.available_at <= ?
-            AND (candidate.status IN ('queued', 'failed') OR (candidate.status IN ('running', 'steering') AND candidate.lease_expires_at <= ?))
+            AND (candidate.status = 'queued' OR (candidate.status IN ('running', 'steering') AND candidate.lease_expires_at <= ?))
             AND (
               SELECT COUNT(*) FROM ${this.tables.webhookQueue} AS active_group
               WHERE active_group.status = 'running' AND active_group.lease_expires_at > ?
@@ -277,7 +277,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             SET attempts = attempts + CASE WHEN status IN ('running', 'steering') THEN 1 ELSE 0 END,
               status = 'running', lease_token = ?, lease_expires_at = ?
             WHERE scope = ? AND delivery_id = ?
-              AND (status IN ('queued', 'failed') OR (status IN ('running', 'steering') AND lease_expires_at <= ?))
+              AND (status = 'queued' OR (status IN ('running', 'steering') AND lease_expires_at <= ?))
             RETURNING value`,
           [leaseToken, now + leaseTtlMs, scope, candidate.delivery_id, now],
         )
@@ -358,7 +358,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
         const delivery = parseAgentWebhookQueueDelivery(current[0].value)
         delivery.failure = failure
         return await execute(tx, `UPDATE ${this.tables.webhookQueue}
-          SET status = 'failed', value = ?, lease_expires_at = NULL
+          SET value = ?
           WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
           RETURNING delivery_id`, [JSON.stringify(delivery), scope, deliveryId, leaseToken])
       })
