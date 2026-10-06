@@ -5,6 +5,7 @@ import { normalizeAuthBasePath } from "./shared.ts"
 import { resolveAuthOptions } from "./runtime-options.ts"
 import { throwAuthenticationProviderError } from "./errors.ts"
 import { getAuthenticationSession } from "./session.ts"
+import { getAuthRuntimeState } from "./runtime-state.ts"
 
 import type { AccessAuthorizeOption, PublicUrlConfig } from "@vite-hub/runtime"
 import type {
@@ -22,6 +23,8 @@ import type {
   ViteHubAuth,
 } from "./types.ts"
 import { authErrorDiagnostics } from "./error-diagnostics.ts"
+
+export { resetAuth } from "./runtime-state.ts"
 
 declare const __VITEHUB_PUBLIC_URL__: PublicUrlConfig | undefined
 
@@ -80,21 +83,6 @@ export function createAuthRequestRuntimeOptions(
   return resolveAuthOptions(definition, { request, runtimeOptions, event, env: authRuntimeEnvResolver }).requestRuntimeOptions
 }
 
-const authRuntimeStateKey = Symbol.for("vitehub.auth.runtime")
-
-interface AuthRuntimeState {
-  auth?: ViteHubAuth
-  definition?: AuthDefinition
-}
-
-function getAuthRuntimeState(): AuthRuntimeState {
-  const globalScope = globalThis as typeof globalThis & {
-    [authRuntimeStateKey]?: AuthRuntimeState
-  }
-  globalScope[authRuntimeStateKey] ??= {}
-  return globalScope[authRuntimeStateKey]
-}
-
 function resolveDefaultDefinition(): AuthDefinition {
   if (!discoveredDefinition) {
     throw authErrorDiagnostics.AUTH_R0005({ message: "[vitehub] No Auth Definition was discovered. Add `server/auth.ts` or `server.auth.ts`." })
@@ -148,12 +136,6 @@ export function createAuthHandler(
   runtimeOptions?: AuthRuntimeOptions,
 ): ViteHubAuth["handler"] {
   return createAuth(definition, runtimeOptions).handler
-}
-
-export function resetAuth(): void {
-  const state = getAuthRuntimeState()
-  state.auth = undefined
-  state.definition = undefined
 }
 
 export function getAuthForDefinition(
