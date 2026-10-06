@@ -2,9 +2,9 @@ import { isRuntimeObject } from "./runtime-type.ts"
 
 /** Identities are registered only while resolving an Agent Definition. */
 const identities = new WeakMap<object, string>()
-export const agentEnvIdentity = Symbol("vitehub.agentEnvIdentity")
+export const agentEnvIdentity: unique symbol = Symbol("vitehub.agentEnvIdentity")
 
-export function createAgentEnvIdentity<T extends { name: string }>(identity: T, definitionName = identity.name): Readonly<T> {
+export function createAgentEnvIdentity<T extends { name: string }>(identity: T, definitionName: string = identity.name): Readonly<T> {
   const result = Object.freeze({ ...identity })
   identities.set(result, definitionName)
   return result

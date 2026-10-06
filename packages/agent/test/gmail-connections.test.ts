@@ -8,6 +8,7 @@ import { google } from "../../connections/src/google.ts"
 import { createConnectionsRuntime } from "../../connections/src/runtime.ts"
 import { createDatabaseConnectionStore } from "../../connections/src/store.ts"
 import { gmail } from "../src/capabilities/gmail.ts"
+import { defineAgent, runAgent } from "../src/index.ts"
 import { agentInvocationTraceIdContextKey } from "../src/trace.ts"
 
 import type { AgentToolDefinition } from "../src/types.ts"
@@ -123,6 +124,26 @@ it("persists a draft approval and executes it once through Connections", async (
     expect(await test.runtime.approve({ actor: "user:owner", id: approval!.id })).toMatchObject({ approval: { status: "executed" }, result: { id: "d1" } })
     await expect(test.runtime.approve({ id: approval!.id })).rejects.toMatchObject({ code: "CONNECTION_INVALID" })
     expect(test.requests.filter(request => request.url.pathname.endsWith("/drafts"))).toHaveLength(1)
+  }
+  finally { test.close() }
+})
+
+it("rejects a caller-selected Connection identity on an unnamed public Agent invocation", async () => {
+  const test = await fixture()
+  try {
+    const agent = defineAgent({
+      runtime: false,
+      capabilities: [gmail()],
+      driver: { async run(context) {
+        return await execute(context.tools?.gmail_search, { max: 5, query: "in:inbox" })
+      } },
+    })
+    await expect(runAgent(agent, {
+      agentIdentity: { name: "labeller" },
+      runtime: "unknown", memo: (_key, fn) => fn(), waitUntil: () => {},
+      capabilities: { connections: { runtime: () => test.runtime } },
+    }, {})).rejects.toMatchObject({ code: "ENV_BRIDGE_UNTRUSTED" })
+    expect(test.requests).toHaveLength(1)
   }
   finally { test.close() }
 })

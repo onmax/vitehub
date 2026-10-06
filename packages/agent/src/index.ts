@@ -876,8 +876,8 @@ function withAgentIdentityOwner<TRuntimeConfig extends AgentRuntimeConfig>(
   // Keep host discovery separate from the identity minted for Connection access.
   const discovered = context[agentWorkflowDiscovery] ?? Boolean(context.agentIdentity)
   context = { ...context, [agentWorkflowDiscovery]: discovered }
-  const name = agent.name || readDiscoveredAgentName(agent) || (!owner ? context.agentIdentity?.name : undefined)
-  if (!name) return { ...context, agentIdentity: undefined, [agentIdentityOwner]: agent, [agentEnvIdentity]: undefined }
+  const name = agent.name || readDiscoveredAgentName(agent)
+  if (!name) return { ...context, agentIdentity: !owner ? context.agentIdentity : undefined, [agentIdentityOwner]: agent, [agentEnvIdentity]: undefined }
   const envIdentity = createAgentEnvIdentity({ ...(!owner ? context.agentIdentity : {}), name })
   return {
     ...context,
