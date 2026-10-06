@@ -1447,11 +1447,40 @@ async function runInvocationReference(agentName: string | undefined, run: AgentR
   }
 }
 
+// Keep terminal callbacks single-flight within a worker. The persisted queue row
+// handles process recovery, while this fence covers a lease handoff that happens
+// while the original callback is still settling.
+const activeWebhookFailureNotifications = new Map<string, Promise<void>>()
+
 /**
  * Calls the trigger's `failed` callback when the queue stops retrying a delivery.
  * The callback cannot change the delivery outcome. Its errors are logged.
  */
 async function notifyQueuedWebhookFailure(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  delivery: AgentWebhookQueueDelivery,
+  error: unknown,
+  attempts: number,
+  invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
+): Promise<void> {
+  const key = `${delivery.scope}:${delivery.deliveryId}`
+  const active = activeWebhookFailureNotifications.get(key)
+  if (active) {
+    await active
+    return
+  }
+  const notification = notifyQueuedWebhookFailureOnce(agent, handlerOptions, delivery, error, attempts, invocation)
+  activeWebhookFailureNotifications.set(key, notification)
+  try {
+    await notification
+  }
+  finally {
+    if (activeWebhookFailureNotifications.get(key) === notification) activeWebhookFailureNotifications.delete(key)
+  }
+}
+
+async function notifyQueuedWebhookFailureOnce(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   handlerOptions: AgentChannelWebhookRouteOptions,
   delivery: AgentWebhookQueueDelivery,
