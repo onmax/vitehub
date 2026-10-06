@@ -6,6 +6,7 @@ import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { createBasicWorkspaceSession } from "../session/basic.ts"
 import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
+import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
@@ -431,10 +432,11 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
 
     // Every base write needs a Source write grant for its exact path.
     // SAFETY: Write paths are checked by the base facade at runtime; the generic facade has no statically known named Workspace paths.
+    const rawWrites = resolveWorkspaceRawWriteTarget(workspace) ?? workspace.fs
     const baseWrites = {
-      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await workspace.fs.mkdir(path as never, options)),
-      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await workspace.fs.rm(path as never, options)),
-      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await workspace.fs.writeFile(path as never, content, options)),
+      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await rawWrites.mkdir(path, options)),
+      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await rawWrites.rm(path, options)),
+      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await rawWrites.writeFile(path, content, options)),
     }
 
     async function writeWithPolicy<Result = void>(
@@ -603,6 +605,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       sync: writeWorkspace.sync,
       tools: writeTools,
     }
+    setWorkspaceRawWriteTarget(writableWorkspace, rawWrites)
     sourceSyncStores.set(writableWorkspace, syncStore)
     forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, writableWorkspace)
     forwardWorkspaceStoreTarget(workspace, writableWorkspace)
