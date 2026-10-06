@@ -37,8 +37,13 @@ export interface ViteHubDevEndpointServer {
 
 export interface ViteHubDevEndpointOptions extends ViteHubDevEndpointGuard {
   /**
-   * Handles a request that passed the route, method, and guard checks.
-   * The handler writes the response. `grant` proves that this request passed the guard.
+   * Owner authorization, for example a dev token check. It runs after the guard checks and before `handle`.
+   * Return a rejection response to stop the request. `handle` gets the grant only when this check passes.
+   */
+  authorize?: (req: IncomingMessage) => Response | undefined | Promise<Response | undefined>
+  /**
+   * Handles a request that passed the route, method, guard, and `authorize` checks.
+   * The handler writes the response. `grant` proves that this request passed these checks.
    */
   handle: (req: IncomingMessage, res: ServerResponse, grant: ViteHubDevRequestGrant) => void
   /**
@@ -255,8 +260,8 @@ async function writeResponse(res: ServerResponse, response: Response, stream = f
  * Registers a guarded dev endpoint on a Vite development server.
  *
  * The middleware skips other routes, rejects methods outside `methods`, and
- * runs {@link validateViteHubDevRequest} before it calls `handle` with the request grant. Dev
- * endpoints exist only on the development server. They are not an
+ * runs {@link validateViteHubDevRequest} and the optional `authorize` callback before it calls `handle` with the
+ * request grant. Dev endpoints exist only on the development server. They are not an
  * authenticated path to a deployed stage.
  */
 export function registerViteHubDevEndpoint(server: ViteHubDevEndpointServer, options: ViteHubDevEndpointOptions): void {
@@ -274,7 +279,28 @@ export function registerViteHubDevEndpoint(server: ViteHubDevEndpointServer, opt
       void writeResponse(res, rejection)
       return
     }
-    options.handle(req, res, grant)
+    const { authorize } = options
+    if (!authorize) {
+      options.handle(req, res, grant)
+      return
+    }
+    let closed = req.aborted || res.destroyed
+    const onAborted = () => { closed = true }
+    const onClose = () => { closed = true }
+    req.once("aborted", onAborted)
+    res.once("close", onClose)
+    void (async () => await authorize(req))()
+      .then((rejected) => {
+        if (rejected) return writeResponse(res, rejected)
+        if (!closed && !res.destroyed) options.handle(req, res, grant)
+      })
+      .catch((error: unknown) => res.headersSent ? undefined : writeResponse(res, Response.json({
+        error: { message: redactInspectionText(`${options.label} request failed: ${error instanceof Error ? error.message : String(error)}`) },
+      }, { status: 500 })))
+      .finally(() => {
+        req.off("aborted", onAborted)
+        res.off("close", onClose)
+      })
   })
 }
 

@@ -616,6 +616,14 @@ async function resolveDevRuntimeCapabilities(
   return capabilities
 }
 
+/**
+ * The discovery `GET` returns the Agent names, the server root, and the token server ID. Clients need it to find the
+ * private token, so it is the only Dev Loop request that does not need the token.
+ */
+function isAgentDevLoopDiscoveryRequest(req: IncomingMessage): boolean {
+  return req.method === "GET" && new URL(req.url || "/", "http://localhost").searchParams.get("inspect") !== "1"
+}
+
 async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: IncomingMessage, grant: ViteHubDevRequestGrant, tokenOptions: WorkspaceDevTokenOptions, abortSignal: AbortSignal | undefined, runtimeOptions: AgentDevRuntimeOptions): Promise<Response> {
   assertViteHubDevRequestGrant(grant, req)
   const capabilities = await resolveDevRuntimeCapabilities(server, runtimeOptions.runtimeCapabilities ?? [], runtimeOptions)
@@ -623,8 +631,7 @@ async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: In
   if (req.method === "GET") {
     await ensureWorkspaceDevToken(server.config.root, tokenOptions)
     const url = new URL(req.url || "/", "http://localhost")
-    const inspect = url.searchParams.get("inspect") === "1"
-    const entry = inspect ? selectedEntry(entries, url.searchParams.get("agent") || undefined) : undefined
+    const entry = isAgentDevLoopDiscoveryRequest(req) ? undefined : selectedEntry(entries, url.searchParams.get("agent") || undefined)
     const run = entry ? devRun(entry.name) : undefined
     const inspection = entry && run
       ? await resolveAgentInspectionMetadata(entry.agent as never, {
@@ -684,9 +691,6 @@ async function handleAgentInvocationStreamRequest(server: ViteDevServer, req: In
     if (!workspace) return new Response("Agent Dev Loop command requires an Agent with a Workspace.", { status: 400 })
     if (agentWorkspaceMode(entry) !== "write") {
       return new Response("Agent Dev Loop command requires workspace.mode: \"write\".", { status: 403 })
-    }
-    if (!await validateWorkspaceDevToken(server.config.root, req.headers, tokenOptions)) {
-      return new Response("Forbidden Agent Dev Loop command token.", { status: 403 })
     }
     if (typeof body.workspaceCommand.command !== "string") {
       return new Response("Missing Agent Dev Loop command.", { status: 400 })
@@ -788,6 +792,10 @@ export async function registerAgentInvocationStreamEndpoint(server: ViteDevServe
   const tokenOptions = { serverId: workspaceDevTokenServerId(server.config.server.port) }
   await refreshWorkspaceDevToken(server.config.root, tokenOptions)
   registerViteHubDevEndpoint(server, {
+    // Inspection, streams, Capability CLI calls, Workspace commands, and Channel replay run Agent code or return Agent data.
+    authorize: async req => isAgentDevLoopDiscoveryRequest(req) || await validateWorkspaceDevToken(server.config.root, req.headers, tokenOptions)
+      ? undefined
+      : new Response("Forbidden Agent Dev Loop token.", { status: 403 }),
     handle: (req, res, grant) => {
       const abort = createAbortSignalFromClose(res, "[vitehub] Agent Invocation Stream response closed.")
       void handleAgentInvocationStreamRequest(server, req, grant, tokenOptions, abort.signal, runtimeOptions)

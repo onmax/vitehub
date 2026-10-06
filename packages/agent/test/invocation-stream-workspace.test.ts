@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Readable } from "node:stream"
 
 import { getWorkspaceHostedStoreLoader, setWorkspaceHostedStoreLoader } from "@vite-hub/workspace/runtime"
-import { workspaceDevTokenServerId } from "@vite-hub/workspace/server"
+import { readWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 import { agentInvocationsDevHeader, agentInvocationsDevHeaderValue, agentInvocationsDevRoute } from "../src/invocations-dev.ts"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -116,6 +116,13 @@ function createFakeServer(root: string, module: unknown) {
     ssrLoadModule: vi.fn(async () => module),
   }
   return { handlers, server }
+}
+
+/** Headers with the private Agent Dev Loop token, as `vitehub agent dev` sends them. */
+async function devLoopTokenHeaders(root: string): Promise<Record<string, string>> {
+  const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
+  if (!token) throw new Error("The Agent Dev Loop endpoint must write its private token.")
+  return { [workspaceDevTokenHeader]: token }
 }
 
 async function configurePluginServer(plugin: { configureServer?: unknown }, server: unknown) {
@@ -280,6 +287,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -304,7 +312,7 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
     expect(replyEffect).not.toHaveBeenCalled()
   })
 
-  it("requires the private token before running Agent Workspace commands", async () => {
+  it("requires the private token before Agent Workspace commands, streams, Channel replay, and inspection", async () => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-agent-workspace-command-token-"))
     await mkdir(join(root, "server", "agents"), { recursive: true })
     await writeFile(join(root, "server", "agents", "support.ts"), "export default {}", "utf8")
@@ -320,17 +328,26 @@ describe("Agent Invocation Stream write workspace finish lifecycle", () => {
 
     await configurePluginServer(plugin, server)
 
-    const response = await invokeMiddleware(handlers, {
-      agent: "support",
-      workspaceCommand: { command: "pnpm", args: ["test"] },
-    }, agentInvocationStreamRoute, {
-      "content-type": "application/json",
-      [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
-    })
-
-    expect(response.statusCode).toBe(403)
-    expect(response.body).toBe("Forbidden Agent Dev Loop command token.")
+    const guard = { "content-type": "application/json", [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue }
+    const { [workspaceDevTokenHeader]: token = "" } = await devLoopTokenHeaders(root)
+    const wrongToken = `${token.slice(0, -1)}${token.endsWith("0") ? "1" : "0"}`
+    const requests: Array<[Record<string, unknown>, string, IncomingMessage["headers"], string?]> = [
+      [{ agent: "support", workspaceCommand: { command: "pnpm", args: ["test"] } }, agentInvocationStreamRoute, guard],
+      [{ agent: "support", workspaceCommand: { command: "pnpm", args: ["test"] } }, agentInvocationStreamRoute, { ...guard, [workspaceDevTokenHeader]: wrongToken }],
+      [{ agent: "support", messages: [{ id: "user-1", parts: [{ text: "hello", type: "text" }], role: "user" }] }, agentInvocationStreamRoute, guard],
+      [{ agent: "support", replay: { channel: "mailbox", describe: true } }, agentInvocationStreamRoute, guard],
+      [{}, `${agentInvocationStreamRoute}?inspect=1&agent=support`, guard, "GET"],
+    ]
+    for (const [body, url, headers, method] of requests) {
+      const response = await invokeMiddleware(handlers, body, url, headers, { onRequest: (req) => { if (method) req.method = method } })
+      expect([response.statusCode, response.body]).toEqual([403, "Forbidden Agent Dev Loop token."])
+    }
     expect(useWorkspace).not.toHaveBeenCalled()
+
+    const discovery = await invokeMiddleware(handlers, {}, agentInvocationStreamRoute, guard, { onRequest: (req) => { req.method = "GET" } })
+    expect(discovery.statusCode).toBe(200)
+    expect(JSON.parse(discovery.body)).toMatchObject({ agents: [{ name: "support" }], root, workspaceDevTokenServerId: workspaceDevTokenServerId(3000) })
+    expect(discovery.body).not.toContain(token)
   })
 
   it("installs GitHub workspace stores before Agent Workspace commands", async () => {
@@ -674,7 +691,7 @@ describe("Agent Invocation Stream Channel replay", () => {
     })
     const { handlers, server } = createFakeServer(root, { default: agent })
     await configurePluginServer((await import("../src/vite.ts")).hubAgent(), server)
-    const headers = { "content-type": "application/json", [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue }
+    const headers = { "content-type": "application/json", [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue, ...await devLoopTokenHeaders(root) }
 
     const description = await invokeMiddleware(handlers, { agent: "support", replay: { channel: "mailbox", describe: true } }, agentInvocationStreamRoute, headers)
     expect(description.statusCode).toBe(200)
