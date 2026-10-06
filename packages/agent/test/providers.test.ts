@@ -13236,7 +13236,7 @@ describe("server helpers", () => {
     }
   })
 
-  it("tells the thread about a host restart and retries the interrupted inline chat once", async () => {
+  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13245,6 +13245,17 @@ describe("server helpers", () => {
     const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-inline-chat-restart-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const persistenceGate = deferred<void>()
+    const originalSet = state.set.bind(state)
+    let delayedWrite = false
+    const setSpy = vi.spyOn(state, "set").mockImplementation(async (key, value, ttl) => {
+      if (scenario === "slow persistence" && key.endsWith("vitehub:interrupted-chat") && !delayedWrite) {
+        delayedWrite = true
+        await persistenceGate.promise
+      }
+      await originalSet(key, value, ttl)
+    })
+    const processStartedAt = Date.now()
     const prompts: string[] = []
     const createAgent = (adapter: ReturnType<typeof createTestChatAdapter>) => defineAgent({
       name: "support",
@@ -13259,7 +13270,7 @@ describe("server helpers", () => {
         run: async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
           prompts.push(JSON.stringify(input))
           // The first attempt runs until the host restarts.
-          if (prompts.length === 1) {
+          if (prompts.length === 1 || (scenario === "second restart" && prompts.length === 2)) {
             await new Promise<never>((_resolve, reject) => {
               input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
             })
@@ -13296,11 +13307,41 @@ describe("server helpers", () => {
       expect(response.status).toBe(200)
       await vi.waitFor(() => expect(prompts).toHaveLength(1), { timeout: 10_000 })
 
-      await expect(drainInlineChatInvocations({ timeoutMs: 0 })).resolves.toEqual({ active: 1, interrupted: 1, unsettled: 0 })
+      if (scenario === "cutoff") {
+        // Work admitted by this process must not be recovered at its startup cutoff.
+        stop = firstHandler.resume({ agentIdentity: { name: "support" }, recoverInterruptedBefore: processStartedAt, state, webhookState: state })
+        await new Promise(resolveWait => setTimeout(resolveWait, 250))
+        expect(prompts).toHaveLength(1)
+        await stop()
+      }
+      const drain = drainInlineChatInvocations({ timeoutMs: 0 })
+      if (scenario === "slow persistence") {
+        let settled = false
+        void drain.then(() => { settled = true })
+        await Promise.allSettled(waitUntilTasks)
+        await new Promise(resolveWait => setTimeout(resolveWait, 50))
+        expect(delayedWrite).toBe(true)
+        expect(settled).toBe(false)
+        persistenceGate.resolve()
+      }
+      await expect(drain).resolves.toEqual({ active: 1, interrupted: 1, unsettled: 0 })
       await Promise.allSettled(waitUntilTasks)
       const restartNotice = "The server restarted while I was working on this. I'll retry it automatically."
       expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
 
+      if (scenario === "initialize failure" || scenario === "retry failure") {
+        const failure = new Error("temporary recovery failure")
+        const method = scenario === "initialize failure" ? "initialize" : "processMessage"
+        const failing = vi.spyOn(Chat.prototype, method).mockRejectedValueOnce(failure)
+        // SAFETY: The test Agent supplies the route contract through defineAgent.
+        stop = createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+          agentIdentity: { name: "support" }, recoverInterruptedBefore: Date.now(), state, webhookState: state,
+        })
+        await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.includes(failure))).toBe(true))
+        await stop()
+        failing.mockRestore()
+        expect(prompts).toHaveLength(1)
+      }
       const secondAdapter = createTestChatAdapter({ deferMessageProcessing: true })
       // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
       stop = createChannelWebhookRouteHandler(createAgent(secondAdapter) as never).resume({
@@ -13314,10 +13355,14 @@ describe("server helpers", () => {
       expect(prompts[1]).toContain("[Retry after interruption]")
       expect(prompts[1]).toContain("review the pull request")
       expect([...secondAdapter.postMessage.mock.calls, ...secondAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
-      // The first start consumes the record, so the next start does not retry again.
+      if (scenario === "second restart") {
+        await drainInlineChatInvocations({ timeoutMs: 0 })
+      }
+      // A completed retry clears recovery; an interrupted retry only posts the exhausted notice.
       await stop()
+      const thirdAdapter = createTestChatAdapter({ deferMessageProcessing: true })
       // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
-      stop = createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+      stop = createChannelWebhookRouteHandler(createAgent(thirdAdapter) as never).resume({
         agentIdentity: { name: "support" },
         recoverInterruptedBefore: Date.now(),
         state,
@@ -13325,8 +13370,13 @@ describe("server helpers", () => {
       })
       await new Promise(resolveWait => setTimeout(resolveWait, 500))
       expect(prompts).toHaveLength(2)
+      if (scenario === "second restart") {
+        expect([...thirdAdapter.postMessage.mock.calls, ...thirdAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining("The server restarted twice"))
+      }
     } finally {
       // Release a run that a failed assertion left blocked, so it cannot hold the thread lock for later tests.
+      persistenceGate.resolve()
+      setSpy.mockRestore()
       await drainInlineChatInvocations({ timeoutMs: 0 })
       await stop?.()
       await state.disconnect()

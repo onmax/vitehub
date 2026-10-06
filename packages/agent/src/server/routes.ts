@@ -5225,7 +5225,7 @@ interface InlineChatInvocation {
 interface InterruptedChatRecord {
   agentName: string
   channelId?: string
-  message: Record<string, unknown> & { id: string; text?: string }
+  message: ReturnType<Message["toJSON"]>
   placeholderId?: string
   runId: string
   startedAt: string
@@ -5235,7 +5235,7 @@ interface InterruptedChatRecord {
 export interface DrainInlineChatInvocationsOptions {
   /** How long running inline chat invocations get to finish before they are interrupted. */
   timeoutMs?: number
-  /** How long interrupted invocations get to post their HOST_RESTARTED notice. */
+  /** How long interrupted invocations get to persist their record and post their HOST_RESTARTED notice. */
   settleMs?: number
 }
 
@@ -5276,6 +5276,7 @@ async function updateInterruptedChatIndex(
   }
   try {
     const current = await state.get(key)
+    // SAFETY: This private index is written only with InterruptedChatRecord values below.
     const records = isRecord(current) ? { ...current } as Record<string, InterruptedChatRecord> : {}
     await update(records)
     if (Object.keys(records).length) await state.set(key, records)
@@ -5302,7 +5303,7 @@ function registerInlineChatInvocation(options: {
   const { abort, agentName, keyPrefix, message, registration, runId, state } = options
   let resolveSettled!: () => void
   const logError = (error: unknown) => console.error("[vitehub] Inline chat restart record could not be updated.", error)
-  const serialize = (message as { toJSON?: () => unknown }).toJSON
+  const serialize = Reflect.get(message, "toJSON")
   const entry: InlineChatInvocation = {
     interrupted: false,
     persisted: Promise.resolve(),
@@ -5327,16 +5328,24 @@ function registerInlineChatInvocation(options: {
       await updateInterruptedChatIndex(state, keyPrefix, (records) => { delete records[runId] }).catch(logError)
     },
     finish() {
-      inlineChatInvocations.delete(entry)
-      resolveSettled()
+      void entry.persisted.finally(() => {
+        inlineChatInvocations.delete(entry)
+        resolveSettled()
+      })
     },
   }
   if (runId && isRuntimeFunction(serialize)) {
     entry.persisted = updateInterruptedChatIndex(state, keyPrefix, (records) => {
+      // Once the retry is persisted, it owns recovery even if this process restarts again.
+      if (interruptedChatRetryAttempt(message.id) > 0) {
+        for (const [previousRunId, previous] of Object.entries(records)) {
+          if (previous.agentName === agentName && previous.channelId === registration.channelId && previous.threadId === message.threadId && `${previous.message.id}${interruptedChatRetrySuffix}` === message.id) delete records[previousRunId]
+        }
+      }
       records[runId] = {
         agentName,
         channelId: registration.channelId,
-        message: serialize.call(message) as InterruptedChatRecord["message"],
+        message: serialize.call(message),
         runId,
         startedAt: new Date().toISOString(),
         threadId: message.threadId,
@@ -5357,7 +5366,10 @@ export async function drainInlineChatInvocations(options: DrainInlineChatInvocat
     if (!entries.length || !(ms > 0)) return
     let timer: ReturnType<typeof setTimeout> | undefined
     await Promise.race([
-      Promise.allSettled(entries.map(entry => entry.settled)),
+      Promise.allSettled(entries.map(async entry => {
+        await entry.settled
+        await entry.persisted
+      })),
       new Promise<void>((resolve) => { timer = setTimeout(resolve, ms) }),
     ])
     clearTimeout(timer)
@@ -5388,17 +5400,17 @@ async function resumeInterruptedChatInvocation(options: {
   chatOptions: AgentChatOptions | undefined
   record: InterruptedChatRecord
   waitUntil: ViteAgentRouteRuntimeContext["waitUntil"]
-}): Promise<void> {
+}): Promise<boolean> {
   const { adapter, agent, agentName, chat, chatOptions, record, waitUntil } = options
-  if (!isRecord(record) || !isRuntimeString(record.threadId) || !isRecord(record.message) || !isRuntimeString(record.message.id)) return
+  if (!isRecord(record) || !isRuntimeString(record.threadId) || !isRecord(record.message) || !isRuntimeString(record.message.id)) return false
+  // SAFETY: Agent Definitions expose the invocation journal; only its optional summary reader is used.
   const invocations = isRecord(agent) && isRecord(agent.invocations) ? agent.invocations as { getSummary?: (id: string) => unknown } : undefined
   const summary = await Promise.resolve()
     .then(async () => await invocations?.getSummary?.(await agentInvocationId(record.runId, agentName)))
     .catch(() => undefined)
   // The previous process finished the work after all.
-  if (isRecord(summary) && summary.status === "completed") return
-  // Records hold message.toJSON() output, which Message.fromJSON restores.
-  const message = Message.fromJSON(record.message as never)
+  if (isRecord(summary) && summary.status === "completed") return true
+  const message = Message.fromJSON(record.message)
   const thread = chat.thread(record.threadId)
   const exhausted = interruptedChatRetryAttempt(record.message.id) >= 1
   const notice = await interruptedChatFallbackText(chatOptions, thread, message, exhausted ? "exhausted" : "pending")
@@ -5406,23 +5418,30 @@ async function resumeInterruptedChatInvocation(options: {
     const edited = isRuntimeString(record.placeholderId)
       ? await Promise.resolve(adapter.editMessage(record.threadId, record.placeholderId, notice)).then(() => true, () => false)
       : false
-    if (!edited) await thread.post(notice).catch(error => console.error("[vitehub] Interrupted chat notice could not be posted.", error))
+    if (!edited) await thread.post(notice)
   }
-  if (exhausted) return
+  if (exhausted) return true
   const retry = Message.fromJSON({
     ...record.message,
     id: `${record.message.id}${interruptedChatRetrySuffix}`,
     text: `${interruptedChatRetryNote}\n\n${record.message.text ?? ""}`,
-  } as never)
+  })
   // A new message id gives the retry a new run id; deduplicate: false keeps Chat from dropping it.
-  ;(chat.processMessage as (...args: unknown[]) => Promise<unknown>)(adapter, record.threadId, retry, { deduplicate: false, waitUntil })
-    .catch(error => console.error("[vitehub] Interrupted chat invocation retry failed.", error))
+  try {
+    await chat.processMessage(adapter, record.threadId, retry, { deduplicate: false, waitUntil })
+    return true
+  }
+  catch (error) {
+    console.error("[vitehub] Interrupted chat invocation retry failed.", error)
+    return false
+  }
 }
 
 async function resumeInterruptedChatInvocations(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   context: ViteAgentRouteRuntimeContext,
   handlerOptions: AgentChannelWebhookRouteOptions,
+  recoveryBefore: number,
 ): Promise<void> {
   if (!isRecord(agent) || await hasActiveWorkflowRuntime(agent, context)) return
   const agentName = firstString(agent.name, context.agentIdentity?.name)
@@ -5438,20 +5457,27 @@ async function resumeInterruptedChatInvocations(
     const state = await resolveChatState(chatOptions, context, registration, handlerOptions)
     await state.state.connect()
     const records: InterruptedChatRecord[] = []
-    await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
-      for (const [runId, record] of Object.entries(current)) {
+    const current = await state.state.get<Record<string, InterruptedChatRecord>>(interruptedChatIndexKey(state.titleKeyPrefix))
+    if (isRecord(current)) {
+      for (const record of Object.values(current)) {
         if (!isRecord(record) || record.agentName !== agentName || record.channelId !== registration.channelId) continue
+        if (!isRuntimeString(record.startedAt) || !(Date.parse(record.startedAt) < recoveryBefore)) continue
         records.push(record)
-        delete current[runId]
       }
-    })
+    }
     if (!records.length) continue
     const chat = await createChannelChat(agent, context, registration, adapterName, adapter, chatOptions, handlerOptions, undefined, state)
     await chat.initialize()
-    for (const record of records) {
-      await resumeInterruptedChatInvocation({ adapter, agent, agentName, chat, chatOptions, record, waitUntil: context.waitUntil })
+    await Promise.all(records.map(async (record) => {
+      const accepted = await resumeInterruptedChatInvocation({ adapter, agent, agentName, chat, chatOptions, record, waitUntil: context.waitUntil })
         .catch(error => console.error("[vitehub] Interrupted chat invocation could not be resumed.", error))
-    }
+      if (accepted) {
+        await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
+          const currentRecord = current[record.runId]
+          if (isRecord(currentRecord) && currentRecord.startedAt === record.startedAt) delete current[record.runId]
+        })
+      }
+    }))
   }
 }
 
@@ -8253,7 +8279,7 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
           ...[...trackedStates].filter(hasAgentWebhookQueue).map(state => ({ owns: (scope: string) => scope.startsWith(agentScopePrefix), state })),
           ...registrations.map(({ scope, state }) => ({ owns: (candidate: string) => candidate === scope, state })),
         ]).catch(error => console.error("[vitehub] Interrupted Agent invocation recovery failed.", error))
-        resumeInterruptedChatInvocations(agent, context, handlerOptions)
+        resumeInterruptedChatInvocations(agent, context, handlerOptions, recoveryBefore)
           .catch(error => console.error("[vitehub] Interrupted chat invocation resume failed.", error))
         recoveryBefore = undefined
       }
