@@ -1372,6 +1372,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
     })
     const launchSecretEnvironmentKeys = providerSecretEnvironmentKeys(environment, [])
     const credentialSecrets = await codexCredentialSecrets(home?.homePath)
+    const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     const binary = options.providerSettings?.binaryPath ?? resolveInstalledProviderExecutable(options.provider)
     let binaryPath = binary
     let launchDiagnosticPath: string | undefined
@@ -1384,7 +1385,7 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
         ...context, command: requirements.length ? "sh" : command, providerCommand: command, cwd: root, environment: Object.freeze({ ...environment }), requiredEnvironment: [...(home ? ["CODEX_HOME"] : []), ...Object.keys(gateway?.environment || {})],
       }), signal))
       signal?.throwIfAborted()
-      launchDiagnosticSecrets = providerLaunchSecretValues(launch)
+      launchDiagnosticSecrets = [...providerLaunchSecretValues(launch), ...shellArgTokens(launchArgs)]
       if (requirements.length) requirementCapture = {
         path: join(root, "provider-requirements.jsonl"),
         prefix: `vitehub-requirements-${crypto.randomUUID()}:`,
@@ -1397,7 +1398,6 @@ export async function inspectAgentProvider<TRuntimeConfig extends AgentRuntimeCo
       binaryPath = launcher.path
       launchDiagnosticPath = launcher.diagnosticPath
     }
-    const launchArgs = [options.providerSettings?.launchArgs, gateway?.launchArgs, ...(home ? ['-c "cli_auth_credentials_store=\\"file\\""'] : [])].filter(Boolean).join(" ")
     signal?.throwIfAborted()
     let missingCommands = options.launch === undefined
       ? await missingProviderCommands(requirements, environment, root || process.cwd(), signal)

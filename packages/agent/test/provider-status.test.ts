@@ -137,6 +137,25 @@ describe("provider inspection", () => {
     expect(JSON.stringify(result)).not.toContain(secret)
   })
 
+  it("redacts runtime launch arguments from launcher stderr", async () => {
+    const runtimeSecret = "runtime-launch-secret"
+    inspectProvider.mockImplementation(async options => {
+      const launched = spawnSync(options.settings.binaryPath, ["--api-key", runtimeSecret], { encoding: "utf8", env: options.environment })
+      expect(launched.status).toBe(1)
+      return { ...ready(), status: "error", message: "Codex App Server process exited with code 1" }
+    })
+    const result = await inspectAgentProvider({
+      provider: "codex",
+      providerSettings: { launchArgs: `--api-key ${runtimeSecret}` },
+      launch: { command: "sh", args: ["-c", 'echo "runtime args: $*" >&2; exit 1'] },
+    }, context())
+    expect(result).toMatchObject({
+      readiness: "unavailable",
+      reason: "Provider status check failed: Codex App Server process exited with code 1 Launch stderr: runtime args: [REDACTED]",
+    })
+    expect(JSON.stringify(result)).not.toContain(runtimeSecret)
+  })
+
   it("reports Driver commands that are missing where the Driver runs", async () => {
     inspectProvider.mockResolvedValue(ready())
     const requirements = ["sh", "vitehub-missing-command-a", "vitehub-missing-command-b"]
