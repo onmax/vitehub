@@ -14,7 +14,7 @@ export default defineConfig({
       },
     }],
     deps: {
-      neverBundle: ["vite", "@vite-hub/agent/env-identity"],
+      neverBundle: ["vite", "@vite-hub/runtime/internal/agent-identity"],
       alwaysBundle: [/^@vite-hub\/internal/],
       onlyBundle: false,
     },
