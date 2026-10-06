@@ -183,7 +183,7 @@ Each grant targets one actor kind (`user`, `agent`, or `service`), one actor ID,
 | `use` | Resolve the value at runtime, or run a trusted `bridge.use()` operation. |
 
 - Only administrators manage grants and read activity. An administrator context passes every permission check.
-- Only Env creates an administrator context: `createEnvAuthenticator()` returns one when your `isAdmin` policy returns `true`. The context is frozen and is valid for one request. Do not store it.
+- Only Env creates an administrator context: `createEnvAuthenticator()` returns one when your `isAdmin` policy returns `true`. The context is frozen, and trusted application code must keep it within the authenticated request.
 - The bridge rejects an administrator context that Env did not create, for example `{ actor, admin: true }` or a copy of a real one, with `ENV_BRIDGE_UNTRUSTED`. TypeScript also rejects `admin: true` in a context that you build.
 - A verified Agent token can add a `scope`. The scope is a ceiling over the Agent's durable grants. A context with a `scope` never gets administrator access.
 - Revocation applies to the next permission check. It cannot retract a secret that an operation already resolved.

@@ -18,7 +18,7 @@ export interface EnvActorAccessContext {
   traceId?: string;
   invocationId?: string;
 }
-/** A frozen, request-scoped context that only Env creates after its own check. Do not persist it. */
+/** A frozen context that only Env creates after its own check. Keep it in trusted request code. */
 export interface EnvGrantedAccessContext {
   readonly [envAccessGrant]: true;
   readonly actor: Readonly<EnvActor>;

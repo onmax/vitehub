@@ -11,7 +11,7 @@ export type EnvAuthority =
 
 const authorities = new WeakMap<EnvAccessContext, EnvAuthority>();
 
-/** Create a frozen, request-scoped context. Only Env modules call this after their own check. */
+/** Create a frozen context. Only Env modules call this after their own check. */
 export function grantEnvAccess(
   attribution: { actor: EnvActor; traceId?: string; invocationId?: string },
   authority: EnvAuthority,
