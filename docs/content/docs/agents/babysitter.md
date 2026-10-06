@@ -42,6 +42,37 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `noProgressBudget` | `3` | Passes on one head that can end without a push or a recorded wait. Then the PR waits until its head changes or a person comments. `false` disables the budget. |
 | `install` | `true` | Install dependencies on the host before the model starts. `true` detects pnpm, npm, Yarn or Bun from the lockfile and installs it frozen; `{ command, args }` overrides it; `{ cache: { directory, entries } }` configures the pnpm cache; `false` skips it. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
+| `admission` | `{}` | Token budgets, a free-space guard and custom checks that stop model passes. See [Limit model passes](#limit-model-passes). |
+
+## Limit model passes
+
+The host checks `admission` before it claims a pull request. A spent limit stops model passes. Direct merges and recorded waits continue, so a ready pull request still merges.
+
+```ts [server/agents/babysitter/agent.ts]
+export default defineAgent({
+  extends: babysitter,
+  options: {
+    filter: { repository: { allow: ['acme/app'] } },
+    admission: {
+      inputTokens: { daily: 1_000_000_000 },
+      paused: process.env.BABYSITTER_PAUSED === '1',
+      async check() {
+        const quota = await readProviderQuota()
+        if (quota.usedPercent >= 80) return { reason: 'provider-quota', detail: `${quota.usedPercent}% of the weekly quota used` }
+      },
+    },
+  },
+})
+```
+
+| Field | Default | Purpose |
+| --- | --- | --- |
+| `inputTokens.hourly`, `inputTokens.daily` | No limit | Input tokens that the Agent's passes can use in the local clock hour and in the local day. Leave a window out for no limit. A pass continues when it goes past the limit; the next pass waits for the next window. |
+| `minFreeTmpMb` | `4096` | Free space, in MiB, that the temporary directory needs before a pass. `false` disables the check. |
+| `paused` | `false` | Stop every claim, including direct merges. Use it for a smoke boot or maintenance. |
+| `check` | None | Extra check before each claim, for example a provider quota. Return `{ reason, detail, retryAt }` to stop model passes, or `undefined` to continue. When it throws, the error is shown in health and passes continue. |
+
+The health route shows the decision in `admission` and the token use, the limits and the `check` result in `budget`.
 
 ## Configure GitHub
 

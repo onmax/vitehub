@@ -1,17 +1,43 @@
-import { readFile, statfs } from "node:fs/promises";
+import { statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
+import { isRuntimeRecord } from "../../internal/runtime-type.ts";
 
-/** Shared host and provider limits that gate new Babysitter passes. */
+/** A reason to stop model passes, returned by `admission.check`. */
+export interface BabysitterAdmissionPause {
+  /** Short machine-readable reason, such as `"provider-quota"`. */
+  reason: string;
+  detail?: string;
+  /** Epoch milliseconds when the pause ends, if it ends at a known time. */
+  retryAt?: number;
+}
+
+/**
+ * Shared-resource limits that the host checks before it claims a PR. A spent limit stops model
+ * passes. Direct merges and recorded waits continue.
+ */
+export interface BabysitterAdmissionOptions {
+  /**
+   * Input tokens that this Agent's passes may use per local clock hour and per local day. Leave a
+   * window out for no limit. Defaults to no limit.
+   */
+  inputTokens?: { hourly?: number; daily?: number };
+  /** Free space, in MiB, that the temporary directory needs before a pass. `false` disables the check. Defaults to 4096. */
+  minFreeTmpMb?: number | false;
+  /** Stop every claim, including direct merges, for example during a smoke boot. Defaults to `false`. */
+  paused?: boolean;
+  /**
+   * Extra check before each claim, for example a provider quota. Return a pause to stop model
+   * passes, or `undefined` to continue. An error is reported in health and does not pause.
+   */
+  check?: () => BabysitterAdmissionPause | undefined | Promise<BabysitterAdmissionPause | undefined>;
+}
+
+/** Resolved admission limits. An undefined limit has no bound. */
 export interface BabysitterAdmissionLimits {
-  minFreeTmpBytes: number;
-  hourlyInputTokens: number;
-  dailyInputTokens: number;
-  /** Sanitized proxy account status, written by the proxy host. */
-  proxyStatusFile: string;
-  proxyProvider: string;
-  proxyMaxWeeklyPercent: number;
-  proxyStatusMaxAgeMs: number;
+  hourlyInputTokens?: number;
+  dailyInputTokens?: number;
+  minFreeTmpBytes?: number;
+  paused: boolean;
 }
 
 /** The answer that `reconcile()` reads before it claims a PR. */
@@ -19,8 +45,7 @@ export interface BabysitterAdmission {
   accepting: boolean;
   /**
    * While `accepting` is false, the host may still claim PRs for work without a model pass:
-   * direct merges, deferred waits and reviewed heads. A zero budget is an explicit operator pause
-   * and stops every claim.
+   * direct merges, deferred waits and reviewed heads. `paused` stops every claim.
    */
   hostOnly?: boolean;
   reason?: string;
@@ -29,39 +54,49 @@ export interface BabysitterAdmission {
   detail?: string;
 }
 
-export type BabysitterProxySummary =
-  | { state: "unknown" | "stale" | "unreadable"; observedAt?: string }
-  | { state: "fresh"; observedAt?: string; accounts: number; usable: number; weeklyUsedPercent?: number };
+/** Epoch-millisecond bounds of the local clock hour and calendar day. */
+export interface BabysitterBudgetWindows {
+  hourStart: number;
+  hourEnd: number;
+  dayStart: number;
+  dayEnd: number;
+}
 
 export interface BabysitterAdmissionState {
-  windows: ReturnType<typeof babysitterBudgetWindows>;
+  windows: BabysitterBudgetWindows;
   tmpDir: string;
   freeTmpBytes?: number;
   hourlyInputTokens?: number;
   dailyInputTokens?: number;
-  proxy?: BabysitterProxySummary;
+  /** The pause that `admission.check` returned. */
+  pause?: BabysitterAdmissionPause;
   errors?: string[];
 }
 
-/** Reads the admission limits. Unset or invalid values keep the defaults; 0 pauses admission. */
-export function readBabysitterAdmissionLimits(env: Record<string, string | undefined> = process.env, provider = "codex"): BabysitterAdmissionLimits {
-  const number = (name: string, fallback: number) => {
-    const value = env[name] ? Number(env[name]) : Number.NaN;
-    return Number.isFinite(value) && value >= 0 ? value : fallback;
-  };
+const tokenLimit = (value: unknown) => value === undefined || (Number.isSafeInteger(value) && Number(value) >= 0);
+
+/** Whether `value` is a valid `admission` option. */
+export function validBabysitterAdmission(value: unknown): value is BabysitterAdmissionOptions {
+  if (!isRuntimeRecord(value)) return false;
+  const { inputTokens, minFreeTmpMb, paused, check } = value;
+  if (inputTokens !== undefined && !(isRuntimeRecord(inputTokens) && tokenLimit(inputTokens.hourly) && tokenLimit(inputTokens.daily))) return false;
+  if (minFreeTmpMb !== undefined && minFreeTmpMb !== false && !(typeof minFreeTmpMb === "number" && Number.isFinite(minFreeTmpMb) && minFreeTmpMb >= 0)) return false;
+  return (paused === undefined || typeof paused === "boolean") && (check === undefined || typeof check === "function");
+}
+
+/** Resolves the `admission` option of the Babysitter preset. */
+export function resolveBabysitterAdmissionLimits(options: BabysitterAdmissionOptions = {}): BabysitterAdmissionLimits {
+  const minFreeTmpMb = options.minFreeTmpMb ?? 4096;
   return {
-    minFreeTmpBytes: number("BABYSITTER_MIN_FREE_TMP_MB", 4096) * 1024 * 1024,
-    hourlyInputTokens: number("BABYSITTER_HOURLY_INPUT_TOKENS", 15e6),
-    dailyInputTokens: number("BABYSITTER_DAILY_INPUT_TOKENS", 200e6),
-    proxyStatusFile: env.BABYSITTER_PROXY_STATUS_FILE || "/srv/cliproxy-status/accounts.json",
-    proxyProvider: env.BABYSITTER_PROXY_PROVIDER || provider,
-    proxyMaxWeeklyPercent: number("BABYSITTER_PROXY_MAX_WEEKLY_PERCENT", 80),
-    proxyStatusMaxAgeMs: number("BABYSITTER_PROXY_STATUS_MAX_AGE_S", 900) * 1000,
+    hourlyInputTokens: options.inputTokens?.hourly,
+    dailyInputTokens: options.inputTokens?.daily,
+    minFreeTmpBytes: minFreeTmpMb === false ? undefined : minFreeTmpMb * 1024 * 1024,
+    paused: options.paused === true,
   };
 }
 
 /** The local clock hour and calendar day that contain `now`. */
-export function babysitterBudgetWindows(now: number) {
+export function babysitterBudgetWindows(now: number): BabysitterBudgetWindows {
   const hour = new Date(now);
   hour.setMinutes(0, 0, 0);
   const day = new Date(now);
@@ -71,48 +106,23 @@ export function babysitterBudgetWindows(now: number) {
   return { hourStart: hour.getTime(), hourEnd: hour.getTime() + 60 * 60_000, dayStart: day.getTime(), dayEnd: nextDay.getTime() };
 }
 
-/** Summarizes the proxy account status for one provider. Unavailable or limited accounts count as 100% used. */
-export function summarizeProxyAccounts(status: unknown, provider: string, now: number, maxAgeMs: number): BabysitterProxySummary {
-  if (!isRuntimeRecord(status) || !Array.isArray(status.accounts)) return { state: "unknown" };
-  const observedAt = hasRuntimeType(status.observedAt, "string") ? status.observedAt : undefined;
-  if (!(now - Date.parse(observedAt ?? "") <= maxAgeMs)) return { state: "stale", observedAt };
-  const accounts = status.accounts.filter(account => isRuntimeRecord(account) && account.provider === provider && !account.disabled);
-  if (!accounts.length) return { state: "unknown", observedAt };
-  const exhausted = (account: Record<PropertyKey, unknown>) => !account.available || account.limitReached === true;
-  const used = accounts
-    .map(account => exhausted(account) ? 100 : account.weeklyUsedPercent)
-    .filter((value): value is number => hasRuntimeType(value, "number") && Number.isFinite(value));
-  return {
-    state: "fresh",
-    observedAt,
-    accounts: accounts.length,
-    usable: accounts.filter(account => !exhausted(account)).length,
-    weeklyUsedPercent: used.length ? Math.round(used.reduce((sum, value) => sum + value, 0) / used.length) : undefined,
-  };
-}
-
-/** Decides whether the scheduler may start another pass on the shared host and proxy. */
+/** Decides whether the scheduler may start another pass. */
 export function babysitterAdmissionDecision(state: BabysitterAdmissionState, limits: BabysitterAdmissionLimits): BabysitterAdmission {
-  const { windows, proxy } = state;
+  const { windows } = state;
   const mib = (bytes: number) => Math.floor(bytes / 1024 / 1024);
-  if (limits.hourlyInputTokens === 0 || limits.dailyInputTokens === 0) {
-    return { accepting: false, hostOnly: false, reason: limits.hourlyInputTokens === 0 ? "token-budget-hourly" : "token-budget-daily", detail: "Admission is paused by a zero token budget" };
+  if (limits.paused) {
+    return { accepting: false, hostOnly: false, reason: "paused", detail: "Admission is paused by the admission.paused option" };
   }
-  if (state.freeTmpBytes !== undefined && state.freeTmpBytes < limits.minFreeTmpBytes) {
+  if (limits.minFreeTmpBytes !== undefined && state.freeTmpBytes !== undefined && state.freeTmpBytes < limits.minFreeTmpBytes) {
     return { accepting: false, hostOnly: true, reason: "tmp-space-low", detail: `${mib(state.freeTmpBytes)} MiB free in ${state.tmpDir}; passes need ${mib(limits.minFreeTmpBytes)} MiB` };
   }
-  if (state.dailyInputTokens !== undefined && state.dailyInputTokens >= limits.dailyInputTokens) {
+  if (limits.dailyInputTokens !== undefined && state.dailyInputTokens !== undefined && state.dailyInputTokens >= limits.dailyInputTokens) {
     return { accepting: false, hostOnly: true, reason: "token-budget-daily", retryAt: windows.dayEnd, detail: `${state.dailyInputTokens} of ${limits.dailyInputTokens} daily input tokens used` };
   }
-  if (state.hourlyInputTokens !== undefined && state.hourlyInputTokens >= limits.hourlyInputTokens) {
+  if (limits.hourlyInputTokens !== undefined && state.hourlyInputTokens !== undefined && state.hourlyInputTokens >= limits.hourlyInputTokens) {
     return { accepting: false, hostOnly: true, reason: "token-budget-hourly", retryAt: windows.hourEnd, detail: `${state.hourlyInputTokens} of ${limits.hourlyInputTokens} hourly input tokens used` };
   }
-  if (proxy?.state === "fresh" && proxy.usable === 0) {
-    return { accepting: false, hostOnly: true, reason: "proxy-exhausted", detail: `No usable ${limits.proxyProvider} account of ${proxy.accounts}` };
-  }
-  if (proxy?.state === "fresh" && proxy.weeklyUsedPercent !== undefined && proxy.weeklyUsedPercent >= limits.proxyMaxWeeklyPercent) {
-    return { accepting: false, hostOnly: true, reason: "proxy-weekly-limit", detail: `${limits.proxyProvider} accounts at ${proxy.weeklyUsedPercent}% of their weekly limit; admission stops at ${limits.proxyMaxWeeklyPercent}%` };
-  }
+  if (state.pause) return { accepting: false, hostOnly: true, ...state.pause };
   return { accepting: true };
 }
 
@@ -169,8 +179,13 @@ export function sumInvocationInputTokens(usage: ReadonlyMap<string, InvocationIn
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-/** Gathers disk, token, and proxy state for admission. Token usage is refreshed at most once a minute. */
-export function createBabysitterAdmission(options: { invocationsFile: string; limits: BabysitterAdmissionLimits }) {
+export type BabysitterAdmissionCheck = (now?: number) => Promise<BabysitterAdmission & { state: BabysitterAdmissionState; limits: BabysitterAdmissionLimits }>;
+
+/**
+ * Gathers disk, token and custom-check state for admission. Token usage is read only while a
+ * token limit is set, and at most once a minute.
+ */
+export function createBabysitterAdmission(options: { invocationsFile: string; limits: BabysitterAdmissionLimits; check?: BabysitterAdmissionOptions["check"] }): BabysitterAdmissionCheck {
   const { limits } = options;
   // Today's per-invocation maxima. After the first read, a refresh reads only rows updated
   // since the previous read, with one minute of overlap for clock skew between writers.
@@ -186,7 +201,8 @@ export function createBabysitterAdmission(options: { invocationsFile: string; li
     } catch (error) {
       errors.push(`tmp: ${message(error)}`);
     }
-    if (cursor === undefined || now - cursor >= 60_000) {
+    const budgeted = limits.hourlyInputTokens !== undefined || limits.dailyInputTokens !== undefined;
+    if (budgeted && (cursor === undefined || now - cursor >= 60_000)) {
       try {
         const since = cursor === undefined ? windows.dayStart : Math.max(windows.dayStart, cursor - 60_000);
         for (const entry of await readInvocationInputTokens(options.invocationsFile, since)) usage.set(entry.id, entry);
@@ -201,11 +217,13 @@ export function createBabysitterAdmission(options: { invocationsFile: string; li
       state.hourlyInputTokens = sumInvocationInputTokens(usage, windows.hourStart);
       state.dailyInputTokens = sumInvocationInputTokens(usage, windows.dayStart);
     }
-    try {
-      state.proxy = summarizeProxyAccounts(JSON.parse(await readFile(limits.proxyStatusFile, "utf8")), limits.proxyProvider, now, limits.proxyStatusMaxAgeMs);
-    } catch (error) {
-      // Hosts without a proxy have no status file.
-      state.proxy = { state: isRuntimeRecord(error) && error.code === "ENOENT" ? "unknown" : "unreadable" };
+    if (options.check && !limits.paused) {
+      try {
+        const pause = await options.check();
+        if (pause) state.pause = pause;
+      } catch (error) {
+        errors.push(`check: ${message(error)}`);
+      }
     }
     if (errors.length) state.errors = errors;
     return { ...babysitterAdmissionDecision(state, limits), state, limits };

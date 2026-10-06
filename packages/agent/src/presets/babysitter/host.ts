@@ -10,9 +10,8 @@ import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts"
 import { registerAgentProcessHostIntake, type AgentProcessHostContext, type AgentProcessHostInstance } from "../../agent-process-host.ts";
 import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
-import { getAgentLayerOptions } from "../../agent-layers.ts";
 import { createBabysitterRuntime } from "./server.ts";
-import { createBabysitterAdmission, readBabysitterAdmissionLimits } from "./admission.ts";
+import { createBabysitterAdmission, resolveBabysitterAdmissionLimits, type BabysitterAdmissionOptions } from "./admission.ts";
 
 /** Reads a plain or sealed Server Env value. */
 export function envString(value: unknown): string | undefined {
@@ -68,17 +67,17 @@ export async function sweepBabysitterWorkspaces(root = tmpdir(), startedAt = per
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
 export async function createBabysitterProcessHost(context: AgentProcessHostContext): Promise<AgentProcessHostInstance> {
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
-  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
+  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; admission: BabysitterAdmissionOptions } };
   const repositories = babysitterRepositories(agent.options.filter);
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
   const github = createGitHubHost({ credentials: credentials.credentials, identity });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
-  const driver = getAgentLayerOptions(agent)?.driver;
   const admission = createBabysitterAdmission({
     invocationsFile: join(context.dataDir, "invocations.sqlite"),
-    limits: readBabysitterAdmissionLimits(process.env, isRuntimeRecord(driver) && driver.kind === "claude-code" ? "claude" : "codex"),
+    limits: resolveBabysitterAdmissionLimits(agent.options.admission),
+    check: agent.options.admission.check,
   });
   const host = await createProcessAgentHost({
     name: context.agentName,
@@ -148,14 +147,14 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
           label: "Shared resources",
           status: guard.accepting && !state.errors ? "ok" : "warning",
           value: guard.accepting ? "Within budget" : "Admission paused",
-          detail: guard.detail ?? state.errors?.join("; ") ?? `${state.hourlyInputTokens ?? "?"} of ${limits.hourlyInputTokens} hourly input tokens`,
+          detail: guard.detail ?? state.errors?.join("; ") ?? (state.dailyInputTokens === undefined ? "No token limit" : `${state.dailyInputTokens} input tokens today`),
         }],
         admission: { accepting: guard.accepting, hostOnly: guard.hostOnly, reason: guard.reason, retryAt: guard.retryAt, detail: guard.detail, lastSkip: await inbox.meta("admission-skipped") },
         budget: {
           hourly: { inputTokens: state.hourlyInputTokens, limit: limits.hourlyInputTokens, resetsAt: state.windows.hourEnd },
           daily: { inputTokens: state.dailyInputTokens, limit: limits.dailyInputTokens, resetsAt: state.windows.dayEnd },
           tmp: { dir: state.tmpDir, freeBytes: state.freeTmpBytes, minFreeBytes: limits.minFreeTmpBytes },
-          proxy: { provider: limits.proxyProvider, maxWeeklyPercent: limits.proxyMaxWeeklyPercent, ...state.proxy },
+          pause: state.pause,
           errors: state.errors,
         },
         repositories,

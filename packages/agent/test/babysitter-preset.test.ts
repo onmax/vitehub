@@ -460,6 +460,9 @@ describe("Babysitter preset runtime", () => {
     expect(() => defineAgent({ extends: babysitter, options: { install: { cache: { directory: "/var/cache/vitehub", entries: 4 } } } })).not.toThrow();
     expect(() => defineAgent({ extends: babysitter, options: { install: { cache: false } } })).not.toThrow();
     expect(() => defineAgent({ extends: babysitter, options: { install: { command: "pnpm", args: ["install", 1 as unknown as string] } } })).toThrow(/install must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { admission: { inputTokens: { daily: 1e9 }, minFreeTmpMb: false, paused: false, check: () => undefined } } })).not.toThrow();
+    expect(() => defineAgent({ extends: babysitter, options: { admission: { inputTokens: { hourly: -1 } } } })).toThrow(/admission must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { admission: { paused: "yes" as unknown as boolean } } })).toThrow(/admission must be/);
     expect(() => defineAgent({ extends: babysitter, options: { ignoreFeedbackAuthors: ["vercel[bot]"], noProgressBudget: false, deferWhilePending: false, install: { command: "pnpm", args: ["install"] } } })).not.toThrow();
   });
 
