@@ -622,8 +622,6 @@ async function resetPooledCheckout(checkout: string, anchoredRoot: string, repos
       ["fetch.recurseSubmodules", "false"],
       ["remote.origin.url", `https://github.com/${repository}.git`],
       ["remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"],
-      ["remote.origin.promisor", "true"],
-      ["remote.origin.partialclonefilter", "blob:none"],
     ] as const) await exec("git", ["-C", replacement, "config", key, value], commandOptions)
     await rename(replacementGit, gitMetadata)
     // These paths came from the verified tree before the previous callback,
