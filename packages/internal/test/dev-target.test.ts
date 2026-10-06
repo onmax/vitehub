@@ -9,7 +9,7 @@ import {
   resolveViteHubDevServerUrl,
   viteHubDevEndpointUrl,
 } from "../src/cli.ts"
-import { isViteHubDevHostAllowed, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
+import { assertViteHubDevRequestGrant, isViteHubDevHostAllowed, isViteHubDevSecretEqual, registerViteHubDevEndpoint, validateViteHubDevRequest } from "../src/dev-endpoint.ts"
 
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
 import type { ViteHubDevTargetArgs } from "../src/cli.ts"
@@ -192,9 +192,15 @@ describe("guarded dev endpoint", () => {
       resolvedUrls: null,
     }
     registerViteHubDevEndpoint(server, {
-      handle: (req, res) => {
+      handle: (req, res, grant) => {
         handled.push(req.method || "")
-        res.end("handled")
+        try {
+          assertViteHubDevRequestGrant(grant, req)
+          res.end("handled")
+        }
+        catch {
+          res.end("no grant")
+        }
       },
       header: endpoint.header,
       headerValue: endpoint.headerValue,
@@ -226,6 +232,8 @@ describe("guarded dev endpoint", () => {
     const route = `${url}${endpoint.route}`
     const missing = await fetch(route)
     expect([missing.status, await missing.text()]).toEqual([403, "Forbidden Test Dev request."])
+    const wrong = await fetch(route, { headers: { [endpoint.header]: "10" } })
+    expect([wrong.status, await wrong.text()]).toEqual([403, "Forbidden Test Dev request."])
     const origin = await fetch(route, { headers: { [endpoint.header]: "1", origin: "http://evil.test" } })
     expect([origin.status, await origin.text()]).toEqual([403, "Forbidden Test Dev origin."])
     const text = await fetch(route, { body: "x", headers: { "content-type": "text/plain", [endpoint.header]: "1" }, method: "POST" })
@@ -242,6 +250,18 @@ describe("guarded dev endpoint", () => {
     expect(handled).toEqual(["GET", "POST"])
   })
 
+  it("compares secrets in full and rejects missing values", () => {
+    expect(isViteHubDevSecretEqual("token", "token")).toBe(true)
+    expect(isViteHubDevSecretEqual("tokem", "token")).toBe(false)
+    expect(isViteHubDevSecretEqual("toke", "token")).toBe(false)
+    expect(isViteHubDevSecretEqual("token-", "token")).toBe(false)
+    expect(isViteHubDevSecretEqual("tökén", "tökén")).toBe(true)
+    expect(isViteHubDevSecretEqual(undefined, "token")).toBe(false)
+    expect(isViteHubDevSecretEqual(null, "token")).toBe(false)
+    expect(isViteHubDevSecretEqual("", "")).toBe(false)
+    expect(isViteHubDevSecretEqual("token", undefined)).toBe(false)
+  })
+
   it("rejects methods outside the allowed list before the guard", async () => {
     const { handled, url } = await listen({ methods: ["GET", "POST"] })
     const response = await fetch(`${url}${endpoint.route}`, { method: "DELETE" })
@@ -253,7 +273,7 @@ describe("guarded dev endpoint", () => {
     const server = { config: { server: { allowedHosts: ["example.test"], port: 5173 } }, resolvedUrls: { local: ["https://localhost:5173/"] } }
     const req = { headers: { host: "example.test:5173", origin: "https://example.test:5173", [endpoint.header]: "1" }, method: "GET" }
     // SAFETY: the guard reads only headers and method from the request.
-    expect(validateViteHubDevRequest(server, req as unknown as IncomingMessage, { ...endpoint, label: "Test Dev" })).toBeUndefined()
+    expect(validateViteHubDevRequest(server, req as unknown as IncomingMessage, { ...endpoint, label: "Test Dev" }).grant?.label).toBe("Test Dev")
   })
 
   // Node fetch does not send a custom Host header, so these requests use node:http.
