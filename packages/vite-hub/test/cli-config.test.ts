@@ -36,6 +36,27 @@ describe("ViteHub CLI config loading", () => {
     await expect(isAgentCliEnabled(root)).resolves.toBe(false)
   })
 
+  it("handles nested Agent options and ignores comments or unrelated objects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), `
+      // agent: false
+      const unrelated = { agent: false }
+      export default { vitehub: { agent: { providers: { state: { provider: "memory" } }, cli: false } } }
+    `, "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(false)
+  })
+
+  it("uses the effective Nuxt config owner for the opt-out guard", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), "export default { vitehub: { agent: false } }\n", "utf8")
+    await writeFile(join(root, "nuxt.config.ts"), "export default { vitehub: { agent: {} } }\n", "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(true)
+    await writeFile(join(root, "nuxt.config.ts"), "export default { vitehub: { agent: { cli: false } } }\n", "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(false)
+  })
+
   it("loads Nuxt Vite options when Nuxt is the project config owner", async () => {
     const root = await createProject("nuxt")
     const close = vi.fn()
