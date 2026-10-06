@@ -31,7 +31,8 @@ await resolveConfig({
   logLevel: "silent",
   root: process.cwd(),
   plugins: [vitehub({
-    preset: "node",
+    // Queue and Sandbox require a preset that provides both capabilities.
+    preset: "cloudflare",
     agent: true,
     auth: true,
     blob: true,
