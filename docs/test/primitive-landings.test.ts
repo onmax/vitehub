@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { discoverQueueDefinitions } from "../../packages/queue/src/discovery";
 import { QueueLanding } from "../app/data/primitive-landings/queue";
 import { describe, expect, it } from "vitest";
+import { ContentLanding } from "../app/data/primitive-landings/content";
 import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-landings";
 import { stubLanding } from "../app/data/primitive-landings/stub";
 
@@ -99,6 +100,26 @@ describe("Queue starter projects", () => {
   });
 });
 
+describe("Sandbox landing projects", () => {
+  it("supplies package handlers, callers, and configured hosts", () => {
+    const landing = getPrimitiveLanding("sandbox")!;
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).toBe(false);
+      const files = new Map(variant.files.map(file => [file.path, file.content]));
+      const manifest = JSON.parse(files.get("package.json")!);
+      for (const dependency of ["vite-hub", "@vite-hub/sandbox", "@vercel/sandbox", ...(variant.framework === "nuxt" ? ["nuxt"] : ["vite", "nitro"])]) {
+        expect(manifest.dependencies[dependency]).toBeTruthy();
+      }
+      const config = files.get(variant.framework === "nuxt" ? "nuxt.config.ts" : "vite.config.ts");
+      expect(config).toContain('preset: "vercel", sandbox: true');
+      expect(files.get("server/sandboxes/release-notes/index.ts")).toContain("export default async function");
+      expect(files.get("server/sandboxes/release-notes/index.ts")).not.toContain("defineSandbox");
+      expect(files.get("server/release-notes.ts")).toContain('runSandbox("release-notes", { notes: "ship it" })');
+      expect(JSON.parse(files.get("server/sandboxes/release-notes/package.json")!).type).toBe("module");
+    }
+  });
+});
+
 describe("Browser landing examples", () => {
   it("configures supported hosts and uses the discovered Browser API", () => {
     const browser = getPrimitiveLanding("browser")!;
@@ -112,6 +133,37 @@ describe("Browser landing examples", () => {
       expect(source).not.toMatch(/definePrimitive|vite-hub\/vite/);
       expect(variant.files.find(file => file.path === "server/browsers/page-html.ts")?.content).toContain("defineBrowser");
       expect(source).toContain('runBrowser("page-html",');
+    }
+  });
+});
+
+describe("Content landing examples", () => {
+  it("provides a discoverable Content definition and a document for every host", () => {
+    expect(ContentLanding.variants.map((variant) => variant.framework)).toEqual(["vite", "nitro", "nuxt"]);
+    for (const variant of ContentLanding.variants) {
+      const definition = variant.files.find((file) => file.path === "server/content.ts");
+      expect(definition?.content).toContain('import { defineContent } from "vite-hub/content"');
+      expect(definition?.content).toContain("export const content = defineContent(");
+      expect(definition?.content).toContain('glob({ cwd: "docs", include: "**/*.md" })');
+      expect(variant.files.some((file) => file.path === "docs/guide.md")).toBe(true);
+      const manifest = JSON.parse(variant.files.find((file) => file.path === "package.json")!.content);
+      expect(manifest.dependencies["vite-hub"]).toBeTruthy();
+      expect(manifest.dependencies["comark-content"]).toBeTruthy();
+      expect(variant.files.map((file) => file.content).join("\n")).not.toMatch(/definePrimitive|vite-hub\/vite|Illustrative pseudocode/);
+    }
+  });
+
+  it("mounts the handler explicitly only in the standalone Nitro example", () => {
+    for (const variant of ContentLanding.variants) {
+      const route = variant.files.find((file) => file.path.startsWith("server/routes/"));
+      if (variant.framework === "nitro") {
+        expect(route?.path).toBe("server/routes/api/content/[...path].ts");
+        expect(route?.content).toContain('import { content } from "../../../content"');
+        expect(route?.content).toContain("export default defineContentHandler(content)");
+      } else {
+        expect(route).toBeUndefined();
+        expect(variant.files.find((file) => file.path.endsWith(".config.ts"))?.content).toContain('preset: "node"');
+      }
     }
   });
 });

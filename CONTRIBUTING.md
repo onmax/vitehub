@@ -1,6 +1,22 @@
 # Contributing to ViteHub
 
-Use this guide to turn a requested behavior into a tested change. [AGENTS.md](AGENTS.md) contains the code map, critical boundaries, and permission rules.
+Use this guide to turn a requested behavior into a tested change. [AGENTS.md](AGENTS.md) explains the project's purpose, principles, and general rules.
+
+## Code map
+
+| Path | Responsibility |
+| --- | --- |
+| `packages/vite-hub/src/` | Framework distribution, discovery, generated output, and host integration |
+| `packages/vite-hub/src/console/` | First-party inspection UI and server routes |
+| `packages/agent/src/` | Agent Definitions, Drivers, Invocations, and Capabilities |
+| `packages/runtime/src/` | Shared host-independent runtime contracts |
+| `packages/workspace/src/`, `packages/source/src/` | File trees, access, and mounted Sources |
+| Other `packages/*/src/` | Each Server Primitive or integration |
+| `playground/console/` | Real Console UI with synthetic API data |
+| `fixtures/`, `test/consumer/`, `test/output/` | Consumer applications and generated output proof |
+| `docs/` | User documentation and the first-party website |
+
+Use these names consistently: Server Primitives, Agent Definitions, Drivers, Invocations, Capabilities, Workspaces, Sources, framework integrations, and generated host output. Runtime policy belongs in its owner package.
 
 ## Set up a checkout
 
@@ -56,7 +72,7 @@ corepack pnpm --dir packages/vite-hub exec vp test test/console-colocated-skills
 corepack pnpm --dir packages/vite-hub run typecheck
 ```
 
-Replace `vite-hub` with a manifest package name, such as `@vite-hub/agent`, and use the matching directory. Use the Vite+ target build for dependency builds; `run-package-task.mjs build --packages` builds only the selected packages. Add the following checks only when their behavior is affected:
+Replace `vite-hub` with a manifest package name, such as `@vite-hub/agent`, and use the matching directory. Use the Vite+ target build for dependency builds; `run-package-task.mjs build --packages` builds only the selected packages. The root `build` task builds every package in dependency order and caches each package build by the files it reads, so it rebuilds only packages whose inputs changed. `--no-cache` does not reach its nested run; run `corepack pnpm exec vp cache clean` first to force a full rebuild. Add the following checks only when their behavior is affected:
 
 | Change | Check from the repository root |
 | --- | --- |
