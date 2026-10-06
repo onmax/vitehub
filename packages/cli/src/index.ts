@@ -59,6 +59,11 @@ export interface RunViteHubCliOptions {
   env?: NodeJS.ProcessEnv
   /** Namespaces that run without loading the project config, for example inside a deployed container. */
   runtimeNamespaces?: ViteHubCliCommandNamespace[]
+  /**
+   * Features that run without loading the project config, for example commands that only talk to a server.
+   * Other features of a project namespace with the same name still load the config.
+   */
+  runtimeFeatures?: ViteHubCliCommandNamespace[]
   loadConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<ViteHubCliLoadedConfig>
   loadNuxtViteConfig?: (rootDir: string, command: ConfigEnv["command"]) => Promise<{ plugins: readonly unknown[], root?: string } | undefined>
   spawn?: ViteHubCliSpawn
@@ -197,6 +202,8 @@ export async function runViteHubCli(options: RunViteHubCliOptions = {}): Promise
   const spawn = options.spawn || defaultSpawn
   const runtimeNamespace = options.runtimeNamespaces?.find(namespace => namespace.name === args[0] && namespace.name !== "inspect")
   if (runtimeNamespace) return await runNamespace(runtimeNamespace, args, { cwd, env, rootDir: cwd, spawn, stderr, stdout })
+  const runtimeFeatures = options.runtimeFeatures?.find(namespace => namespace.name === args[0] && namespace.features.some(feature => feature.name === args[1]))
+  if (runtimeFeatures) return await runNamespace(runtimeFeatures, args, { cwd, env, rootDir: cwd, spawn, stderr, stdout })
 
   const command = args[0] === "inspect" && args[1] === "provider-output" ? "build" : "serve"
   const config = await (options.loadConfig || loadViteConfig)(cwd, command)

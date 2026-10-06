@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { createServer } from "node:http"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -157,6 +158,40 @@ export default ({ command, mode }) => ({
         expect.objectContaining({ owner: "test", path: ".vitehub/production.json" }),
       ]),
     );
+  });
+
+  it("cancels an Agent Invocation through a deployed Console without loading the project config", async () => {
+    const root = await createProject("vite");
+    await writeFile(join(root, "vite.config.ts"), "throw new Error('project config loaded')\n");
+    const calls: unknown[] = [];
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      request.on("end", () => {
+        calls.push({ authorization: request.headers.authorization, body: JSON.parse(body), url: request.url });
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ ok: true, value: { id: "ainv_1", outcome: "requested", status: "running" } }));
+      });
+    });
+    await new Promise<void>(resolveListen => server.listen(0, "127.0.0.1", resolveListen));
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected a TCP address.");
+      const { stdout } = await execFileAsync(
+        process.execPath,
+        [bin, "agent", "invocations", "cancel", "ainv_1", "--url", `http://127.0.0.1:${address.port}/_vitehub`],
+        { cwd: root, env: { ...process.env, VITEHUB_CONSOLE_AUTHORIZATION: "Bearer cli-test" } },
+      );
+      expect(stdout).toBe("ainv_1 cancel requested\n");
+      expect(calls).toEqual([{
+        authorization: "Bearer cli-test",
+        body: { input: { body: { action: "cancel" }, id: "ainv_1", method: "POST" }, method: "vitehub:console:invocation" },
+        url: "/_vitehub/rpc/__call",
+      }]);
+    }
+    finally {
+      await new Promise(resolveClose => server.close(resolveClose));
+    }
   });
 
   it("inspects production-only Nuxt output through the framework entrypoint", async () => {
