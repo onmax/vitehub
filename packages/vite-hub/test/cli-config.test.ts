@@ -29,6 +29,8 @@ describe("ViteHub CLI config loading", () => {
   it.each([
     "export default { vitehub: { agent: false } }\n",
     "export default { vitehub: { agent: { cli: false } } }\n",
+    "import { vitehub } from 'vite-hub'\nexport default { plugins: [vitehub({ agent: false })] }\n",
+    "import { vitehub } from 'vite-hub'\nexport default { plugins: [vitehub({ agent: { cli: false } })] }\n",
   ])("honors an Agent CLI opt-out without evaluating config", async source => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
     roots.push(root)
@@ -45,6 +47,16 @@ describe("ViteHub CLI config loading", () => {
       export default { vitehub: { agent: { providers: { state: { provider: "memory" } }, cli: false } } }
     `, "utf8")
     await expect(isAgentCliEnabled(root)).resolves.toBe(false)
+  })
+
+  it("does not treat unrelated agent options in a plugin call as ViteHub config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-cli-guard-"))
+    roots.push(root)
+    await writeFile(join(root, "vite.config.ts"), `
+      const plugin = (options: unknown) => options
+      export default { plugins: [plugin({ agent: false })] }
+    `, "utf8")
+    await expect(isAgentCliEnabled(root)).resolves.toBe(true)
   })
 
   it("uses the effective Nuxt config owner for the opt-out guard", async () => {

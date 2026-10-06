@@ -21,18 +21,30 @@ function matchingBrace(source: string, open: number): number {
 
 function hasAgentOptOut(source: string): boolean {
   const clean = stripCommentsAndStrings(source)
-  const vitehub = /\bvitehub\s*:\s*\{/gu.exec(clean)
-  if (!vitehub) return false
-  const vitehubEnd = matchingBrace(clean, clean.indexOf("{", vitehub.index))
-  if (vitehubEnd < 0) return false
-  const body = clean.slice(vitehub.index, vitehubEnd)
-  const agent = /\bagent\s*:\s*(false|\{)/gu.exec(body)
-  if (!agent) return false
-  if (agent[1] === "false") return true
-  const open = body.indexOf("{", agent.index)
-  const end = matchingBrace(body, open)
-  if (end < 0) return false
-  return /\bcli\s*:\s*false\b/u.test(body.slice(open, end))
+  const starts: number[] = []
+  for (const match of clean.matchAll(/\bvitehub\s*:\s*\{|\bvitehub\s*\(\s*\{/gu)) {
+    starts.push(match.index! + match[0].lastIndexOf("{"))
+  }
+  return starts.some(open => {
+    const end = matchingBrace(clean, open)
+    return end >= 0 && hasAgentOptOutInObject(clean.slice(open + 1, end))
+  })
+}
+
+function hasAgentOptOutInObject(body: string): boolean {
+  for (const match of body.matchAll(/\bagent\s*:\s*(false|\{)/gu)) {
+    let depth = 0
+    for (const character of body.slice(0, match.index)) {
+      if (character === "{") depth++
+      else if (character === "}") depth--
+    }
+    if (depth !== 0) continue
+    if (match[1] === "false") return true
+    const open = match.index! + match[0].lastIndexOf("{")
+    const end = matchingBrace(body, open)
+    if (end >= 0 && /\bcli\s*:\s*false\b/u.test(body.slice(open, end))) return true
+  }
+  return false
 }
 
 /** Detects explicit Agent CLI opt-outs without evaluating the project config. */
