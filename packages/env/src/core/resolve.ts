@@ -211,7 +211,7 @@ function assertUniqueBuildCanonicalNames(declarations: unknown, path: string, pr
   const visit = (value: unknown, valuePath: string, valuePrefix?: string | false): void => {
     if (isEnvVariableDeclaration(value)) {
       const source = resolveEnvSource(value, valuePath, valuePrefix)
-      if (source.kind === "env") claimCanonicalName(owners, source.canonical, valuePath)
+      if (source.kind === "env" && source.canonical !== false) claimCanonicalName(owners, source.canonical, valuePath)
       return
     }
     if (!isPlainRecord(value)) return
@@ -392,7 +392,7 @@ export function canonicalEnvName(path: string, prefix: string | false = defaultE
 export function resolveEnvSource(declaration: EnvVariableDeclaration, path: string, prefix: string | false = defaultEnvPrefix): EnvSource {
   const source = declaration.source ?? inferEnvSource(path)
   const canonical = canonicalEnvName(path, prefix)
-  if (source.kind !== "env" || canonical === undefined) return source
+  if (source.kind !== "env" || canonical === undefined || source.canonical === false) return source
   const names = [...new Set([canonical, ...(source.names ?? [source.name])])]
   return names.length === 1
     ? { ...source, canonical }

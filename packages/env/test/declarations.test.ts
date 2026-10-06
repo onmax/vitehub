@@ -156,6 +156,7 @@ describe("env declarations", () => {
       name: "VITEHUB_TELEGRAM_BOT_TOKEN",
     })
     expect(resolveEnvSource(env({ source: env.gitSha() }), "env.release")).not.toHaveProperty("canonical")
+    expect(resolveEnvSource(env({ source: env.source("TOKEN", { canonical: false }) }), "env.token")).toHaveProperty("canonical", false)
   })
 
   it("supports ordered env source aliases", () => {
