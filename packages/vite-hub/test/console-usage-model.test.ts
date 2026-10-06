@@ -128,6 +128,7 @@ describe("Console usage token mix", () => {
       cacheWriteTokens: 100,
     });
     expect(consoleUsageTokenSegments(totals)).toEqual({ complete: false, segments: [] });
+    expect(consoleUsageCacheHitRate(totals)).toBeNull();
   });
 
   it("never shows a negative plain input", () => {

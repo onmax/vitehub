@@ -129,6 +129,9 @@ export function consoleUsageTokenSegments(totals: ConsoleUsageEvidence): {
  */
 export function consoleUsageCacheHitRate(totals: ConsoleUsageEvidence): number | null {
   if (!totals.inputTokensAvailable || !totals.cachedInputTokensAvailable) return null;
+  if (totals.totalTokensAvailable && totals.inputTokens + totals.outputTokens !== totals.totalTokens) {
+    return null;
+  }
   return totals.inputTokens > 0 ? totals.cachedInputTokens / totals.inputTokens : null;
 }
 
