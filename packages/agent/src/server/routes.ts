@@ -1521,14 +1521,32 @@ async function deliverQueuedWebhookFailure(
   invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
 ): Promise<boolean> {
   const failure = { error: error instanceof Error ? error.message : String(error), attempts }
-  if (state.markWebhookDeliveryFailure) {
-    if (!await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
+  const notificationLock = await state.acquireLock(
+    `webhook-failure:${delivery.scope}:${delivery.deliveryId}`,
+    delivery.leaseTtlMs,
+  )
+  if (!notificationLock) return false
+  let notificationLockLost = false
+  const stopNotificationLockHeartbeat = startWebhookLockHeartbeat(state, notificationLock, delivery.leaseTtlMs, () => {
+    notificationLockLost = true
+  })
+  try {
+    if (state.markWebhookDeliveryFailure) {
+      if (!await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
+      if (notificationLockLost) return false
+      await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+      if (notificationLockLost) return false
+      return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+    }
+    if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
+    if (notificationLockLost) return false
     await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
-    return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+    return true
   }
-  if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
-  await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
-  return true
+  finally {
+    stopNotificationLockHeartbeat()
+    await state.releaseLock(notificationLock).catch(() => undefined)
+  }
 }
 
 async function executeQueuedWebhookDelivery(
