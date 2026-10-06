@@ -74,3 +74,34 @@ it("uses a shared journal and recovers only the configured Agent", async () => {
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+it("keeps another Babysitter host's live work when a shared-journal host restarts", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "vitehub-babysitter-hosts-"));
+  const store = createMemoryAgentInvocationStore();
+  const invocations = defineAgentInvocations({ content: "content", store });
+  const options = { invocations, capacity: { concurrency: 1 }, run: vi.fn() };
+  const first = await createProcessAgentHost({ ...options, dataDir: join(dataDir, "first"), invocationAgentName: "first-worker" });
+  try {
+    for (const agentName of ["first-worker", "second-worker"]) {
+      await store.create({
+        id: agentName, agentName, traceId: agentName, observations: [], status: "running",
+        createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z",
+      });
+    }
+    expect(await store.claim("first-worker", "live-claim", 60_000)).toBe(true);
+    const liveClaimToken = await store.getClaimToken("first-worker");
+    expect(liveClaimToken).toBeDefined();
+    const second = await createProcessAgentHost({ ...options, dataDir: join(dataDir, "second"), invocationAgentName: "second-worker" });
+    try {
+      await expect(invocations.get("first-worker")).resolves.toMatchObject({ status: "running" });
+      expect(await store.getClaimToken("first-worker")).toBe(liveClaimToken);
+      await expect(invocations.get("second-worker")).resolves.toMatchObject({ status: "failed" });
+      await expect(second.health()).resolves.toMatchObject({ workload: { total: 1, failed: 1, stale: 0 } });
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await first.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});

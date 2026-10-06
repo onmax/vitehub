@@ -11,8 +11,6 @@ import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
 import { createBabysitterRuntime } from "./server.ts";
 
-const babysitterWorkerName = "babysitter-worker";
-
 /** Reads a plain or sealed Server Env value. */
 export function envString(value: unknown): string | undefined {
   const plain = isRuntimeRecord(value) && hasRuntimeType(value.unseal, "function") ? value.unseal() : value;
@@ -112,7 +110,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     name: context.agentName,
     dataDir: context.dataDir,
     invocations: agent.invocations,
-    invocationAgentName: babysitterWorkerName,
+    invocationAgentName: `${context.agentName}-worker`,
     // A webhook claim owns a PR until its provider pass finishes or records a
     // durable wait. Keep transient provider pressure in this host queue rather
     // than failing the claim, while bounding how long a checkout can be held.
@@ -126,7 +124,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     intervalMs: 10_000,
     run: async (reason, run, accepting) => await runtime?.reconcile(reason, run, accepting),
   });
-  // Workers record invocations and provider sessions in this host's directory.
+  // Workers share the assigned journal and keep provider sessions in the host directory.
   const worker = defineAgent({
     extends: agent,
     invocations: host.invocations,
