@@ -74,3 +74,20 @@ describe("primitive landing placeholders", () => {
     expect(source).toContain("Illustrative pseudocode. This layout is not an executable starter.");
   });
 });
+
+describe("Browser landing examples", () => {
+  it("configures supported hosts and uses the discovered Browser API", () => {
+    const browser = getPrimitiveLanding("browser")!;
+    expect(browser.docsTo).toBe("/docs/browser");
+    expect(browser.supported).toContain("Cloudflare Browser Run");
+    expect(browser.variants.map(variant => variant.framework)).toEqual(["vite", "nuxt"]);
+    for (const variant of browser.variants) {
+      expect(variant.illustrative).not.toBe(true);
+      const source = variant.files.map(file => file.content).join("\n");
+      expect(source).toContain('preset: "cloudflare", browser: true');
+      expect(source).not.toMatch(/definePrimitive|vite-hub\/vite/);
+      expect(variant.files.find(file => file.path === "server/browsers/page-html.ts")?.content).toContain("defineBrowser");
+      expect(source).toContain('runBrowser("page-html",');
+    }
+  });
+});
