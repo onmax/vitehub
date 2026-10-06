@@ -5,6 +5,8 @@ import { createWorkspaceWritePolicy } from "../core/rules.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { createBasicWorkspaceSession } from "../session/basic.ts"
 import { createMemoryWorkspaceStore } from "../storage/memory.ts"
+import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
+import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
@@ -415,6 +417,9 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
   if (isWritableWorkspaceFacade(workspace)) {
     const writePolicy = createWorkspaceWritePolicy(resolvedDefinition)
     const syncStore = createWritableFacadeStore(workspace, true)
+    // Source Sync must share the overlay's mutation queue with guarded writes
+    // and materialization, even though it uses a facade Store wrapper.
+    registerWorkspaceStoreAlias(syncStore, overlayStore)
     let writeWorkspace!: Workspace
 
     async function previousStat(path: string) {
@@ -428,10 +433,15 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
 
     // Every base write needs a Source write grant for its exact path.
     // SAFETY: Write paths are checked by the base facade at runtime; the generic facade has no statically known named Workspace paths.
+    const rawWrites = resolveWorkspaceRawWriteTarget(workspace)
+    if (!rawWrites) {
+      throw workspaceError("[vitehub] Cannot resolve a writable Source facade from an unregistered object.")
+    }
+    const writes = rawWrites
     const baseWrites = {
-      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await workspace.fs.mkdir(path as never, options)),
-      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await workspace.fs.rm(path as never, options)),
-      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await workspace.fs.writeFile(path as never, content, options)),
+      mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await writes.mkdir(path, options)),
+      rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await writes.rm(path, options)),
+      writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await writes.writeFile(path, content, options)),
     }
     const baseRebase = sourceView.requireRebaseGrants(async options => await workspace.history.rebase(options))
 
@@ -609,6 +619,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       sync: writeWorkspace.sync,
       tools: writeTools,
     }
+    setWorkspaceRawWriteTarget(writableWorkspace, writes)
     sourceSyncStores.set(writableWorkspace, syncStore)
     forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, writableWorkspace)
     forwardWorkspaceStoreTarget(workspace, writableWorkspace)

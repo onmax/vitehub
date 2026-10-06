@@ -1258,15 +1258,33 @@ describe("Provider Agent Driver", () => {
   it("reuses one session store concurrently for equivalent paths", async () => {
     const path = `.vitehub/provider-session-${crypto.randomUUID()}.sqlite`
     const calls = createSqliteProviderRuntimeSessionStore.mock.calls.length
+    let notifyFirstStarted!: () => void
+    let notifySecondStarted!: () => void
+    const firstStarted = new Promise<void>(resolve => { notifyFirstStarted = resolve })
+    const secondStarted = new Promise<void>(resolve => { notifySecondStarted = resolve })
     const runtimes = ["first", "second"].map(suffix => runtime(`thread-session-${suffix}`, [
       event("turn.completed", `thread-session-${suffix}`, { state: "completed" }, { turnId: "turn-1" }),
-    ]))
+    ], {
+      // Keep both invocations active, but assign the FIFO runtime mocks in order.
+      beforeEvent: async () => { await secondStarted },
+      onStartSession: async () => {
+        if (suffix === "first") notifyFirstStarted()
+        else notifySecondStarted()
+      },
+    }))
 
     await Promise.all([
       // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
       createProviderAgentAdapter({ provider: "codex", sessionStorePath: path }).generate(context("thread-session-first") as never),
       // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-      createProviderAgentAdapter({ provider: "codex", sessionStorePath: resolve(path) }).generate(context("thread-session-second") as never),
+      createProviderAgentAdapter({
+        provider: "codex",
+        sessionStorePath: resolve(path),
+        env: async () => {
+          await firstStarted
+          return {}
+        },
+      }).generate(context("thread-session-second") as never),
     ])
 
     expect(createSqliteProviderRuntimeSessionStore).toHaveBeenCalledTimes(calls + 1)
