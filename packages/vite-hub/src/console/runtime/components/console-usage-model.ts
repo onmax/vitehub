@@ -63,11 +63,11 @@ export function sortConsoleUsageModels<
 
 /**
  * A model's share of the selected metric, or `null` when it is unknown.
- * A model with no recorded cost has no cost share, but it keeps its token share.
+ * Cost shares require complete aggregate cost evidence. Token shares stay independent.
  */
 export function consoleUsageModelShare(
   model: Pick<ConsoleUsageEvidence, "costUsd" | "pricedInvocations" | "totalTokens" | "totalTokensAvailable">,
-  totals: Pick<ConsoleUsageEvidence, "costUsd" | "totalTokens">,
+  totals: Pick<ConsoleUsageEvidence, "costAvailable" | "costUsd" | "totalTokens">,
   metric: ConsoleUsageMetric,
 ): number | null {
   if (metric === "tokens") {
@@ -77,18 +77,22 @@ export function consoleUsageModelShare(
     return model.totalTokens / totals.totalTokens;
   }
   const total = costValue(totals);
-  return model.pricedInvocations === 0 || total <= 0 ? null : costValue(model) / total;
+  return !totals.costAvailable || model.pricedInvocations === 0 || total <= 0 ? null : costValue(model) / total;
 }
 
 /**
  * Splits recorded tokens by type. Input counts cache reads and cache writes,
  * so plain input is what remains. `complete` is false when a session did not
  * report every type, because then its cache tokens are counted as plain input.
+ * Omit historical response counts that do not partition the recorded session total.
  */
 export function consoleUsageTokenSegments(totals: ConsoleUsageEvidence): {
   complete: boolean;
   segments: ConsoleUsageSegment[];
 } {
+  if (totals.totalTokensAvailable && totals.inputTokens + totals.outputTokens !== totals.totalTokens) {
+    return { complete: false, segments: [] };
+  }
   return {
     complete:
       totals.inputTokensAvailable &&

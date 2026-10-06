@@ -111,7 +111,7 @@ function formatChartNumber(value: number): string {
   <div class="flex flex-col gap-7" data-slot="usage-model-detail">
     <p class="text-xs text-muted">
       <template v-if="share !== null">{{ formatConsoleUsageShare(share) }} of recorded {{ chartMetric === "cost" ? "cost" : "tokens" }}</template>
-      <template v-else>No recorded {{ chartMetric === "cost" ? "cost" : "tokens" }}</template>
+      <template v-else>{{ chartMetric === "cost" ? "Cost" : "Token" }} share unavailable</template>
       · {{ formatConsoleUsagePeriod(from, resolution) }} to {{ formatConsoleUsagePeriod(to, resolution) }}
     </p>
     <dl class="grid grid-cols-2 gap-x-6 gap-y-4">

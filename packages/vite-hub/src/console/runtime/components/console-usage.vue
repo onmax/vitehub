@@ -131,6 +131,7 @@ type UsageSummary = v.InferOutput<typeof usageSummarySchema>;
 const route = useRoute();
 const router = useRouter();
 const props = defineProps<{ base: string }>();
+const emit = defineEmits<{ "open-sessions": [] }>();
 function setFilter(key: string, value: string) {
   void router.replace({ query: { ...route.query, [key]: value || undefined } });
 }
@@ -370,6 +371,7 @@ onBeforeUnmount(() => { request?.abort(); clearTimeout(searchTimer); });
     <template #header>
       <UDashboardNavbar title="Usage" :toggle="false" :ui="{ root: 'border-b border-default' }">
         <template #right>
+          <UButton class="md:hidden" aria-label="Open agent sessions" color="neutral" icon="i-lucide-list" label="Sessions" size="sm" variant="ghost" @click="emit('open-sessions')" />
           <USelect v-model="window" aria-label="Usage period" class="w-28" size="sm" value-key="value" :items="windowOptions" />
           <UButton aria-label="Refresh usage" color="neutral" icon="i-lucide-refresh-cw" size="sm" variant="ghost" :disabled="loading" @click="refresh(); loadStatus();" />
         </template>
@@ -633,7 +635,7 @@ onBeforeUnmount(() => { request?.abort(); clearTimeout(searchTimer); });
           </section>
 
           <section
-            v-if="tokenSegments && summary.totals.totalTokens > 0"
+            v-if="tokenSegments?.segments.length && summary.totals.totalTokens > 0"
             class="grid gap-x-12 gap-y-6 py-2 lg:grid-cols-2"
             aria-label="Usage mix"
           >

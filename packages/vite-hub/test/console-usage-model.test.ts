@@ -72,6 +72,19 @@ describe("Console usage model ranking", () => {
     expect(formatConsoleUsageShare(null)).toBe("—");
   });
 
+  it("has no cost share when another model lacks cost evidence", () => {
+    const priced = model("priced", "9", 100);
+    const unpriced = model("local", "0", 300, { costAvailable: false, pricedInvocations: 0 });
+    const totals = evidence({
+      costAvailable: false,
+      costUsd: "9",
+      totalTokens: priced.totalTokens + unpriced.totalTokens,
+    });
+    expect(consoleUsageModelShare(priced, totals, "cost")).toBeNull();
+    expect(consoleUsageModelShare(priced, totals, "tokens")).toBeCloseTo(0.25);
+    expect(consoleUsageModelShare(unpriced, totals, "tokens")).toBeCloseTo(0.75);
+  });
+
   it("does not round a small share down to zero", () => {
     expect(formatConsoleUsageShare(0.0004)).toBe("<0.1%");
     expect(formatConsoleUsageShare(0)).toBe("0.0%");
@@ -86,6 +99,7 @@ describe("Console usage token mix", () => {
       cachedInputTokens: 50,
       inputTokens: 100,
       outputTokens: 30,
+      totalTokens: 130,
     });
     expect(consoleUsageTokenSegments(totals)).toEqual({
       complete: true,
@@ -100,13 +114,24 @@ describe("Console usage token mix", () => {
   });
 
   it("marks the mix as recorded evidence when a type was not reported", () => {
-    const totals = evidence({ cachedInputTokensAvailable: false, inputTokens: 100, outputTokens: 10 });
+    const totals = evidence({ cachedInputTokensAvailable: false, inputTokens: 100, outputTokens: 10, totalTokens: 110 });
     expect(consoleUsageTokenSegments(totals).complete).toBe(false);
     expect(consoleUsageCacheHitRate(totals)).toBeNull();
   });
 
+  it("omits a historical response mix that does not partition the session total", () => {
+    const totals = evidence({
+      totalTokens: 59222,
+      inputTokens: 21267,
+      outputTokens: 118,
+      cachedInputTokens: 20352,
+      cacheWriteTokens: 100,
+    });
+    expect(consoleUsageTokenSegments(totals)).toEqual({ complete: false, segments: [] });
+  });
+
   it("never shows a negative plain input", () => {
-    const totals = evidence({ cachedInputTokens: 120, inputTokens: 100 });
+    const totals = evidence({ cachedInputTokens: 120, inputTokens: 100, totalTokens: 100 });
     expect(consoleUsageTokenSegments(totals).segments[0]?.value).toBe(0);
   });
 });

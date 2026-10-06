@@ -1,5 +1,7 @@
 import * as v from "valibot";
 
+import { isViteHubSecretEqual } from "@vite-hub/internal/secret";
+
 import { isConnectionError } from "../errors.ts";
 import { CONNECTION_NAME_MAX_LENGTH } from "../types.ts";
 import { connectionsRuntimeFor } from "./http-access.ts";
@@ -196,7 +198,7 @@ const callback: ConnectionsRoute = {
       return page("Connection cancelled", "The provider did not grant access.", 400);
     // The state must come from a start request in this browser, by the same manager.
     // `complete()` consumes the state and checks the manager that started the flow.
-    if (!state || !code || cookie(access.request, STATE_COOKIE) !== state)
+    if (!state || !code || !isViteHubSecretEqual(state, cookie(access.request, STATE_COOKIE)))
       return page(
         "Connection failed",
         "The authorization response does not match this browser. Start the connection again.",
