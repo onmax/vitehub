@@ -1513,6 +1513,14 @@ async function executeQueuedWebhookDelivery(
 ): Promise<number | undefined> {
   if (delivery.failure) {
     const error = new Error(delivery.failure.error)
+    const notificationLock = await state.acquireLock(
+      `webhook-failure:${delivery.scope}:${delivery.deliveryId}`,
+      delivery.leaseTtlMs,
+    )
+    if (!notificationLock) return
+    const stopNotificationLockHeartbeat = startWebhookLockHeartbeat(state, notificationLock, delivery.leaseTtlMs, () => {
+      // Keep awaiting the callback even if the recovery fence is lost.
+    })
     // SAFETY: The queue persists invocation input and run metadata from this route contract.
     // Keep the recovered terminal notification fenced while the callback runs. A callback
     // may outlive the normal queue lease, and an expired lease would let another worker
@@ -1546,6 +1554,8 @@ async function executeQueuedWebhookDelivery(
     }
     finally {
       stopHeartbeat()
+      stopNotificationLockHeartbeat()
+      await state.releaseLock(notificationLock).catch(() => undefined)
     }
     return
   }
