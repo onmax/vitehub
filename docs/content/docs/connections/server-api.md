@@ -13,8 +13,24 @@ icon: i-lucide-code-2
 | `defineConnection`, `oauth2`, `apiKey`, `useConnection` from `vite-hub/connections` | Define a Connection, use a generic OAuth 2 or API key provider, and call a Connection from server code. |
 | `google`, `gmail`, `gmailOperations` from `vite-hub/connections/google` | Google OAuth preset and typed Gmail REST Operations. |
 | `createConnectionsRuntime`, `useConnectionsRuntime` from `vite-hub/connections/server` | Runtime access for hosts and tests. |
-| `createConnectionsHandler` from `vite-hub/connections/http` | Management, connect, and callback routes. The Console mounts them. |
+| `createConnectionsHandler` from `vite-hub/connections/http` | Management, connect, and callback routes. The Console mounts them. It requires an `actor` access policy. |
 | `hubConnections` from `@vite-hub/connections/vite` | Standalone Vite integration. |
+
+## Management routes
+
+The management routes are `POST /_vitehub/connections`, `GET /_vitehub/connections/connect/:name`, and `GET /_vitehub/connections/callback`. With a Vite `base`, they start with that base.
+
+Each route checks access itself before it reads or changes a Connection. Middleware, such as Console Auth, is an extra layer. The access policy comes from the Console configuration:
+
+| Console access | Who can manage Connections |
+| --- | --- |
+| Console Auth | The signed-in Console Auth user. |
+| `access: 'auth'` with an Auth Definition | The signed-in app Auth user. |
+| No Auth (`console: true`, `exposure: 'host-managed'`, or Cloudflare Access) | Everyone, as `user:local`, but only on the development server. A production server returns `500` with `CONNECTION_AUTH_REQUIRED`. |
+
+A rejected request returns `403` with `CONNECTION_FORBIDDEN`. With `createConnectionsHandler()`, pass `actor`: a function that returns `user:<id>` for an authorized manager, or `'development'` for the development-only policy.
+
+The OAuth callback is reached by a redirect from the provider. It completes the flow only for the browser that started it (the `state` cookie) and for the same manager. The `state` works one time only and expires after 10 minutes. A `state` from another manager returns `403`.
 
 ## Calls
 

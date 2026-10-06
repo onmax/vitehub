@@ -228,14 +228,20 @@ async function recordGeneratedOwners(projectRoot: string, origin: string, hash: 
 }
 
 export interface ConnectionsVitePluginOptions {
+  /**
+   * Module whose default export is the access policy of the management API, in development and
+   * production. Export a function that authenticates the `Request` and returns `user:<id>`, or
+   * `undefined` to deny it. Export `"development"` to allow the development server without Auth.
+   * Without this module, development uses `"development"`.
+   */
+  actor?: string;
   /** Module that exports the ViteHub Database as `db`. Set `false` when the app has no database. */
   database?: string | false;
   /** Package that the generated handler imports from. */
   importBase?: string;
   /**
    * Mount the management API in production. The development server always mounts it.
-   * Production requires an actor module whose default export authenticates each Request
-   * and returns `user:<id>` or `undefined` to deny access.
+   * Production requires an actor module, from `actor` or `management.actor`.
    */
   management?: boolean | { actor: string };
   projectRoot?: string;
@@ -449,7 +455,7 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
 
       if (environment.command === "serve" || options.management) {
         const actorModule =
-          options.management && options.management !== true ? options.management.actor : undefined;
+          (options.management && options.management !== true ? options.management.actor : undefined) ?? options.actor;
         if (environment.command !== "serve" && !actorModule?.trim()) {
           throw new Error(
             "Connections management in production requires management: { actor: <authentication module> }.",
@@ -463,9 +469,10 @@ export function hubConnections(options: ConnectionsVitePluginOptions = {}): Conn
             "",
             ...(actorModule ? [`import actor from ${JSON.stringify(actorImport)}`] : []),
             "",
+            // Without an actor module, only a development server allows management.
             actorModule
               ? `const handle = createConnectionsHandler({ actor, basePath: ${JSON.stringify(managementRoute)} })`
-              : `const handle = createConnectionsHandler({ actor: () => "user:local", basePath: ${JSON.stringify(managementRoute)} })`,
+              : `const handle = createConnectionsHandler({ actor: "development", basePath: ${JSON.stringify(managementRoute)} })`,
             "",
             "export default (event: { req: Request }) => handle(event.req, event)",
             "",

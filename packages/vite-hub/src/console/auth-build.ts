@@ -259,33 +259,33 @@ export const consoleConnectionsActorId = "#vitehub/console/connections-actor"
 
 /**
  * Where the Connections actor comes from:
- * `console-auth` reads the Console Auth session, `app-auth` reads the app Auth session, and `none` records `user:local`.
+ * `console-auth` reads the Console Auth session, `app-auth` reads the app Auth session, and `none` uses the
+ * Connections `"development"` policy. That policy allows `user:local` on a development server and fails closed elsewhere.
  */
 export type ConsoleConnectionsActorSource = "app-auth" | "console-auth" | "none"
 
-/** Write the module that returns the signed-in Console user as `user:<id>` for Connections management actions. */
+/** Write the Connections access policy module. It returns the signed-in Console user as `user:<id>` for each management request. */
 export async function writeConsoleConnectionsActor(root: string, source: ConsoleConnectionsActorSource): Promise<string> {
   const file = resolve(root, ".vitehub/nitro/console/connections-actor.mjs")
   const session = {
     "app-auth": [
       'import { getAuthForRequest } from "#vitehub/auth/server"',
       'import { consoleSessionActor } from "vite-hub/console/auth"',
-      "export default function viteHubConsoleConnectionsActor(event) {",
-      "  return consoleSessionActor(getAuthForRequest(event.req, undefined, event), event.req)",
+      "export default function viteHubConsoleConnectionsActor(request, event) {",
+      "  return consoleSessionActor(getAuthForRequest(request, undefined, event), request)",
       "}",
     ],
     "console-auth": [
       'import { createAuthForRequest } from "#vitehub/auth/server"',
       'import { consoleSessionActor } from "vite-hub/console/auth"',
       'import { definition } from "./auth-definition.mjs"',
-      "export default function viteHubConsoleConnectionsActor(event) {",
-      "  return consoleSessionActor(createAuthForRequest(definition, event.req, undefined, event), event.req)",
+      "export default function viteHubConsoleConnectionsActor(request, event) {",
+      "  return consoleSessionActor(createAuthForRequest(definition, request, undefined, event), request)",
       "}",
     ],
     "none": [
-      "export default function viteHubConsoleConnectionsActor() {",
-      "  return undefined",
-      "}",
+      "// Without Auth, only a development server allows Connections management.",
+      'export default "development"',
     ],
   }[source]
   await writeFileIfChanged(file, [...session, ""].join("\n"))

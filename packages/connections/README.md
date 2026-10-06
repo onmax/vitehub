@@ -108,12 +108,25 @@ A custom Connections store must supply the token revision as the second `bridge.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `actor` | none | Module whose default export receives the server event and returns `user:<id>`. Management actions record this actor. Without it, they record `user:local`. `vite-hub` sets it to the signed-in Console user. |
+| `actor` | none | Module whose default export is the access policy of the management API, in development and production. `vite-hub` sets it to the Console actor module when the Console shows Connections. |
 | `database` | `false` | Module that exports the SQLite Drizzle database as `db`. |
-| `management` | `false` | Use `{ actor: "./server/connections-auth.ts" }` to mount the production API with an authentication module. `true` is supported only in development. |
+| `management` | `false` | Mount the management API in production. Production requires an actor module, from `actor` or `management: { actor }`. |
 | `projectRoot` | Vite root | Project root for discovery. |
 
-The actor module must default-export a function that authenticates the `Request` and returns `user:<id>` for an authorized manager. Return `undefined` to reject the request. Relative module paths resolve from the project root. The handler checks every API request and OAuth callback. Console authentication does not protect these routes automatically.
+The actor module default-exports one of these policies:
+
+- A function `(request, event) => string | undefined`. It authenticates the `Request` and returns `user:<id>` for an authorized manager, or `undefined` to reject the request (`403`). Relative module paths resolve from the project root.
+- The string `"development"`. It allows every request as `user:local`, but only when `NODE_ENV` is `development`. Any other runtime returns `500` with `CONNECTION_AUTH_REQUIRED`.
+
+Without an actor module, the development server uses `"development"`. A production build without an actor module fails.
+
+With `vite-hub` and the Console, the policy follows the Console access configuration:
+
+| Console access | Policy in development and production |
+| --- | --- |
+| Console Auth (`console: { access: "auth", auth: { ... } }`) | The signed-in Console Auth user. |
+| Primary Auth (`console: { access: "auth" }` with an Auth Definition) | The signed-in app Auth user. |
+| No Auth (`console: true`, `exposure: "host-managed"`, or Cloudflare Access) | `"development"`. A production server returns `500` with `CONNECTION_AUTH_REQUIRED`. |
 
 ```ts
 import { hubConnections } from "@vite-hub/connections/vite";
@@ -121,7 +134,25 @@ import { hubConnections } from "@vite-hub/connections/vite";
 hubConnections({ management: { actor: "./server/connections-auth.ts" } });
 ```
 
-Development uses `user:local` when no actor module is configured. A directly mounted `createConnectionsHandler()` also requires an `actor` callback and denies requests by default.
+### Management routes
+
+`createConnectionsHandler({ actor, basePath, runtime })` from `@vite-hub/connections/http` serves these routes. `actor` is required.
+
+| Route | Use |
+| --- | --- |
+| `POST /_vitehub/connections` | Run one JSON action, for example `list`, `revoke`, `set-key`, or `approve`. Same-origin JSON only. |
+| `GET /_vitehub/connections/connect/:name` | Start the OAuth flow, set the `state` cookie, and redirect to the provider. Cross-site requests get `403`. |
+| `GET /_vitehub/connections/callback` | Complete the OAuth flow. |
+
+Every route runs the access policy itself, before the route body. Middleware, such as Console Auth, is an extra layer and not the only check. A route body gets the Connections runtime only from the access that the policy creates for the current request.
+
+The OAuth callback is reached by a browser redirect from the provider. It completes the flow only when all of these are true:
+
+- The `state` query value is equal to the `state` cookie that the start request set in this browser.
+- The `state` is known and not expired. The store deletes it when the callback reads it, so a `state` works one time only.
+- The access policy accepts the callback request, and returns the same manager that started the flow. A `state` that another manager started returns `403` and is consumed.
+
+`runtime.complete({ actor, code, state })` applies the same manager check. `actor` defaults to `user:local`, as in `runtime.authorize()`.
 
 ## Generate API catalogs
 
