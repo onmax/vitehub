@@ -428,7 +428,7 @@ Use `--json` for the structured inspection contract at `config.driver.executionA
 When multiple Agents are discovered, `--agent` is required.
 `agent info` reads resolved runtime metadata from the guarded Agent Dev Loop endpoint exposed by `hubAgent()`.
 
-`agent info`, `agent dev`, and `channels replay` send a private token to this endpoint. The dev server stores the token with user-only permissions outside the served project tree, and the CLI reads it locally. The discovery request needs no token and returns only the Agent names, the server root, and the token server ID. The endpoint rejects Agent inspection, Agent messages, Capability CLI calls, Workspace commands, and Channel replay without the token, including requests to a server exposed with `--host`. Run these commands on the machine that runs the dev server.
+`agent info`, `agent dev`, and `channels replay` send a private token to this endpoint. The dev server stores the token with user-only permissions outside the served project tree, and the CLI reads it locally. The discovery request needs no token and returns the Agent names, aliases, trigger names, server root, and token server ID. It does not return the token. The endpoint rejects Agent inspection, Agent messages, Capability CLI calls, Workspace commands, and Channel replay without the token, including requests to a server exposed with `--host`. Run these commands on the machine that runs the dev server.
 
 ## Cancel an Agent Invocation
 

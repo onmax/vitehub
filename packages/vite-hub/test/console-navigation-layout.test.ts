@@ -56,6 +56,21 @@ describe("shared Console navigation layout", () => {
     expect(switcher).not.toContain('label="Usage"')
   })
 
+  it("marks the selected Agent with a checkbox menu item", () => {
+    const app = component("console-app")
+    // Nuxt UI dropdown items ignore `trailingIcon`, so the selected Agent showed no check mark.
+    expect(app).not.toMatch(/agentMenuItems[\s\S]*?trailingIcon/)
+    expect(app).toMatch(/type: "checkbox",\s*label: name,\s*checked: selectedAgentName\.value === name/)
+  })
+
+  it("generates the Tailwind classes that the Console app config declares", () => {
+    const styles = readFileSync(new URL("../src/console/runtime/client/styles.css", import.meta.url), "utf8")
+    const appConfig = readFileSync(new URL("../src/console/app.config.ts", import.meta.url), "utf8")
+    expect(appConfig).toContain("bg-(color:--vitehub-console-floating)")
+    expect(styles).toContain('@source "../../app.config.ts";')
+    expect(styles).toMatch(/--vitehub-console-floating:/)
+  })
+
   it("loads the Workspace when its active tab is reopened from a file", () => {
     const inspector = component("console-session-inspector")
     expect(inspector).toMatch(/selectedPath\.value = undefined;[\s\S]*?if \(!workspace\.value && !workspaceLoading\.value\) void loadWorkspace\(\);/)

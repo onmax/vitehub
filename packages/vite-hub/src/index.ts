@@ -988,14 +988,12 @@ export function vitehub(options: ViteHubOptions): PluginOption[] {
     if (options.connections !== true && options.connections.management && !options.console) {
       throw viteHubErrorDiagnostics.VITE_HUB_R0126({ message: '[vitehub] connections.management requires Console production access. Set console: { access: "auth" } or console: { exposure: "host-managed" }.' })
     }
-    plugins.push(hubConnections({
-      ...(options.connections === true ? {} : options.connections),
-      ...(options.connections !== true && options.connections.management === true && options.console && consoleSections.includes("connections")
-        ? { management: { actor: consoleConnectionsActorId } }
-        : {}),
-      database: "vite-hub/database/drizzle",
-      importBase: "vite-hub/connections",
-    }))
+    const connectionsOptions: ConnectionsVitePluginOptions = options.connections === true
+      ? { database: "vite-hub/database/drizzle", importBase: "vite-hub/connections" }
+      : { ...options.connections, database: "vite-hub/database/drizzle", importBase: "vite-hub/connections" }
+    // The Console actor module checks the Console or app Auth session in every management route.
+    if (!connectionsOptions.actor && options.console && consoleSections.includes("connections")) connectionsOptions.actor = consoleConnectionsActorId
+    plugins.push(hubConnections(connectionsOptions))
   }
   else plugins.push(hubConnectionsTypesCleanup())
   if (options.database) plugins.push(hubDb(options.database === true ? undefined : options.database))

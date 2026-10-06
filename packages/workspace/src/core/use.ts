@@ -17,6 +17,7 @@ import { useRegisteredWorkspace } from "./registry.ts"
 import { createWorkspace } from "./workspace.ts"
 import { attachWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "../sources/request-execution.ts"
 import { forwardWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
+import { setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
 import { createHostedWorkspaceSession } from "../session/host.ts"
 
@@ -629,7 +630,8 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
     tools.inspect = createReadTools as WritableWorkspaceFacade<Name>["tools"]["inspect"]
     tools.write = createTools as WritableWorkspaceFacade<Name>["tools"]["write"]
     tools.none = emptyTools
-    return {
+    // SAFETY: The writable facade delegates all operations to the lazy Workspace and carries its Store accessor.
+    const facade = {
       [workspaceMetadataTarget]: async () => await (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.(),
       [workspaceStoreTarget]: async () => {
         return await (workspace as Workspace & WorkspaceStoreTargetCarrier)[workspaceStoreTarget]?.()
@@ -650,6 +652,8 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
       sync: async options => await workspace.sync(options),
       tools,
     } as WritableWorkspaceFacade<Name> & WorkspaceStoreTargetCarrier
+    setWorkspaceRawWriteTarget(facade, facade.fs)
+    return facade
   }
 
   const workspace = createLazyWorkspace(name, options?.definition, { reuseStartupSnapshots: options?.refresh === false })

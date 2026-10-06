@@ -89,6 +89,7 @@ describe("dev server discovery", () => {
       body: "{}",
       headers: { "content-type": "application/json", "x-test-dev": "1" },
       method: "POST",
+      redirect: "manual",
     })
   })
 
@@ -103,7 +104,7 @@ describe("dev server discovery", () => {
       stderr: output.stderr,
     })
     expect(target).toEqual({ discovery: { items: ["a"], root: "/app" }, url: "http://localhost:5173/__test/dev" })
-    expect(fetchImpl).toHaveBeenCalledWith("http://localhost:5173/__test/dev", { headers: { accept: "application/json", "x-test-dev": "1" } })
+    expect(fetchImpl).toHaveBeenCalledWith("http://localhost:5173/__test/dev", { headers: { accept: "application/json", "x-test-dev": "1" }, redirect: "manual" })
     expect(output.text()).toBe("")
   })
 

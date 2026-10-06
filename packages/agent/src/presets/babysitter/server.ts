@@ -66,6 +66,23 @@ export interface BabysitterRuntimeOptions {
   providerRetryDelayMs?: number;
 }
 
+/** Bound policy hooks inside an owner slot, never in the scheduler wait scan. */
+export async function boundedMergeReady(read: () => true | string | Promise<true | string>, signal: AbortSignal, timeoutMs = 10_000) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: () => void = () => {};
+  try {
+    signal.throwIfAborted();
+    return await Promise.race([Promise.resolve().then(read), new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      timer = setTimeout(() => reject(new Error("Merge readiness timed out.")), timeoutMs);
+    })]);
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 /** Provider quota and rate-limit failures. Cancellation is never a rate limit. */
 export function isProviderRateLimit(error: unknown): boolean {
   if (error instanceof Error && error.name === "AbortError") return false;
@@ -271,7 +288,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const reviewedEvidenceKey = isRuntimeRecord(assessment) && assessment.head === snapshot.pr?.head?.sha && hasRuntimeType(assessment.evidenceKey, "string") ? assessment.evidenceKey : undefined;
     let decision = directMergeReadiness(snapshot, evaluation.state, { pendingReviewChecks: waitPolicy.pendingReviewChecks, workerAuthors: waitPolicy.workerAuthors, reviewedEvidenceKey });
     if (decision.ready && merge.ready) {
-      const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state });
+      const head = decision.head;
+      const readyHook = merge.ready;
+      const ready = await boundedMergeReady(() => readyHook({ repository, number, head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state }), signal);
       if (ready !== true) decision = { ready: false, reason: ready };
     }
     if (!decision.ready) {
@@ -381,7 +400,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   /** Wakes a parked PR only when its new events need a model pass or a direct merge. */
   async function evaluateWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(true)) {
-      const reasons = wakeReasons(snapshot, await requiredCheckState(snapshot), waitPolicy);
+      if (snapshot.generation <= snapshot.handled && (snapshot.wait?.retryAt ?? Infinity) > Date.now() && !snapshot.wait?.wake) continue;
+      const checks = await requiredCheckState(snapshot);
+      const reasons = wakeReasons(snapshot, checks, waitPolicy);
+      if (snapshot.wait?.retryAt !== undefined && snapshot.wait.retryAt <= Date.now()) reasons.push("merge-retry");
       if (snapshot.wait?.wake) {
         const dependencyKey = `dependency:${snapshot.repository}#${snapshot.number}`;
         const nextReadKey = `dependency-next:${snapshot.repository}#${snapshot.number}`;
@@ -589,6 +611,29 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           if (merge.mode === "direct") {
             const mergeResult = await mergeReadyPullRequest(inboxClaim, owner, passSignal);
             if (mergeResult !== "not-ready") return;
+            // A previous pass explicitly reviewed this unchanged head. If the
+            // merge gates are still closed, keep waiting instead of invoking
+            // the model again. New feedback, conflicts, or a new failure alter
+            // the evidence key and invalidate this checkpoint.
+            const assessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
+            if (isRuntimeRecord(assessment)
+              && assessment.head === inboxClaim.snapshot.pr?.head?.sha
+              && assessment.evidenceKey === mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)
+              && inboxClaim.snapshot.threads.every(thread => thread.isResolved === true)
+              && inboxClaim.snapshot.pr?.mergeable !== false
+              && inboxClaim.snapshot.pr?.mergeable_state !== "dirty") {
+              await pullRequestInbox.finish(inboxClaim, {
+                text: inboxClaim.snapshot.lastResult || "Reviewed head is unchanged; waiting for merge gates.",
+                wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: Date.now() + 120_000 },
+              });
+              schedulerEvent("babysitter.wait.kept", {
+                ...owner,
+                head_sha: inboxClaim.snapshot.pr?.head?.sha,
+                avoided_invocation: true,
+                reason: "reviewed-head-unchanged",
+              });
+              return;
+            }
           }
           if (!(await hydrateFailedCiEvidence(pullRequestInbox, inboxClaim, {
             readJson: (path, projection) => readRest(path, projection, passSignal),
@@ -848,7 +893,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           );
 
           const current = await pullRequestInbox.get(repository, number);
-          const assessed = !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
+          const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
           if (assessed) await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
           const terminal = current?.status === "terminal";
@@ -859,6 +904,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await parkOnPushedHead(inboxClaim, resultText, pushedHead);
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && passResult?.wait?.kind === "external") {
             outcome = "waiting";
+            await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, null);
             await pullRequestInbox.finish(inboxClaim, { text: resultText,
               wait: await externalWait(inboxClaim.snapshot, passResult.wait.wake, passResult.wait.reason) });
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && (passResult?.wait?.kind === "checks" && passResult.wait.headSha === pullRequest.headRefOid
@@ -867,13 +913,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             outcome = "waiting";
             // Evidence that changed during the pass makes this wait stale, and the PR stays claimable.
             await pullRequestInbox.finish(inboxClaim, { text: resultText, progress: { kind: "no-progress" },
-              wait: createCheckWait(inboxClaim.snapshot, waitPolicy) });
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else if (assessed) {
             outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: createCheckWait(inboxClaim.snapshot, waitPolicy) });
-            // A durable readiness checkpoint schedules only a host merge check, not another model pass.
-            const waiting = await pullRequestInbox.get(repository, number);
-            if (waiting && merge.mode === "direct") await pullRequestInbox.wake(waiting, `reviewed:${mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)}`);
+            await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else {
             // A park that names no external gate still consumed a pass without progress.
             outcome = "retry";

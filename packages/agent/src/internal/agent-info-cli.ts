@@ -220,6 +220,7 @@ async function fetchAgentInfo(url: string, rootDir: string, fetchImpl: typeof fe
   const discovery = new URL(url)
   discovery.search = ""
   return await fetchImpl(url, {
+    redirect: "manual",
     headers: {
       accept: "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,

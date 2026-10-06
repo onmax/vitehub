@@ -84,7 +84,6 @@ export const consoleIcons: readonly string[] = [
   "ph:chat-dots-light",
   "ph:chat-text-light",
   "ph:check-circle-light",
-  "ph:check-light",
   "ph:circle-notch-light",
   "ph:cloud-slash-light",
   "ph:dot-outline-fill",

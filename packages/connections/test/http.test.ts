@@ -26,7 +26,6 @@ function streamedPost(body: ReadableStream<Uint8Array>): Request {
 
 describe("createConnectionsHandler", () => {
   it.each([
-    undefined,
     () => undefined,
     () => "agent:worker",
     () => "user:",
