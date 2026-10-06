@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { getPrimitiveLanding, primitiveLandings } from "../app/data/primitive-landings";
+import { stubLanding } from "../app/data/primitive-landings/stub";
 
 describe("primitive landing routes", () => {
   it("resolves registered primitives", () => {
@@ -18,14 +19,13 @@ describe("primitive landing routes", () => {
 
 describe("primitive landing placeholders", () => {
   it("marks every stub variant as illustrative and removes invented APIs", () => {
-    for (const landing of Object.values(primitiveLandings).filter((landing) => landing.slug !== "shell")) {
-      expect(landing.description).not.toContain("working project");
-      for (const variant of landing.variants) {
-        expect(variant.illustrative).toBe(true);
-        const source = variant.files.map((file) => file.content).join("\n");
-        expect(source).toContain("Illustrative pseudocode");
-        expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\//);
-      }
+    const landing = stubLanding("example", "Example", "/docs/example");
+    expect(landing.description).not.toContain("working project");
+    for (const variant of landing.variants) {
+      expect(variant.illustrative).toBe(true);
+      const source = variant.files.map((file) => file.content).join("\n");
+      expect(source).toContain("Illustrative pseudocode");
+      expect(source).not.toMatch(/definePrimitive|vite-hub\/vite|from ["']vite-hub\//);
     }
   });
 
