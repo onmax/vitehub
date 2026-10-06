@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { createAuthClient } from "@vite-hub/auth/vue";
+import { defineShortcuts } from "@nuxt/ui/composables";
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
@@ -7,7 +8,7 @@ import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
 import { loadConsoleNavigation, resolveConsoleSectionDetails, subscribeConsoleNavigation } from "../client/sections";
 import { decodeAgentRouteParam, resolveConsoleRouteName } from "../console-route";
-import { groupConsoleSections } from "../sections";
+import { consoleGoToKey, consoleOverviewShortcut, consoleSectionShortcut, groupConsoleSections } from "../sections";
 import ConsoleMark from "./console-mark.vue";
 
 const props = defineProps<{
@@ -31,14 +32,13 @@ let authClientRequest: Promise<ReturnType<typeof createAuthClient>> | undefined;
 let unsubscribe: (() => void) | undefined;
 
 const projectName = computed(() => navigation.value?.projectName || "ViteHub");
-const groups = computed(() =>
-  groupConsoleSections(
-    (navigation.value?.sections ?? []).flatMap((section) => {
-      const details = resolveConsoleSectionDetails(navigation.value, section);
-      return details ? [{ id: section, ...details }] : [];
-    }),
-  ),
+const sections = computed(() =>
+  (navigation.value?.sections ?? []).flatMap((section) => {
+    const details = resolveConsoleSectionDetails(navigation.value, section);
+    return details ? [{ id: section, ...details, shortcut: consoleSectionShortcut(section) }] : [];
+  }),
 );
+const groups = computed(() => groupConsoleSections(sections.value));
 const signOutLabel = computed(() => (accessIdentity.value?.label ? `Sign out ${accessIdentity.value.label}` : "Sign out"));
 
 async function open(routeName: string): Promise<void> {
@@ -49,6 +49,42 @@ async function open(routeName: string): Promise<void> {
     ...(name === resolveConsoleRouteName(route.name, "vitehub-console-usage") && agent ? { query: { returnAgent: agent } } : {}),
   });
 }
+
+// The rail is on every page, so it owns the "Go to" chords. Only enabled sections get one.
+// Chords do not run while an input, a textarea, or editable content has focus.
+let goToStartedOutsideEditor = false;
+
+function editing(): boolean {
+  const active = document.activeElement;
+  return active instanceof HTMLElement && (active.matches("input, textarea") || active.isContentEditable);
+}
+
+function trackGoToStart(event: KeyboardEvent): void {
+  // Nuxt UI records chained keys before checking focus. Check the first key too.
+  if (editing() || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) goToStartedOutsideEditor = false;
+  else if (event.key === consoleGoToKey) goToStartedOutsideEditor = true;
+}
+
+function invalidateGoToStart(): void {
+  goToStartedOutsideEditor = false;
+}
+
+function openShortcut(routeName: string): void {
+  if (goToStartedOutsideEditor && !editing()) void open(routeName);
+  invalidateGoToStart();
+}
+
+defineShortcuts(
+  computed(() => {
+    const shortcuts: Record<string, () => void> = {
+      [consoleOverviewShortcut.join("-")]: () => openShortcut("vitehub-console"),
+    };
+    for (const section of sections.value) {
+      if (section.shortcut) shortcuts[section.shortcut.join("-")] = () => openShortcut(section.routeName);
+    }
+    return shortcuts;
+  }),
+);
 
 async function loadNavigation(): Promise<void> {
   navigationFailed.value = false;
@@ -120,17 +156,25 @@ async function signOut(): Promise<void> {
 }
 
 onMounted(() => {
+  window.addEventListener("keydown", trackGoToStart, true);
+  window.addEventListener("focusin", invalidateGoToStart);
+  window.addEventListener("blur", invalidateGoToStart);
   unsubscribe = subscribeConsoleNavigation(props.sectionsBase, (value) => {
     navigation.value = value;
   });
   void loadNavigation();
 });
-onBeforeUnmount(() => unsubscribe?.());
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", trackGoToStart, true);
+  window.removeEventListener("focusin", invalidateGoToStart);
+  window.removeEventListener("blur", invalidateGoToStart);
+  unsubscribe?.();
+});
 </script>
 
 <template>
   <nav class="vitehub-console__rail" aria-label="Console">
-    <UTooltip :text="`${projectName} overview`" :content="{ side: 'right' }">
+    <UTooltip :text="`${projectName} overview`" :kbds="[...consoleOverviewShortcut]" :content="{ side: 'right' }">
       <button
         type="button"
         class="vitehub-console__rail-item vitehub-console__rail-home"
@@ -157,7 +201,13 @@ onBeforeUnmount(() => unsubscribe?.());
         </button>
       </UTooltip>
       <div v-for="(group, index) in groups" :key="index" class="vitehub-console__rail-group">
-        <UTooltip v-for="section in group" :key="section.id" :text="section.label" :content="{ side: 'right' }">
+        <UTooltip
+          v-for="section in group"
+          :key="section.id"
+          :text="section.label"
+          :kbds="section.shortcut ? [...section.shortcut] : undefined"
+          :content="{ side: 'right' }"
+        >
           <button
             type="button"
             class="vitehub-console__rail-item"

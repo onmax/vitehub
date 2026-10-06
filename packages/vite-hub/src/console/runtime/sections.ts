@@ -83,6 +83,37 @@ export function groupConsoleSections<T extends { id: ConsoleSectionId }>(section
     .filter(group => group.length > 0)
 }
 
+/** First key of every "Go to" chord, as in Linear and GitHub. */
+export const consoleGoToKey = "g"
+
+/** Keys that open the Overview: `g` and then `o`. */
+export const consoleOverviewShortcut: readonly [typeof consoleGoToKey, "o"] = [consoleGoToKey, "o"]
+
+/** Second key of the "Go to" chord of each known section. Each key is unique and is not `o`. */
+export const consoleSectionShortcutKeys: Readonly<Record<string, string>> = {
+  agents: "a",
+  usage: "u",
+  databases: "d",
+  kv: "k",
+  blob: "b",
+  workspaces: "w",
+  workflows: "f",
+  queues: "q",
+  schedules: "s",
+  sandboxes: "x",
+  env: "e",
+  connections: "c",
+  email: "m",
+  "rate-limits": "r",
+}
+
+/** Returns the "Go to" chord keys of a section. A contributed section with an unknown id has no chord. */
+export function consoleSectionShortcut(section: ConsoleSectionId): readonly [typeof consoleGoToKey, string] | undefined {
+  return Object.hasOwn(consoleSectionShortcutKeys, section)
+    ? [consoleGoToKey, consoleSectionShortcutKeys[section]!]
+    : undefined
+}
+
 interface ConsoleSectionStorage {
   getItem(key: string): string | null
   setItem(key: string, value: string): void

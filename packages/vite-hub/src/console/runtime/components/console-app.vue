@@ -17,7 +17,7 @@ import {
   resolveConsoleAgentRows,
 } from "./console-agent-list";
 
-import type { SplitterItem } from "@nuxt/ui";
+import type { CommandPaletteItem, SplitterItem } from "@nuxt/ui";
 import type {
   AgentInvocationConfiguration,
   AgentInvocationListItem,
@@ -236,6 +236,17 @@ const showAllAgents = ref(false);
 // The list shows a few Agents first. The selected Agent stays in it, so the panel always names the active filter.
 const agentRows = computed(() =>
   resolveConsoleAgentRows(agentNames.value, selectedAgentName.value, showAllAgents.value),
+);
+// Search shows the same New chat action as the sidebar button.
+const searchActions = computed<CommandPaletteItem[]>(() =>
+  newChatTargetName.value
+    ? [{
+        description: `Start a session with ${newChatTargetName.value}`,
+        icon: "i-ph-note-pencil-light",
+        label: "New chat",
+        onSelect: () => void startNewChat(),
+      }]
+    : [],
 );
 const activeFilterCount = computed(() => Number(Boolean(selectedCapabilityId.value)) + Number(Boolean(selectedTriggeredBy.value)));
 const capabilityOptions = computed(() => capabilityIds.value.map(id => ({ label: capabilityLabel(id), value: id })));
@@ -1220,6 +1231,7 @@ onBeforeUnmount(() => {
     </UDashboardSidebar>
 
     <ConsoleSearch
+      :actions="searchActions"
       :agent-names="agentNames"
       :agents-base="agentsBase"
       :definitions-base="definitionsBase"
