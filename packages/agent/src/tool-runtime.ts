@@ -14,7 +14,7 @@ import type {
   AgentToolStepItem,
 } from "./types.ts"
 
-const approvalPreservingExecutors = new WeakSet<Function>()
+const approvalPreservingExecutorOwners = new WeakMap<Function, AgentToolPolicyOwner | null>()
 
 function copyWithOverrides<T extends object, Overrides extends object>(tool: T, overrides: Overrides, bindExecute: boolean): Omit<T, keyof Overrides> & Overrides {
   const descriptors: Record<PropertyKey, PropertyDescriptor> = Object.getOwnPropertyDescriptors(tool)
@@ -48,7 +48,7 @@ function copyWithOverrides<T extends object, Overrides extends object>(tool: T, 
   })
   const policyOwner = agentToolPolicyOwners.get(tool)
   const overrideExecute = (overrides as { execute?: unknown }).execute
-  if (policyOwner && (!Object.hasOwn(overrides, "execute") || (typeof overrideExecute === "function" && approvalPreservingExecutors.has(overrideExecute)))) {
+  if (policyOwner && (!Object.hasOwn(overrides, "execute") || (typeof overrideExecute === "function" && approvalPreservingExecutorOwners.get(overrideExecute) === policyOwner))) {
     agentToolPolicyOwners.set(copied, policyOwner)
   }
   return copied
@@ -203,7 +203,7 @@ function withToolPolicy(tool: AgentToolDefinition): AgentToolDefinition {
       context?.abortSignal?.throwIfAborted()
       return await execute.call(tool, input, context)
     }
-  approvalPreservingExecutors.add(approvalExecute)
+  approvalPreservingExecutorOwners.set(approvalExecute, policyOwner)
   const wrapped = copyToolWithOverrides(tool, { execute: approvalExecute })
   agentToolPolicyOwners.set(wrapped, policyOwner)
   return wrapped
@@ -233,7 +233,7 @@ export function withJsonCompatibleToolOutputs<TTools extends AgentToolSet>(tools
 
     const execute = (tool as { execute: (...args: unknown[]) => unknown }).execute
     const wrappedExecute = async (input: unknown, ...args: unknown[]) => toJsonCompatibleValue(await execute.call(tool, input, ...args))
-    approvalPreservingExecutors.add(wrappedExecute)
+    approvalPreservingExecutorOwners.set(wrappedExecute, agentToolPolicyOwners.get(tool) ?? null)
     return [name, copyToolWithOverrides(tool, { execute: wrappedExecute })]
   })) as TTools
 }
@@ -332,7 +332,7 @@ export function withAgentToolStepReporting<TTools extends AgentToolSet>(tools: T
           throw error
         }
       }
-    approvalPreservingExecutors.add(wrappedExecute)
+    approvalPreservingExecutorOwners.set(wrappedExecute, agentToolPolicyOwners.get(tool) ?? null)
     return [name, copyToolWithOverrides(tool, { execute: wrappedExecute })]
   })) as TTools
 }

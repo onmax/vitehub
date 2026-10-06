@@ -99,4 +99,15 @@ describe("tool approval grants", () => {
     await expect(executeApprovedAgentTool(replacement, grant)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" })
     expect(replacementExecute).not.toHaveBeenCalled()
   })
+
+  it("does not let an unrelated preserving wrapper run an approved tool", async () => {
+    const { tool } = approvalTool()
+    const unrelatedExecute = vi.fn(async (input: unknown) => input)
+    const unrelated = withJsonCompatibleToolOutputs({ email_send: { execute: unrelatedExecute, name: "email_send" } }).email_send!
+    const copied = copyToolWithOverrides(tool, { execute: unrelated.execute })
+    const grant = approveAgentToolRequest(await requestApproval(tool, { recipient: "team@example.com" }))!
+
+    await expect(executeApprovedAgentTool(copied, grant)).rejects.toMatchObject({ code: "APPROVAL_REQUIRED" })
+    expect(unrelatedExecute).not.toHaveBeenCalled()
+  })
 })
