@@ -84,6 +84,7 @@
     "./agent/eval": "./dist/agent/eval.js",
     "./agent/evlog": "./dist/agent/evlog.js",
     "./agent/evlog/posthog": "./dist/agent/evlog/posthog.js",
+    "./agent/gateways": "./dist/agent/gateways.js",
     "./agent/invocations/d1": "./dist/agent/invocations/d1.js",
     "./agent/invocations/sqlite": "./dist/agent/invocations/sqlite.js",
     "./agent/mcp": "./dist/agent/mcp.js",

@@ -24,6 +24,7 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/agent/presets/workspace` | Opt-in workspace source-provenance citation preset. |
 | `vite-hub/agent/capabilities` | Official Capability factories. |
 | `vite-hub/agent/channels` | Official Channel Kind helpers. |
+| `vite-hub/agent/gateways` | LLM proxy and gateway presets for provider Drivers. |
 | `vite-hub/agent/evlog` | Host-level evlog integration for Agent lifecycle events and diagnostics. |
 | `vite-hub/agent/evlog/posthog` | Optional Node.js PostHog event, Error Tracking and log exporter. |
 | `vite-hub/agent/eval` | Agent Eval authoring helpers; install Evalite and the test runner explicitly. |

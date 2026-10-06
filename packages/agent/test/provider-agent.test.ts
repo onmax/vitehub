@@ -65,6 +65,7 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({ resolveInstalle
 
 import { appendLatestFinalText } from "../src/agent-output.ts"
 import { createProviderAgentAdapter, localWorkspaceHost } from "../src/provider-agent.ts"
+import { cliproxy, defineGateway, vercel } from "../src/gateways.ts"
 import { markTrustedWorkspaceAccessScope } from "../src/access-runtime.ts"
 import { codexDriver, defineAgent, runAgent } from "../src/index.ts"
 import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
@@ -220,13 +221,15 @@ describe("Provider Agent Driver", () => {
     await adapter.generate(context(threadId) as never)
 
     expect(createProviderRuntime).toHaveBeenLastCalledWith(expect.objectContaining({
-      environment: expect.objectContaining({ PROVIDER_SELECTED: "selected", CLIPROXY_BASE_URL: "http://127.0.0.1:8317/v1", CLIPROXY_API_KEY: "proxy-test-key" }),
+      environment: expect.objectContaining({ PROVIDER_SELECTED: "selected" }),
       settings: { binaryPath: "/app/node_modules/@openai/codex/bin/codex.js" },
     }))
     expect(createProviderRuntime).toHaveBeenCalled()
     const lastRuntimeCall = createProviderRuntime.mock.lastCall
     expect(lastRuntimeCall).toBeDefined()
     expect(lastRuntimeCall?.[0].environment).not.toHaveProperty("VITEHUB_UNRELATED_SECRET")
+    expect(lastRuntimeCall?.[0].environment).not.toHaveProperty("CLIPROXY_BASE_URL")
+    expect(lastRuntimeCall?.[0].environment).not.toHaveProperty("CLIPROXY_API_KEY")
     vi.unstubAllEnvs()
   })
 
@@ -425,29 +428,117 @@ describe("Provider Agent Driver", () => {
     }).generate(runContext as never)).rejects.toThrow('browser({ runtime: "external" })')
   })
 
-  it.each([
-    { provider: "codex", endpoint: undefined },
-    { provider: "codex", endpoint: "   " },
-    { provider: "claude-code", endpoint: "http://127.0.0.1:8317/v1" },
-  ] as const)("filters ambient CLIProxy credentials for $provider with endpoint $endpoint", async ({ provider, endpoint }) => {
+  it.each(["codex", "claude-code"] as const)("does not forward ambient proxy variables to %s", async (provider) => {
     const threadId = "thread-filter-proxy"
-    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
-    vi.stubEnv("CLIPROXY_BASE_URL", endpoint)
-    vi.stubEnv("CLIPROXY_API_KEY", "proxy-test-key")
-    await createProviderAgentAdapter({ provider }).generate(context(threadId) as never)
-    expect(createProviderRuntime.mock.lastCall?.[0].environment).not.toHaveProperty("CLIPROXY_API_KEY")
-    expect(createProviderRuntime.mock.lastCall?.[0].environment).not.toHaveProperty("CLIPROXY_BASE_URL")
-    vi.unstubAllEnvs()
-  })
-
-  it.each([undefined, ""])("allows driver.env to disable ambient CLIProxy forwarding with %s", async (endpoint) => {
-    const threadId = "thread-disable-proxy"
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
     vi.stubEnv("CLIPROXY_BASE_URL", "http://127.0.0.1:8317/v1")
     vi.stubEnv("CLIPROXY_API_KEY", "proxy-test-key")
-    await createProviderAgentAdapter({ env: { CLIPROXY_BASE_URL: endpoint }, provider: "codex" }).generate(context(threadId) as never)
-    expect(createProviderRuntime.mock.lastCall?.[0].environment).not.toHaveProperty("CLIPROXY_API_KEY")
+    vi.stubEnv("OPENAI_API_KEY", "openai-test-key")
+    vi.stubEnv("ANTHROPIC_BASE_URL", "http://127.0.0.1:8317")
+    await createProviderAgentAdapter({ provider }).generate(context(threadId) as never)
+    const environment = createProviderRuntime.mock.lastCall?.[0].environment
+    for (const name of ["CLIPROXY_API_KEY", "CLIPROXY_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL"]) expect(environment).not.toHaveProperty(name)
     vi.unstubAllEnvs()
+  })
+
+  it("routes Codex through driver.gateway with secrets in the environment", async () => {
+    const threadId = "thread-codex-gateway"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    await createProviderAgentAdapter({
+      env: { PROVIDER_SELECTED: "selected" },
+      gateway: cliproxy({ url: "https://proxy.example", apiKey: "proxy-key", headers: { "CF-Access-Client-Id": "client-id" } }),
+      provider: "codex",
+      providerSettings: { launchArgs: '-c "model_provider=\\"other\\""' },
+    }).generate(context(threadId) as never)
+
+    const options = createProviderRuntime.mock.lastCall?.[0]
+    expect(options?.environment).toMatchObject({ PROVIDER_SELECTED: "selected", VITEHUB_GATEWAY_API_KEY: "proxy-key", VITEHUB_GATEWAY_HEADER_0: "client-id" })
+    const launchArgs = String(options?.settings?.launchArgs)
+    // Codex applies later overrides last, so the gateway follows providerSettings.launchArgs.
+    expect(launchArgs.indexOf('model_provider=\\"vitehub\\"')).toBeGreaterThan(launchArgs.indexOf('model_provider=\\"other\\"'))
+    expect(launchArgs).toContain('model_providers.vitehub.base_url=\\"https://proxy.example/v1\\"')
+    expect(launchArgs).not.toContain("proxy-key")
+  })
+
+  it.each(["codex", "claude-code"] as const)("resolves %s gateway secrets with invocation purpose", async (provider) => {
+    const threadId = "thread-gateway-purpose"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const apiKey = vi.fn(({ purpose }: AgentProviderCredentialContext) => purpose === "invocation" ? "proxy-key" : undefined)
+    const header = vi.fn(({ purpose }: AgentProviderCredentialContext) => purpose === "invocation" ? "client-id" : undefined)
+    await createProviderAgentAdapter({
+      gateway: cliproxy({ url: "https://proxy.example", apiKey, headers: { "X-Client": header } }),
+      provider,
+    }).generate(context(threadId) as never)
+
+    expect(apiKey).toHaveBeenCalledWith(expect.objectContaining({ purpose: "invocation" }))
+    expect(header).toHaveBeenCalledWith(expect.objectContaining({ purpose: "invocation" }))
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject(provider === "codex"
+      ? { VITEHUB_GATEWAY_API_KEY: "proxy-key", VITEHUB_GATEWAY_HEADER_0: "client-id" }
+      : { ANTHROPIC_AUTH_TOKEN: "proxy-key", ANTHROPIC_CUSTOM_HEADERS: "X-Client: client-id" })
+  })
+
+  it.each(["codex", "claude-code"] as const)("preserves gateway transport in every %s usage record", async (provider) => {
+    const threadId = "thread-gateway-usage"
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { totalProcessedTokens: 10 } }),
+      event("thread.token-usage.updated", threadId, { usage: { totalProcessedTokens: 12 } }, { itemId: "response-1" }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 2, outputTokens: 1, totalProcessedTokens: 15 } }, { itemId: "response-2" }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 1, totalProcessedTokens: 15 } }, { itemId: "response-2" }),
+      event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" }),
+    ])
+    const events = await collect(await createProviderAgentAdapter({
+      gateway: cliproxy({ url: "https://proxy.example", apiKey: "proxy-key" }),
+      provider,
+    }).stream!(context(threadId) as never)) as StreamEvent[]
+    const records = events.filter(item => item.type === "usage")
+    expect(records).toHaveLength(1)
+    for (const item of records) {
+      expect(item.usageRecord).toMatchObject({ provider, transport: "gateway" })
+      if (provider === "codex") {
+        expect(item.usageRecord?.calls?.length).toBeGreaterThan(0)
+        for (const call of item.usageRecord?.calls || []) expect(call).toMatchObject({ provider, transport: "gateway" })
+      }
+    }
+  })
+
+  it("does not prepare Codex credentials that a gateway replaces", async () => {
+    const threadId = "thread-gateway-credentials"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    const credentials = vi.fn(() => "{}")
+    await createProviderAgentAdapter({
+      credentialProfile: "replaced",
+      credentials,
+      gateway: cliproxy({ url: "https://proxy.example", apiKey: "proxy-key" }),
+      provider: "codex",
+    }).generate(context(threadId) as never)
+
+    expect(credentials).not.toHaveBeenCalled()
+    const options = createProviderRuntime.mock.lastCall?.[0]
+    expect(options?.settings).not.toHaveProperty("homePath")
+    expect(String(options?.settings?.launchArgs)).not.toContain("cli_auth_credentials_store")
+  })
+
+  it("routes Claude Code through driver.gateway", async () => {
+    const threadId = "thread-claude-gateway"
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })])
+    await createProviderAgentAdapter({ gateway: vercel({ apiKey: "vercel-key" }), provider: "claude-code" }).generate(context(threadId) as never)
+
+    expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({
+      ANTHROPIC_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "vercel-key",
+      ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh/claude-code",
+    })
+    expect(String(createProviderRuntime.mock.lastCall?.[0].settings?.launchArgs || "")).not.toContain("model_provider")
+  })
+
+  it.each(["ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"])("rejects resolved driver.env.%s that the gateway owns", async (variable) => {
+    // The invocation fails before it starts a provider runtime, so queue none.
+    const threadId = "thread-gateway-conflict"
+    await expect(createProviderAgentAdapter({
+      env: async () => ({ [variable]: "https://other.example" }),
+      gateway: defineGateway({ name: "proxy", baseURL: { "claude-code": "https://proxy.example" }, apiKey: "k" }),
+      provider: "claude-code",
+    }).generate(context(threadId) as never)).rejects.toThrow(`driver.gateway sets ${variable}`)
   })
 
   it("resolves provider environment once and launches through an isolated executable", async () => {
@@ -514,8 +605,6 @@ describe("Provider Agent Driver", () => {
     const threadId = "thread-launch-diagnostic"
     const secret = "launch-secret-value"
     const shortSecret = "x7z"
-    vi.stubEnv("CLIPROXY_BASE_URL", "http://127.0.0.1:8317/v1")
-    vi.stubEnv("CLIPROXY_API_KEY", "ambient-proxy-secret")
     runtime(threadId, [], {
       async onStartSession() {
         const options = createProviderRuntime.mock.lastCall?.[0]
@@ -529,7 +618,7 @@ describe("Provider Agent Driver", () => {
         expect(persisted).not.toContain(secret)
         expect(persisted).toContain("token=[REDACTED] short=[REDACTED] label=ordinary-value")
         expect(persisted).not.toContain(shortSecret)
-        expect(persisted).not.toContain("ambient-proxy-secret")
+        expect(persisted).not.toContain("gateway-proxy-secret")
         throw new Error("Codex App Server process exited with code 5")
       },
     })
@@ -538,8 +627,9 @@ describe("Provider Agent Driver", () => {
     try {
       await createProviderAgentAdapter({
         env: { SHORT_TOKEN: shortSecret },
+        gateway: defineGateway({ name: "proxy", baseURL: { codex: "http://127.0.0.1:8317/v1" }, apiKey: "gateway-proxy-secret" }),
         launch: {
-          args: ["-e", 'process.stderr.write(`runner failed token=${process.env.T3_MCP_BEARER_TOKEN} short=${process.env.SHORT_TOKEN} label=ordinary-value proxy=${process.env.CLIPROXY_API_KEY}\\n`);process.exit(5)'],
+          args: ["-e", 'process.stderr.write(`runner failed token=${process.env.T3_MCP_BEARER_TOKEN} short=${process.env.SHORT_TOKEN} label=ordinary-value proxy=${process.env.VITEHUB_GATEWAY_API_KEY}\\n`);process.exit(5)'],
           command: process.execPath,
         },
         provider: "codex",
@@ -564,7 +654,7 @@ describe("Provider Agent Driver", () => {
     expect((failure as Error & { cause?: unknown }).cause).toMatchObject({ message: "Codex App Server process exited with code 5" })
     expect(JSON.stringify(shape)).not.toContain(secret)
     expect(JSON.stringify(shape)).not.toContain(shortSecret)
-    expect(JSON.stringify(shape)).not.toContain("ambient-proxy-secret")
+    expect(JSON.stringify(shape)).not.toContain("gateway-proxy-secret")
     vi.unstubAllEnvs()
   })
 
