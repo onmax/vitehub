@@ -342,6 +342,8 @@ function contentEquals(left: string | Uint8Array, right: string | Uint8Array) {
   return leftBytes.byteLength === rightBytes.byteLength && leftBytes.every((byte, index) => byte === rightBytes[index])
 }
 
+// Measure the interval from when the previous report finished. A slow observer, such as an Invocation
+// journal under write contention, would otherwise exceed the interval on every file and report each one.
 function shouldReportMaterializationUpdate(lastReportedAt: number, files: number) {
   return files === 1 || files % 25 === 0 || Date.now() - lastReportedAt >= 1_000
 }
@@ -1027,7 +1029,6 @@ async function materializeWorkspaceSourcesInternal(
           counts.unchanged++
           paths.push({ path, status: "unchanged" })
           if (shouldReportMaterializationUpdate(lastProgressAt, sourceFiles)) {
-            lastProgressAt = Date.now()
             await reportMaterializationProgress(options, source, {
               bytes: sourceBytes,
               cacheStatus,
@@ -1036,6 +1037,7 @@ async function materializeWorkspaceSourcesInternal(
               revision,
               status: "updating",
             })
+            lastProgressAt = Date.now()
           }
           continue
         }
@@ -1105,7 +1107,6 @@ async function materializeWorkspaceSourcesInternal(
         counts[status]++
         paths.push({ path, status })
         if (shouldReportMaterializationUpdate(lastProgressAt, sourceFiles)) {
-          lastProgressAt = Date.now()
           await reportMaterializationProgress(options, source, {
             bytes: sourceBytes,
             cacheStatus,
@@ -1114,6 +1115,7 @@ async function materializeWorkspaceSourcesInternal(
             revision,
             status: "updating",
           })
+          lastProgressAt = Date.now()
         }
       }
       throwIfAborted(options.abortSignal)
