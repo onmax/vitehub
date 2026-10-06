@@ -29,6 +29,7 @@ import { github as githubPublisher } from "../src/publish.ts"
 import { getWorkspaceSourceRequestDescriptor, isWorkspaceSourceRequestOnly, normalizeWorkspaceSources } from "../src/sources/config.ts"
 import { workspaceStoreTarget } from "../src/storage/target.ts"
 import { workspaceMetadataTarget, resolveWorkspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../src/storage/metadata-target.ts"
+import { setWorkspaceRawWriteTarget } from "../src/storage/raw-write-target.ts"
 
 const invocation = {
   context: {
@@ -118,7 +119,7 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     none: () => ({}),
     write: () => ({}),
   } as never
-  return {
+  const facade: WritableWorkspaceFacade & WorkspaceMetadataTargetCarrier = {
     [workspaceMetadataTarget]: () => resolveWorkspaceMetadataTarget(workspace),
     capabilities: async () => await workspace.capabilities?.() ?? { conditionalWrites: false },
     diff: async options => await workspace.diff(options),
@@ -166,6 +167,8 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     sync: async options => await workspace.sync(options),
     tools,
   }
+  setWorkspaceRawWriteTarget(facade, facade.fs)
+  return facade
 }
 
 async function runShell(workspace: ReadonlyWorkspaceFacade, command: string, sourceRequests = false): Promise<WorkspaceShellResult> {
@@ -1286,6 +1289,56 @@ describe("Workspace Source Resolution", () => {
     await expect(base.readFile("artifacts/review.md")).resolves.toBe("ok")
     await expect(base.readFile("artifacts/body.md")).resolves.toBe("# Pull request\n")
     await expect(base.exists("artifacts/moved.md")).resolves.toBe(false)
+  })
+
+  it("requires a Source write grant for every writable overlay mutation", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    await base.writeFile("artifacts/draft.md", "draft")
+    const definition: WorkspaceDefinition = {
+      name: "support",
+      rules: {
+        "redirect/**": { validate: input => ({ ...input, path: input.path.replace(/^redirect\//, "pull-request/") }) },
+      },
+      sources: {
+        pullRequest: custom({
+          materialize: "lazy",
+          mount: "pull-request",
+          async getKeys() {
+            return ["body.md"]
+          },
+          async getItem(key) {
+            return { key, path: key, content: "# Pull request\n" }
+          },
+        }),
+      },
+    }
+
+    const { workspace } = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, {
+      invocation,
+      overlay: true,
+    })
+    // SAFETY: This test fixture intentionally constructs the exact asserted Workspace contract.
+    const writable = workspace as WritableWorkspaceFacade
+
+    await expect(writable.fs.appendFile("pull-request/body.md", "nope")).rejects.toThrow("read-only")
+    await expect(writable.fs.movePath("artifacts/draft.md", "pull-request/draft.md")).rejects.toThrow("read-only")
+    await expect(writable.fs.writeFile("redirect/body.md", "nope")).rejects.toThrow("read-only")
+    await expect(writable.fs.mkdir("redirect/new")).rejects.toThrow("read-only")
+    await expect(writable.fs.rm("redirect/body.md", { force: true })).rejects.toThrow("read-only")
+
+    const session = await writable.startSession()
+    try {
+      await expect(session.writeFile("pull-request/body.md", "nope")).rejects.toThrow("read-only")
+      await expect(session.mkdir("pull-request/new")).rejects.toThrow("read-only")
+      await expect(session.rm("pull-request/body.md")).rejects.toThrow("read-only")
+    }
+    finally {
+      await session.close()
+    }
+
+    await expect(writable.fs.readFile("pull-request/body.md")).resolves.toBe("# Pull request\n")
+    await expect(base.readFile("artifacts/draft.md")).resolves.toBe("draft")
+    await expect(base.exists("pull-request")).resolves.toBe(false)
   })
 
   it("publishes the resolved writable overlay", async () => {

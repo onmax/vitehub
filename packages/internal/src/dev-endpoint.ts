@@ -284,15 +284,23 @@ export function registerViteHubDevEndpoint(server: ViteHubDevEndpointServer, opt
       options.handle(req, res, grant)
       return
     }
+    let closed = req.aborted || res.destroyed
+    const onAborted = () => { closed = true }
+    const onClose = () => { closed = true }
+    req.once("aborted", onAborted)
+    res.once("close", onClose)
     void (async () => await authorize(req))()
       .then((rejected) => {
         if (rejected) return writeResponse(res, rejected)
-        // The client can close the request while `authorize` runs. Then no handler can observe the close.
-        if (!res.destroyed) options.handle(req, res, grant)
+        if (!closed && !res.destroyed) options.handle(req, res, grant)
       })
       .catch((error: unknown) => res.headersSent ? undefined : writeResponse(res, Response.json({
         error: { message: redactInspectionText(`${options.label} request failed: ${error instanceof Error ? error.message : String(error)}`) },
       }, { status: 500 })))
+      .finally(() => {
+        req.off("aborted", onAborted)
+        res.off("close", onClose)
+      })
   })
 }
 

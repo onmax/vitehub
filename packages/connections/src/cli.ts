@@ -20,6 +20,7 @@ export interface ConnectionsCliOptions {
 
 interface ParsedArgs {
   confirm?: string
+  cookie?: string
   flags: Map<string, string | true>
   json: boolean
   positionals: string[]
@@ -28,7 +29,7 @@ interface ParsedArgs {
 
 class CliError extends Error {}
 
-const valueFlags = new Set(["--before", "--confirm", "--name", "--port", "--status", "--url"])
+const valueFlags = new Set(["--before", "--confirm", "--cookie", "--name", "--port", "--status", "--url"])
 
 function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
   const flags = new Map<string, string | true>()
@@ -55,6 +56,7 @@ function parse(args: string[], env: NodeJS.ProcessEnv): ParsedArgs {
   const url = flags.get("--url")
   return {
     confirm: stringFlag(flags.get("--confirm")),
+    cookie: stringFlag(flags.get("--cookie")) ?? env.VITEHUB_CONNECTIONS_COOKIE,
     flags,
     json: flags.has("--json"),
     positionals,
@@ -124,7 +126,11 @@ async function request<T>(parsed: ParsedArgs, options: ConnectionsCliOptions, bo
   try {
     const init: RequestInit = {
       body: JSON.stringify(body),
-      headers: { "content-type": "application/json", origin: base.origin },
+      headers: {
+        "content-type": "application/json",
+        origin: base.origin,
+        ...(parsed.cookie ? { cookie: parsed.cookie } : {}),
+      },
       method: "POST",
     }
     if (redirect) init.redirect = redirect
@@ -364,6 +370,7 @@ function usage(): string {
     "",
     "Options:",
     "  --url <url>   App URL, including its Vite base path. Defaults to VITEHUB_CONNECTIONS_URL or http://localhost:5173.",
+    "  --cookie <value>  Console session cookie (or VITEHUB_CONNECTIONS_COOKIE) for protected apps.",
     "  --port <port> Loopback callback port for connect. The OAuth client must allow http://127.0.0.1:<port>/callback.",
     "  --json        Print JSON.",
     "",

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
-import { createViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
+import { createViteHubDevToken, removeViteHubDevToken, viteHubDevTokenHeader } from "@vite-hub/internal/dev-token"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { blob } from "../src/index.ts"
@@ -16,10 +16,12 @@ vi.mock("@vite-hub/blob/runtime/state", async () => await import("../src/runtime
 
 let base: string
 let credential: { serverId: string, token: string }
+let extraCredentials: Array<{ serverId: string, token: string }>
 
 beforeEach(async () => {
   base = await mkdtemp(join(tmpdir(), "vitehub-blob-dev-"))
   credential = await createViteHubDevToken(base, blobDevTokenNamespace)
+  extraCredentials = []
   setBlobRuntimeConfig({
     store: { base: join(base, "default"), driver: "fs" },
     stores: {
@@ -33,6 +35,8 @@ beforeEach(async () => {
 afterEach(async () => {
   setBlobRuntimeConfig(undefined)
   setBlobRuntimeStorage(undefined)
+  await removeViteHubDevToken(base, { namespace: blobDevTokenNamespace, serverId: credential.serverId })
+  await Promise.all(extraCredentials.map(({ serverId }) => removeViteHubDevToken(base, { namespace: blobDevTokenNamespace, serverId })))
   await rm(base, { force: true, recursive: true })
 })
 
@@ -204,6 +208,7 @@ describe("Blob dev runtime handler", () => {
     const list = { operation: "list" }
     const wrongToken = `${credential.token.slice(0, -1)}${credential.token.endsWith("0") ? "1" : "0"}`
     const other = await createViteHubDevToken(base, blobDevTokenNamespace)
+    extraCredentials.push(other)
     const forbidden = [
       await handle(devRequest(list, { headers: { [viteHubDevTokenHeader]: "" } })),
       await handle(devRequest(list, { headers: { [viteHubDevTokenHeader]: wrongToken } })),
