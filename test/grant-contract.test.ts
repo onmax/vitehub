@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 import {
@@ -174,11 +175,10 @@ function grantFindings(file: string, source: string): GrantFinding[] {
 
 async function packageSourceFindings(): Promise<GrantFinding[]> {
   const findings: GrantFinding[] = []
-  const tracked = execFileSync("git", ["ls-tree", "-r", "--name-only", "HEAD", "--", "packages"], { cwd: repoRoot, encoding: "utf8" })
-  for (const file of tracked.split("\n")) {
+  const tracked = execFileSync("git", ["ls-files", "-z", "--", "packages"], { cwd: repoRoot, encoding: "utf8" })
+  for (const file of tracked.split("\0")) {
     if (!/^packages\/[^/]+\/src\/.+\.[cm]?tsx?$/.test(file) || file.endsWith(".d.ts")) continue
-    const source = execFileSync("git", ["show", `HEAD:${file}`], { cwd: repoRoot, encoding: "utf8" })
-    findings.push(...grantFindings(file, source))
+    findings.push(...grantFindings(file, readFileSync(resolve(repoRoot, file), "utf8")))
   }
   return findings
 }
