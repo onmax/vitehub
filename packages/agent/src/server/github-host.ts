@@ -4,9 +4,9 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { mkdtemp, realpath, rm } from "node:fs/promises"
+import { lstat, mkdtemp, readdir, realpath, rename, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { Diagnostic } from "nostics"
 
@@ -717,6 +717,39 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef is required when headRepository is supplied." })
     }
     const checkout = await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
+    const checkoutIdentity = await lstat(checkout, { bigint: true })
+    const isCheckout = async (path: string) => {
+      try {
+        const identity = await lstat(path, { bigint: true })
+        return identity.dev === checkoutIdentity.dev && identity.ino === checkoutIdentity.ino
+      }
+      catch {
+        return false
+      }
+    }
+    const cleanupCheckout = async () => {
+      const parent = dirname(checkout)
+      const claim = `${checkout}.cleanup-${process.pid}-${Date.now()}`
+      let candidate: string | undefined
+      if (await isCheckout(checkout)) candidate = checkout
+      else {
+        for (const entry of await readdir(parent)) {
+          const path = join(parent, entry)
+          if (await isCheckout(path)) {
+            candidate = path
+            break
+          }
+        }
+      }
+      if (!candidate) return
+      try {
+        await rename(candidate, claim)
+      }
+      catch {
+        return
+      }
+      if (await isCheckout(claim)) await rm(claim, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
+    }
     const operation = controlledOperation(options)
     try {
       const baseAuth = await access({
@@ -805,7 +838,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      await rm(checkout, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
+      await cleanupCheckout()
     }
   }
 

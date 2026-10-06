@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -165,5 +165,15 @@ process.exit(result.status ?? 1);
     await expect(git(checkout.path, 'symbolic-ref', 'HEAD')).rejects.toThrow()
     await expect(checkout.push()).rejects.toThrow('source repository and branch are required')
   })
+  let replacement: string | undefined
+  await host.withPullRequestCheckout({ repository: pr.repository, number: 125, headSha: baseHead }, async checkout => {
+    const moved = `${checkout.path}-moved`
+    replacement = checkout.path
+    await rename(checkout.path, moved)
+    await mkdir(checkout.path)
+    await writeFile(join(checkout.path, 'replacement'), 'preserve\n')
+  })
+  expect(await readFile(join(replacement!, 'replacement'), 'utf8')).toBe('preserve\n')
+  await rm(replacement!, { recursive: true, force: true })
 
 }, 30_000)
