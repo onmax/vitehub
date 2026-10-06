@@ -10637,6 +10637,258 @@ describe("server helpers", () => {
     }
   }, 30_000)
 
+  async function failedTriggerFixture(options: {
+    failed: (event: unknown) => void | Promise<void>
+    run: (...args: unknown[]) => Promise<unknown>
+    startAttempts?: number
+  }) {
+    const { defineAgent } = await import("../src/index.ts")
+    const { github } = await import("../src/channels.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-failed-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const claim = state.claimWebhookDelivery.bind(state)
+    // Start from a later attempt so the test reaches the terminal branch without retry delays.
+    vi.spyOn(state, "claimWebhookDelivery").mockImplementation(async (scope) => {
+      const lease = await claim(scope)
+      return lease && options.startAttempts ? { ...lease, attempts: Math.max(lease.attempts, options.startAttempts) } : lease
+    })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              failed: options.failed,
+              invoke: () => ({
+                input: { prompt: "Review the pull request." },
+                run: { runId: "failed-webhook-run" },
+                webhook: { concurrencyLimit: 1, deliveryId: "delivery-failed" },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run: options.run },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const request = () => new Request("https://example.com/api/github/webhook", {
+      body: "{}",
+      headers: { "content-type": "application/json", "x-github-delivery": "delivery-failed", "x-github-event": "pull_request" },
+      method: "POST",
+    })
+    return {
+      complete,
+      state,
+      resume: (webhookState: typeof state) => handler.resume({ agentName: "review", webhookState }),
+      stateUrl: `file:${join(stateDir, "state.sqlite")}`,
+      deliveries: () => handler.deliveries(request(), "github", { agentName: "review", webhookState: state }),
+      retry,
+      send: () => handler(request(), "github", { agentName: "review", webhookState: state }),
+      async cleanup() {
+        await state.disconnect()
+        await rm(stateDir, { force: true, recursive: true })
+      },
+    }
+  }
+
+  it.each(["last attempt", "execution leases"] as const)("calls the trigger failed callback once after the %s", async (terminal) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { review: "https://agents.example.test" } })
+    const { agentInvocationId } = await import("../src/invocations.ts")
+    const failed = vi.fn()
+    const run = vi.fn(async () => {
+      throw new Error("persistent failure")
+    })
+    const fixture = await failedTriggerFixture({ failed, run, startAttempts: terminal === "last attempt" ? 2 : 3 })
+    try {
+      await expect(fixture.send()).resolves.toMatchObject({ status: 200 })
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce())
+      expect(fixture.retry).not.toHaveBeenCalled()
+      expect(run).toHaveBeenCalledTimes(terminal === "last attempt" ? 1 : 0)
+      const id = await agentInvocationId("failed-webhook-run", "review")
+      expect(failed).toHaveBeenCalledWith({
+        attempts: 3,
+        deliveryId: "delivery-failed",
+        error: expect.objectContaining({ message: terminal === "last attempt" ? "persistent failure" : expect.stringContaining("exhausted 3 execution leases") }),
+        input: expect.objectContaining({ prompt: "Review the pull request." }),
+        invocation: { consoleUrl: `https://agents.example.test/_vitehub/agents/review/invocations/${encodeURIComponent(id)}`, id },
+        publicError: expect.objectContaining({ code: "INTERNAL" }),
+        run: expect.objectContaining({ runId: "failed-webhook-run" }),
+      })
+    }
+    finally {
+      consoleError.mockRestore()
+      vi.unstubAllGlobals()
+      await fixture.cleanup()
+    }
+  })
+
+  it.each(["last attempt", "execution leases", "recovered"] as const)("durably fences the %s failure callback beyond lease expiry", async (terminal) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    let settle!: () => void
+    const blocked = new Promise<void>(resolve => { settle = resolve })
+    const failed = vi.fn(() => blocked)
+    const fixture = await failedTriggerFixture({
+      failed,
+      run: vi.fn(async () => { throw new Error("persistent failure") }),
+      startAttempts: terminal === "execution leases" ? 3 : 2,
+    })
+    const otherWorker = createLibsqlAgentState({ url: fixture.stateUrl })
+    let stopRecovery: (() => Promise<void>) | undefined
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      if (terminal === "recovered") vi.spyOn(fixture.state, "beginWebhookFailureNotification").mockResolvedValueOnce(false)
+      await fixture.send()
+      if (terminal === "recovered") {
+        await vi.waitFor(async () => {
+          const [scope] = await fixture.state.webhookDeliveryScopes()
+          const [pending] = await fixture.state.webhookDeliveries(scope!)
+          expect(pending?.failure).toBeDefined()
+        })
+        expect(failed).not.toHaveBeenCalled()
+        const [scope] = await fixture.state.webhookDeliveryScopes()
+        const [pending] = await fixture.state.webhookDeliveries(scope!)
+        clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + pending!.leaseTtlMs + 1)
+        await otherWorker.connect()
+        vi.spyOn(otherWorker, "completeWebhookDelivery").mockImplementation(fixture.complete)
+        stopRecovery = fixture.resume(otherWorker)
+      }
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      const scopes = await fixture.state.webhookDeliveryScopes()
+      const scope = scopes[0]!
+      const [delivery] = await fixture.state.webhookDeliveries(scope)
+      expect(delivery?.failure?.notificationStarted).toBe(true)
+      const expired = Date.now() + delivery!.leaseTtlMs + 1
+      clock = vi.spyOn(Date, "now").mockReturnValue(expired)
+      await otherWorker.connect()
+      // A separate state connection has no access to process-local callback guards.
+      const finalizer = (await otherWorker.claimWebhookDelivery(scope))!
+      expect(finalizer.failure?.notificationStarted).toBe(true)
+      await expect(otherWorker.beginWebhookFailureNotification(scope, finalizer.deliveryId, finalizer.leaseToken)).resolves.toBe(false)
+      expect(failed).toHaveBeenCalledOnce()
+      expect(fixture.complete).not.toHaveBeenCalled()
+      await expect(otherWorker.completeWebhookDelivery(scope, finalizer.deliveryId, finalizer.leaseToken)).resolves.toBe(true)
+      const completedBeforeSettlement = fixture.complete.mock.calls.length
+      settle()
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalledTimes(completedBeforeSettlement + 1))
+      await expect(fixture.complete.mock.results.at(-1)?.value).resolves.toBe(false)
+      await expect(otherWorker.claimWebhookDelivery(scope)).resolves.toBeNull()
+      await expect(otherWorker.webhookDeliveries(scope)).resolves.toEqual([])
+      expect(failed).toHaveBeenCalledOnce()
+    }
+    finally {
+      settle()
+      clock?.mockRestore()
+      await stopRecovery?.()
+      await otherWorker.disconnect()
+      await fixture.cleanup()
+      consoleError.mockRestore()
+    }
+  })
+
+  it.each([
+    { terminal: "last attempt", completion: "reject", startAttempts: 2 },
+    { terminal: "last attempt", completion: "false", startAttempts: 2 },
+    { terminal: "execution leases", completion: "reject", startAttempts: 3 },
+    { terminal: "execution leases", completion: "false", startAttempts: 3 },
+  ])("recovers $terminal finalization after a $completion completion without replaying failed", async ({ completion, startAttempts }) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const failed = vi.fn()
+    const run = vi.fn(async () => { throw new Error("persistent failure") })
+    const fixture = await failedTriggerFixture({ failed, run, startAttempts })
+    const otherWorker = createLibsqlAgentState({ url: fixture.stateUrl })
+    let stopRecovery: (() => Promise<void>) | undefined
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    try {
+      // Keep the original worker from finalizing so a new connection must recover it.
+      fixture.complete.mockImplementation(async () => {
+        if (completion === "reject") throw new Error("temporary completion outage")
+        return false
+      })
+      await fixture.send()
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalled(), { timeout: 10_000 })
+      expect(failed).toHaveBeenCalledOnce()
+      const [scope] = await fixture.state.webhookDeliveryScopes()
+      const [pending] = await fixture.state.webhookDeliveries(scope!)
+      expect(pending?.failure?.notificationStarted).toBe(true)
+      clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + pending!.leaseTtlMs + 1)
+      await otherWorker.connect()
+      stopRecovery = fixture.resume(otherWorker)
+      await vi.waitFor(async () => {
+        await expect(otherWorker.webhookDeliveries(scope!)).resolves.toEqual([])
+        await expect(fixture.deliveries()).resolves.toEqual([
+          expect.objectContaining({ sourceId: "delivery-failed", status: "failed", events: expect.arrayContaining([
+            expect.objectContaining({ type: "invocation.failed", attempt: 3 }),
+            expect.objectContaining({ type: "failed", attempt: 3 }),
+          ]) }),
+        ])
+      }, { timeout: 10_000 })
+      expect(failed).toHaveBeenCalledOnce()
+      expect(run).toHaveBeenCalledTimes(startAttempts === 2 ? 1 : 0)
+    }
+    finally {
+      clock?.mockRestore()
+      await stopRecovery?.()
+      await otherWorker.disconnect()
+      await fixture.cleanup()
+      consoleError.mockRestore()
+    }
+  }, 20_000)
+
+  it("does not call the trigger failed callback for a retried delivery", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const failed = vi.fn()
+    const run = vi.fn().mockRejectedValueOnce(new Error("temporary failure")).mockResolvedValue("accepted")
+    const fixture = await failedTriggerFixture({ failed, run })
+    try {
+      await expect(fixture.send()).resolves.toMatchObject({ status: 200 })
+      await vi.waitFor(() => expect(fixture.retry).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2), { timeout: 10_000 })
+      await vi.waitFor(() => expect(fixture.complete).toHaveBeenCalledOnce())
+      expect(failed).not.toHaveBeenCalled()
+    }
+    finally {
+      consoleError.mockRestore()
+      await fixture.cleanup()
+    }
+  }, 15_000)
+
+  it("keeps the terminal delivery outcome when the trigger failed callback throws", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const failed = vi.fn(async () => {
+      throw new Error("callback failure")
+    })
+    const run = vi.fn(async () => {
+      throw new Error("persistent failure")
+    })
+    const fixture = await failedTriggerFixture({ failed, run, startAttempts: 2 })
+    try {
+      await expect(fixture.send()).resolves.toMatchObject({ status: 200 })
+      await vi.waitFor(() => expect(failed).toHaveBeenCalledOnce(), { timeout: 10_000 })
+      await expect(fixture.complete.mock.results[0]?.value).resolves.toBe(true)
+      expect(fixture.retry).not.toHaveBeenCalled()
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining('The failed callback of webhook delivery "delivery-failed" threw an error.'),
+        expect.objectContaining({ message: "callback failure" }),
+      ))
+      await expect(fixture.deliveries()).resolves.toEqual([
+        expect.objectContaining({ sourceId: "delivery-failed", status: "failed" }),
+      ])
+    }
+    finally {
+      consoleError.mockRestore()
+      await fixture.cleanup()
+    }
+  })
+
   it("retries a failed queued webhook delivery without the startup pump", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
@@ -16474,6 +16726,66 @@ describe("server helpers", () => {
     if (completion === "placeholder") {
       expect(edit).toHaveBeenCalledWith("Placeholder fallback")
       expect(post).not.toHaveBeenCalled()
+    }
+  })
+
+  it.each([true, false])("passes the failed Invocation to Chat error replies (errorConsoleLink: %s)", async (errorConsoleLink) => {
+    vi.stubGlobal("__VITEHUB_PUBLIC_URL__", { agents: { support: "https://agents.example.test" } })
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { defineChatCapability } = await import("../src/chat-trigger.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { agentInvocationId } = await import("../src/invocations.ts")
+    const adapter = createTestChatAdapter({ deferMessageProcessing: true })
+    // Each case needs its own message, because the Chat SDK drops duplicate message IDs.
+    const messageId = errorConsoleLink ? 7731 : 7732
+    const waitUntilTasks: Promise<unknown>[] = []
+    const errorFallbackText = vi.fn((_context: { invocation?: { consoleUrl?: string, id: string }, run?: { runId: string } }) => "It failed.")
+    const agent = defineAgent({
+      name: "support",
+      capabilities: [
+        defineChatCapability({
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          platforms: { telegram: () => adapter as never },
+          errorConsoleLink,
+          errorFallbackText,
+          webhooks: { telegram: {} },
+        }),
+      ],
+      driver: {
+        run: () => {
+          throw new Error("private failure")
+        },
+      },
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+
+    try {
+      const response = await handler(
+        new Request("https://example.com/api/_vitehub/agents/support/webhooks/telegram", {
+          body: JSON.stringify({
+            update_id: messageId,
+            message: { chat: { id: 456, type: "private" }, date: 1781092800, from: { first_name: "Maxi", id: 123, username: "maxi" }, message_id: messageId, text: "hello" },
+          }),
+          method: "POST",
+        }),
+        "telegram",
+        { waitUntil: (task) => waitUntilTasks.push(task) },
+      )
+      expect(response.status).toBe(200)
+      await Promise.all(waitUntilTasks)
+
+      expect(errorFallbackText).toHaveBeenCalledOnce()
+      const args = errorFallbackText.mock.calls[0]![0]
+      const id = await agentInvocationId(args.run!.runId, "support")
+      const consoleUrl = `https://agents.example.test/_vitehub/agents/support/invocations/${encodeURIComponent(id)}`
+      expect(args.invocation).toEqual({ consoleUrl, id })
+      expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", errorConsoleLink ? `It failed.\n\nDetails: ${consoleUrl}` : "It failed.")
+    }
+    finally {
+      consoleError.mockRestore()
+      vi.unstubAllGlobals()
     }
   })
 

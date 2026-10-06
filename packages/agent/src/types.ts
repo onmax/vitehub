@@ -743,11 +743,39 @@ export interface AgentTriggerDefinition<
   CALL_OPTIONS = unknown,
   TContext extends AgentCallbackContext<TRuntimeConfig> = AgentTriggerContext<TRuntimeConfig, Name>,
 > {
+  /**
+   * Dispatched at most once when the webhook queue stops retrying a delivery:
+   * the last attempt failed, or the delivery used all its execution leases.
+   * An error from this callback is logged and does not change the delivery outcome.
+   * A process exit after dispatch leaves an uncertain outcome; the callback is not replayed.
+   */
+  failed?: (event: AgentTriggerFailedEvent<CALL_OPTIONS>) => MaybePromise<void>
   health?: AgentHealthDescriptor
   input?: string | StandardSchemaV1<unknown, TInput>
   invoke: (context: TContext, input: TInput) => MaybePromise<AgentTriggerInvokeResult<CALL_OPTIONS>>
   output?: "events" | "ui-message-stream" | (string & {})
   webhooks?: AgentWebhookRegistrationDefinition<TRuntimeConfig>[]
+}
+
+/** One Agent Invocation, as the Console shows it. */
+export interface AgentInvocationReference {
+  /** The Console URL of the Invocation. Present when the Agent has a public URL. */
+  consoleUrl?: string
+  id: string
+}
+
+/** The terminal failure of one queued webhook delivery. */
+export interface AgentTriggerFailedEvent<CALL_OPTIONS = unknown> {
+  /** The number of execution attempts, including the last one. */
+  attempts: number
+  deliveryId: string
+  error: unknown
+  /** Present when the queue stored the Invocation input. */
+  input?: AgentRunInput<CALL_OPTIONS>
+  /** Present when the delivery has a run ID. */
+  invocation?: AgentInvocationReference
+  publicError: AgentPublicError
+  run?: AgentRunMetadata
 }
 
 export interface ResolvedAgentTriggerDefinition<
@@ -2100,6 +2128,8 @@ export interface AgentChatAgentHookArgs<_TRuntimeConfig extends AgentRuntimeConf
 
 export interface AgentChatErrorHookArgs<_TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends AgentChatAgentHookArgs<_TRuntimeConfig> {
   error: unknown
+  /** The failed Invocation, when the error belongs to a run. */
+  invocation?: AgentInvocationReference
   publicError: AgentPublicError
   toolResults: AgentToolStepItem[]
 }
@@ -2199,6 +2229,11 @@ export interface AgentMessageChannelSettings<TRuntimeConfig extends AgentRuntime
   dedupeTtlMs?: number
   delivery?: "automatic" | "manual"
   durable?: boolean
+  /**
+   * Add the Console URL of the failed Invocation to each error reply.
+   * Off by default, because the link shows internal details to the people in the conversation.
+   */
+  errorConsoleLink?: boolean
   errorFallbackText?: string | null | ((context: AgentChatErrorHookArgs<TRuntimeConfig> & {
     /** The text ViteHub sends when `errorFallbackText` is not set. */
     defaultText: string
