@@ -3311,7 +3311,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       // CLI discovery resolves the application config to collect contributors; it does not start Nitro.
       // The Console's discovery config intentionally includes its broad /_vitehub/** route, so do not
       // install or validate the development-only invocation handler in that mode.
-      const cliDiscovery = (config as { vitehubCliDiscovery?: unknown }).vitehubCliDiscovery === true
+      const cliDiscovery = (config as { server?: { middlewareMode?: unknown }, vitehubCliDiscovery?: unknown }).vitehubCliDiscovery === true
+        || (config as { server?: { middlewareMode?: unknown } }).server?.middlewareMode === true
       const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && !cliDiscovery && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
