@@ -13,10 +13,12 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
+const boxDefinitions = vi.hoisted(() => vi.fn());
 const remoteBoxes = vi.hoisted(() => new Map<string, { path: string; closed: boolean }>());
 vi.mock("@vite-hub/box", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@vite-hub/box")>();
   const resolveBox: typeof actual.resolveBox = async (definition, context, options) => {
+    boxDefinitions(definition);
     const box = await actual.resolveBox(definition, context, options);
     const remote = remoteBoxes.get(box.plan.workspace.path ?? "");
     if (!remote) return box;
@@ -255,7 +257,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
     })] as never,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
-    ...(preset.box ? { box: { runtime: "trusted-host" as const, ...(preset.boxCheckout ? { checkout: { remote: "https://github.com/acme/other.git", ref: "main", sha: "d".repeat(40) } } : {}) } } : {}),
+    ...(preset.box ? { box: { runtime: "trusted-host" as const, requires: ["sh"], ...(preset.boxCheckout ? { checkout: { remote: "https://github.com/acme/other.git", ref: "main", sha: "d".repeat(40) } } : {}) } } : {}),
     driver: { kind: "codex", ...(preset.box ? { providerSettings: { binaryPath: "/bin/true" } } : {}), env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
@@ -818,6 +820,7 @@ describe("Babysitter preset runtime", () => {
     f.choose("pushRepair");
     await f.reconcile();
     expect(f.prepare).not.toHaveBeenCalled();
+    expect(boxDefinitions).toHaveBeenCalledWith(expect.objectContaining({ requires: ["sh", "git"] }));
     expect(f.push.mock.calls[0]?.[0]).toBe(f.checkout);
     expect(f.passes).toHaveLength(1);
   });

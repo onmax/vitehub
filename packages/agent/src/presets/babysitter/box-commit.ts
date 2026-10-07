@@ -36,7 +36,8 @@ export async function importBoxCommit(session: BoxSession, checkout: string, bas
     await localGit(["merge-base", "--is-ancestor", base, head]);
     await localGit(["update-ref", "HEAD", head, previous]);
   } finally {
-    await rm(temporary, { recursive: true, force: true });
-    await session.files.remove(remoteBundle, { signal });
+    // Cleanup must not hide an import error or prevent publication of an imported commit.
+    await rm(temporary, { recursive: true, force: true }).catch(() => {});
+    await session.files.remove(remoteBundle, { signal }).catch(() => {});
   }
 }

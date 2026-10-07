@@ -851,7 +851,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 },
               };
               const agent = workerSettings.box
-                ? defineAgent({ ...workerOptions, box: { ...workerSettings.box, checkout: undefined, cwd: checkout } })
+                ? defineAgent({ ...workerOptions, box: { ...workerSettings.box, checkout: undefined, cwd: checkout, requires: [...(workerSettings.box.requires ?? []), "git"] } })
                 : defineAgent({ ...workerOptions, workspace: {
                     ...baseWorkspace,
                     commit: false,
