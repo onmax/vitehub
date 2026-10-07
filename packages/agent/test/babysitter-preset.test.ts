@@ -19,6 +19,7 @@ import { boundedMergeReady, createBabysitterRuntime } from "../src/presets/babys
 import { getAgentLayerOptions } from "../src/agent-layers.ts";
 import { github as githubChannel, githubChannelIdentity } from "../src/channels.ts";
 import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
+import { repairCapability } from "../src/presets/babysitter/repair.ts";
 import * as githubRuns from "../src/server/github-pull-requests.ts";
 import { agentInvocationId } from "../src/invocations.ts";
 import type { GitHubHost } from "../src/server/github.ts";
@@ -29,7 +30,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -221,7 +222,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
       },
     })] as never,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
-    options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
+    options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}), ...(preset.mentionAllowlist ? { mentionAllowlist: preset.mentionAllowlist } : {}) },
     driver: { kind: "codex", env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
@@ -236,7 +237,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
-  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
+  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; schemas: Record<string, unknown>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
   let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async () => {
@@ -273,6 +274,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
           passes.push({
             tools: listedTools.map((tool) => tool.name),
             descriptions: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.description])),
+            schemas: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.inputSchema])),
             prompt: input.input,
             session: threadId,
             instructions: await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
@@ -480,6 +482,27 @@ describe("Babysitter preset runtime", () => {
     expect(() => defineAgent({ extends: babysitter, options: { driver: "model" } })).toThrow(/driver must be/);
     expect(() => defineAgent({ extends: babysitter, options: { noFindingsReviews: [""] } })).toThrow(/noFindingsReviews cannot contain an empty prefix/);
     expect(() => defineAgent({ extends: babysitter, options: { merge: { strategy: "direct", method: "fast-forward" as "squash" } } })).toThrow(/merge.method/);
+  });
+
+  it("preserves the Babysitter mention allowlist through Agent layer configuration", () => {
+    const agent = defineAgent({ extends: babysitter, options: { mentionAllowlist: [" Stefina ", "other-user"] } });
+    expect(getAgentLayerOptions(agent)).toMatchObject({ mentionAllowlist: [" Stefina ", "other-user"] });
+    expect(agent.options.mentionAllowlist).toEqual([" Stefina ", "other-user"]);
+  });
+
+  it("publishes only normalized configured mention recipients to the repair worker", async () => {
+    const configured = await fixture(false, false, { mentionAllowlist: [" Stefina ", "stefina", "other-user", "invalid login"] });
+    try {
+      await configured.reconcile();
+      expect(configured.passes[0]?.tools).toContain("mentionOnPullRequest");
+      expect(configured.passes[0]?.schemas.mentionOnPullRequest).toMatchObject({
+        properties: { login: { enum: ["stefina", "other-user"] } },
+      });
+      const withoutRecipients = repairCapability({} as never, false, []);
+      expect(withoutRecipients.tools).not.toHaveProperty("mentionOnPullRequest");
+    } finally {
+      await configured.runtime.inbox.close();
+    }
   });
 
   it("retargets a stacked PR to the default branch after its parent merged there", async () => {

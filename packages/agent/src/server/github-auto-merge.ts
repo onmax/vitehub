@@ -67,6 +67,8 @@ export interface GitHubPullRequestOperationsOptions {
   eligible?: (pullRequest: GitHubPullRequestOperationSnapshot) => boolean | Promise<boolean>
   /** Exact GitHub logins allowed by the explicit mention capability. Defaults to none. */
   mentionAllowlist?: readonly string[]
+  /** Reject unallowlisted `@login` tokens in ordinary comments. Defaults to false for generic callers. */
+  restrictCommentMentions?: boolean
   /** Host-owned prefix that correlates comment webhooks with this worker's activity. */
   commentPrefix?: string
   /** Host-owned checkout push, already bound to its source branch and expected-head lease. */
@@ -117,6 +119,22 @@ function nonempty(value: string, name: string): string {
   return value
 }
 
+const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
+const githubMentionPattern = /(^|[\s([{])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?=$|[\s.,!?;:)\]}])/g
+
+export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
+  return [...new Set(logins
+    .map(login => login.trim().toLowerCase())
+    .filter(login => githubLoginPattern.test(login)))]
+}
+
+function assertCommentMentionsAllowed(body: string, allowlist: ReadonlySet<string>): void {
+  for (const match of body.matchAll(githubMentionPattern)) {
+    const login = match[2]
+    if (login && !allowlist.has(login.toLowerCase())) throw new Error("Comment contains a GitHub login outside the configured mention allowlist.")
+  }
+}
+
 /**
  * Host-only PR operations. Keep the GitHub host and its credentials out of the
  * worker environment. Expose selected methods as capabilities, never command or access.
@@ -133,7 +151,7 @@ export function createGitHubPullRequestOperations(
   if (!/^[a-f\d]{40}$/i.test(options.expectedHeadOid)) throw new Error("Expected a full GitHub head commit SHA.")
   if (options.expectedBaseOid !== undefined && !/^[a-f\d]{40}$/i.test(options.expectedBaseOid)) throw new Error("Expected a full GitHub base commit SHA.")
   const repository = options.repository
-  const mentionAllowlist = new Set((options.mentionAllowlist ?? []).map(login => login.trim().toLowerCase()).filter(Boolean))
+  const mentionAllowlist = new Set(normalizeGitHubMentionAllowlist(options.mentionAllowlist))
   let expectedHeadOid = options.expectedHeadOid
   const target = `/repos/${repository}/issues/${options.number}`
   const commandOptions = { repository, signal: options.signal, timeout: 60_000 }
@@ -314,12 +332,13 @@ export function createGitHubPullRequestOperations(
     },
     async comment(body) {
       nonempty(body, "Comment")
+      if (options.restrictCommentMentions) assertCommentMentionsAllowed(body, mentionAllowlist)
       await snapshot()
       await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}${body}`], commandOptions)
     },
     async mention(login, body) {
       const targetLogin = nonempty(login, "GitHub login")
-      if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(targetLogin) || !mentionAllowlist.has(targetLogin.toLowerCase())) {
+      if (!githubLoginPattern.test(targetLogin) || !mentionAllowlist.has(targetLogin.toLowerCase())) {
         throw new Error("GitHub login is not in the configured mention allowlist.")
       }
       const message = nonempty(body, "Mention body")

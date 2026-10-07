@@ -1,5 +1,6 @@
 import { defineCapability } from "../../capability-runtime.ts";
 import type { GitHubPullRequestOperations } from "../../server/github.ts";
+import { normalizeGitHubMentionAllowlist } from "../../server/github-auto-merge.ts";
 
 const noArguments = { type: "object", properties: {}, additionalProperties: false } as const;
 
@@ -15,7 +16,7 @@ function stringField(input: unknown, key: string, allowEmpty = false): string {
 }
 
 export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, mentionAllowlist: readonly string[] = []) {
-  const allowedMentions = [...new Set(mentionAllowlist.map(login => login.trim().toLowerCase()).filter(Boolean))]
+  const allowedMentions = normalizeGitHubMentionAllowlist(mentionAllowlist)
   return defineCapability({
     id: "babysitter.github",
     tools: {
@@ -86,11 +87,17 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           return { commented: true };
         },
       },
+      // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- The mention tool is intentionally absent until the application configures recipients.
       ...(allowedMentions.length ? {
         mentionOnPullRequest: {
           name: "mentionOnPullRequest",
-          description: `Mention one configured human (${allowedMentions.map(login => `@${login}`).join(", ")}) about a verified blocker.`,
-          inputSchema: { type: "object", properties: { login: { type: "string", enum: allowedMentions }, body: { type: "string" } }, required: ["login", "body"], additionalProperties: false },
+          description: `Mention one configured human (${allowedMentions.map(login => `@${login}`).join(", ")}) about a verified blocker that needs their action. This sends a notification; use it sparingly.`,
+          inputSchema: {
+            type: "object",
+            properties: { login: { type: "string", enum: allowedMentions }, body: { type: "string" } },
+            required: ["login", "body"],
+            additionalProperties: false,
+          },
           execute: async (input: unknown) => {
             await operations.mention(stringField(input, "login"), stringField(input, "body"));
             return { mentioned: true };

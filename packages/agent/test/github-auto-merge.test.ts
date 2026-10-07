@@ -110,6 +110,13 @@ describe("native auto-merge", () => {
     await expect(f.operations.mention("stefina", "Also notify @another.")).rejects.toThrow(/another mention/)
   })
 
+  it("does not let ordinary Babysitter comments bypass the mention allowlist", async () => {
+    const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
+    await f.operations.comment("Please email ops@example.com and ask @stefina to confirm.")
+    await expect(f.operations.comment("Please ask @other-user to confirm.")).rejects.toThrow(/outside.*allowlist/)
+    await expect(f.operations.comment("Please ask @stefina and @other-user to confirm.")).rejects.toThrow(/outside.*allowlist/)
+  })
+
   it("is disabled without touching credentials, reads or writes", async () => {
     const f = fixture()
     expect(await f.operations.requestAutoMerge()).toEqual({ status: "blocked", reason: "disabled" })
