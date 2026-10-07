@@ -16,6 +16,7 @@ icon: i-lucide-package
 | ----------------------------------------- | --------------------------------------------------------- |
 | `vue`                                     | All entry points.                                         |
 | `ai`                                      | All entry points. Components render AI SDK types.         |
+| `@ai-sdk/vue`                              | `useChat()` and other Vue transport helpers. Optional when the app supplies its own state. |
 | `@nuxt/ui` and `tailwindcss`              | Styled components. Not needed for `@vite-hub/ui/headless`. |
 | `vite` and `@vitejs/plugin-vue`           | The `@vite-hub/ui/vite` plugin.                           |
 | `@iconify-json/lucide`, `@iconify-json/ph` | The Nuxt module. It adds the component icons to the `@nuxt/icon` client bundle. |

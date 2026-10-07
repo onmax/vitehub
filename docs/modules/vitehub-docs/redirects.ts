@@ -83,6 +83,7 @@ const agentCapabilities = {
 } satisfies Record<string, string>;
 
 export const docsPageRedirects = {
+  "/blog/server-primitives": "/docs/getting-started/server-primitives",
   "/docs/agents/evlog": "/docs/agents/observability",
   "/docs/ai-resources": "/docs/getting-started/ai-resources",
   "/docs/concepts": "/docs/getting-started/concepts",

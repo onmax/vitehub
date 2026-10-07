@@ -1,5 +1,4 @@
 ---
-
 title: Schedule a daily report
 description: Declare a UTC schedule, run it on demand during development, and inspect the generated provider output.
 layout: tutorial

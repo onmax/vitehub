@@ -1,5 +1,4 @@
 ---
-
 title: Process a welcome job with Queue
 description: Enqueue a job from a route, then let a provider deliver it after the request ends.
 layout: tutorial

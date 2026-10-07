@@ -88,10 +88,19 @@ export default defineConnection({
 
 ::
 
+::tutorial-step{title="Connect the account"}
 ## Connect the account
 
 Open the Console, select **Connections**, and select **Connect**. You can also print a single-use connect URL from the CLI while the development server runs:
 
+```bash [Terminal: connect]
+pnpm vite dev
+pnpm vitehub connections connect google
+pnpm vitehub connections status google --json
+```
+
+The status should report a connected account.
+::
 
 ::tutorial-step{title="Call the provider"}
 ## Call the provider
@@ -106,16 +115,7 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
-Start the Vite dev server, open the Console, select **Connections**, and select
-**Connect**. You can also print a single-use connect URL from the CLI:
-
-```bash [Terminal]
-pnpm vite dev
-pnpm vitehub connections connect google
-pnpm vitehub connections status google --json
-```
-
-The status should report a connected account. Request the route and verify that
+Request the route and verify that
 the provider returns a `labels` array:
 
 ```bash [Terminal]

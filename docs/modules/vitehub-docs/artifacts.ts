@@ -380,6 +380,11 @@ function optionalString(value: unknown) {
   return result.success ? result.output : null;
 }
 
+function pageLayout(value: unknown): "article" | "tutorial" | null {
+  const layout = optionalString(value);
+  return layout === "article" || layout === "tutorial" ? layout : null;
+}
+
 function stringList(value: unknown) {
   const result = safeParse(array(string()), value);
   return result.success ? result.output : [];
@@ -409,6 +414,7 @@ function collectPages(rootDir: string, sectionId: string) {
       sourceTitle: optionalString(meta.title),
       description: optionalString(meta.description),
       icon: optionalString(meta.icon),
+      layout: pageLayout(meta.layout),
       kind: optionalString(meta["navigation.kind"]),
       group: optionalString(meta["navigation.group"]),
       navigation: meta.navigation !== false,

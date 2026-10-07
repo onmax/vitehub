@@ -55,7 +55,7 @@ const codeTreeUi = {
     </UPageBody>
 
     <template #right>
-      <aside class="vh-tutorial-code-panel">
+      <aside class="vh-tutorial-code-panel" aria-label="Tutorial code">
         <ProseCodeTree
           v-if="activePath && treeItems.length"
           v-model="activePath"

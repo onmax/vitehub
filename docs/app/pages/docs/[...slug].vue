@@ -40,7 +40,7 @@ const isUiPage = computed(() => {
 const landingSection = computed(() =>
   isDocsLandingPath(docsManifest.sections, route.path) ? getDocsSectionForPath(docsManifest.sections, route.path) : null,
 );
-const isTutorialPage = computed(() => page.value?.layout === "tutorial");
+const isTutorialPage = computed(() => routeState.page?.layout === "tutorial" || page.value?.layout === "tutorial");
 
 const docsPageUi = {
   root: "lg:!grid-cols-1 lg:!gap-0",

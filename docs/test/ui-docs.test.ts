@@ -125,7 +125,14 @@ describe("UI documentation", () => {
 
     expect(page).toContain('path.startsWith("/docs/ui/")');
     expect(page).toContain('root: "lg:!grid-cols-1 lg:!gap-0"');
-    expect(page).toContain('<DocsAsideRight v-if="!isUiPage"');
+    expect(page).not.toContain("DocsAsideRight");
+    expect(page).not.toContain("UContentToc");
+    expect(page).toContain("<DocsTutorial v-else-if=\"page && isTutorialPage\"");
+    const tutorial = readFileSync(resolve(docsRoot, "app/components/DocsTutorial.vue"), "utf8");
+    expect(tutorial).toContain("grid-cols-[minmax(0,1fr)_minmax(20rem,42%)]");
+    expect(tutorial).toContain("grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]");
+    expect(tutorial).not.toContain("minmax(0,48rem)");
+    expect(readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8")).toContain("max-width: none");
     expect(styles).toContain(".docs-ui-page-shell");
     expect(styles).toContain("max-width: 68rem");
   });

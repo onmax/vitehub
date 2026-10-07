@@ -75,7 +75,7 @@ function primitivePageGroup(section: DocsSection, page: DocsPage) {
   if (page.kind?.trim()) return page.kind.trim();
 
   switch (page.id) {
-    case "get-started": return "Start here";
+    case "get-started": return "Tutorial";
     case "configure":
     case "agent-capability": return "Guides";
     case "server-api": return "Reference";

@@ -7,8 +7,7 @@ const { data: posts } = await useAsyncData(
 )
 
 const laneOrder: Record<string, number> = {
-  "/blog/server-primitives": 0,
-  "/blog/agents": 1,
+  "/blog/agents": 0,
 }
 
 const tutorials = computed(() => {
@@ -16,7 +15,7 @@ const tutorials = computed(() => {
     .sort((left, right) => (laneOrder[left.path] ?? 99) - (laneOrder[right.path] ?? 99))
     .map(post => ({
       authors: post.authors,
-      badge: post.path === "/blog/server-primitives" ? "Server Primitives" : "Agents",
+      badge: post.category || "Article",
       date: post.date,
       description: post.description,
       image: post.image,
@@ -28,16 +27,16 @@ const tutorials = computed(() => {
 useSeoMeta({
   title: "Tutorials",
   ogTitle: "Tutorials · ViteHub",
-  description: "Build one working Server Primitive or one working Agent with ViteHub.",
+  description: "Notes on building Agents with ViteHub and the Server Primitives they call.",
 })
 </script>
 
 <template>
   <main class="relative min-h-[calc(100vh-var(--ui-header-height,56px))] overflow-hidden">
     <UPageHero
-      headline="ViteHub tutorials"
-      title="Start where your product starts."
-      description="Use a Server Primitive directly, or compose primitives into an Agent. Both paths end with a working, observable result."
+      headline="ViteHub writing"
+      title="Build from a working boundary."
+      description="Read the Agent story here, then choose a package tutorial when your application needs a concrete server capability."
       :ui="{
         container: 'relative py-14 sm:py-20 lg:py-24',
         headline: 'font-mono uppercase tracking-[0.18em] text-xs text-primary',
@@ -62,9 +61,9 @@ useSeoMeta({
         />
 
         <div class="mx-auto mt-10 flex max-w-2xl flex-col items-center gap-2 text-center text-sm text-muted sm:flex-row sm:justify-center sm:gap-3">
-          <span>Server Primitives work on their own.</span>
+          <span>Package tutorials show the first successful result.</span>
           <UIcon name="i-lucide-arrow-right" class="hidden size-4 shrink-0 sm:block" />
-          <span>Agents compose them when they need more reach.</span>
+          <NuxtLink to="/docs" class="text-highlighted hover:underline">Browse the package catalog</NuxtLink>
         </div>
       </UContainer>
     </section>

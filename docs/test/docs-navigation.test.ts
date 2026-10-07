@@ -126,7 +126,7 @@ describe("docs product navigation", () => {
     const kv = docsManifest.sections.find(candidate => candidate.id === "kv");
     expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([
       null,
-      "Start here",
+      "Tutorial",
       "Guides",
       "Reference",
       "Deploy",
@@ -172,6 +172,7 @@ describe("docs product navigation", () => {
     const routeRules = createDocsRedirectRouteRules();
 
     expect(docsPageRedirects["/docs/server-primitives/kv"]).toBe("/docs/kv");
+    expect(docsPageRedirects["/blog/server-primitives"]).toBe("/docs/getting-started/server-primitives");
     expect(docsPageRedirects["/docs/capabilities/db"]).toBe("/docs/database/agent-capability");
     expect(docsPageRedirects["/docs/capabilities/mcp"]).toBe("/docs/agents/capabilities/mcp");
 

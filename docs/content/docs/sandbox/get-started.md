@@ -1,5 +1,4 @@
 ---
-
 title: Run an image optimizer in a Sandbox
 description: Create a package project, run it outside the app process, and read its native Response.
 layout: tutorial

@@ -117,6 +117,10 @@ function offset(index: number) {
                 <UIcon name="i-lucide-arrow-right" class="vh-docs-catalog-tile-arrow size-3.5 shrink-0" aria-hidden="true" />
               </h3>
               <p v-if="tile.description" class="vh-docs-catalog-tile-description">{{ tile.description }}</p>
+              <span class="vh-docs-catalog-tile-action">
+                View {{ tile.kind === "Getting started" ? "guide" : "docs" }}
+                <UIcon name="i-lucide-arrow-up-right" class="size-3.5 shrink-0" aria-hidden="true" />
+              </span>
             </div>
           </NuxtLink>
         </li>
@@ -244,6 +248,19 @@ function offset(index: number) {
   -webkit-line-clamp: 2;
 }
 
+.vh-docs-catalog-tile-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  color: var(--ui-text-dimmed);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .vh-docs-catalog-tile:hover {
     --tile-bg: color-mix(in srgb, var(--ui-bg-muted) 35%, var(--ui-bg));
@@ -257,6 +274,11 @@ function offset(index: number) {
   .vh-docs-catalog-tile:focus-visible .vh-docs-catalog-tile-arrow {
     opacity: 1;
     transform: translateX(0);
+  }
+
+  .vh-docs-catalog-tile:hover .vh-docs-catalog-tile-action,
+  .vh-docs-catalog-tile:focus-visible .vh-docs-catalog-tile-action {
+    color: var(--ui-text-highlighted);
   }
 }
 

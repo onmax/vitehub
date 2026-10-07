@@ -3,6 +3,11 @@ import { docsManifest, normalizeDocsPath } from "~~/modules/vitehub-docs/runtime
 import { getDocsCatalog, getDocsSectionForPath } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
 
 const route = useRoute();
+const productPicker = useTemplateRef<HTMLDetailsElement>("productPicker");
+function closeProductPicker() {
+  if (productPicker.value) productPicker.value.open = false;
+}
+watch(() => route.path, closeProductPicker);
 const currentSection = computed(() => getDocsSectionForPath(docsManifest.sections, route.path));
 const sectionTitle = computed(() => currentSection.value?.title || "All products");
 const sectionCategory = computed(() => {
@@ -24,7 +29,7 @@ const productGroups = computed(() => getDocsCatalog(docsManifest.sections));
       }"
     />
 
-    <details class="vh-docs-product-picker">
+    <details ref="productPicker" class="vh-docs-product-picker">
       <summary class="vh-docs-context" :class="{ 'is-current': isDocsIndex }">
         <UIcon
           :name="currentSection ? sidebarSectionIcon(currentSection) : 'i-ph-squares-four-light'"
@@ -37,7 +42,7 @@ const productGroups = computed(() => getDocsCatalog(docsManifest.sections));
         <UIcon name="i-lucide-chevrons-up-down" class="vh-docs-context-arrow size-3.5 shrink-0" aria-hidden="true" />
       </summary>
       <div class="vh-docs-product-picker-menu">
-        <NuxtLink to="/docs" class="vh-docs-product-option" :class="{ 'is-active': isDocsIndex }">
+        <NuxtLink to="/docs" class="vh-docs-product-option" :class="{ 'is-active': isDocsIndex }" @click="closeProductPicker">
           <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
           <span>All documentation</span>
         </NuxtLink>
@@ -49,6 +54,7 @@ const productGroups = computed(() => getDocsCatalog(docsManifest.sections));
             :to="product.path"
             class="vh-docs-product-option"
             :class="{ 'is-active': product.id === currentSection?.id }"
+            @click="closeProductPicker"
           >
             <UIcon :name="sidebarSectionIcon(product)" class="size-4 shrink-0" />
             <span class="min-w-0 truncate">{{ product.title }}</span>
