@@ -482,8 +482,8 @@ function withPathPrefix(env: NodeJS.ProcessEnv, prefix: readonly string[] | unde
 function workspaceBrowserEnvironment(browser: Readonly<Record<string, string>> | undefined, environment: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!browser) return environment
   return {
-    ...browser,
     ...environment,
+    ...browser,
     ...(browser.PATH ? { PATH: [browser.PATH, environment?.PATH || process.env.PATH].filter(Boolean).join(delimiter) } : {}),
     ...(browser.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: [browser.LD_LIBRARY_PATH, environment?.LD_LIBRARY_PATH || process.env.LD_LIBRARY_PATH].filter(Boolean).join(delimiter) } : {}),
   }
@@ -1734,9 +1734,9 @@ async function startToolServer(
 
 /**
  * Run Workspace commands on this host. `path` entries, such as a provisioned
- * toolchain, precede the command PATH. The array can be filled after creation.
+ * toolchain, precede the command PATH. Entries are resolved at each spawn.
  */
-export function localWorkspaceHost(hostOptions: { path?: readonly string[] } = {}): WorkspaceSessionHost {
+export function localWorkspaceHost(hostOptions: { path?: readonly string[] | (() => readonly string[]) } = {}): WorkspaceSessionHost {
   return {
     executionAuthority: normalizeExecutionAuthority({
       credentials: "ambient",
@@ -1815,7 +1815,7 @@ export function localWorkspaceHost(hostOptions: { path?: readonly string[] } = {
             INIT_CWD: cwd,
             OLDPWD: cwd,
             PWD: cwd,
-          }, hostOptions.path),
+          }, typeof hostOptions.path === "function" ? hostOptions.path() : hostOptions.path),
           signal,
         })
         let stdout = ""
@@ -2007,7 +2007,7 @@ async function prepareWorkspace(
     abortSignal: context.input.abortSignal,
     // The Driver owns this temporary root and removes it after the run, so close() must not restore it.
     disposableTarget: true,
-    host: localWorkspaceHost({ path }),
+    host: localWorkspaceHost({ path: () => [browserRuntimeEnvironment(context.context)?.PATH, ...path].filter((entry): entry is string => Boolean(entry)) }),
     ...(materializedSources?.ready ? { materializeSources: false } : {}),
     onProgress: createWorkspaceSetupObservers(workspaceSetupObserverOptions(context)).preparation,
     paths,
@@ -2937,7 +2937,7 @@ async function* runProvider<
         if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
         const { abortSignal, ...hostOptions } = execOptions || {}
         const environment = workspaceBrowserEnvironment(browserRuntimeEnvironment(context.context), execOptions?.env)
-        const execution = localWorkspaceHost({ path: toolchainPath }).exec(command, args, {
+        const execution = localWorkspaceHost({ path: [browserRuntimeEnvironment(context.context)?.PATH, ...toolchainPath].filter((entry): entry is string => Boolean(entry)) }).exec(command, args, {
           ...hostOptions,
           ...(environment ? { env: environment } : {}),
           cwd: execOptions?.cwd === undefined ? providerCwd : cwd,
@@ -3023,7 +3023,7 @@ async function* runProvider<
       const target = resolve(providerCwd, source.workspacePath)
       if (target !== providerCwd && !target.startsWith(`${providerCwd}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
       if (options.box) {
-        addProviderBoxSkill(providerBoxHomeFiles, relative(root, target), source.content)
+        addProviderBoxSkill(providerBoxHomeFiles, relative(providerCwd, target), source.content)
         continue
       }
       // Preserve resolved Workspace Sources only after validating the complete path.
@@ -3279,7 +3279,7 @@ async function* runProvider<
     const resumed = resumeCursor !== undefined
     effectiveSignal?.throwIfAborted()
     const session = await waitForProviderOperation(runtime.startSession({
-      cwd: root,
+      cwd: providerCwd,
       mcp: toolServer?.mcp,
       model: options.model,
       resumeCursor,

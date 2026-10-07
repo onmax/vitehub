@@ -1,4 +1,4 @@
-import { execFile, spawn } from "node:child_process"
+import { execFile, spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -300,6 +300,76 @@ describe("Agent Box environment", () => {
 })
 
 describe("Agent Box relay", () => {
+  it("materializes nested pull request Skills in Box Home", async () => {
+    const threadId = "thread-nested-pull-request-provider-root"
+    let root = ""
+    providerRuntime(threadId, async ({ cwd }) => {
+      expect(cwd).toBe(join(root, "portal"))
+      const result = await openedBoxSession.current!.exec("sh", ["-c", 'cat "$HOME/.codex/skills/review/SKILL.md"'])
+      expect(result.stdout).toBe("review skill")
+      expect(result.ok).toBe(true)
+    })
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async (command: string, args: string[] = [], options?: { cwd?: string }) => {
+        const cwd = options?.cwd?.replace(/^\/workspace/, root) || root
+        const result = spawnSync(command, args, { cwd, encoding: "utf8" })
+        return { args, command, exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+      }),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const workspace = {
+      fs: {},
+      startSession: vi.fn(async (options: { target: string }) => {
+        root = options.target
+        const checkout = join(root, "portal")
+        await mkdir(checkout)
+        const git = (...args: string[]) => {
+          const result = spawnSync("git", ["-C", checkout, ...args], { encoding: "utf8" })
+          if (result.status !== 0) throw new Error(result.stderr)
+          return result.stdout
+        }
+        git("init", "-q", "-b", "feature")
+        git("remote", "add", "origin", "https://github.com/acme/portal.git")
+        git("config", "branch.feature.remote", "origin")
+        git("config", "branch.feature.merge", "refs/heads/feature")
+        git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "--allow-empty", "-qm", "initial repository")
+        runContext.context.set("pullRequest", {
+          pullRequest: {
+            head: { ref: "feature", repo: "acme/portal", sha: git("rev-parse", "HEAD").trim() },
+            source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
+          },
+          repository: { fullName: "acme/portal", name: "portal" },
+        })
+        return session
+      }),
+      tools: {},
+    }
+    const runContext = {
+      ...invocationContext(threadId, { options: { ref: "feature", sha: "a".repeat(40), token: "test" }, prompt: "hello" }),
+      workspace,
+      workspaceDefinition: { mode: "write", name: "docs" },
+      workspaceMode: "write",
+    }
+    runContext.context.set("agent.colocatedSkills", {
+      review: { content: "review skill", workspacePath: ".agents/skills/review/SKILL.md" },
+    })
+    runContext.context.set("pullRequest", {
+      pullRequest: {
+        head: { ref: "feature", repo: "acme/portal", sha: "a".repeat(40) },
+        number: 42,
+        source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
+      },
+      repository: { fullName: "acme/portal", name: "portal" },
+    })
+
+    await expect(createProviderAgentAdapter({ box: { runtime: "trusted-host" }, provider: "codex", providerSettings: { binaryPath: process.execPath } }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
+    expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
+  })
+
+
   it.each(["relay.mjs", "provider"])("closes the listening server when writing %s fails", async (blockedFile) => {
     const root = await temporaryRoot()
     await mkdir(join(root, blockedFile))

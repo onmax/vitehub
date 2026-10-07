@@ -4352,9 +4352,10 @@ cli_auth_credentials_store = "keyring"
   it("runs a nested pull request checkout as the provider root", async () => {
     const threadId = "thread-nested-pull-request-provider-root"
     let root = ""
-    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+    const provider = runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
       async onStartSession() {
         expect(createProviderRuntime.mock.lastCall?.[0].cwd).toBe(join(root, "portal"))
+        expect(provider.startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: join(root, "portal") }))
         await expect(readFile(join(root, "portal", "AGENTS.md"), "utf8")).resolves.toBe("provider instructions")
       },
     })
@@ -4434,7 +4435,7 @@ cli_auth_credentials_store = "keyring"
       tools: {
         workspace_exec: {
           description: "Run a workspace command",
-          execute: async (input: { args?: string[], command: string }) => await executeWorkspaceCommand(workspace, input.command, input.args, {}, runContext.context as never),
+          execute: async (input: { args?: string[], command: string }) => await executeWorkspaceCommand(workspace, input.command, input.args, { env: { AGENT_BROWSER_SESSION: "caller", AGENT_BROWSER_SOCKET_DIR: "/caller", VITEHUB_BROWSER_ACTIVE: "0", PATH: "/caller/bin", LD_LIBRARY_PATH: "/caller/lib" } }, runContext.context as never),
           inputSchema: { additionalProperties: false, properties: { args: { items: { type: "string" }, type: "array" }, command: { type: "string" } }, required: ["command"], type: "object" },
           name: "workspace_exec",
         },
@@ -4443,7 +4444,7 @@ cli_auth_credentials_store = "keyring"
       workspaceDefinition: { mode: "write", name: "docs" },
       workspaceMode: "write",
     })
-    provideBrowserRuntimeEnvironment(runContext.context as never, { PATH: "/managed/bin", VITEHUB_BROWSER_ACTIVE: "1" })
+    provideBrowserRuntimeEnvironment(runContext.context as never, { AGENT_BROWSER_SESSION: "managed", AGENT_BROWSER_SOCKET_DIR: "/managed/socket", PATH: "/managed/bin", LD_LIBRARY_PATH: "/managed/lib", VITEHUB_BROWSER_ACTIVE: "1" })
     runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
       async onSendTurn(mcp) {
         const client = new McpClient({ name: "provider-browser-path-test", version: "1" })
@@ -4455,7 +4456,7 @@ cli_auth_credentials_store = "keyring"
     })
 
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
-    expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ PATH: expect.stringMatching(/^\/managed\/bin:/) }) }))
+    expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ AGENT_BROWSER_SESSION: "managed", AGENT_BROWSER_SOCKET_DIR: "/managed/socket", VITEHUB_BROWSER_ACTIVE: "1", PATH: "/managed/bin:/caller/bin", LD_LIBRARY_PATH: "/managed/lib:/caller/lib" }) }))
   })
 
   it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {
