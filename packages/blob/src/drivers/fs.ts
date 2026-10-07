@@ -175,10 +175,15 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
     if (!stats.isFile()) return null
     const meta = await readMetadata(root, pathname)
     const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+    let contentHash = meta.fileVersion === fileVersion ? meta.contentHash : undefined
+    if (!contentHash) {
+      contentHash = createHash("sha256").update(await readFile(path)).digest("hex")
+      await writeMetadata(root, pathname, { ...meta, contentHash, fileVersion }).catch((error) => {
+        console.error("[vitehub/blob] Filesystem hash cache write failed", error)
+      })
+    }
     return {
-      contentHash: meta.fileVersion === fileVersion && meta.contentHash
-        ? meta.contentHash
-        : createHash("sha256").update(await readFile(path)).digest("hex"),
+      contentHash,
       meta,
       path: pathname,
       size: Number(stats.size),

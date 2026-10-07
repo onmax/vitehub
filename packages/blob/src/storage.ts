@@ -63,6 +63,21 @@ async function derivedCachePrefix(pathname: string): Promise<string> {
   return `_vitehub/derived/${await hashCacheKey(pathname)}/`
 }
 
+async function readDerived(cache: Blob | null, fingerprint: string): Promise<Blob | null> {
+  if (!cache) return null
+  const header = new Uint8Array(await cache.slice(0, 4096).arrayBuffer())
+  const boundary = header.indexOf(10)
+  if (boundary < 0) return null
+  try {
+    const metadata = JSON.parse(new TextDecoder().decode(header.subarray(0, boundary)))
+    if (metadata.fingerprint !== fingerprint || typeof metadata.type !== "string") return null
+    return cache.slice(boundary + 1, cache.size, metadata.type)
+  }
+  catch {
+    return null
+  }
+}
+
 function joinPath(...parts: Array<string | undefined>): string {
   return parts
     .filter((part): part is string => Boolean(part && part.length > 0))
@@ -237,10 +252,9 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
           cacheControls: [cacheControl],
         })) return null
 
-        const cachedMeta = cachePath ? await driver.head(cachePath) : undefined
-        let body = !cachePath || cachedMeta?.customMetadata?.vitehubFingerprint === etag
-          ? await driver.get(cachePath ?? normalizedPath)
-          : null
+        let body = cachePath
+          ? await readDerived(await driver.get(cachePath), etag!)
+          : await driver.get(normalizedPath)
         const transform = options.transform
         if (!body && cachePath && transform) {
           const key = cachePath
@@ -253,10 +267,12 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
               const derived = await transform.run(original)
               const current = await driver.head(normalizedPath)
               if (current?.httpEtag === meta.httpEtag && current?.uploadedAt.getTime() === meta.uploadedAt.getTime()) {
-                await driver.put(key, derived, {
+                // Keep the version and body in one object. Some drivers reject custom metadata.
+                await driver.put(key, new Blob([
+                  JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
+                ]), {
                   access: "private",
-                  contentType: derived.type,
-                  customMetadata: { vitehubFingerprint: etag! },
+                  contentType: "application/octet-stream",
                 }).catch((error) => {
                   console.error("[vitehub/blob] Transform cache write failed", error)
                 })

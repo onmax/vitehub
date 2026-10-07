@@ -1,4 +1,4 @@
-import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -61,6 +61,37 @@ describe("Blob response transforms", () => {
     expect(await original?.text()).toBe("public:private-camera-data")
     const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
     expect(cache?.blobs).toHaveLength(1)
+  })
+
+  it("caches through drivers that reject custom metadata", async () => {
+    const put = driver.put.bind(driver)
+    vi.spyOn(driver, "put").mockImplementation(async (path, body, settings) => {
+      if (Object.keys(settings?.customMetadata ?? {}).length) throw new Error("custom metadata unsupported")
+      return put(path, body, settings)
+    })
+    for (let count = 0; count < 2; count++) {
+      const [, body] = await storage.serve(event(), "private/original", options)
+      expect(await new Response(body).text()).toBe("public")
+    }
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it("backfills filesystem hashes and reuses the persisted file version", async () => {
+    const path = "legacy/photo"
+    const file = join(directory, path)
+    await driver.put(path, "legacy")
+    const metadataFile = join(directory, ".vitehub/blob-meta", `${Buffer.from(path).toString("base64url")}.json`)
+    await writeFile(metadataFile, JSON.stringify({ contentType: "text/plain" }))
+    const meta = await driver.head(path)
+    const backfilled = JSON.parse(await readFile(metadataFile, "utf8"))
+    expect(backfilled.contentHash).toBe(meta!.httpEtag!.slice(1, -1))
+    expect(backfilled.fileVersion).toBeTypeOf("string")
+    const before = await stat(metadataFile)
+    expect((await driver.head(path))!.httpEtag).toBe(meta!.httpEtag)
+    expect((await stat(metadataFile)).mtimeMs).toBe(before.mtimeMs)
+    await writeFile(file, "updated")
+    expect((await driver.head(path))!.httpEtag).not.toBe(meta!.httpEtag)
+    expect(JSON.parse(await readFile(metadataFile, "utf8")).contentHash).not.toBe(backfilled.contentHash)
   })
 
   it("invalidates the derivative when source bytes or the transform key change", async () => {
