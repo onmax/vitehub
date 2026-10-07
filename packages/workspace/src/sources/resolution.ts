@@ -626,9 +626,10 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     writeTools.inspect = createTools as WorkspaceWriteToolSet["inspect"]
     writeTools.none = (() => ({})) as WorkspaceWriteToolSet["none"]
     writeTools.write = createWriteTools as WorkspaceWriteToolSet["write"]
-    // Call checkpoint on its original receiver, including custom class instances.
+    // Bind delegated methods to their original receiver, including custom class instances.
+    const baseHistory = workspace.history
     const history: WritableWorkspaceFacade["history"] = {
-      checkpoint: async options => await workspace.history.checkpoint(options),
+      checkpoint: baseHistory.checkpoint.bind(baseHistory),
       rebase,
     }
     const writableWorkspace: WritableWorkspaceFacade<Name> = {
