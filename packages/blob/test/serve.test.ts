@@ -283,11 +283,25 @@ describe("Blob response transforms", () => {
   })
 
   it("returns transformation failures through the Blob error contract", async () => {
-    const [error] = await storage.serve(event(), "private/original", {
+    const request = event()
+    const [error] = await storage.serve(request, "private/original", {
+      cacheControl: "public, max-age=300",
       transform: { key: "failing", run() { throw new Error("private transform detail") } },
     })
     expect(error).toMatchObject({ code: "BLOB_OPERATION_FAILED", details: { operation: "serve" } })
     expect(error?.message).not.toContain("private transform detail")
+    expect(request.res.headers.get("cache-control")).toBeNull()
+    expect(request.res.headers.get("etag")).toBeNull()
+  })
+
+  it("leaves caller headers unchanged when a source read fails", async () => {
+    vi.spyOn(driver, "get").mockRejectedValue(new Error("storage unavailable"))
+    const request = event()
+    request.res.headers.set("cache-control", "private, no-store")
+    const [error] = await storage.serve(request, "private/original", options)
+    expect(error?.code).toBe("BLOB_OPERATION_FAILED")
+    expect(request.res.headers.get("cache-control")).toBe("private, no-store")
+    expect(request.res.headers.get("etag")).toBeNull()
   })
 
   it("serves the fresh derivative even when caching fails", async () => {

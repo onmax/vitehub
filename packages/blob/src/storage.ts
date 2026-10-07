@@ -1,4 +1,4 @@
-import { handleCacheHeaders } from "h3"
+import { handleCacheHeaders, isCacheMatch } from "h3"
 
 import { toArray } from "@vite-hub/internal/arrays"
 
@@ -249,14 +249,12 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             cachePath = `${await derivedCachePrefix(normalizedPath)}${await hashCacheKey(options.transform.key)}`
           }
 
-          event.res.headers.set("X-Content-Type-Options", "nosniff")
           const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"
-          event.res.headers.set("Cache-Control", cacheControl)
-          if (etag) event.res.headers.set("ETag", etag)
-          if (["GET", "HEAD"].includes(event.req.method) && handleCacheHeaders(event, {
-            etag,
-            cacheControls: [cacheControl],
-          })) return null
+          if (["GET", "HEAD"].includes(event.req.method) && isCacheMatch(event.req.headers, { etag })) {
+            event.res.headers.set("X-Content-Type-Options", "nosniff")
+            handleCacheHeaders(event, { etag, cacheControls: [cacheControl] })
+            return null
+          }
 
           let body = cachePath
             ? await readDerived(await driver.get(cachePath), etag!)
@@ -298,6 +296,9 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             body = transformed ?? null
           }
           if (!body) return
+          event.res.headers.set("X-Content-Type-Options", "nosniff")
+          event.res.headers.set("Cache-Control", cacheControl)
+          if (etag) event.res.headers.set("ETag", etag)
           event.res.headers.set("Content-Length", String(body.size))
           event.res.headers.set("Content-Type", transform
             ? body.type || "application/octet-stream"
