@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 
 const docsRoot = resolve(import.meta.dirname, "..")
-const fixturesRoot = resolve(docsRoot, "../../fixtures/tutorials")
+const fixturesRoot = resolve(docsRoot, "../fixtures/tutorials")
 
 function normalize(source: string) {
   return source.trim().replaceAll("\r\n", "\n")
@@ -84,7 +84,7 @@ describe("documentation tutorials", () => {
     expect(source).toContain("if (!entry.isIntersecting) continue")
     expect(source).toContain("records.value")
     expect(source).toContain("while (labels.has(label))")
-    expect(source).toContain("data.vhTutorialCodeIndex")
+    expect(source).toContain("dataset.vhTutorialCodeIndex")
     expect(source).toContain("block.before(marker)")
     expect(source).toContain("new IntersectionObserver")
     expect(source).not.toContain("const registered = ref(false)")
