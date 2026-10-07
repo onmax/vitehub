@@ -71,6 +71,7 @@ describe("blob cloudflare provision step", () => {
   })
 
   it.each([
+    {},
     { buckets: {} },
     { buckets: [null] },
     [],
