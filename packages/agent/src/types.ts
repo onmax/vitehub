@@ -2465,6 +2465,8 @@ export interface AgentChannelHistory<TItem = unknown> {
   collection: AgentChannelHistoryCollection<TItem>
   /** Returns a stable key for an item, such as the provider message ID. Replay derives the Invocation ID from it. */
   key(item: TItem): string
+  /** Conversation that the item belongs to. Used to group exports and filter them by thread. */
+  thread?(item: TItem): string
   /** Channel trigger that receives each item. Optional when the Channel has exactly one trigger. */
   trigger?: string
 }

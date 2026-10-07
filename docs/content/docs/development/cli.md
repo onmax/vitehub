@@ -270,7 +270,7 @@ Telegram exposes the registered URL and delivery errors through `getWebhookInfo`
 
 ## Download Channel history
 
-`channels history` loads the same stage-specific Agent and Channel configuration, then authenticates to the deployed webhook route with its configured webhook secret. It writes portable message metadata to `history.json` and downloads attachment data into `media/`; Agent traces and tool events are not included.
+`channels history` loads the same stage-specific Agent and Channel configuration, then authenticates to the deployed webhook route with its configured webhook secret. Adapter-backed Channels keep the Chat SDK export. A Channel with `history` exports its Collection items, supports `--query key=value` (repeatable), optional `--thread`, and pages until the Collection ends. Add `--invocations` to join retained Invocations and recorded deliveries to each item.
 
 ```bash [Terminal]
 pnpm vitehub channels history \
