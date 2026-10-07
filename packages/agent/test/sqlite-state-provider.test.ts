@@ -692,6 +692,25 @@ describe("SQLite Agent State Provider", () => {
     await adapter.disconnect()
   })
 
+  it("does not open a migration transaction for a current schema", async () => {
+    let transactions = 0
+    const driver: SqliteAgentStateDriver = {
+      async execute(statement: string) {
+        if (statement.includes("COALESCE(MAX(version)")) return { rows: [{ version: 5 }] }
+        return { rows: [] }
+      },
+      async transaction(run) {
+        transactions += 1
+        return await run(driver)
+      },
+    }
+    const adapter = new ViteHubSqliteAgentStateAdapter({ driver })
+
+    await adapter.connect()
+    expect(transactions).toBe(0)
+    await adapter.disconnect()
+  })
+
   it("awaits in-flight setup after the driver connects", async () => {
     let finishMigration: (() => void) | undefined
     let startMigration!: () => void

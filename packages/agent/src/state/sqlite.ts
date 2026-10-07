@@ -755,6 +755,17 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
   }
 
   private async migrate(): Promise<void> {
+    // A current database does not need a write transaction just to read its
+    // schema version. Keeping reconnects read-only avoids holding a libSQL
+    // statement open while a large on-disk database is being opened.
+    let currentVersion = 0
+    try {
+      const rows = await execute(this.driver, `SELECT COALESCE(MAX(version), 0) as version FROM ${this.tables.schemaVersion}`)
+      currentVersion = numberValue(rows[0]?.version)
+      if (currentVersion >= 5) return
+    } catch (error) {
+      if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error
+    }
     await this.transaction(async (tx) => {
       await execute(tx, `CREATE TABLE IF NOT EXISTS ${this.tables.schemaVersion} (version INTEGER PRIMARY KEY)`)
       const versionRows = await execute(tx, `SELECT COALESCE(MAX(version), 0) as version FROM ${this.tables.schemaVersion}`)
