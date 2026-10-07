@@ -96,6 +96,7 @@ describe("documentation tutorials", () => {
     expect(tutorial).toContain("xl:!w-full")
     expect(step).toContain("@media (min-width: 80rem)")
     expect(step).toContain("@media (max-width: 79.99rem)")
+    expect(step).toContain(":deep(div:has(> pre))")
   })
 
   it("keeps the Agents editorial tutorial cold-rendered", async () => {

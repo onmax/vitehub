@@ -12,14 +12,14 @@ defineProps<{
 
 <template>
   <section :id="id" class="vh-tutorial-step">
+    <CodeTreeIntersection register-only>
+      <slot />
+    </CodeTreeIntersection>
+
     <div class="vh-tutorial-step-copy">
       <p v-if="title" class="vh-tutorial-step-label">{{ title }}</p>
       <slot />
     </div>
-
-    <CodeTreeIntersection register-only>
-      <slot />
-    </CodeTreeIntersection>
   </section>
 </template>
 
@@ -46,19 +46,20 @@ defineProps<{
   text-transform: uppercase;
 }
 
-@media (min-width: 64rem) {
+@media (min-width: 80rem) {
   .vh-tutorial-step {
     min-height: 30rem;
   }
 
   /* Desktop code lives in the sticky ProseCodeTree. Keep prose focused on the explanation. */
   .vh-tutorial-step-copy :deep(.code-block-wrapper),
+  .vh-tutorial-step-copy :deep(div:has(> pre)),
   .vh-tutorial-step-copy :deep(pre:has(code)) {
     display: none;
   }
 }
 
-@media (max-width: 63.99rem) {
+@media (max-width: 79.99rem) {
   .vh-tutorial-step-copy :deep(.code-block-wrapper) {
     margin-top: 1.5rem;
   }

@@ -17,7 +17,7 @@ and entrypoint below are a separate package project, not another server route.
 
 This tutorial uses Vercel Sandbox:
 
-```bash [commands/install.sh]
+```bash [commands/install]
 pnpm add @vite-hub/sandbox @vercel/sandbox h3
 pnpm add -D @vite-hub/cli vite
 ```
@@ -92,7 +92,7 @@ export default defineEventHandler(async (event) => {
 
 You should see:
 
-```json [response/image-optimizer.json]
+```json [output/image-optimizer.json]
 { "pixels": 786432, "format": "webp" }
 ```
 
@@ -106,7 +106,7 @@ available network, filesystem, and process access.
 ::tutorial-step{title="Inspect and continue"}
 ## Inspect and continue
 
-```bash [commands/inspect.sh]
+```bash [commands/inspect]
 pnpm vite build
 pnpm vitehub inspect definitions --kind sandbox
 ```

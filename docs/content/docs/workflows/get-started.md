@@ -22,7 +22,7 @@ deploying work that must survive a process restart.
 ::tutorial-step{title="Install"}
 ## Install
 
-```bash [commands/install.sh]
+```bash [commands/install]
 pnpm add @vite-hub/runtime @vite-hub/workflow h3
 pnpm add -D vite
 ```
@@ -105,7 +105,7 @@ export default defineEventHandler(async (event) => {
 
 Start Vite and call the route:
 
-```bash [commands/run.sh]
+```bash [commands/run]
 pnpm vite dev
 curl -X POST http://localhost:5173/api/onboard
 ```
