@@ -46,6 +46,7 @@ it.each(['review', '__proto__'])('bundles the published runtime lookup for %s wi
   const aliases = (configured as { resolve: { alias: Record<string, string> } }).resolve.alias
   const registry = aliases['#vitehub/agent/registry']!
   expect(configured).toMatchObject({ nitro: { alias: { '#vitehub/agent/registry': registry } } })
+  expect(await readFile(registry, 'utf8')).toContain("if (typeof resetPublicUrlAgentNames === 'function') resetPublicUrlAgentNames()")
   expect(await readFile(registry, 'utf8')).toContain('await import(')
   const entry = join(root, 'entry.ts')
   await writeFile(entry, `import { getAgentFromRegistry } from '@vite-hub/agent'
@@ -112,6 +113,20 @@ export async function inspect() {
   try {
     const module = await server.ssrLoadModule(entry)
     expect(await module.inspect()).toEqual({ result: 'Owned workspace context.', instructions: { template: 'Before.\n{{{ instructions }}}\nAfter.', content: 'Check migrations.' }, standalone: 'Standalone context.' })
+  } finally { await server.close() }
+}, 30_000)
+
+it('loads published server internals before the registry during Vite SSR', async () => {
+  const { root } = await fixture(false)
+  const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+  await mkdir(join(root, 'node_modules/@vite-hub'), { recursive: true })
+  await symlink(packageRoot, join(root, 'node_modules/@vite-hub/agent'), 'dir')
+  await symlink(join(packageRoot, '../workspace'), join(root, 'node_modules/@vite-hub/workspace'), 'dir')
+  const server = await createServer({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { middlewareMode: true, watch: null } })
+  try {
+    const internal = await server.ssrLoadModule(join(packageRoot, 'dist/server/internal.js'))
+    expect(typeof internal.resetPublicUrlAgentNames).toBe('function')
+    expect((await server.ssrLoadModule(join(root, '.vitehub/agent/registry.mjs'))).default).toEqual({})
   } finally { await server.close() }
 }, 30_000)
 

@@ -1830,9 +1830,12 @@ async function writeAgentRuntimeRegistry(
     workspaceRegistry: false,
   })
   await writeFile(catalogPath, [...aggregateCatalog.imports, "", ...aggregateCatalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
+  // Published server internals also import this registry. On the first SSR load,
+  // that cycle can reach the registry before the reset export is initialized.
+  // No discovered aliases exist yet; subsequent registry refreshes reset them.
   await writeFile(registryPath, [
     `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/internal"))}`,
-    "resetPublicUrlAgentNames()",
+    "if (typeof resetPublicUrlAgentNames === 'function') resetPublicUrlAgentNames()",
     `export default {${entries.length ? `\n  ${entries.join(",\n  ")}\n` : ""}}`,
     `export const metadata = {${generatedAgentIdentityEntries(definitions)}}`,
     "",
