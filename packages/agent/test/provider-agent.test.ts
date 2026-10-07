@@ -4368,7 +4368,10 @@ cli_auth_credentials_store = "keyring"
         expect(instructions).toContain(`"id": "${checkoutSha}"`)
         expect(instructions).toContain('"root": ""')
         expect(instructions).not.toContain('"root": "docs"')
-        await expect(readFile(join(root, "portal", ".agents/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Browser\n")
+        await expect(readFile(join(root, "portal", ".agents/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Native Browser\n")
+        await expect(readFile(join(root, "portal", ".codex/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Native Browser\n")
+        await expect(readFile(join(root, "portal", ".claude/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Native Browser\n")
+        await expect(readFile(join(root, "portal", ".agents/skills/outer-only/SKILL.md"), "utf8")).resolves.toBe("# Outer Only\n")
       },
     })
     const session = {
@@ -4395,8 +4398,12 @@ cli_auth_credentials_store = "keyring"
         root = options.target
         await mkdir(join(root, ".agents/skills/agent-browser"), { recursive: true })
         await writeFile(join(root, ".agents/skills/agent-browser/SKILL.md"), "# Browser\n")
+        await mkdir(join(root, ".agents/skills/outer-only"), { recursive: true })
+        await writeFile(join(root, ".agents/skills/outer-only/SKILL.md"), "# Outer Only\n")
         const checkout = join(root, "portal")
         await mkdir(checkout)
+        await mkdir(join(checkout, ".codex/skills/agent-browser"), { recursive: true })
+        await writeFile(join(checkout, ".codex/skills/agent-browser/SKILL.md"), "# Native Browser\n")
         const git = (...args: string[]) => {
           const result = spawnSync("git", ["-C", checkout, ...args], { encoding: "utf8" })
           if (result.status !== 0) throw new Error(result.stderr)

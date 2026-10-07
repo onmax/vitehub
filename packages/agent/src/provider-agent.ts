@@ -271,10 +271,14 @@ async function materializeProviderSkillCompatibility(root: string): Promise<Gene
  * in the checkout.
  */
 async function materializeNestedProviderSkills(sourceRoot: string, providerRoot: string): Promise<GeneratedProviderFile[]> {
+  const checkoutSkills = new Set<string>()
+  for (const skillRoot of providerSkillRoots) {
+    for (const name of await providerSkillDirectories(providerRoot, skillRoot)) checkoutSkills.add(name)
+  }
   const skills = new Map<string, string>()
   for (const skillRoot of providerSkillRoots) {
     for (const name of await providerSkillDirectories(sourceRoot, skillRoot)) {
-      if (!skills.has(name)) skills.set(name, join(sourceRoot, skillRoot, name))
+      if (!checkoutSkills.has(name) && !skills.has(name)) skills.set(name, join(sourceRoot, skillRoot, name))
     }
   }
   const generated: GeneratedProviderFile[] = []
