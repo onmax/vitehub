@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import type { AgentInvocationView } from "@vite-hub/ui";
 
+const now = useState("ui-running-clock", () => Date.now());
+const time = (secondsAgo: number) => new Date(now.value - secondsAgo * 1_000).toISOString();
+
 const invocation: AgentInvocationView = {
   agentName: "interface-engineer",
-  createdAt: "2026-08-30T17:25:00.000Z",
+  createdAt: time(844),
   id: "ainv_console_navigation",
   observations: [
     {
@@ -14,7 +17,7 @@ const invocation: AgentInvocationView = {
       },
       name: "agent.message.recorded",
       sequence: 1,
-      timestamp: "2026-08-30T17:25:08.000Z",
+      timestamp: time(836),
       trace: { id: "trace_console_navigation" },
       type: "run",
     },
@@ -26,7 +29,7 @@ const invocation: AgentInvocationView = {
       },
       name: "agent.progress",
       sequence: 2,
-      timestamp: "2026-08-30T17:31:40.000Z",
+      timestamp: time(444),
       trace: { id: "trace_console_navigation" },
       type: "run",
     },
@@ -38,16 +41,16 @@ const invocation: AgentInvocationView = {
       },
       name: "agent.tool.finish",
       sequence: 3,
-      timestamp: "2026-08-30T17:38:44.000Z",
+      timestamp: time(20),
       trace: { id: "trace_console_navigation" },
       type: "run",
     },
   ],
-  startedAt: "2026-08-30T17:25:02.000Z",
+  startedAt: time(842),
   status: "running",
   title: "Polish Console navigation",
   traceId: "trace_console_navigation",
-  updatedAt: "2026-08-30T17:38:44.000Z",
+  updatedAt: time(20),
 };
 </script>
 

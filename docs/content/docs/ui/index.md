@@ -7,36 +7,18 @@ navigation.group: Start
 icon: i-ph-squares-four-light
 ---
 
-`@vite-hub/ui` is the Vue and Nuxt component layer for the ViteHub Console. Start with a complete Console block, then replace one surface at a time as your product grows.
+`@vite-hub/ui` is the Vue and Nuxt component layer for the ViteHub Console. Start with a complete Console block, then connect your own data.
 
 The package owns presentation, layout, and interaction defaults. Your app owns transport, persistence, and authorization. Every example uses synthetic data, makes no network requests, and shows the source below the live preview.
 
-::u-page-grid{class="not-prose mt-8 sm:grid-cols-2 lg:grid-cols-3"}
-  :::u-page-card
-  ---
-  title: Build the Console first
-  description: Copy a complete chat, Invocation dashboard, or code review surface and connect your data.
-  icon: i-ph-layout-light
-  to: /docs/ui/blocks/chat-app
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Install the defaults
-  description: Add the Nuxt module or Vite plugin, then load the shared styles.
-  icon: i-lucide-package
-  to: /docs/ui/installation
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Read the Vue point of view
-  description: Why ViteHub UI chooses a small default and a Console-first layout.
-  icon: i-simple-icons-vuedotjs
-  to: /docs/getting-started/built-for-vue
-  ---
-  :::
+## A Console with the defaults
+
+Select an Invocation to read its messages, tool calls, and result. The inspector shows its configuration and activity. This example uses the package styles without custom component slots.
+
+::component-preview{name="InvocationDashboardBlock" flush reset}
 ::
+
+[Install the package](/docs/ui/installation), then copy the [Invocation dashboard](/docs/ui/blocks/invocation-dashboard), [Chat app](/docs/ui/blocks/chat-app), or [Code review](/docs/ui/blocks/code-review) into your application. Each block explains how to connect real data.
 
 ## Components
 
@@ -47,7 +29,7 @@ The package owns presentation, layout, and interaction defaults. Your app owns t
 - **Utilities:** [Attachments](/docs/ui/attachments), [Message scroller](/docs/ui/message-scroller)
 ::
 
-## Defaults that travel
+## What each layer owns
 
 | Concern | Owner |
 | ------- | ----- |

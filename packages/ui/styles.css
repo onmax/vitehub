@@ -485,8 +485,25 @@
 }
 
 .vh-trace__step-heading > span:first-child {
+  flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.vh-trace__step-status {
+  color: var(--vh-ui-info);
+  flex: none;
+  font-size: 0.75rem;
+}
+
+.vh-trace__step[data-status="failed"] .vh-trace__step-status {
+  color: var(--vh-ui-error);
+}
+
+.vh-trace__empty {
+  color: var(--vh-ui-dimmed);
+  margin: 0;
+  padding: 0.75rem;
 }
 
 .vh-trace__attributes {
@@ -2247,6 +2264,8 @@ details.vh-invocation-event > .vh-invocation-event__summary:hover {
 .vh-invocation-inspector__agent code {
   color: var(--vh-ui-muted);
   font-size: 0.75rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .vh-invocation-inspector__error,
