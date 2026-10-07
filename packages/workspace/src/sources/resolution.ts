@@ -6,9 +6,9 @@ import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { createBasicWorkspaceSession } from "../session/basic.ts"
 import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
-import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
+import { setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceInternalMetadataCapability, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
 import { isInternalWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
@@ -281,7 +281,7 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
         if (await setWorkspaceMetadata(target, key, value)) return
       }
       if (metadata.setMeta) {
-        await metadata.setMeta(key, value)
+        await metadata.setMeta(key, value, workspaceInternalMetadataCapability)
         return
       }
       meta.set(key, value)
@@ -446,12 +446,10 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       }
     }
 
-    // Every base write needs a Source write grant for its exact path.
-    // SAFETY: Write paths are checked by the base facade at runtime; the generic facade has no statically known named Workspace paths.
-    const rawWrites = resolveWorkspaceRawWriteTarget(workspace)
-    // Custom writable facades cannot register the private raw target. Their
-    // public fs is still the guarded write boundary, so use it as a fallback.
-    const writes = rawWrites ?? {
+    // Every base write needs both the outer facade's policy and this view's
+    // Source grant. Always compose through the facade so nested resolutions
+    // retain guards established by their parent view.
+    const writes = {
       writeFile: async (path: string, content: WorkspaceContent, options?: WriteFileOptions) =>
         await workspace.fs.writeFile(path as never, content, options),
       mkdir: async (path: string, options?: MkdirOptions) =>

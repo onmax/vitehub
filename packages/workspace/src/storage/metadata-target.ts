@@ -1,4 +1,6 @@
 export const workspaceMetadataTarget: unique symbol = Symbol.for("vitehub.workspace.metadataTarget")
+/** Internal capability used only by Source Sync through wrapped writable facades. */
+export const workspaceInternalMetadataCapability: unique symbol = Symbol("vitehub.workspace.internalMetadata")
 
 import { forwardWorkspaceStoreTarget } from "./target.ts"
 import type { ListOptions, MkdirOptions, RmOptions, WorkspaceEntry, WorkspaceFile } from "../core/types.ts"
@@ -14,11 +16,11 @@ export interface WorkspaceMetadataTarget {
 }
 
 type WorkspaceMetadataStore = WorkspaceMetadataTarget & {
-  setMeta?(key: string, value: unknown): Promise<void>
+  setMeta?(key: string, value: unknown, capability?: typeof workspaceInternalMetadataCapability): Promise<void>
 }
 
 const metadataTargetsByStore = new WeakMap<WorkspaceMetadataTarget, Map<string, WorkspaceMetadataTarget>>()
-const metadataSetters = new WeakMap<WorkspaceMetadataTarget, (key: string, value: unknown) => Promise<void>>()
+const metadataSetters = new WeakMap<WorkspaceMetadataTarget, (key: string, value: unknown, capability?: typeof workspaceInternalMetadataCapability) => Promise<void>>()
 const publicMetadataTargets = new WeakMap<WorkspaceMetadataTarget, WorkspaceMetadataTarget>()
 const privateMetadataTargets = new WeakMap<WorkspaceMetadataTarget, WorkspaceMetadataTarget>()
 
@@ -55,7 +57,7 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataStore, wor
 export async function setWorkspaceMetadata(target: WorkspaceMetadataTarget, key: string, value: unknown): Promise<boolean> {
   const setter = metadataSetters.get(target) || metadataSetters.get(privateMetadataTargets.get(target) ?? target)
   if (!setter) return false
-  await setter(key, value)
+  await setter(key, value, workspaceInternalMetadataCapability)
   return true
 }
 
