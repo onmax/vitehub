@@ -542,24 +542,30 @@ describe("Agent Box provider execution", () => {
     await mkdir(workspace)
     await writeFile(join(workspace, "README.md"), "independent checkout\n")
     const threadId = "box-independent-cwd"
+    let sibling = ""
+    let embedded = ""
     let launched: LauncherResult | undefined
     providerRuntime(threadId, async ({ cwd }) => {
       expect(cwd).not.toBe(workspace)
+      sibling = `${cwd}ist/config`
+      embedded = `prefix${cwd}suffix`
       const options = createProviderRuntime.mock.lastCall?.[0]
-      const script = "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(1), input, readme: require('node:fs').readFileSync('README.md', 'utf8'), mapped: process.env.PROVIDER_PATH })))"
-      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", script, join(cwd, "notes.txt")], {
+      const script = "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(1), input, readme: require('node:fs').readFileSync('README.md', 'utf8'), mapped: process.env.PROVIDER_PATH, sibling: process.env.PROVIDER_SIBLING, text: process.env.PROVIDER_TEXT })))"
+      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", script, join(cwd, "notes.txt"), sibling], {
         cwd,
-        env: { ...options?.environment, PROVIDER_PATH: join(cwd, "notes.txt") },
-        stdin: `${cwd}/notes.txt\n`,
+        env: { ...options?.environment, PROVIDER_PATH: join(cwd, "notes.txt"), PROVIDER_SIBLING: sibling, PROVIDER_TEXT: embedded },
+        stdin: `${cwd}/notes.txt\n${sibling}\n`,
       })
       expect(launched).toMatchObject({ code: 0 })
       const boxCwd = openedBoxSession.current!.cwd
       expect(JSON.parse(launched.stdout)).toMatchObject({
-        argv: [`${boxCwd}/notes.txt`],
+        argv: [`${boxCwd}/notes.txt`, sibling],
         cwd: await realpath(boxCwd),
-        input: `${boxCwd}/notes.txt\n`,
+        input: `${boxCwd}/notes.txt\n${sibling}\n`,
         mapped: `${boxCwd}/notes.txt`,
         readme: "independent checkout\n",
+        sibling,
+        text: embedded,
       })
     })
     await expect(createProviderAgentAdapter<PullRequestOptions>({

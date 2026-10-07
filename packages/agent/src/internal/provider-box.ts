@@ -209,7 +209,12 @@ async function handleRelayConnection(
   const boxWorkingDirectory = mirrorsLocalRoot && options.localCwd !== undefined
     ? mapPath(options.localCwd)
     : boxCwd
-  const mapText = (value: string) => mappingRoot ? value.replaceAll(mappingRoot, boxCwd) : value
+  const mapTextPattern = mappingRoot
+    ? new RegExp(`(^|[^A-Za-z0-9._-])${escapeRegExp(mappingRoot)}(?=$|[/\\\\"'\\s,:;\\[\\]{}()?])`, "g")
+    : undefined
+  const mapText = (value: string) => mapTextPattern
+    ? value.replace(mapTextPattern, (_match, prefix: string) => `${prefix}${boxCwd}`)
+    : value
   const selectedArgs = options.filterArgs ? options.filterArgs(args, mapPath) : [...args]
   let disconnected = socket.destroyed
   socket.once("close", () => {
@@ -520,6 +525,10 @@ socket.on("close", () => {
   void forwarding.then(() => { process.exitCode = exitCode })
 })
 `
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
 
 function shellQuote(value: string) {
