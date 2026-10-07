@@ -22,6 +22,7 @@ const cycles: Record<string, number> = {
   workflow: 5600,
   content: 5600,
   agent: 6000,
+  ui: 5000,
 };
 const cycle = computed(() => cycles[props.name] ?? 5000);
 const id = useId();
@@ -59,6 +60,17 @@ const id = useId();
       <circle cx="34" cy="18" r="1.75" class="token a ag-call-1" />
       <circle cx="34" cy="20" r="1.75" class="token a ag-call-2" />
       <circle cx="34" cy="22" r="1.75" class="token a ag-call-3" />
+    </template>
+
+    <template v-else-if="name === 'ui'">
+      <rect x="6" y="7" width="42" height="26" rx="2" class="line" />
+      <path d="M6 13h42" class="line" />
+      <circle cx="10" cy="10" r="1" class="command" />
+      <circle cx="14" cy="10" r="1" class="command" />
+      <rect x="11" y="18" width="19" height="2.5" rx="1" class="soft" />
+      <rect x="11" y="23" width="13" height="2.5" rx="1" class="soft" />
+      <rect x="36" y="18" width="7" height="8" rx="1.5" class="soft a ui-panel" />
+      <circle cx="52" cy="20" r="2" class="token a ui-token" />
     </template>
 
     <template v-else-if="name === 'env'">

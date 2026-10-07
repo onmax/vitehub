@@ -1,7 +1,7 @@
 ---
-title: Source get started
+title: Read your first Source
 description: Install ViteHub, define a Source, and read it from a server route.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

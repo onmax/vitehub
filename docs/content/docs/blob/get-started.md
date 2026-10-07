@@ -1,7 +1,7 @@
 ---
-title: Blob get started
+title: Store your first Blob object
 description: Install Blob, register the Vite integration, and write the first object.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

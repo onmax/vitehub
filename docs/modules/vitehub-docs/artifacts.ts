@@ -409,6 +409,7 @@ function collectPages(rootDir: string, sectionId: string) {
       sourceTitle: optionalString(meta.title),
       description: optionalString(meta.description),
       icon: optionalString(meta.icon),
+      kind: optionalString(meta["navigation.kind"]),
       group: optionalString(meta["navigation.group"]),
       navigation: meta.navigation !== false,
       order: pageOrderFromMeta(meta),
@@ -444,6 +445,7 @@ function collectRootPage(localDocsRoot: string) {
     sourceTitle: optionalString(meta.title),
     description: optionalString(meta.description),
     icon: optionalString(meta.icon),
+    kind: optionalString(meta["navigation.kind"]),
     navigation: meta.navigation !== false,
     order: pageOrderFromMeta(meta),
   };

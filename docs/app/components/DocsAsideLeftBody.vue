@@ -78,6 +78,18 @@ function isActive(path: string) {
       </NuxtLink>
     </section>
 
+    <section class="vh-docs-sidebar-related" aria-label="Learn ViteHub">
+      <h2 class="vh-docs-sidebar-heading">Learn</h2>
+      <NuxtLink to="/blog" class="vh-docs-sidebar-link">
+        <UIcon name="i-lucide-book-open" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">Tutorials</span>
+      </NuxtLink>
+      <NuxtLink to="/docs/getting-started/concepts" class="vh-docs-sidebar-link">
+        <UIcon name="i-lucide-lightbulb" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">Concepts</span>
+      </NuxtLink>
+    </section>
+
     <NuxtLink to="/docs" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
       <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
       <span class="min-w-0 truncate">Browse all docs</span>

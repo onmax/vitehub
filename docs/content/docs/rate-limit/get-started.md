@@ -1,7 +1,7 @@
 ---
-title: Rate Limit get started
+title: Guard your first request
 description: Register the Rate Limit integration and guard a first server handler.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

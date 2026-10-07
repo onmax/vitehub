@@ -1,7 +1,7 @@
 ---
-title: Env get started
+title: Read your first environment value
 description: Install Env, register the Vite integration, and read the first Public Env value.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

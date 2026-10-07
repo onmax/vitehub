@@ -1,7 +1,7 @@
 ---
-title: Connections get started
+title: Connect your first provider account
 description: Enable Connections, define a Connection, connect the account, and call the provider.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

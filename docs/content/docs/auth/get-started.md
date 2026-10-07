@@ -1,7 +1,7 @@
 ---
-title: Auth get started
+title: Create your first Auth session
 description: Install Auth, register the Vite integration, and create the first session.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

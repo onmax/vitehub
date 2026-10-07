@@ -1,7 +1,7 @@
 ---
-title: Content get started
+title: Read your first Content document
 description: Install Comark Content, define server/content.ts, and read the first document.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

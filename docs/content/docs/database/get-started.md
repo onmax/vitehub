@@ -1,7 +1,7 @@
 ---
-title: Database get started
+title: Query your first Database
 description: Install Database, define a schema, apply the first migration, and query it.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

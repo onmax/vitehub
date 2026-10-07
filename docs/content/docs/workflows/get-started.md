@@ -1,7 +1,7 @@
 ---
-title: Workflows get started
+title: Start your first Workflow
 description: Install Workflows, register the Vite integration, and start the first run.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

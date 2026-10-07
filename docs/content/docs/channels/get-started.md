@@ -1,7 +1,7 @@
 ---
-title: Channels get started
+title: Send through your first Channel
 description: Enable Channel discovery and define the first named Channel.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

@@ -14,6 +14,12 @@ useIntersectionObserver(grid, ([entry]) => {
 function offset(index: number) {
   return (index * 0.37) % 1;
 }
+
+function primitiveKind(id: string) {
+  if (id === "agent") return "Agent runtime";
+  if (id === "ui") return "UI components";
+  return "Server Primitive";
+}
 </script>
 
 <template>
@@ -54,7 +60,7 @@ function offset(index: number) {
         class="mt-12 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-4 lg:mt-16 lg:grid-cols-5"
         role="list"
       >
-        <!-- The Agent tile spans two cells, so 20 cells fill every row at 2, 4, and 5 columns. -->
+        <!-- The Agent tile spans two cells, so the catalog still reads as a dense package grid. -->
         <li
           v-for="(primitive, index) in landingPrimitives"
           :key="primitive.id"
@@ -71,6 +77,9 @@ function offset(index: number) {
               <LandingPrimitiveMotion :name="primitive.id" :play="visible" :offset="offset(index)" />
             </div>
             <div>
+              <p class="text-[0.625rem] font-semibold uppercase tracking-[0.06em] text-dimmed">
+                {{ primitiveKind(primitive.id) }}
+              </p>
               <h2 class="text-sm font-medium text-highlighted">
                 {{ primitive.name }}
               </h2>

@@ -7,6 +7,7 @@ export type DocsPage = {
   sourceTitle: string | null;
   description: string | null;
   icon: string | null;
+  kind: string | null;
   group?: string | null;
   navigation: boolean;
   order: number;

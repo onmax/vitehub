@@ -1,7 +1,7 @@
 ---
-title: Email get started
+title: Send your first Email
 description: Install Email, configure Resend, and send a first message from server code.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

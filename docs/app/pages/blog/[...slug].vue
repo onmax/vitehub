@@ -19,6 +19,7 @@ if (!post.value) {
   throw createError({ statusCode: 404, statusMessage: "Page not found", fatal: true })
 }
 const initialPost = post.value
+const isServerPrimitivesTutorial = computed(() => resolvedPostPath === "/blog/server-primitives")
 
 const publishedDate = computed(() => post.value?.date || "")
 const formattedDate = computed(() => {
@@ -41,8 +42,9 @@ useSeoMeta({
 </script>
 
 <template>
+  <BlogTutorial v-if="post && isServerPrimitivesTutorial" :post="post" />
   <UPage
-    v-if="post"
+    v-else-if="post"
     :ui="{
       root: 'lg:!block',
       center: 'mx-auto w-full max-w-[calc(var(--vh-content-width)+4rem)] lg:!col-span-1',

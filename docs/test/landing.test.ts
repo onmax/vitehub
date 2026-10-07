@@ -131,6 +131,7 @@ describe("landing page", () => {
 
     expect(landingPrimitives.map((primitive) => primitive.id)).toEqual([
       "agent",
+      "ui",
       "workspace",
       "sandbox",
       "connections",

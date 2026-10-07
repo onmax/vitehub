@@ -1,7 +1,7 @@
 ---
-title: Workspace get started
+title: Build your first Workspace
 description: Install Workspace, register the Vite integration, define a Workspace, and read and write files from server code.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

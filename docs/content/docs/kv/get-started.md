@@ -1,7 +1,7 @@
 ---
-title: KV get started
+title: Store your first KV value
 description: Install KV, register the Vite integration, and write the first key.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

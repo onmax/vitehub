@@ -146,6 +146,12 @@ export const landingPrimitives = [
     to: "/docs/agents",
   },
   {
+    id: "ui",
+    name: "UI",
+    description: "Agent interfaces",
+    to: "/docs/ui",
+  },
+  {
     id: "workspace",
     name: "Workspace",
     description: "Persistent file trees",

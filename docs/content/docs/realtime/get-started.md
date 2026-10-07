@@ -1,7 +1,7 @@
 ---
-title: Realtime get started
+title: Create your first collaborative room
 description: Install Realtime, enable it with Workspace, define a room, and connect a TipTap editor.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

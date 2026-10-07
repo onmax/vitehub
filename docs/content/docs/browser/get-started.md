@@ -1,7 +1,7 @@
 ---
-title: Browser get started
+title: Run your first Browser Definition
 description: Install ViteHub, enable Browser on the Cloudflare preset, and run a first Browser Definition.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

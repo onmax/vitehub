@@ -1,7 +1,7 @@
 ---
-title: Shell get started
+title: Run your first Shell command
 description: Install Shell, create a Shell Runtime, and run a first command.
-navigation.title: Get started
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---

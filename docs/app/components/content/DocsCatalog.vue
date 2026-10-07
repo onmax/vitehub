@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { useIntersectionObserver } from "@vueuse/core";
 import { docsManifest } from "~~/modules/vitehub-docs/runtime/utils/docs";
-import { docsRootSectionId, getDocsCatalog } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+import { docsRootSectionId, getDocsCatalog, getDocsSectionKind } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
 
 type CatalogTile = {
   description: string | null;
   icon: string;
+  kind: string;
   key: string;
   /** Landing scene name when the product has a looping micro-animation. */
   scene: string | null;
@@ -54,6 +55,7 @@ const rows = computed<CatalogRow[]>(() =>
           .map(page => ({
             description: page.description,
             icon: sidebarPageIcon(page),
+            kind: "Getting started",
             key: page.path,
             scene: null,
             title: page.sourceTitle || page.title,
@@ -62,6 +64,7 @@ const rows = computed<CatalogRow[]>(() =>
       : group.sections.map(section => ({
           description: section.description,
           icon: sidebarSectionIcon(section),
+          kind: getDocsSectionKind(section),
           key: section.id,
           scene: scenes.get(section.id) ?? null,
           title: section.title,
@@ -107,6 +110,7 @@ function offset(index: number) {
               <UIcon v-else :name="tile.icon" class="size-5" />
             </div>
             <div class="min-w-0">
+              <p class="vh-docs-catalog-tile-kind">{{ tile.kind }}</p>
               <h3 class="vh-docs-catalog-tile-title">
                 <span>{{ tile.title }}</span>
                 <UIcon name="i-lucide-arrow-right" class="vh-docs-catalog-tile-arrow size-3.5 shrink-0" aria-hidden="true" />
@@ -210,6 +214,16 @@ function offset(index: number) {
   font-size: 0.875rem;
   font-weight: 500;
   line-height: 1.25rem;
+}
+
+.vh-docs-catalog-tile-kind {
+  margin: 0 0 0.25rem;
+  color: var(--ui-text-dimmed);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .vh-docs-catalog-tile-arrow {
