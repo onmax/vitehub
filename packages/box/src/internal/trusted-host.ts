@@ -302,7 +302,10 @@ async function createSession(
 async function retrySessionDestroy(session: TrustedHostSession): Promise<void> {
   while (true) {
     await new Promise<void>((resolvePromise) => {
-      setTimeout(resolvePromise, 250);
+      const timer = setTimeout(resolvePromise, 250);
+      // Cleanup is best-effort after initialization failed. Do not let an
+      // unbounded retry loop keep an otherwise idle process alive forever.
+      timer.unref?.();
     });
     try {
       await session.destroy?.();

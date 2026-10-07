@@ -101,7 +101,11 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
     }
   };
   const monitor = setInterval(() => {
-    void inspectHealth().catch(error => { healthError = error instanceof Error ? error : new Error(String(error)); });
+    void inspectHealth().catch(error => {
+      // Once a local allocation OOM is observed, retain BOX_R0158 even if
+      // optional fencing or cgroup termination writes fail.
+      if (!healthError) healthError = error instanceof Error ? error : new Error(String(error));
+    });
   }, 25);
   monitor.unref?.();
   return {
