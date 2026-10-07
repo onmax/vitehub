@@ -232,7 +232,7 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             return
           }
 
-          let etag = meta.httpEtag
+          let etag = meta.httpEtag ? `"${await hashCacheKey([meta.httpEtag, meta.contentType])}"` : undefined
           let sourceVersion = meta.httpEtag
           let cachePath: string | undefined
           let originalBody: Blob | null | undefined

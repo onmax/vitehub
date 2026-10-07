@@ -59,7 +59,21 @@ describe("Blob response transforms", () => {
     const [, body] = await storage.serve(request, "private/original")
     expect(await new Response(body).text()).toBe("updated")
     expect(request.res.headers.get("content-type")).toBe("text/html")
-    expect(request.res.headers.get("etag")).toBe((await driver.head("private/original"))?.httpEtag)
+    const fresh = event()
+    await storage.serve(fresh, "private/original")
+    expect(request.res.headers.get("etag")).toBe(fresh.res.headers.get("etag"))
+  })
+
+  it("invalidates normal HTTP validators when identical bytes get a different content type", async () => {
+    const first = event()
+    await storage.serve(first, "private/original")
+    await storage.put("private/original", "public:private-camera-data", { contentType: "text/html" })
+    const second = event({ "if-none-match": first.res.headers.get("etag")! })
+    const [, body] = await storage.serve(second, "private/original")
+    expect(second.res.status).not.toBe(304)
+    expect(second.res.headers.get("content-type")).toBe("text/html")
+    expect(second.res.headers.get("etag")).not.toBe(first.res.headers.get("etag"))
+    expect(await new Response(body).text()).toBe("public:private-camera-data")
   })
 
   it("caches only the derived body and keeps the original unchanged", async () => {
