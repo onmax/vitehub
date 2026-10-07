@@ -109,7 +109,7 @@ describe("docs product navigation", () => {
   });
 
   it("publishes tutorials for public packages without product sections", () => {
-    expect(getDocsPageByPath("/docs/agents/box-tutorial")?.title).toBe("Box tutorial");
+    expect(getDocsPageByPath("/docs/agents/box-tutorial")?.title).toBe("Tutorial");
     expect(getDocsPageByPath("/docs/reference/markdown-template-tutorial")?.title).toBe("Tutorial");
     expect(getDocsPageByPath("/docs/ui/get-started")?.title).toBe("Tutorial");
   });
