@@ -151,12 +151,14 @@ function normalizeResult(value: unknown): RuntimePreflightCheckResult {
   if (value !== null && hasRuntimeType(value, "object") && !Array.isArray(value)) {
     // SAFETY: The object guard above establishes the record shape read below.
     const result = value as Partial<RuntimePreflightCheckResult>
-    const state = result.state === "available" || result.state === "missing" || result.state === "unknown" ? result.state : "unknown"
+    const validState = result.state === "available" || result.state === "missing" || result.state === "unknown"
+    const state = validState ? result.state : "unknown"
     const normalized: RuntimePreflightCheckResult = { state }
     const details = normalizeDetails(result.details)
     if (details) normalized.details = details
     const reason = normalizeReason(result.reason)
     if (reason) normalized.reason = reason
+    else if (!validState) normalized.reason = "The preflight check returned an invalid result."
     return normalized
   }
   return { state: "unknown", reason: "The preflight check returned an invalid result." }

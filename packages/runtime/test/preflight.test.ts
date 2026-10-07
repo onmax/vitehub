@@ -171,6 +171,17 @@ describe("runtime preflight", () => {
     expect(manifest.capabilities["tool:malformed"]).toBe("unknown")
   })
 
+  it("explains object results with an invalid state", async () => {
+    const manifest = await runRuntimePreflight({
+      checks: [
+        { id: "tool:invalid-object", kind: "tool", check: () => ({}) as never },
+        { id: "tool:unknown", kind: "tool", check: () => ({ state: "unknown" }) },
+      ],
+    })
+    expect(manifest.checks[0]).toMatchObject({ state: "unknown", reason: "The preflight check returned an invalid result." })
+    expect(manifest.checks[1]).not.toHaveProperty("reason")
+  })
+
   it("does not read accessors or properties beyond the detail cap", async () => {
     const getter = vi.fn(() => { throw new Error("must not be read") })
     const details: Record<string, string | number> = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`key${i}`, i]))
