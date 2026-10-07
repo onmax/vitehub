@@ -76,22 +76,30 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
     throw error;
   }
   let closed = false;
+  let healthError: Error | undefined;
+  const inspectHealth = async (): Promise<void> => {
+    if (closed || healthError) return;
+    const localEvents = await readFile(join(path, "memory.events.local"), "utf8");
+    const localOom = Number(/^oom (\d+)/m.exec(localEvents)?.[1] ?? 0);
+    if (localOom > 0) {
+      const events = await readFile(join(path, "memory.events"), "utf8");
+      const kills = Number(/^oom_kill (\d+)/m.exec(events)?.[1] ?? 0);
+      const peak = await readFile(join(path, "memory.peak"), "utf8")
+        .then(contents => contents.trim())
+        .catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? "unavailable" : Promise.reject(error));
+      healthError = diagnostics.BOX_R0158({ message: `Box memory limit exceeded: local allocation OOM recorded; limit=${resources.memoryMaxBytes} bytes, peak=${peak} bytes, local_oom=${localOom}, observed_oom_kill=${kills}. Kill count does not identify the OOM cause and may exclude descendants on memory_localevents mounts. Open a new session after reducing the workload or changing its budget.` });
+      await writeFile(join(path, "cgroup.kill"), "1");
+    }
+  };
+  const monitor = setInterval(() => {
+    void inspectHealth().catch(error => { healthError = error instanceof Error ? error : new Error(String(error)); });
+  }, 25);
+  monitor.unref?.();
   return {
     async assertHealthy() {
       if (closed) throw diagnostics.BOX_R0157({ message: "Box resource group is closed." });
-      const localEvents = await readFile(join(path, "memory.events.local"), "utf8");
-      const localOom = Number(/^oom (\d+)/m.exec(localEvents)?.[1] ?? 0);
-      // A local allocation OOM identifies this group's exhausted budget, even
-      // without a kill. Kill counters cannot establish the OOM domain and may
-      // include unrelated host/ancestor kills. Do not use them for attribution.
-      if (localOom > 0) {
-        const events = await readFile(join(path, "memory.events"), "utf8");
-        const kills = Number(/^oom_kill (\d+)/m.exec(events)?.[1] ?? 0);
-        const peak = await readFile(join(path, "memory.peak"), "utf8")
-          .then(contents => contents.trim())
-          .catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? "unavailable" : Promise.reject(error));
-        throw diagnostics.BOX_R0158({ message: `Box memory limit exceeded: local allocation OOM recorded; limit=${resources.memoryMaxBytes} bytes, peak=${peak} bytes, local_oom=${localOom}, observed_oom_kill=${kills}. Kill count does not identify the OOM cause and may exclude descendants on memory_localevents mounts. Open a new session after reducing the workload or changing its budget.` });
-      }
+      await inspectHealth();
+      if (healthError) throw healthError;
     },
     spawn(command: string, options: SpawnOptionsWithoutStdio) {
       // Join the cgroup before starting the command. Startup hooks are restored only
@@ -113,21 +121,24 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
     },
     async close() {
       if (closed) return;
+      clearInterval(monitor);
       await writeFile(join(path, "cgroup.kill"), "1");
-      // A killed process can remain in the group until the kernel finishes exit.
-      for (let attempt = 0; ; attempt++) {
-        try {
-          await removeDescendantCgroups(path);
-          await rmdir(path);
-          closed = true;
-          return;
-        } catch (error) {
-          if (!(error instanceof Error) || !("code" in error) || error.code !== "EBUSY" || attempt === 39) throw error;
-          await delay(25);
-        }
-      }
+      // Wait for all descendants to exit before removing nested cgroups.
+      await waitForCgroupEmpty(path);
+      await removeDescendantCgroups(path);
+      await rmdir(path);
+      closed = true;
     },
   };
+}
+
+async function waitForCgroupEmpty(path: string): Promise<void> {
+  while (true) {
+    const events = await readFile(join(path, "cgroup.events"), "utf8");
+    const populated = /^populated (\d+)/m.exec(events)?.[1];
+    if (populated === undefined || populated === "0") return;
+    await delay(25);
+  }
 }
 
 async function removeDescendantCgroups(path: string): Promise<void> {
