@@ -20,7 +20,7 @@ Node process, use the local provider in [Hosts](/docs/browser/hosts).
 ::tutorial-step{title="Install"}
 ## Install
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub h3
 pnpm add -D vite
 ```
@@ -86,7 +86,7 @@ The generated Browser registry infers each Definition's input type. `runBrowser(
 
 Start Vite and send a URL to the route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl -X POST http://localhost:5173/api/page-html \
   -H 'content-type: application/json' \

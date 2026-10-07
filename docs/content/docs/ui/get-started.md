@@ -22,7 +22,7 @@ application that uses Vite, follow [Installation](/docs/ui/installation) first.
 
 Install the UI package and its Nuxt peers:
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue @iconify-json/lucide @iconify-json/ph
 ```
 
@@ -80,7 +80,7 @@ container. The component does not fetch data or choose an Agent route.
 
 Start Nuxt and open the page:
 
-```bash [Terminal]
+```bash [commands/dev]
 pnpm nuxt dev
 ```
 
@@ -91,7 +91,7 @@ live edge.
 Replace the fixture with the reactive values from `useChat()` when you are
 ready to send messages:
 
-```bash [Terminal]
+```bash [commands/install-ai-sdk]
 pnpm add @ai-sdk/vue
 ```
 

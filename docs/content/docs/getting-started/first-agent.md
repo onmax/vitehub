@@ -24,7 +24,7 @@ You need Node.js 24.15 or newer and `pnpm`. This project runs completely offline
 
 Create an empty ESM project, then install ViteHub with Vite and H3.
 
-```bash [Terminal]
+```bash [commands/setup]
 mkdir vitehub-agent-start
 cd vitehub-agent-start
 pnpm init
@@ -149,14 +149,14 @@ request.
 Build the project and start the generated Node.js server. The server listens on
 port `5173` unless you set `PORT`.
 
-```bash [Terminal]
+```bash [commands/build]
 pnpm vite build
 node dist/server.js
 ```
 
 From another terminal, send a name to the H3 route.
 
-```bash [Terminal]
+```bash [commands/request]
 curl -X POST http://localhost:5173/greet \
   -H 'content-type: application/json' \
   -d '{"name":"Ada"}'
@@ -164,7 +164,7 @@ curl -X POST http://localhost:5173/greet \
 
 The Agent returns the greeting:
 
-```json [Response]
+```json [output/response.json]
 {"text":"Hello, Ada. This result came from an Agent Invocation."}
 ```
 

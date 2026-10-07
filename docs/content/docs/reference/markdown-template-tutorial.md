@@ -20,7 +20,7 @@ network I/O, so this first example runs without a Vite server.
 ::tutorial-step{title="Install the package"}
 ## Install the package
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/markdown-template
 ```
 
@@ -66,7 +66,7 @@ the trusted `notes` fragment.
 
 Run the module with your project's TypeScript runner. The output is Markdown:
 
-```md [Output]
+```md [output/result.md]
 # Release 0.0.4
 
 Status: ready

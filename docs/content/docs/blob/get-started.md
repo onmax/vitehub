@@ -19,7 +19,7 @@ provider for production.
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/blob h3
 pnpm add -D @vite-hub/cli vite
 ```
@@ -69,14 +69,14 @@ content type, size, and upload timestamp.
 
 Start Vite and send one request:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl -X POST http://localhost:5173/api/files
 ```
 
 The response contains metadata for `hello.txt`:
 
-```json [Response]
+```json [output/response.json]
 {
   "pathname": "hello.txt",
   "contentType": "text/plain",

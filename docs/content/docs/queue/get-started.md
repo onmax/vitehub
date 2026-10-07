@@ -16,7 +16,7 @@ Queue has hosted providers only. This tutorial uses Cloudflare Queues. Use Verce
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/queue h3
 pnpm add -D @vite-hub/cli vite
 ```
@@ -69,7 +69,7 @@ export default defineEventHandler(async (event) => {
 
 The response is an acceptance signal:
 
-```json [Response]
+```json [output/response.json]
 { "status": "queued", "messageId": "..." }
 ```
 
@@ -82,7 +82,7 @@ The response is an acceptance signal:
 
 Build the app and inspect the generated definition before deploying:
 
-```bash [Terminal]
+```bash [commands/inspect]
 pnpm vite build
 pnpm vitehub inspect definitions --kind queue
 ```

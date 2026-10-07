@@ -1,9 +1,22 @@
-import { readFile } from "node:fs/promises"
+import { readFile, readdir } from "node:fs/promises"
 import { resolve } from "node:path"
 
 import { describe, expect, it } from "vitest"
 
 const docsRoot = resolve(import.meta.dirname, "..")
+
+async function markdownFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true })
+  const files: string[] = []
+
+  for (const entry of entries) {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) files.push(...await markdownFiles(path))
+    else if (entry.isFile() && path.endsWith(".md")) files.push(path)
+  }
+
+  return files
+}
 
 function labels(source: string) {
   return [...source.matchAll(/^```[^\n]*\[([^\]]+)\]/gm)].map(match => match[1])
@@ -37,5 +50,18 @@ describe("multi-file tutorial examples", () => {
     ]))
     expect(source).toContain("a separate package project, not another server route")
     expect(source).toContain("This JSON is the response body, not a file")
+  })
+
+  it("keeps command and output snippets in semantic virtual folders", async () => {
+    const tutorials = await markdownFiles(resolve(docsRoot, "content/docs"))
+
+    for (const path of tutorials) {
+      const source = await readFile(path, "utf8")
+      if (!source.includes("layout: tutorial")) continue
+
+      const virtualLabels = labels(source).filter(label => label.startsWith("commands/") || label.startsWith("output/"))
+      expect(labels(source).filter(label => /^(Terminal|Response|Output)(?::|$)/.test(label)), path).toEqual([])
+      expect(new Set(virtualLabels).size, path).toBe(virtualLabels.length)
+    }
   })
 })

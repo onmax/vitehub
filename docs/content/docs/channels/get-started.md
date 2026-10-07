@@ -22,7 +22,7 @@ You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app.
 
 Install the ViteHub distribution and the Channels integration:
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub h3 vite
 ```
 
@@ -87,14 +87,14 @@ export default defineEventHandler(async () => {
 
 Start the dev server and send one request:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl -X POST http://localhost:5173/api/build-finished
 ```
 
 The response includes a generated delivery id and the connector id:
 
-```json [Response]
+```json [output/response.json]
 {
   "channel": "alerts",
   "connector": "log",

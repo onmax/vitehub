@@ -23,7 +23,7 @@ Cloudflare Artifacts, Vercel Blob, and GitHub stores.
 ::tutorial-step{title="Install"}
 ## Install
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/workspace h3
 pnpm add -D vite
 ```
@@ -100,7 +100,7 @@ export default defineEventHandler(async (event) => {
 
 Start Vite and call the read route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl http://localhost:5173/api/docs
 ```
@@ -108,7 +108,7 @@ curl http://localhost:5173/api/docs
 The response lists Markdown files from the `docs` mount. Send a draft to the
 write route when you need mutation:
 
-```bash [Terminal]
+```bash [commands/write]
 curl -X POST http://localhost:5173/api/drafts \
   -H 'content-type: application/json' \
   -d '{"text":"# Draft"}'

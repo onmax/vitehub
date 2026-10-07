@@ -21,7 +21,7 @@ choosing a hosted database.
 ::tutorial-step{title="Install"}
 ## Install
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/database drizzle-orm
 pnpm add -D @vite-hub/cli drizzle-kit vite
 ```
@@ -63,7 +63,7 @@ export default defineDatabase({
 
 Generate and apply the first migration:
 
-```bash [Terminal]
+```bash [commands/generate]
 pnpm vitehub db generate
 pnpm vitehub db migrate
 ```
@@ -88,7 +88,7 @@ export default defineEventHandler(() => {
 
 The Database integration adds the `db` commands to the ViteHub CLI. `vite-hub` includes the CLI. Direct package installations need `@vite-hub/cli`, as shown in the quick start. Run the commands from the project root:
 
-```bash [Terminal]
+```bash [commands/migrate]
 pnpm vitehub db generate
 pnpm vitehub db migrate
 ```
@@ -106,7 +106,7 @@ Migrations go to a `migrations` directory next to each Database Definition file.
 
 Start Vite and call the route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl http://localhost:5173/api/notes
 ```

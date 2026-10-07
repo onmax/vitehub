@@ -21,7 +21,7 @@ an account or credential.
 
 Create an empty ESM project and install ViteHub with Vite and H3.
 
-```bash [Terminal]
+```bash [commands/setup]
 mkdir vitehub-kv-start
 cd vitehub-kv-start
 pnpm init
@@ -107,14 +107,14 @@ createServer(toNodeHandler(app)).listen(port, () => {
 Build and start the generated Node.js entry. The server listens on port `5173`
 unless you set `PORT`.
 
-```bash [Terminal]
+```bash [commands/build]
 pnpm vite build
 node dist/server.js
 ```
 
 Send a value from another terminal.
 
-```bash [Terminal]
+```bash [commands/request]
 curl -X POST http://localhost:5173/settings \
   -H 'content-type: application/json' \
   -d '{"theme":"system"}'
@@ -122,7 +122,7 @@ curl -X POST http://localhost:5173/settings \
 
 The response proves that the route wrote and read through ViteHub:
 
-```json [Response]
+```json [output/response.json]
 {"settings":{"theme":"system"}}
 ```
 

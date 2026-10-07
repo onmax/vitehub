@@ -22,7 +22,7 @@ database before deploying more than one process.
 
 `comark-content` is an optional peer dependency of `vite-hub`. Install it with the framework package.
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub comark-content h3
 pnpm add -D vite
 ```
@@ -101,7 +101,7 @@ await content.search('runtime', { instances: ['docs'] })
 
 Start Vite and read the generated Content route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl http://localhost:5173/api/guide
 ```

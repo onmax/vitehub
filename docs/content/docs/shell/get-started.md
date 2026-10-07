@@ -22,7 +22,7 @@ when you need provider-managed isolation.
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/shell @vite-hub/workspace h3
 pnpm add -D vite
 ```
@@ -97,14 +97,14 @@ the mounted filesystem even though the route owns a writable Workspace.
 
 Start Vite and call the route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl http://localhost:5173/api/search-docs
 ```
 
 The response contains a successful observation:
 
-```json [Response]
+```json [output/response.json]
 {
   "event": "command_finished",
   "exitCode": 0,

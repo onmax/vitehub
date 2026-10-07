@@ -20,7 +20,7 @@ can check. The final request sends a real message.
 ::tutorial-step{title="Install the email dependencies"}
 ## Install the email dependencies
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub
 ```
 
@@ -58,7 +58,7 @@ The stable driver name selects a ViteHub-owned provider implementation. The Env 
 
 Set `RESEND_API_KEY` in the server process:
 
-```bash [Terminal]
+```bash [commands/secret]
 export RESEND_API_KEY='re_...'
 ```
 
@@ -92,7 +92,7 @@ export default defineEventHandler(async () => {
 
 Start the application with its normal development command and send a `POST` request to `/api/welcome`. A successful response has this shape:
 
-```json [Response]
+```json [output/response.json]
 {
   "id": "<provider-message-id>",
   "driver": "resend"

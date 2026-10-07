@@ -29,7 +29,7 @@ icon: i-lucide-package
 
 Install the package and its peers:
 
-```bash [Terminal]
+```bash [commands/install-nuxt]
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue @iconify-json/lucide @iconify-json/ph
 ```
 
@@ -53,7 +53,7 @@ For explicit imports, each public component also has a kebab-case entry such as 
 
 Install the package, its peers, and the Vite tooling:
 
-```bash [Terminal]
+```bash [commands/install-vite]
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue
 pnpm add -D vite @vitejs/plugin-vue
 ```

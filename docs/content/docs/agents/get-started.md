@@ -20,7 +20,7 @@ example runs offline and needs no provider key.
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub h3
 pnpm add -D vite
 ```
@@ -80,7 +80,7 @@ export default defineEventHandler(async (event) => {
 
 Start Vite and send one request:
 
-```bash [Terminal: request]
+```bash [commands/request]
 pnpm vite dev
 curl -X POST http://localhost:5173/api/greeting \\
   -H 'content-type: application/json' \\
@@ -90,7 +90,7 @@ curl -X POST http://localhost:5173/api/greeting \\
 The response is `{ "text": "Hello, Ada!" }`. Build and inspect the discovered
 Agent before deploying:
 
-```bash [Terminal: inspect]
+```bash [commands/inspect]
 pnpm vite build
 pnpm vitehub inspect definitions --kind agent
 ```

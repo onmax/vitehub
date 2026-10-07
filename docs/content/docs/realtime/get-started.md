@@ -13,7 +13,7 @@ icon: i-lucide-rocket
 
 Install the ViteHub distribution in a Vue or Nuxt application.
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub @tiptap/vue-3
 ```
 

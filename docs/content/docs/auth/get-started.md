@@ -20,7 +20,7 @@ before relying on sessions across restarts or replicas.
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/auth @vite-hub/runtime better-auth h3
 pnpm add -D vite
 ```
@@ -62,7 +62,7 @@ ViteHub discovers the definition and mounts Better Auth at `/api/auth/**`.
 Start the dev server. Sign up with an email and password, saving the session
 cookie for the second request:
 
-```bash [Terminal]
+```bash [commands/sign-up]
 pnpm vite dev
 curl -i -c cookies.txt -X POST http://localhost:5173/api/auth/sign-up/email \
   -H 'content-type: application/json' \
@@ -72,7 +72,7 @@ curl -i -c cookies.txt -X POST http://localhost:5173/api/auth/sign-up/email \
 A successful response is `200` and includes a user, a session, and a
 `set-cookie` header. Read the session back with the saved cookie:
 
-```bash [Terminal]
+```bash [commands/session]
 curl -i -b cookies.txt http://localhost:5173/api/auth/get-session
 ```
 

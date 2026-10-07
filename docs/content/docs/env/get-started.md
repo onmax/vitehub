@@ -21,7 +21,7 @@ read them only from server code.
 ::tutorial-step{title="Install"}
 ## Install
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/env @vite-hub/runtime
 pnpm add -D vite
 ```
@@ -64,7 +64,7 @@ console.log(publicEnv.appName)
 
 Build the app to generate the aliased module and its types:
 
-```bash [Terminal]
+```bash [commands/build]
 pnpm vite build
 ```
 

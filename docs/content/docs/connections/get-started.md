@@ -23,7 +23,7 @@ Vite server app. The app must have a Database integration and a stable
 
 Install the ViteHub distribution:
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub
 ```
 
@@ -48,7 +48,7 @@ export default defineConfig({
 })
 ```
 
-```bash [Terminal]
+```bash [commands/secret]
 # 32 random bytes, base64url
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
@@ -93,7 +93,7 @@ export default defineConnection({
 
 Open the Console, select **Connections**, and select **Connect**. You can also print a single-use connect URL from the CLI while the development server runs:
 
-```bash [Terminal: connect]
+```bash [commands/connect]
 pnpm vite dev
 pnpm vitehub connections connect google
 pnpm vitehub connections status google --json
@@ -118,11 +118,11 @@ export default defineEventHandler(async (event) => {
 Request the route and verify that
 the provider returns a `labels` array:
 
-```bash [Terminal]
+```bash [commands/request]
 curl http://localhost:5173/api/labels
 ```
 
-```json [Response]
+```json [output/response.json]
 { "labels": [] }
 ```
 

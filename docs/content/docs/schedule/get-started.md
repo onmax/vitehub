@@ -12,7 +12,7 @@ A Static Schedule is part of your build. The host triggers it at the declared cr
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/schedule
 pnpm add -D @vite-hub/cli vite
 ```
@@ -52,14 +52,14 @@ Static Schedule cron expressions use UTC. `scheduledAt` is the occurrence time c
 ::tutorial-step{title="Build and inspect"}
 ## Build and inspect
 
-```bash [Terminal]
+```bash [commands/inspect]
 pnpm vite build
 pnpm vitehub inspect definitions --kind schedule
 ```
 
 The generated output contains the schedule name and provider wiring. Because `manual: true` is set, run the definition without waiting for 08:00:
 
-```bash [Terminal]
+```bash [commands/dev]
 # Terminal 1
 pnpm vite dev
 

@@ -21,7 +21,7 @@ you deploy multiple instances.
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub
 ```
 
@@ -63,7 +63,7 @@ export default defineEventHandler(async (event) => {
 
 Start the dev server and call the route three times from the same client:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl -i -X POST http://localhost:5173/api/image-upload
 curl -i -X POST http://localhost:5173/api/image-upload
@@ -78,7 +78,7 @@ client is the correct budget boundary.
 
 Inspect the generated policy before choosing a hosted provider:
 
-```bash [Terminal]
+```bash [commands/inspect]
 pnpm vite build
 pnpm vitehub inspect definitions --kind rate-limit
 ```

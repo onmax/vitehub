@@ -21,7 +21,7 @@ Sandbox when untrusted code needs provider-managed isolation.
 ::tutorial-step{title="Install the Box package"}
 ## Install the Box package
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add @vite-hub/box
 ```
 
@@ -78,14 +78,14 @@ state when the command fails as well as when it succeeds.
 
 Start the server and call the route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl http://localhost:5173/api/box-check
 ```
 
 The response contains:
 
-```json [Response]
+```json [output/response.json]
 {
   "runtime": "trusted-host",
   "output": "Box is ready\n"

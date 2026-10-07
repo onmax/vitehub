@@ -20,7 +20,7 @@ persist or mutate a file tree.
 ::tutorial-step{title="Install"}
 ## Install
 
-```bash [Terminal]
+```bash [commands/install]
 pnpm add vite-hub h3
 pnpm add -D vite
 ```
@@ -80,7 +80,7 @@ export default defineEventHandler(async () => {
 
 Start Vite and call the route:
 
-```bash [Terminal]
+```bash [commands/request]
 pnpm vite dev
 curl http://localhost:5173/api/docs
 ```
