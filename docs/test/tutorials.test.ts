@@ -88,6 +88,16 @@ describe("documentation tutorials", () => {
     expect(source).not.toContain("if (registered.value) return")
   })
 
+  it("keeps the code rail breakpoint aligned with the inline code fallback", async () => {
+    const tutorial = await readFile(resolve(docsRoot, "app/components/DocsTutorial.vue"), "utf8")
+    const step = await readFile(resolve(docsRoot, "app/components/TutorialStep.vue"), "utf8")
+
+    expect(tutorial).toContain("xl:grid-cols-[minmax(0,1fr)_minmax(20rem,42%)]")
+    expect(tutorial).toContain("xl:!w-full")
+    expect(step).toContain("@media (min-width: 80rem)")
+    expect(step).toContain("@media (max-width: 79.99rem)")
+  })
+
   it("keeps the Agents editorial tutorial cold-rendered", async () => {
     const source = await readFile(resolve(docsRoot, "content/blog/2.agents.md"), "utf8")
     expect(source).not.toContain("::code-tree-intersection")
