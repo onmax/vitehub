@@ -30,6 +30,7 @@ export interface GitHubInboxSummary {
   repository: string; number: number; head?: string; generation: number; handled: number; status: Snapshot['status']; reasons: string[]
   wait?: PullRequestWait
   dirty: boolean; attempts: number; nextAt: number; lastResult?: string; progressBudget?: ProgressBudget
+  stackBlocked?: boolean; stackParent?: { number: number; state: string }
 }
 export type Claim = { token: string; generation: number; snapshot: Snapshot }
 export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number }
@@ -101,6 +102,7 @@ const summarySchema = v.object({
   repository: v.string(), number: v.number(), head: v.optional(v.string()), generation: v.number(), handled: v.number(),
   status: v.picklist(['ready', 'working', 'waiting', 'terminal']), reasons: v.array(v.string()), wait: v.optional(v.unknown()),
   dirty: v.boolean(), attempts: v.number(), nextAt: v.number(), lastResult: v.optional(v.string()), progressBudget: v.optional(v.unknown()),
+  stackBlocked: v.optional(v.boolean()), stackParent: v.optional(v.object({ number: v.number(), state: v.string() })),
 })
 function parseSummary(value: unknown): GitHubInboxSummary {
   const { wait, progressBudget, ...summary } = v.parse(summarySchema, value)
@@ -549,7 +551,7 @@ export class PullRequestInbox {
       return await finish(numbers.size ? undefined : 'no matching PR head')
     })
   }
-  async claim(limit: number): Promise<Claim[]> {
+  async claim(limit: number, options: { only?: (snapshot: Snapshot) => boolean; skip?: (snapshot: Snapshot) => boolean; includeBlocked?: boolean } = {}): Promise<Claim[]> {
     if (!this.repositories.length || limit < 1) return []
     return await this.transaction(async tx => {
       const now = this.clock(), claims: Claim[] = [], t = this.tables
@@ -557,8 +559,8 @@ export class PullRequestInbox {
       // Columns select candidates; only these snapshots are parsed.
       const candidates = await tx.execute(`SELECT repository, number, base_ref FROM ${t.pullRequests}
         WHERE scope=? AND ${repositories.sql} AND waiting=0 AND status<>'terminal' AND generation>handled AND next_at<=?
-          AND (lease IS NULL OR lease_until<=?) AND progress_blocked=0
-        ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now])
+          AND (lease IS NULL OR lease_until<=?) AND (progress_blocked=0 OR ?=1)
+        ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now, options.includeBlocked ? 1 : 0])
       for (const candidate of candidates) {
         if (claims.length >= limit) break
         const repository = stringValue(candidate.repository), number = Number(candidate.number)
@@ -568,6 +570,8 @@ export class PullRequestInbox {
         const s = await this.getIn(tx, repository, number)
         if (!s) continue
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
+        if (options.only && !options.only(s)) continue
+        if (options.skip && options.skip(s)) continue
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
@@ -700,12 +704,12 @@ export class PullRequestInbox {
     }
   }
   /** Waiting PRs that received events since the host last evaluated their wait. */
-  async waitsToEvaluate(includeExternal = false): Promise<Snapshot[]> {
+  async waitsToEvaluate(includeExternal = false, includeIdle = false): Promise<Snapshot[]> {
     if (!this.repositories.length) return []
     const repositories = this.repositoryFilter()
     const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
-      AND waiting=1 AND status<>'terminal' AND lease IS NULL ${includeExternal ? '' : 'AND generation>handled'} ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
-    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && (snapshot.wait?.wake || snapshot.wait?.retryAt !== undefined))
+      AND waiting=1 AND status<>'terminal' AND lease IS NULL ${includeExternal || includeIdle ? '' : 'AND generation>handled'} ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && (snapshot.wait?.wake || snapshot.wait?.retryAt !== undefined) || includeIdle && !snapshot.wait?.wake)
   }
   /** Records that the host evaluated a wait's new events and the wait still holds. */
   async acknowledgeWait(observed: Snapshot): Promise<boolean> {
@@ -749,8 +753,15 @@ export class PullRequestInbox {
   async summary(): Promise<GitHubInboxSummary[]> {
     if (!this.repositories.length) return []
     const repositories = this.repositoryFilter()
-    const rows = await this.read(`SELECT summary FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
-    return rows.map(row => parseSummary(JSON.parse(stringValue(row.summary))))
+    const rows = await this.read(`SELECT p.summary, (SELECT parent.number FROM ${this.tables.pullRequests} parent
+      WHERE parent.scope=p.scope AND parent.repository=p.repository AND parent.number<>p.number
+        AND parent.state='open' AND parent.head_ref=p.base_ref ORDER BY parent.number LIMIT 1) AS stack_parent
+      FROM ${this.tables.pullRequests} p WHERE p.scope=? AND p.${repositories.sql} ORDER BY p.repository, p.number`, [this.scope, ...repositories.args])
+    return rows.map(row => {
+      const summary = parseSummary(JSON.parse(stringValue(row.summary)))
+      if (summary.status !== 'ready' || !summary.dirty || row.stack_parent === null || row.stack_parent === undefined) return summary
+      return { ...summary, stackBlocked: true, stackParent: { number: Number(row.stack_parent), state: 'open' } }
+    })
   }
   /** The open, unleased PR that a reconciliation probe checked longest ago, with that probe time. */
   async nextProbe(): Promise<{ repository: string; number: number; probedAt: number } | undefined> {

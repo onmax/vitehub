@@ -38,6 +38,7 @@ import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
 import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
+import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 
 export interface BabysitterRuntimeOptions {
@@ -135,6 +136,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const schedulerError = (name: string, error: unknown, properties: Record<string, unknown> = {}) =>
     options.error?.(name, error, properties);
   const active = new Set<string>();
+  // Failed Actions waits are periodically woken without requiring a webhook.
+  const ciRecoveryLane = new Set<string>();
+  const laneKey = (snapshot: Pick<Snapshot, "repository" | "number">) => `${snapshot.repository}#${snapshot.number}`;
   const execFileAsync = promisify(execFile);
   async function readRest(path: string, projection = ".[]", signal?: AbortSignal) {
     const repository = path.split("/").slice(1, 3).join("/");
@@ -397,6 +401,21 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return { ...createCheckWait(observed, waitPolicy), kind: "external" as const, reason, wake };
   }
 
+  async function recoverFailedCiWaits() {
+    for (const snapshot of await pullRequestInbox.waitsToEvaluate(false, true)) {
+      if (snapshot.generation > snapshot.handled || !hasFailedActions(snapshot)) continue;
+      const head = snapshot.pr?.head?.sha;
+      if (!head) continue;
+      const recoveryKey = `ci-recovery-next:${snapshot.repository}#${snapshot.number}:${head}`;
+      if ((await pullRequestInbox.metaNumber(recoveryKey) ?? 0) > Date.now()) continue;
+      await pullRequestInbox.setMeta(recoveryKey, Date.now() + 10 * 60_000);
+      if (await pullRequestInbox.wake(snapshot, `ci-recovery:${head}`)) {
+        ciRecoveryLane.add(laneKey(snapshot));
+        schedulerEvent("babysitter.ci.recovery.woken", { repository: snapshot.repository, pull_request: snapshot.number, head_sha: head });
+      }
+    }
+  }
+
   /** Wakes a parked PR only when its new events need a model pass or a direct merge. */
   async function evaluateWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(true)) {
@@ -435,7 +454,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       const parent = parents.find(value => isRuntimeRecord(value) && String(value.state).toLowerCase() === "open" && Number.isSafeInteger(value.number));
       return isRuntimeRecord(parent) && hasRuntimeType(parent.number, "number") ? { parent: parent.number } : undefined;
     }
-    await github.command(["api", "-X", "PATCH", `repos/${snapshot.repository}/pulls/${snapshot.number}`, "-f", `base=${to}`], { repository: snapshot.repository, timeout: 60_000 });
+    try {
+      await github.command(["api", "-X", "PATCH", `repos/${snapshot.repository}/pulls/${snapshot.number}`, "-f", `base=${to}`], { repository: snapshot.repository, timeout: 60_000 });
+    } catch (error) {
+      // A stale stack snapshot can race a webhook or another worker. GitHub
+      // may reject a redundant retarget even though the desired base is live.
+      const [current] = await readRest(`repos/${snapshot.repository}/pulls/${snapshot.number}`, ".");
+      const currentBase = isRuntimeRecord(current) && isRuntimeRecord(current.base) ? current.base.ref : undefined;
+      if (currentBase !== to) throw error;
+    }
     return { from: base, to };
   }
 
@@ -514,6 +541,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // Recover leases that expired while the host was stopped before claiming work.
     await pullRequestInbox.recoverLeases();
     try {
+      if ((await pullRequestInbox.metaNumber("idle-wait-sweep-next") ?? 0) <= Date.now()) {
+        await pullRequestInbox.setMeta("idle-wait-sweep-next", Date.now() + 10 * 60_000);
+        await recoverFailedCiWaits();
+      }
       await evaluateWaits();
     } catch (error) {
       schedulerError("babysitter.wait.evaluate.failed", error);
@@ -527,7 +558,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.
-    const jobs = await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size));
+    const lane = ciRecoveryLane.size
+      ? await pullRequestInbox.claim(5, { only: snapshot => ciRecoveryLane.has(laneKey(snapshot)), includeBlocked: true })
+      : [];
+    for (const claim of lane) ciRecoveryLane.delete(laneKey(claim.snapshot));
+    const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size - lane.length))];
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {
@@ -639,6 +674,38 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             readJson: (path, projection) => readRest(path, projection, passSignal),
             readLog: async (path, repository) => (await github.command(["api", path], { repository, timeout: 60_000, signal: passSignal })).stdout,
           }))) { await pullRequestInbox.release(inboxClaim); return; }
+          const ciRecovery = await rerunFailedActions(
+            pullRequestInbox,
+            inboxClaim,
+            (args, request) => github.command(args, { ...request, signal: passSignal }),
+          );
+          if (ciRecovery?.state === "rerun") {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: `Automatically reran failed GitHub Actions run${ciRecovery.runs.length === 1 ? "" : "s"} ${ciRecovery.runs.map(run => run.runId).join(", ")}; waiting for the new check result.`,
+              wait: createCheckWait(inboxClaim.snapshot, waitPolicy),
+            });
+            schedulerEvent("babysitter.ci.rerun", { ...owner, runs: ciRecovery.runs.map(run => run.runId) });
+            return;
+          }
+          if (ciRecovery?.state === "blocked") {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: `Automatic GitHub Actions rerun is blocked: ${ciRecovery.reason}`,
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason: ciRecovery.reason },
+            });
+            schedulerEvent("babysitter.ci.rerun.blocked", { ...owner, reason: ciRecovery.reason });
+            return;
+          }
+          if (ciRecovery?.state === "waiting") {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: `Automatic GitHub Actions rerun already attempted; waiting for the new check result${ciRecovery.reason ? `: ${ciRecovery.reason}` : "."}`,
+              wait: createCheckWait(inboxClaim.snapshot, waitPolicy),
+            });
+            schedulerEvent("babysitter.ci.rerun.waiting", { ...owner, reason: ciRecovery.reason });
+            return;
+          }
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
           await github.withPullRequestCheckout(

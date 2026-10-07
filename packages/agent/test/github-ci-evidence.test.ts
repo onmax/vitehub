@@ -2,6 +2,8 @@ import { it, afterEach } from 'vitest'
 import assert from 'node:assert/strict'
 import { PullRequestInbox, type GitHubEvidence } from '../src/server/github-inbox.ts'
 import { diagnosticExcerpt, hydrateFailedCiEvidence } from '../src/server/github-inbox/ci-evidence.ts'
+import { rerunFailedActions } from '../src/presets/babysitter/ci-recovery.ts'
+import type { Claim } from '../src/server/github-inbox.ts'
 const repository = 'vite-hub/vitehub'
 const pr = { number: 7, state: 'open', user: { login: 'onmax' }, head: { sha: 'head', ref: 'fix' }, base: { ref: 'main' } }
 const check = (patch: GitHubEvidence = {}) => ({ id: 11, name: 'types', app: { slug: 'github-actions' }, head_sha: 'head', status: 'completed', conclusion: 'failure', completed_at: '2026-09-13T10:00:00Z', html_url: `https://github.com/${repository}/actions/runs/1/job/11`, ...patch })
@@ -124,4 +126,29 @@ it('keeps the diagnostic anchor before oversized trailing context', () => {
  assert.match(result.excerpt, /Error: actual failure/)
  assert.ok(result.excerpt.length <= 100)
  assert.deepEqual(result.partialLines, [2])
+})
+
+it('reruns each failed Actions run once per PR head and then waits for evidence', async () => {
+ const metadata = new Map<string, unknown>(); const commands: string[][] = []
+ const claim = { snapshot: { repository, pr: { head: { sha: 'head' } }, checks: {
+   first: check({ id: 1, html_url: `https://github.com/${repository}/actions/runs/41/job/11` }),
+   duplicate: check({ id: 2, html_url: `https://github.com/${repository}/actions/runs/41/job/12` }),
+ } } } as unknown as Claim
+ const inbox = { meta: async (key: string) => metadata.get(key), setMeta: async (key: string, value: unknown) => { metadata.set(key, value) } }
+ const command = async (args: string[]) => { commands.push(args); return { stdout: '', stderr: '' } }
+ const first = await rerunFailedActions(inbox, claim, command, 1_000)
+ assert.equal(first?.state, 'rerun'); assert.deepEqual(commands, [['api', '-X', 'POST', `repos/${repository}/actions/runs/41/rerun-failed-jobs`]])
+ const second = await rerunFailedActions(inbox, claim, command, 1_001)
+ assert.equal(second?.state, 'waiting'); assert.match((second as { reason: string }).reason, /already attempted/); assert.equal(commands.length, 1)
+})
+
+it('turns Actions rerun permission failures into a durable external blocker', async () => {
+ const metadata = new Map<string, unknown>()
+ const claim = { snapshot: { repository, pr: { head: { sha: 'head' } }, checks: {
+   first: check({ html_url: `https://github.com/${repository}/actions/runs/42/job/11` }),
+ } } } as unknown as Claim
+ const inbox = { meta: async (key: string) => metadata.get(key), setMeta: async (key: string, value: unknown) => { metadata.set(key, value) } }
+ const result = await rerunFailedActions(inbox, claim, async () => { throw new Error('HTTP 403: Resource not accessible by integration') }, 1_000)
+ assert.equal(result?.state, 'blocked'); assert.match((result as { reason: string }).reason, /Actions run 42/)
+ assert.equal((([...metadata.values()][0] as { status: string }).status), 'blocked')
 })

@@ -19,6 +19,14 @@ test('GraphQL bootstrap normalizes state, author and head into a claimable snaps
   assert.equal(claim?.snapshot.pr?.head?.sha, 'a')
   assert.equal(claim?.snapshot.pr?.state, 'open')
 })
+test('summary marks dirty stacked children as blocked by their open parent', async t => {
+  const inbox = memory(t)
+  await inbox.seed(repository, pr({ number: 1, head: { sha: 'parent-sha', ref: 'parent' } }))
+  await inbox.seed(repository, pr({ number: 2, head: { sha: 'child-sha', ref: 'child' }, base: { sha: 'base', ref: 'parent' } }))
+  const child = (await inbox.summary()).find(item => item.number === 2)!
+  assert.equal(child.stackBlocked, true)
+  assert.deepEqual(child.stackParent, { number: 1, state: 'open' })
+})
 test('delivery dedupe and three comments coalesce into one claim', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr())
   for (let n = 1; n <= 3; n++) await post(inbox, String(n), 'issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: comment(n) })

@@ -168,7 +168,8 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
       const queue = await inbox.summary();
       return { ...health, repositories, queue: {
         working: queue.filter(item => item.status === "working").length,
-        ready: queue.filter(item => item.status === "ready" && item.dirty).length,
+        ready: queue.filter(item => item.status === "ready" && item.dirty && !item.stackBlocked).length,
+        stackBlocked: queue.filter(item => item.stackBlocked).length,
         waiting: queue.filter(item => item.status === "waiting").length,
       } };
     },
