@@ -89,6 +89,8 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0115",
   "AGENT_R0116",
   "AGENT_R0117",
+  "AGENT_R0118",
+  "AGENT_R0119",
   "AGENT_R0126",
   "AGENT_R0127",
   "AGENT_R0128",

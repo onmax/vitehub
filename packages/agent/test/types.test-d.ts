@@ -85,7 +85,6 @@ describe("agent public types", () => {
       toolOverrides: {
         support: {
           threads_get: {
-            outputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
             inputSchema: {
               additionalProperties: false,
               properties: { id: { type: "string" } },
@@ -96,17 +95,6 @@ describe("agent public types", () => {
         },
       },
     })
-  })
-
-  it("rejects non-object MCP input override schemas", () => {
-    mcp({ servers: { docs: false }, toolOverrides: { docs: { read: {
-      // @ts-expect-error MCP arguments require an object schema.
-      inputSchema: { type: "string" },
-    } } } })
-    mcp({ servers: { docs: false }, toolOverrides: { docs: { read: {
-      // @ts-expect-error MCP arguments require an object schema.
-      inputSchema: { type: "array" },
-    } } } })
   })
 
   it("types Connection-backed capabilities", () => {

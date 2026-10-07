@@ -40,6 +40,9 @@ export type McpServerConfig<
 
 export type McpToolFingerprints = Record<string, string>
 
+/** JSON Schema accepted for an MCP input override. Standard Schema transforms are not supported. */
+export type McpToolInputSchema = JSONSchema7 & { "~standard"?: never }
+
 /**
  * Application-owned corrections to a remote MCP tool contract.
  *
@@ -49,10 +52,8 @@ export type McpToolFingerprints = Record<string, string>
  */
 export interface McpToolOverride {
   description?: string
-  /** Object JSON Schema validates without coercing or transforming remote arguments. */
-  inputSchema?: JSONSchema7 & { type: "object", "~standard"?: never }
-  /** Extract and validate structured MCP output. MCP output contracts are objects. */
-  outputSchema?: JSONSchema7 & { type: "object", "~standard"?: never }
+  /** JSON Schema describes the arguments sent to the remote server unchanged. */
+  inputSchema?: McpToolInputSchema
   title?: string
 }
 

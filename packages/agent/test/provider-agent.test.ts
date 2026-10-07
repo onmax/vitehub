@@ -3940,7 +3940,7 @@ cli_auth_credentials_store = "keyring"
     expect(provider.respondToRequest).toHaveBeenCalledWith(threadId, "approval-1", "decline")
   })
 
-  it.each(["codex", "claude-code"] as const)("serves Capability output contracts through %s MCP boundary", async (provider) => {
+  it("serves Capability tools through the provider MCP boundary", async () => {
     const execute = vi.fn(async (input: unknown) => ({ echoed: input }))
     runtime("thread-tools", [event("turn.completed", "thread-tools", { state: "completed" }, { turnId: "turn-1" })], {
       async onSendTurn(mcp) {
@@ -3956,77 +3956,26 @@ cli_auth_credentials_store = "keyring"
           requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
         })
         await client.connect(transport)
-        expect((await client.listTools()).tools).toMatchObject([{ name: "search", outputSchema: { type: "object", required: ["echoed"] } }])
+        expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["search"])
         await expect(client.callTool({ arguments: { query: "vitehub" }, name: "search" })).resolves.toMatchObject({
-          structuredContent: { echoed: { query: "vitehub" } },
           content: [{ text: '{"echoed":{"query":"vitehub"}}', type: "text" }],
         })
         await client.close()
       },
     })
-    const adapter = createProviderAgentAdapter({ provider })
+    const adapter = createProviderAgentAdapter({ provider: "codex" })
 
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     await expect(adapter.generate(context("thread-tools", {
       tools: {
         search: {
           execute,
-          outputSchema: { type: "object", properties: { echoed: { type: "object" } }, required: ["echoed"] },
           inputSchema: { additionalProperties: false, properties: { query: { type: "string" } }, required: ["query"], type: "object" },
           name: "search",
         },
       },
     }) as never)).resolves.toMatchObject({ text: "" })
     expect(execute).toHaveBeenCalledWith({ query: "vitehub" }, expect.objectContaining({ abortSignal: expect.any(AbortSignal) }))
-  })
-
-  it.each(["codex", "claude-code"] as const)("validates ordinary and approved output contracts through %s MCP boundary", async (provider) => {
-    let toolCall!: Promise<unknown>
-    const execute = vi.fn(async () => ({ id: 42 }))
-    const policy = vi.fn(() => "require-approval" as const)
-    const outputSchema = { type: "object" as const, properties: { id: { type: "string" as const } }, required: ["id"] }
-    const tools = applyAgentToolPolicies({
-      approved: { execute, name: "approved", outputSchema, policy },
-      valid: { execute: async () => ({ id: "one" }), name: "valid", outputSchema },
-      wrongField: { execute, name: "wrongField", outputSchema },
-      primitive: { execute: async () => "one", name: "primitive", outputSchema },
-      array: { execute: async () => [{ id: "one" }], name: "array", outputSchema },
-    })!
-    runtime("thread-output-validation", [event("turn.completed", "thread-output-validation", { state: "completed" }, { turnId: "turn-1" })], {
-      async onSendTurn(mcp) {
-        const client = new McpClient({ name: "provider-test", version: "1" })
-        await client.connect(new StreamableHTTPClientTransport(new URL(mcp!.endpoint), {
-          requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
-        }))
-        expect((await client.listTools()).tools).toEqual(expect.arrayContaining([expect.objectContaining({ name: "valid", outputSchema })]))
-        await expect(client.callTool({ arguments: {}, name: "valid" })).resolves.toMatchObject({ structuredContent: { id: "one" } })
-        for (const name of ["wrongField", "primitive", "array"]) {
-          await expect(client.callTool({ arguments: {}, name })).resolves.toMatchObject({
-            content: [{ text: expect.stringContaining("output"), type: "text" }], isError: true,
-          })
-        }
-        toolCall = client.callTool({ arguments: {}, name: "approved" }).finally(() => client.close())
-        await vi.waitFor(() => expect(policy).toHaveBeenCalledOnce())
-      },
-    })
-    const invocationId = "run-thread-output-validation"
-    const approvalContext = context("thread-output-validation", { tools })
-    approvalContext.runtime = withAgentInvocationResponseOwner(approvalContext.runtime, invocationId)
-    // SAFETY: This fixture supplies the runtime context exercised by the provider adapter.
-    const output = createProviderAgentAdapter({ provider }).stream!(approvalContext as never) as AsyncIterable<unknown>
-    const stream = output[Symbol.asyncIterator]()
-    const approval = await stream.next()
-    expect(approval.value).toMatchObject({ name: "approved", type: "approval-request" })
-    // SAFETY: The preceding assertion checks the emitted approval request.
-    const approvalId = (approval.value as { id: string }).id
-    await sendAgentInvocationInput(invocationId, {
-      messages: [{ id: "approval", parts: [{ approved: true, id: approvalId, type: "approval-decision" }], role: "user" }],
-    }, { mode: "respond" })
-    await expect(toolCall).resolves.toMatchObject({
-      content: [{ text: expect.stringContaining("output"), type: "text" }], isError: true,
-    })
-    expect(execute).toHaveBeenCalledTimes(2)
-    await expect(stream.next()).resolves.toMatchObject({ value: { type: "finish" } })
   })
 
   it.each(["value", "getter", "proxy", "zod"])("handles schema %s markers through the provider MCP boundary", async (kind) => {

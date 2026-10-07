@@ -1,4 +1,3 @@
-import { Validator } from "@cfworker/json-schema"
 import { hasAgentToolStandardSchema } from "../tool-schema.ts"
 import { defineCapability } from "../capability-runtime.ts"
 import { hasRuntimeType, isRuntimeObject, isRuntimeRecord } from "./runtime-type.ts"
@@ -236,24 +235,6 @@ export function defineMcpToolCapability<
     metadata: options.metadata,
     ...(options.requires ? { requires: options.requires } : {}),
     async resolve(context) {
-      for (const [serverName, overrides] of Object.entries(options.toolOverrides ?? {})) {
-        if (!options.servers.some(server => server.name === serverName)) {
-          throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", `[vitehub] MCP tool override references unknown server "${serverName}".`)
-        }
-        for (const override of Object.values(overrides)) {
-          for (const schema of [override.inputSchema, override.outputSchema]) {
-            if (schema && hasAgentToolStandardSchema(schema)) {
-              throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool overrides require JSON Schema without transforms.")
-            }
-          }
-          if (override.inputSchema && override.inputSchema.type !== "object") {
-            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP input overrides require an object JSON Schema.")
-          }
-          if (override.outputSchema && override.outputSchema.type !== "object") {
-            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP output overrides require an object JSON Schema.")
-          }
-        }
-      }
       const tools: AgentToolSet = {}
       const clients: McpClient[] = []
       const unavailableServers = new Set<string>()
@@ -324,6 +305,27 @@ export function defineMcpToolCapability<
       }
       await publishInspection()
       if (hardFailure) throw hardFailure.reason
+      const configuredServerNames = new Set(options.servers.map(server => server.name))
+      for (const [serverName, overrides] of Object.entries(options.toolOverrides ?? {})) {
+        if (!configuredServerNames.has(serverName)) {
+          throw agentDiagnostics.AGENT_R0118({ message: `mcp({ toolOverrides }) references unknown server "${serverName}".` })
+        }
+        for (const override of Object.values(overrides)) {
+          if (override.inputSchema && hasAgentToolStandardSchema(override.inputSchema)) {
+            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool overrides require JSON Schema without transforms.")
+          }
+        }
+      }
+      for (const result of results) {
+        if (result.status !== "fulfilled" || !result.value) continue
+        const { server, serverTools } = result.value
+        const serverOverrides = options.toolOverrides?.[server.name]
+        for (const toolName of Object.keys(serverOverrides ?? {})) {
+          if (!Object.hasOwn(serverTools || {}, toolName)) {
+            throw agentDiagnostics.AGENT_R0119({ message: `mcp({ toolOverrides }) references unknown tool "${toolName}" on discovered MCP server "${server.name}".` })
+          }
+        }
+      }
       if (options.unavailableNotice && unavailableServers.size) {
         const unavailable = [...unavailableServers]
         const notice = options.unavailableNotice === true
@@ -348,12 +350,7 @@ export function defineMcpToolCapability<
       for (const result of results) {
         if (result.status !== "fulfilled" || !result.value) continue
         const { binding, metadata, server, serverTools } = result.value
-        const serverOverrides = Object.hasOwn(options.toolOverrides ?? {}, server.name) ? options.toolOverrides?.[server.name] : undefined
-        for (const toolName of Object.keys(serverOverrides ?? {})) {
-          if (!Object.hasOwn(serverTools || {}, toolName)) {
-            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", `[vitehub] MCP tool override references unknown tool "${server.name}.${toolName}".`)
-          }
-        }
+        const serverOverrides = options.toolOverrides?.[server.name]
         for (const [toolName, tool] of Object.entries(serverTools || {})) {
           // SAFETY: McpClient.tools() establishes that each discovered entry is an Agent tool definition.
           const definition = tool as AgentToolDefinition & { metadata?: Record<string, unknown> }
@@ -366,7 +363,7 @@ export function defineMcpToolCapability<
             : undefined
           tools[name] = {
             ...definition,
-            ...(override ? mcpToolOverride(override, definition) : {}),
+            ...(override ? mcpToolOverride(override) : {}),
             metadata: {
               ...definition.metadata,
               ...(binding ? { connection: { name: binding.name, operation: "fetch" } } : {}),
@@ -395,42 +392,10 @@ export function defineMcpToolCapability<
   })
 }
 
-function mcpToolOverride(override: McpToolOverride, definition: AgentToolDefinition): Partial<AgentToolDefinition> {
-  const execute = definition.execute
-  // SAFETY: The override is a draft-07 JSON Schema; the validator uses a narrower recursive schema type.
-  const validator = override.outputSchema ? new Validator(override.outputSchema as never, "7") : undefined
+function mcpToolOverride(override: McpToolOverride): Pick<AgentToolDefinition, "description" | "inputSchema" | "title"> {
   return {
     ...(override.description === undefined ? {} : { description: override.description }),
     ...(override.inputSchema === undefined ? {} : { inputSchema: override.inputSchema }),
-    ...(override.outputSchema === undefined ? {} : { outputSchema: override.outputSchema }),
     ...(override.title === undefined ? {} : { title: override.title }),
-    ...(validator && execute ? {
-      execute: async (input, options) => {
-        const result = await execute(input, options)
-        // SDK tools with an output schema already extract their structured result.
-        let output = result
-        if (!definition.outputSchema) {
-          if (!isRuntimeRecord(result) || result.isError === true) {
-            throw new ViteHubError("MCP_TOOL_OUTPUT_INVALID", "[vitehub] MCP tool did not return successful structured output.")
-          }
-          output = result.structuredContent
-          if (output == null && Array.isArray(result.content)) {
-            const text = result.content.find(part => isRuntimeRecord(part) && part.type === "text")
-            if (isRuntimeRecord(text) && hasRuntimeType(text.text, "string")) {
-              try {
-                output = JSON.parse(text.text)
-              }
-              catch {
-                throw new ViteHubError("MCP_TOOL_OUTPUT_INVALID", "[vitehub] MCP tool output is not valid JSON.")
-              }
-            }
-          }
-        }
-        if (!validator.validate(output).valid) {
-          throw new ViteHubError("MCP_TOOL_OUTPUT_INVALID", "[vitehub] MCP tool output does not match the overridden output schema.")
-        }
-        return output
-      },
-    } : {}),
   }
 }

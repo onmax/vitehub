@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import type { Mock } from "vitest"
 import type { JSONRPCMessage, MCPClient, MCPTransport } from "@ai-sdk/mcp"
-import type { AgentToolSchema } from "../src/types.ts"
+import type { McpToolInputSchema } from "../src/mcp/types.ts"
 
 const runtime = () => ({
   agentIdentity: createAgentEnvIdentity({ name: "agent" }),
@@ -188,12 +188,12 @@ describe("mcp capability", () => {
         },
       },
     })
-    const inputSchema = {
+    const inputSchema: McpToolInputSchema = {
       additionalProperties: false,
       properties: { id: { type: "string" } },
       required: ["id"],
       type: "object",
-    } satisfies AgentToolSchema
+    }
 
     const resolved = await resolveAgentCapabilities({
       capabilities: [mcp({
@@ -215,6 +215,8 @@ describe("mcp capability", () => {
       metadata: { mcpServer: "productlane", originalName: "threads_get" },
     })
     expect(resolved.tools?.mcp_productlane_threads_get?.execute).toBe(execute)
+    await expect(resolved.tools?.mcp_productlane_threads_get?.execute?.({ id: "thread-1" })).resolves.toBe("ok")
+    expect(execute).toHaveBeenCalledWith({ id: "thread-1" })
     await resolved.close()
   })
 
@@ -231,63 +233,17 @@ describe("mcp capability", () => {
     })] }, runtime(), {})).rejects.toThrow(/JSON Schema/)
   })
 
-  it("validates overridden output through the shipped MCP client", async () => {
-    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
-    const { mcp } = await import("../src/capabilities.ts")
-    let output: unknown = { id: "one" }
-    const calls: unknown[] = []
-    const transport: MCPTransport = {
-      close: vi.fn(async () => undefined),
-      start: vi.fn(async () => undefined),
-      send: vi.fn(async (message) => {
-        if (!("method" in message) || !("id" in message)) return
-        if (message.method === "tools/call") calls.push(message.params)
-        const result = message.method === "initialize"
-          ? { capabilities: { tools: {} }, protocolVersion: "2025-11-25", serverInfo: { name: "test", version: "1" } }
-          : message.method === "tools/list"
-            ? { tools: [{ name: "read", inputSchema: { type: "object", properties: {} } }] }
-            : { content: [], structuredContent: output }
-        queueMicrotask(() => transport.onmessage?.({ id: message.id, jsonrpc: "2.0", result }))
-      }),
-    }
-    const resolved = await resolveAgentCapabilities({ capabilities: [mcp({
-      servers: { docs: { transport } },
-      toolOverrides: { docs: { read: {
-        inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-        outputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
-      } } },
-    })] }, runtime(), {})
-    try {
-      await expect(resolved.tools!.mcp_docs_read!.execute!({ id: "one" })).resolves.toEqual({ id: "one" })
-      expect(calls).toEqual([{ name: "read", arguments: { id: "one" } }])
-      output = { id: 42 }
-      await expect(resolved.tools!.mcp_docs_read!.execute!({ id: "one" })).rejects.toThrow(/output/)
-    }
-    finally {
-      await resolved.close()
-    }
-    expect(transport.close).toHaveBeenCalled()
-  })
-
   it.each(["server", "tool"])("rejects unmatched %s override keys", async (kind) => {
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { mcp } = await import("../src/capabilities.ts")
     const client = createClient({ read: { execute: vi.fn() } })
-    await expect(resolveAgentCapabilities({ capabilities: [mcp({
+    const resolved = resolveAgentCapabilities({ capabilities: [mcp({
       servers: { docs: client },
       toolOverrides: { [kind === "server" ? "typo" : "docs"]: { typo: { description: "Pinned" } } },
-    })] }, runtime(), {})).rejects.toThrow(/override/i)
-  })
-
-  it.each(["string", "array", "number", "boolean", "null"])("rejects %s MCP input override roots", async (type) => {
-    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
-    const { mcp } = await import("../src/capabilities.ts")
-    const client = createClient({ read: { execute: vi.fn() } })
-    await expect(resolveAgentCapabilities({ capabilities: [mcp({
-      servers: { docs: client },
-      // SAFETY: Exercise invalid configuration from untyped callers.
-      toolOverrides: { docs: { read: { inputSchema: { type } as never } } },
-    })] }, runtime(), {})).rejects.toThrow(/input overrides require an object/)
+    })] }, runtime(), {})
+    await expect(resolved).rejects.toMatchObject({
+      code: kind === "server" ? "AGENT_R0118" : "AGENT_R0119",
+    })
   })
 
   it("allows overrides for skipped and unavailable servers", async () => {
@@ -300,32 +256,6 @@ describe("mcp capability", () => {
         offline: { read: { description: "Pinned" } },
       },
     })] }, runtime(), {})
-    await resolved.close()
-  })
-
-  it.each([
-    { structuredContent: { id: "one" }, content: [] },
-    { content: [{ type: "text", text: '{"id":"one"}' }] },
-  ])("extracts and validates overridden MCP output: %j", async (result) => {
-    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
-    const { mcp } = await import("../src/capabilities.ts")
-    const execute = vi.fn(async () => result)
-    const resolved = await resolveAgentCapabilities({ capabilities: [mcp({
-      servers: { docs: createClient({ read: { execute } }) },
-      toolOverrides: { docs: { read: { outputSchema: {
-        type: "object", properties: { id: { type: "string" } }, required: ["id"],
-      } } } },
-    })] }, runtime(), {})
-    const input = { id: "one" }
-    const options = { abortSignal: new AbortController().signal }
-    await expect(resolved.tools!.mcp_docs_read!.execute!(input, options)).resolves.toEqual({ id: "one" })
-    expect(execute).toHaveBeenCalledWith(input, options)
-    // SAFETY: Exercise a malformed response from the remote MCP boundary.
-    execute.mockResolvedValue({ structuredContent: { id: 42 }, content: [] } as never)
-    await expect(resolved.tools!.mcp_docs_read!.execute!(input)).rejects.toThrow(/output/i)
-    // SAFETY: Remote MCP errors must not be accepted as successful structured output.
-    execute.mockResolvedValue({ isError: true, structuredContent: { id: "one" }, content: [] } as never)
-    await expect(resolved.tools!.mcp_docs_read!.execute!(input)).rejects.toThrow(/output/i)
     await resolved.close()
   })
 

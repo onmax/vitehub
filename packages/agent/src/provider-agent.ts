@@ -14,8 +14,6 @@ import { createServer } from "node:http"
 import { hostname, tmpdir } from "node:os"
 import { basename, delimiter, dirname, extname, join, posix, relative, resolve } from "node:path"
 
-import { Validator } from "@cfworker/json-schema"
-
 import { isViteHubBearerSecretEqual } from "@vite-hub/internal/secret"
 import { formatRuntimeDiagnosticError, getViteHubErrorShape, normalizeExecutionAuthority, resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
@@ -1573,6 +1571,7 @@ async function validateToolInput(tool: AgentToolDefinition, input: unknown): Pro
     if (result.issues?.length) throw agentDiagnostics.AGENT_R0697({ message: `[vitehub] Invalid input for Agent tool "${tool.name}".` })
     return "value" in result ? result.value : input
   }
+  const { Validator } = await import("@cfworker/json-schema")
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
   const result = new Validator({ ...tool.inputSchema } as never, "7").validate(input)
   if (!result.valid) throw agentDiagnostics.AGENT_R0698({ message: `[vitehub] Invalid input for Agent tool "${tool.name}": ${result.errors.map(error => error.error).join("; ")}` })
@@ -1594,23 +1593,9 @@ async function validateToolInputUntilCanceled(tool: AgentToolDefinition, input: 
   }
 }
 
-function toolOutputJsonSchema(tool: AgentToolDefinition) {
-  const schema = agentToolJsonSchema(tool.outputSchema, "output")
-  // MCP only supports object output contracts. Other Agent outputs remain text.
-  return schema?.type === "object" ? schema : undefined
-}
-
-function toolResult(value: unknown, tool: AgentToolDefinition) {
+function toolResult(value: unknown) {
   const text = hasRuntimeType(value, "string") ? value : JSON.stringify(value) ?? String(value)
-  const outputSchema = toolOutputJsonSchema(tool)
-  if (outputSchema) {
-    // SAFETY: The advertised output contract is JSON Schema; the validator uses a narrower recursive schema type.
-    const result = new Validator(outputSchema as never, "7").validate(value)
-    if (!result.valid || !isRuntimeRecord(value)) {
-      throw new ViteHubError("AGENT_TOOL_OUTPUT_INVALID", `[vitehub] Invalid output for Agent tool "${tool.name}": result does not match the advertised output schema.`)
-    }
-    return { content: [{ text, type: "text" as const }], structuredContent: value }
-  }
+  // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
   return { content: [{ text, type: "text" as const }] }
 }
 
@@ -1634,8 +1619,6 @@ async function startToolServer(
       description: tool.description,
       // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
       inputSchema: toolJsonSchema(tool.inputSchema) as never,
-      // SAFETY: MCP output schemas must describe an object, as checked above.
-      outputSchema: toolOutputJsonSchema(tool) as never,
       name,
     })),
   }))
@@ -1647,7 +1630,7 @@ async function startToolServer(
       try {
         const input = await validateToolInputUntilCanceled(tool, request.params.arguments || {}, executionSignal)
         executionSignal.throwIfAborted()
-        return toolResult(await tool.execute(input, { abortSignal: executionSignal }), tool)
+        return toolResult(await tool.execute(input, { abortSignal: executionSignal }))
       }
       catch (error) {
         let toolError = error
@@ -1694,7 +1677,7 @@ async function startToolServer(
             const grant = approveAgentToolRequest(approvalRequest)
             if (grant) {
               try {
-                return toolResult(await executeApprovedAgentTool(tool, grant, { abortSignal: executionSignal }), tool)
+                return toolResult(await executeApprovedAgentTool(tool, grant, { abortSignal: executionSignal }))
               }
               catch (approvedError) {
                 if (executionSignal.aborted) throw approvedError

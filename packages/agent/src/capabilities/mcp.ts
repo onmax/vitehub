@@ -199,4 +199,5 @@ export type {
   McpClientConfig,
   McpServerConfig,
   McpToolFingerprints,
+  McpToolInputSchema,
 } from "../mcp/types.ts"
