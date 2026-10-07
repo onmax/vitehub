@@ -46,7 +46,62 @@ export interface GitHubCommitResult {
   treeSha: string;
 }
 
+interface GitHubRefResponse {
+  object: { sha: string }
+}
+
+interface GitHubRepositoryResponse {
+  default_branch: string
+}
+
+interface GitHubCommitResponse {
+  tree: { sha: string }
+}
+
 const githubReadAttempts = 3
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0
+}
+
+function isGitHubRefResponse(value: unknown): value is GitHubRefResponse {
+  return isRecord(value) && isRecord(value.object) && isNonEmptyString(value.object.sha)
+}
+
+function isGitHubRepositoryResponse(value: unknown): value is GitHubRepositoryResponse {
+  return isRecord(value) && isNonEmptyString(value.default_branch)
+}
+
+function isGitHubCommitResponse(value: unknown): value is GitHubCommitResponse {
+  return isRecord(value) && isRecord(value.tree) && isNonEmptyString(value.tree.sha)
+}
+
+function isGitHubTreeEntry(value: unknown): value is GitHubTreeEntry {
+  return isRecord(value)
+    && typeof value.path === "string"
+    && typeof value.type === "string"
+    && (value.mode === undefined || typeof value.mode === "string")
+    && (value.sha === undefined || value.sha === null || typeof value.sha === "string")
+    && (value.size === undefined || (typeof value.size === "number" && Number.isInteger(value.size) && value.size >= 0))
+}
+
+function isGitHubTreeResponse(value: unknown): value is GitHubTreeResponse {
+  return isRecord(value)
+    && Array.isArray(value.tree)
+    && value.tree.every(isGitHubTreeEntry)
+    && (value.truncated === undefined || typeof value.truncated === "boolean")
+}
+
+function requireGitHubResponse<T>(value: unknown, valid: (value: unknown) => value is T, description: string): T {
+  if (!valid(value)) {
+    throw workspaceError(`[vitehub] GitHub workspace returned a malformed ${description} response.`)
+  }
+  return value
+}
 
 function retryDelay(response: Response, attempt: number): number {
   const retryAfter = response.headers.get("retry-after")
@@ -408,44 +463,45 @@ export async function readGitHubBranchState(input: {
 }): Promise<GitHubBranchState> {
   const { owner, repo } = splitGitHubRepository(input.repository, input.kind);
   let branchExists = true;
-  let ref: { object: { sha: string } };
+  let ref: GitHubRefResponse;
   try {
-    ref = await requestGitHubJson(
+    ref = requireGitHubResponse(await requestGitHubJson<unknown>(
       input.repository,
       input.token,
       `/repos/${owner}/${repo}/git/ref/heads/${encodeGitHubRef(input.branch)}`,
-    );
+    ), isGitHubRefResponse, "branch reference");
   }
   catch (error) {
     if (githubRequestStatus(error) !== 404) throw error;
-    const repository = await requestGitHubJson<{ default_branch: string }>(
+    const repository = requireGitHubResponse(await requestGitHubJson<unknown>(
       input.repository,
       input.token,
       `/repos/${owner}/${repo}`,
-    );
-    ref = await requestGitHubJson(
+    ), isGitHubRepositoryResponse, "repository");
+    ref = requireGitHubResponse(await requestGitHubJson<unknown>(
       input.repository,
       input.token,
       `/repos/${owner}/${repo}/git/ref/heads/${encodeGitHubRef(repository.default_branch)}`,
-    );
+    ), isGitHubRefResponse, "default branch reference");
     branchExists = false;
   }
-  const current = await requestGitHubJson<{ tree: { sha: string } }>(
+  const current = requireGitHubResponse(await requestGitHubJson<unknown>(
     input.repository,
     input.token,
     `/repos/${owner}/${repo}/git/commits/${ref.object.sha}`,
-  );
+  ), isGitHubCommitResponse, "commit");
   if (input.paths) {
     const entries = await Promise.all(input.paths.map(async (path) => {
       const fullPath = joinGitPath(input.root, path);
       const encodedPath = fullPath.split("/").map(encodeURIComponent).join("/");
       try {
-        return await requestGitHubJson<GitHubTreeEntry>(
+        const entry = await requestGitHubJson<unknown>(
           input.repository,
           input.token,
           `/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref.object.sha)}`,
           { headers: { accept: "application/vnd.github.object+json" } },
         );
+        return requireGitHubResponse(entry, isGitHubTreeEntry, "content");
       }
       catch (error) {
         if (githubRequestStatus(error) === 404) return undefined;
@@ -462,11 +518,11 @@ export async function readGitHubBranchState(input: {
       treeSha: current.tree.sha,
     };
   }
-  const tree = await requestGitHubJson<GitHubTreeResponse>(
+  const tree = requireGitHubResponse(await requestGitHubJson<unknown>(
     input.repository,
     input.token,
     `/repos/${owner}/${repo}/git/trees/${current.tree.sha}?recursive=1`,
-  );
+  ), isGitHubTreeResponse, "tree");
   return {
     branchExists,
     files: findGitHubRemoteFiles(tree, input.root, input.kind),
