@@ -2,8 +2,8 @@
 title: Installation
 description: Add ViteHub UI to a Nuxt or Vue application.
 layout: tutorial
-navigation.title: Tutorial
-navigation.order: 2
+navigation.title: Installation
+navigation.order: 3
 navigation.group: Start
 icon: i-lucide-package
 ---
