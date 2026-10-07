@@ -9,23 +9,40 @@ import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentChatApprovedTools } from "./internal/chat-approvals.ts"
 
 interface EveApprovalContext {
-  approvedTools: ReadonlySet<string>
+  abortSignal: AbortSignal
   callId: string
   getSandbox: () => Promise<never>
-  getSkill: () => never
+  getToken: (provider: unknown, options?: unknown) => Promise<never>
+  requireAuth: (provider: unknown, options?: unknown) => never
   session: {
     auth: { current: null, initiator: null }
     id: string
     turn: { id: string, sequence: number }
   }
+}
+
+interface EveApprovalRequestContext extends EveApprovalContext {
+  approvedTools: ReadonlySet<string>
   toolInput: unknown
   toolName: string
 }
 
-type EveApproval = (context: EveApprovalContext) => unknown | Promise<unknown>
+type EveApproval = (context: EveApprovalRequestContext) => unknown | Promise<unknown>
+interface EveApprovalConfiguration {
+  request: EveApproval
+  response?: (context: unknown) => unknown | Promise<unknown>
+}
 
 interface EveToolDefinition extends AgentToolDefinition {
-  approval?: EveApproval
+  approvalKey?: (input: Readonly<Record<string, unknown>>) => string
+  availableInSubagents?: boolean
+  endsTurn?: boolean | ((output: unknown) => boolean | Promise<boolean>)
+  label?: {
+    complete?: (input: unknown, output: unknown) => string
+    delta?: (input: unknown, partial: unknown) => string
+    start: (input: unknown) => string
+  }
+  approval?: EveApproval | EveApprovalConfiguration
   toModelOutput?: (output: unknown) => unknown | Promise<unknown>
 }
 
@@ -38,6 +55,11 @@ interface ToolExecutionOptions {
   abortSignal?: AbortSignal
   messages?: ModelMessage[]
   toolCallId?: string
+}
+
+interface EveToolContext extends EveApprovalContext {
+  messages: readonly ModelMessage[]
+  toolName: string
 }
 
 let extensionLoad = Promise.resolve()
@@ -81,7 +103,20 @@ function approvedToolNamesFromContext(context: AgentCapabilityContext): Readonly
 }
 
 function eveSessionId(context: AgentCapabilityContext): string {
-  return context.run?.runId ?? context.run?.threadId ?? context.invoker.id
+  return context.run?.threadId ?? context.run?.runId ?? context.invoker.id
+}
+
+function eveTurn(context: AgentCapabilityContext): { id: string, sequence: number } {
+  const id = context.run?.runId ?? eveSessionId(context)
+  return { id, sequence: 0 }
+}
+
+function eveSession(context: AgentCapabilityContext): EveToolContext["session"] {
+  return {
+    auth: { current: null, initiator: null },
+    id: eveSessionId(context),
+    turn: eveTurn(context),
+  }
 }
 
 function unsupportedEveRuntimeFeature(name: string): never {
@@ -93,10 +128,15 @@ function toViteHubTool(
   tool: EveToolDefinition,
   context: AgentCapabilityContext,
 ): AgentToolDefinition & Record<string, unknown> {
-  const sessionId = eveSessionId(context)
   const execute = tool.execute
   const toModelOutput = tool.toModelOutput
   const approval = tool.approval
+  if (typeof approval === "object" && approval.response) {
+    unsupportedEveRuntimeFeature("approval.response")
+  }
+  const approvalRequest = typeof approval === "function" ? approval : approval?.request
+  const session = eveSession(context)
+  const fallbackAbortSignal = context.abortSignal ?? context.invocation?.input.get().abortSignal ?? new AbortController().signal
   return {
     ...tool,
     name,
@@ -105,44 +145,39 @@ function toViteHubTool(
       : { toModelOutput: undefined }),
     ...(execute
       ? {
-          async execute(input: unknown, options: ToolExecutionOptions = {}) {
-            const callId = options.toolCallId ?? `${name}-${Date.now()}`
-            // SAFETY: This adapter supplies Eve's documented execution context while unsupported members throw explicitly.
-            return await execute(input, {
-              abortSignal: options.abortSignal ?? new AbortController().signal,
-              callId,
-              getSandbox: async () => unsupportedEveRuntimeFeature("ctx.getSandbox()"),
-              getSkill: () => unsupportedEveRuntimeFeature("ctx.getSkill()"),
-              getToken: async () => unsupportedEveRuntimeFeature("ctx.getToken()"),
-              requireAuth: () => unsupportedEveRuntimeFeature("ctx.requireAuth()"),
-              session: {
-                auth: { current: null, initiator: null },
-                id: sessionId,
-                turn: { id: context.run?.runId ?? sessionId, sequence: 0 },
-              },
-              toolName: name,
-            } as never)
-          },
-        }
+        async execute(input: unknown, options: ToolExecutionOptions = {}) {
+          const callId = options.toolCallId ?? `${name}-${Date.now()}`
+          // SAFETY: This adapter supplies Eve's documented execution context while unsupported members throw explicitly.
+          const toolContext: EveToolContext = {
+            abortSignal: options.abortSignal ?? fallbackAbortSignal,
+            callId,
+            getSandbox: async () => unsupportedEveRuntimeFeature("ctx.getSandbox()"),
+            getToken: async () => unsupportedEveRuntimeFeature("ctx.getToken()"),
+            requireAuth: () => unsupportedEveRuntimeFeature("ctx.requireAuth()"),
+            messages: options.messages ?? toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
+            session,
+            toolName: name,
+          }
+          return await execute.call(tool, input, toolContext as never)
+        },
+      }
       : {}),
-    ...(approval
+    ...(approvalRequest
       ? {
           async needsApproval(input: unknown, options: ToolExecutionOptions = {}) {
             const callId = options.toolCallId ?? `${name}-${Date.now()}`
             const approvedTools = approvedToolNamesFromContext(context)
-            const status = await approval({
+            const status = await approvalRequest({
+              abortSignal: options.abortSignal ?? fallbackAbortSignal,
               approvedTools,
               callId,
               getSandbox: async () => unsupportedEveRuntimeFeature("approval ctx.getSandbox()"),
-              getSkill: () => unsupportedEveRuntimeFeature("approval ctx.getSkill()"),
-              session: {
-                auth: { current: null, initiator: null },
-                id: sessionId,
-                turn: { id: context.run?.runId ?? sessionId, sequence: 0 },
-              },
+              getToken: async () => unsupportedEveRuntimeFeature("approval ctx.getToken()"),
+              requireAuth: () => unsupportedEveRuntimeFeature("approval ctx.requireAuth()"),
+              session,
               toolInput: input,
               toolName: name,
-            })
+            } satisfies EveApprovalRequestContext)
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Eve approval callbacks may return a decision object or a legacy scalar.
             const decision = typeof status === "object" && status && "type" in status
               ? status.type
@@ -201,24 +236,24 @@ async function resolveEveTools(
       const events = Object.entries(exported.events)
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Eve event handlers are external extension exports and must be callable.
         .filter(([, handler]) => typeof handler === "function")
+      const unsupportedEvents = events
         .map(([event]) => event)
-      if (events.some(event => event !== "session.started" && event !== "step.started") || events.length > 1) {
-        throw agentDiagnostics.AGENT_R0419({ message: `[vitehub] Eve extension dynamic tool ${JSON.stringify(exportName)} uses unsupported events: ${events.join(", ")}.` })
+        .filter(event => event !== "session.started" && event !== "turn.started" && event !== "step.started")
+      if (unsupportedEvents.length) {
+        throw agentDiagnostics.AGENT_R0419({ message: `[vitehub] Eve extension dynamic tool ${JSON.stringify(exportName)} uses unsupported events: ${unsupportedEvents.join(", ")}.` })
       }
-      const event = events[0]
-      if (!event) continue
-      const sessionId = eveSessionId(context)
-      const handler = exported.events[event]
-      const resolved = await handler?.({ type: event }, {
+      if (events.length > 1) {
+        throw agentDiagnostics.AGENT_R0419({ message: `[vitehub] Eve extension dynamic tool ${JSON.stringify(exportName)} uses unsupported events: ${events.map(([event]) => event).join(", ")}.` })
+      }
+      const [event, handler] = events[0] ?? []
+      if (!event || !handler) continue
+      const resolved = await handler({ type: event }, {
         channel: {
           kind: context.run?.origin,
           metadata: context.invoker.meta,
         },
         messages: toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
-        session: {
-          auth: { current: null, initiator: null },
-          id: sessionId,
-        },
+        session: eveSession(context),
       })
       if (resolved === null || resolved === undefined) continue
       if (isEveTool(resolved)) {

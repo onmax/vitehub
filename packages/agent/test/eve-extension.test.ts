@@ -1169,6 +1169,50 @@ describe("Eve extension capabilities", () => {
     expect(await count.toModelOutput({ output: 1n })).toEqual({ value: "1" })
   })
 
+  it("uses the request policy from Eve approval configurations", async () => {
+    const request = vi.fn(() => ({ type: "user-approval" as const }))
+    const capability = await eveExtensionCapability(
+      "approval-extension",
+      "approval",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({
+        write: {
+          description: "Write a value",
+          approval: { request },
+          execute: async () => "ok",
+        },
+      }),
+    )
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext())
+    const write = tools.approval__write as AgentToolDefinition & {
+      needsApproval: (input: unknown, options: { toolCallId: string }) => Promise<boolean>
+    }
+
+    await expect(write.needsApproval({}, { toolCallId: "call-approval" })).resolves.toBe(true)
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it("rejects Eve approval response authorizers", async () => {
+    const capability = await eveExtensionCapability(
+      "approval-extension",
+      "approval",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({
+        write: {
+          description: "Write a value",
+          approval: {
+            request: () => "user-approval",
+            response: () => ({ status: "allowed" }),
+          },
+          execute: async () => "ok",
+        },
+      }),
+    )
+
+    await expect((capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext()))
+      .rejects.toThrow("approval.response")
+  })
+
   it("ignores dynamic event keys without handlers", async () => {
     const capability = await eveExtensionCapability(
       "test-extension",
@@ -1216,8 +1260,8 @@ describe("Eve extension capabilities", () => {
     const secondTools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(second)
 
     expect(started).toHaveBeenCalledTimes(2)
-    expect(firstTools.test__run!.description).toBe("run-1")
-    expect(secondTools.test__run!.description).toBe("run-2")
+    expect(firstTools.test__run!.description).toBe("session-1")
+    expect(secondTools.test__run!.description).toBe("session-1")
     await expect(secondTools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("run-2")
   })
 
@@ -1245,8 +1289,68 @@ describe("Eve extension capabilities", () => {
     const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
 
     expect(started).toHaveBeenCalledOnce()
-    expect(tools.test__run!.description).toBe("step.started:run-1")
-    await expect(tools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("run-1")
+    expect(tools.test__run!.description).toBe("step.started:session-1")
+    await expect(tools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("session-1")
+  })
+
+  it("maps Eve turn.started tools and the current tool context", async () => {
+    const abortSignal = new AbortController().signal
+    const started = vi.fn((event: { type: string }, context: { messages: readonly ModelMessage[], session: { id: string, turn: { id: string, sequence: number } } }) => ({
+      turn: {
+        description: `${event.type}:${context.session.id}:${context.session.turn.sequence}`,
+        inputSchema: { type: "object" },
+        outputSchema: { type: "object" },
+        execute: async (_input: unknown, toolContext: { abortSignal: AbortSignal, messages: readonly ModelMessage[], session: { id: string, turn: { id: string } } }) => ({
+          hasAbortSignal: toolContext.abortSignal === abortSignal,
+          messageCount: toolContext.messages.length,
+          session: toolContext.session.id,
+          turn: toolContext.session.turn.id,
+        }),
+        toModelOutput: (output: unknown) => ({
+          type: "content",
+          value: [{ type: "text", text: JSON.stringify(output) }],
+        }),
+      },
+    }))
+    const capability = await eveExtensionCapability(
+      "test-extension",
+      "test",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({
+        dynamic: {
+          events: { "turn.started": started },
+          kind: "eve:dynamic",
+        },
+      }),
+    )
+    const context = capabilityContext()
+    context.run = { runId: "turn-2", threadId: "session-1" }
+    context.abortSignal = abortSignal
+    context.invocation!.input.messages = () => [
+      { id: "message-1", parts: [{ text: "Previous", type: "text" }], role: "user" },
+      { id: "message-2", parts: [{ text: "Current", type: "text" }], role: "user" },
+    ] as never
+
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
+    const tool = tools.test__turn as AgentToolDefinition & {
+      execute: (input: unknown, options: { messages: ModelMessage[], toolCallId: string }) => Promise<unknown>
+      outputSchema?: unknown
+      toModelOutput: (options: { output: unknown }) => Promise<unknown>
+    }
+
+    expect(started).toHaveBeenCalledWith({ type: "turn.started" }, expect.objectContaining({ session: expect.objectContaining({ id: "session-1" }) }))
+    expect(tool.description).toBe("turn.started:session-1:0")
+    expect(tool.outputSchema).toEqual({ type: "object" })
+    await expect(tool.execute({}, { messages: [{ role: "user", content: "Hello" }], toolCallId: "call-1" })).resolves.toEqual({
+      hasAbortSignal: true,
+      messageCount: 1,
+      session: "session-1",
+      turn: "turn-2",
+    })
+    await expect(tool.toModelOutput({ output: { ok: true } })).resolves.toEqual({
+      type: "content",
+      value: [{ type: "text", text: JSON.stringify({ ok: true }) }],
+    })
   })
 
   it("rejects dynamic tools with several active lifecycle handlers", async () => {
