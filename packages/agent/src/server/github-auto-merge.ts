@@ -1,6 +1,6 @@
 import { parseMarkdown } from "comark"
 import html from "comark/plugins/html"
-import type { Node as MarkdownNode } from "comark"
+import type { ComarkPlugin, Node as MarkdownNode } from "comark"
 import * as v from "valibot"
 import type { GitHubHost } from "./github-host.ts"
 
@@ -141,7 +141,18 @@ async function githubMentionTokens(body: string): Promise<string[]> {
   // code spans. Only rendered text can notify; code examples must stay usable.
   const document = await parseMarkdown(body, {
     registerDefaultPlugins: false,
-    plugins: [html()],
+    plugins: [html(), {
+      name: "github-mention-comments",
+      markdownItPlugins: [md => {
+        // Remove actual inline comments before Comark falls back to raw text.
+        // Escaped or entity-encoded delimiters remain visible text tokens.
+        md.core.ruler.after("inline", "github-mention-comments", state => {
+          for (const token of state.tokens) {
+            if (token.children) token.children = token.children.filter(child => child.type !== "html_inline" || !child.content.startsWith("<!--"))
+          }
+        })
+      }],
+    } satisfies ComarkPlugin],
     autoClose: false,
     autoUnwrap: false,
     linkify: false,
