@@ -1,31 +1,39 @@
 ---
-title: UI
-description: "Vue components for AI chat, Agent Invocations, traces, diffs, and file trees."
+title: ViteHub UI
+description: "Console-ready Vue components for chat, sessions, Agent runs, and code views."
 navigation.title: Overview
 navigation.order: 1
 navigation.group: Start
 icon: i-ph-squares-four-light
 ---
 
-`@vite-hub/ui` gives Vue and Nuxt applications the interface for AI features: chat, prompts, message parts, Agent sessions, Invocation inspection, traces, diffs, and file trees. The components render AI SDK message contracts with Nuxt UI styling. They do not own transport, persistence, or authorization.
+`@vite-hub/ui` is the Vue and Nuxt component layer for ViteHub. It covers the surfaces a Console needs first: chat, sessions, Agent Invocations, traces, diffs, and file trees. The components render AI SDK contracts with sensible Nuxt UI defaults. They do not own transport, persistence, or authorization.
 
-Each component page has a live preview, the source of that preview, variants, and an API reference. Every example uses synthetic data and makes no network requests.
+The Console is the reference implementation. The examples on these pages use the same dense layout, spacing, and empty states. They run with synthetic data, make no network requests, and show the source directly below each preview.
 
-::u-page-grid{class="not-prose mt-8 sm:grid-cols-2"}
+::u-page-grid{class="not-prose mt-8 sm:grid-cols-2 lg:grid-cols-3"}
   :::u-page-card
   ---
   title: Install the package
-  description: Add the Nuxt module or the Vite plugin, then load the styles.
+  description: Add the Nuxt module or Vite plugin, then load the shared styles.
   icon: i-lucide-package
   to: /docs/ui/installation
   ---
   :::
   :::u-page-card
   ---
-  title: Copy a block
-  description: Start from a complete chat app, Invocation dashboard, or code review view.
+  title: Start with a Console block
+  description: Copy a complete chat app, Invocation dashboard, or code review view.
   icon: i-ph-layout-light
   to: /docs/ui/blocks/chat-app
+  ---
+  :::
+  :::u-page-card
+  ---
+  title: Read the Vue point of view
+  description: Why ViteHub UI chooses a small default and a Console-first layout.
+  icon: i-simple-icons-vuedotjs
+  to: /docs/getting-started/built-for-vue
   ---
   :::
 ::
@@ -39,15 +47,15 @@ Each component page has a live preview, the source of that preview, variants, an
 - **Blocks:** [Chat app](/docs/ui/blocks/chat-app), [Invocation dashboard](/docs/ui/blocks/invocation-dashboard), [Code review](/docs/ui/blocks/code-review)
 ::
 
-## Layers
+## Defaults that travel
 
-| Layer        | Owns                                                                                           |
-| ------------ | ---------------------------------------------------------------------------------------------- |
-| AI SDK       | `UIMessage`, `ChatStatus`, streaming state, tool parts, and transport helpers.                 |
-| Headless Vue | Scroll intent, live-edge following, prepend preservation, and message jumps.                   |
-| Nuxt UI      | Theme tokens and the chat, prompt, reasoning, tool, button, and badge components.              |
-| ViteHub UI   | Part dispatch, defaults, Markdown presentation, attachments, Agent inspection, and code views. |
-| Pierre       | Diff rendering and path-first file trees.                                                      |
+| Concern | Owner |
+| ------- | ----- |
+| Message contracts and transport | AI SDK or your ViteHub Agent route |
+| Scroll intent and message jumps | ViteHub headless Vue primitives |
+| Tokens and basic controls | Nuxt UI |
+| Chat, sessions, Agent inspection, Markdown, and attachments | ViteHub UI |
+| Diffs and path-first file trees | Pierre |
 
 The package does not send messages. Use `useChat()` from `@ai-sdk/vue` or the ViteHub wrapper from `vite-hub/agent/vue`, then pass its reactive values to the components.
 

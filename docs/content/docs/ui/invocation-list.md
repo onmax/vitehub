@@ -6,7 +6,7 @@ navigation.group: Agent work
 icon: i-ph-list-bullets-light
 ---
 
-`AgentInvocationList` renders Agent Invocation summaries as a navigation list. Each row shows the title, context, status, relative time, and channel. Use it as the sidebar of a session browser. It does not search, route, or fetch. Your application loads the items and handles selection.
+`AgentInvocationList` is the Console's session browser. Each row shows the project, title, context, status, and relative time in a dense layout that stays readable when an error wraps. It does not search, route, or fetch. Your application loads the items and handles selection.
 
 ::component-preview{name="InvocationListExample"}
 ::
