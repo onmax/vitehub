@@ -21,7 +21,7 @@ export function sourceSyncMetaKey(sourceKey: string, workspace?: string) {
 /** Identifies the durable metadata record owned by Source Sync. */
 export function isWorkspaceSourceSyncMetaKey(key: string): boolean {
   const forms = [key.toLowerCase(), normalizeWorkspacePath(key).toLowerCase()]
-  return forms.some(form => /^(?:workspace:.+:)?source:.+:sync$/.test(form))
+  return forms.some(form => /^(?:workspace:.+:)?source:.*:sync$/.test(form))
 }
 
 export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyncState | undefined {

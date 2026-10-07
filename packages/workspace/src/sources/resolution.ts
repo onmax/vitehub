@@ -76,10 +76,22 @@ function isWritableWorkspaceFacade<Name extends WorkspaceName>(workspace: Readon
 function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | undefined, right: WorkspaceSourceInput | undefined): boolean {
   if (left === right) return true
   if (!left || !right) return false
-  const leftFingerprint = normalizeWorkspaceSource(key, left).source.fingerprint
-  const rightFingerprint = normalizeWorkspaceSource(key, right).source.fingerprint
-  if (leftFingerprint === undefined || rightFingerprint === undefined) return false
-  return stableWorkspaceSourceValue(leftFingerprint) === stableWorkspaceSourceValue(rightFingerprint)
+  const leftBinding = normalizeWorkspaceSource(key, left)
+  const rightBinding = normalizeWorkspaceSource(key, right)
+  if (leftBinding.source.fingerprint === undefined || rightBinding.source.fingerprint === undefined) return false
+  return stableWorkspaceSourceValue({
+    cache: leftBinding.cache,
+    materialize: leftBinding.materialize,
+    mountPath: leftBinding.mountPath,
+    source: leftBinding.source.fingerprint,
+    sync: leftBinding.sync,
+  }) === stableWorkspaceSourceValue({
+    cache: rightBinding.cache,
+    materialize: rightBinding.materialize,
+    mountPath: rightBinding.mountPath,
+    source: rightBinding.source.fingerprint,
+    sync: rightBinding.sync,
+  })
 }
 
 function stableWorkspaceSourceValue(value: unknown): string {
