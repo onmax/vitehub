@@ -75,6 +75,29 @@ describe("runtime preflight", () => {
     })
   })
 
+  it("snapshots signal and diagnostic callback references", async () => {
+    const firstController = new AbortController()
+    const secondController = new AbortController()
+    const firstReport = vi.fn()
+    const secondReport = vi.fn()
+    const options = {
+      signal: firstController.signal,
+      checks: [{ id: "file:missing", kind: "file", check: () => false }],
+      onDiagnostic: firstReport,
+    }
+    const handle = startRuntimePreflight(options)
+    options.signal = secondController.signal
+    options.onDiagnostic = secondReport
+    firstController.abort(new Error("original signal"))
+
+    await expect(handle.manifest).resolves.toMatchObject({
+      checks: [{ state: "unknown", reason: "original signal" }],
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(firstReport).toHaveBeenCalledTimes(1)
+    expect(secondReport).not.toHaveBeenCalled()
+  })
+
   it("defers diagnostics until every check settles", async () => {
     let release: ((result: RuntimePreflightCheckResult) => void) | undefined
     const report = vi.fn()

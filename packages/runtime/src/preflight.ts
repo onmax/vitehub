@@ -272,10 +272,12 @@ function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePre
  */
 export function startRuntimePreflight(options: RuntimePreflightOptions): RuntimePreflightHandle {
   const normalized = validateOptions(options)
+  const signal = options.signal
+  const onDiagnostic = options.onDiagnostic
   const controller = new AbortController()
-  const abort = () => controller.abort(options.signal?.reason)
-  if (options.signal?.aborted) abort()
-  else options.signal?.addEventListener("abort", abort, { once: true })
+  const abort = () => controller.abort(signal?.reason)
+  if (signal?.aborted) abort()
+  else signal?.addEventListener("abort", abort, { once: true })
   let settled = false
   const startedAt = Date.now()
   const manifest = Promise.resolve().then(async () => {
@@ -316,18 +318,18 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       capabilities,
       diagnostics: summaries.flatMap(summary => summary.diagnostic ? [summary.diagnostic] : []),
     }
-    if (options.onDiagnostic) {
+    if (onDiagnostic) {
       const issues = results.flatMap(({ issue }) => issue ? [issue] : [])
       setTimeout(() => {
         for (const issue of issues) {
-          void Promise.resolve().then(() => options.onDiagnostic!(issue)).catch(() => undefined)
+          void Promise.resolve().then(() => onDiagnostic(issue)).catch(() => undefined)
         }
       }, 0)
     }
     return manifest
   }).finally(() => {
     settled = true
-    options.signal?.removeEventListener("abort", abort)
+    signal?.removeEventListener("abort", abort)
   })
   return {
     manifest,
