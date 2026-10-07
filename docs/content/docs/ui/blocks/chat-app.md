@@ -6,7 +6,7 @@ navigation.group: Blocks
 icon: i-ph-chats-teardrop-light
 ---
 
-This block combines a session list, [`AgentSession`](/docs/ui/session), and [`AgentChatPrompt`](/docs/ui/chat-prompt) with attachments. Select a session, send a message, or attach a log file. The reply streams from a local function, so the block works without a model or a network.
+This block is a starting Console layout: a session list, [`AgentSession`](/docs/ui/session), and [`AgentChatPrompt`](/docs/ui/chat-prompt) with attachments. Select a session, send a message, or attach a log file. The reply streams from a local function so the layout can be explored without a model or a network.
 
 ::component-preview{name="ChatAppBlock" flush reset}
 ::

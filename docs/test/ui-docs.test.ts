@@ -91,7 +91,7 @@ describe("UI documentation", () => {
     }
   });
 
-  it("renders previews with Preview and Code tabs that show the running file", () => {
+  it("renders previews with a live stage and the running source", () => {
     const preview = readFileSync(
       resolve(docsRoot, "app/components/content/ComponentPreview.vue"),
       "utf8",
@@ -100,10 +100,10 @@ describe("UI documentation", () => {
     expect(preview).toContain('import highlighter from "#mdc-highlighter"');
     expect(preview).toContain('import.meta.glob("./examples/*.vue")');
     expect(preview).toContain('query: "?raw"');
-    expect(preview).toContain('role="tablist"');
-    expect(preview).toContain('role="tab"');
-    expect(preview).toContain(':aria-selected="activeTab === tab.id"');
-    expect(preview).toContain('role="tabpanel"');
+    expect(preview).toContain("Live example");
+    expect(preview).toContain('class="component-preview-source border-t border-default"');
+    expect(preview).not.toContain('role="tablist"');
+    expect(preview).not.toContain('role="tab"');
     expect(preview).toContain('<MDC :value="sourceBlock"');
     expect(preview).toContain(':parser-options="sourceParserOptions"');
     expect(preview).toContain('@click="copy(source)"');
