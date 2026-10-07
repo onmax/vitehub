@@ -49,8 +49,11 @@ import {
 import { markBuiltInBoxRuntime } from "./runtime.ts";
 import { acquireFileLock } from "./file-lock.ts";
 import { createBoxSession, type RuntimeSession } from "./session.ts";
+import { createSessionMemory, validateTrustedHostResources, type TrustedHostResources } from "./session-memory.ts";
 
 export interface TrustedHostOptions {
+  /** Linux-only aggregate limits for session commands. Requires cgroup v2 delegation. */
+  resources?: TrustedHostResources;
   stateRoot?: string;
 }
 
@@ -116,12 +119,14 @@ export function createTrustedHostRuntime(options: TrustedHostOptions = {}): BoxR
   return markBuiltInBoxRuntime({
     name: "trusted-host",
     async prepare(input) {
+      if (options.resources) validateTrustedHostResources(options.resources);
       const { cwd, stateRoot } = await resolveTrustedHostInput(input, options);
       preparedInputs.set(input, { cwd, stateRoot });
       return {
         cache: { state: "disposable" },
         environment: { env: {} },
         executionAuthority: trustedHostExecutionAuthority,
+        ...(options.resources ? { resources: Object.freeze({ ...options.resources }) } : {}),
         home: stateRoot
           ? {
               state: input.plan.state.map(state => ({
@@ -145,7 +150,7 @@ export function createTrustedHostRuntime(options: TrustedHostOptions = {}): BoxR
       let initializedSession: ReturnType<typeof createBoxSession> | undefined;
       const runtimeSession = await createSession(
         { ...input, ...(resolved.cwd ? { cwd: resolved.cwd } : {}) },
-        { stateRoot: resolved.stateRoot },
+        { ...options, stateRoot: resolved.stateRoot },
         {
           abortSignal: openOptions?.signal,
           ...(openOptions?.initialize
@@ -240,6 +245,7 @@ async function createSession(
       env,
       home,
       release: releases,
+      resources: options.resources,
       root,
       sessionId: createOptions.sessionId,
       workspace: input.cwd,
@@ -441,6 +447,7 @@ async function createTrustedHostSession(options: {
   env: Record<string, string>;
   home: string;
   release: () => Promise<void>;
+  resources?: TrustedHostResources;
   root: string;
   sessionId?: string;
   workspace?: string;
@@ -448,6 +455,7 @@ async function createTrustedHostSession(options: {
   const workspace = join(options.root, "workspace");
   if (options.workspace) await symlink(options.workspace, workspace, "dir");
   else await mkdir(workspace, { recursive: true });
+  const memory = options.resources ? await createSessionMemory(options.resources) : undefined;
   let destroyPromise: Promise<void> | undefined;
   const processes = new Set<ChildProcessWithoutNullStreams>();
   const processGroups = new Set<number>();
@@ -464,6 +472,7 @@ async function createTrustedHostSession(options: {
       destroyPromise ??= (async () => {
         try {
           await this.stop();
+          await memory?.close();
           await rm(options.root, { force: true, recursive: true });
         } finally {
           await options.release();
@@ -567,11 +576,12 @@ async function createTrustedHostSession(options: {
         runOptions.workingDirectory ?? this.defaultWorkingDirectory,
       );
       runOptions.abortSignal?.throwIfAborted();
-      const child = spawnChildProcess(runOptions.command, {
+      await memory?.assertHealthy();
+      const child = (memory ? memory.spawn : spawnChildProcess)(runOptions.command, {
         cwd,
         detached: process.platform !== "win32",
         env: { ...options.env, ...runOptions.env, INIT_CWD: cwd, OLDPWD: cwd, PWD: cwd },
-        shell: true,
+        shell: !memory,
       });
       processes.add(child);
       if (child.pid && process.platform !== "win32") processGroups.add(child.pid);
@@ -580,7 +590,7 @@ async function createTrustedHostSession(options: {
         if (child.pid && process.platform !== "win32" && !processGroupExists(child.pid))
           processGroups.delete(child.pid);
       });
-      return processHandle(child, runOptions.abortSignal);
+      return processHandle(child, runOptions.abortSignal, () => memory?.assertHealthy());
     },
     async stop() {
       const active = [...processes];
@@ -594,6 +604,7 @@ async function createTrustedHostSession(options: {
       for (const pid of processGroups) signalProcessGroup(pid, "SIGKILL");
       if (process.platform === "win32")
         for (const child of active) signalProcessTree(child, "SIGKILL");
+      await memory?.kill();
       await Promise.all(active.map(waitForExit));
       processes.clear();
       processGroups.clear();
@@ -831,6 +842,7 @@ async function collect(stream: ReadableStream<Uint8Array>) {
 function processHandle(
   child: ChildProcessWithoutNullStreams,
   abortSignal: AbortSignal | undefined,
+  afterExit?: () => Promise<void> | undefined,
 ) {
   let abortReason: unknown;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -848,7 +860,7 @@ function processHandle(
       abortSignal?.removeEventListener("abort", abort);
       if (forceKillTimer) clearTimeout(forceKillTimer);
       if (abortReason) reject(abortReason);
-      else resolvePromise({ exitCode: code ?? 1 });
+      else void Promise.resolve().then(afterExit).then(() => resolvePromise({ exitCode: code ?? 1 }), reject);
     });
   });
   // A background caller may not await immediately. Observe rejection now so

@@ -39,6 +39,30 @@ For each invocation, ViteHub opens a new Box session. The Box creates a private 
 `trusted-host` isolates Home and declared environment values. It does not isolate the filesystem, network, processes, or installed executables. Use it only when the Agent may act with the authority of the host user.
 :::
 
+## Limit worker memory on Linux
+
+A trusted-host Box can cap all session commands and their descendants in one cgroup v2 group:
+
+```ts
+box: {
+  runtime: {
+    kind: 'trusted-host',
+    resources: {
+      cgroupParent: '/sys/fs/cgroup/system.slice/agent.service',
+      memoryHighBytes: 3 * 1024 ** 3,
+      memoryMaxBytes: 4 * 1024 ** 3,
+      memorySwapMaxBytes: 128 * 1024 ** 2,
+    },
+  },
+},
+```
+
+The parent must be writable, must delegate the memory controller, and must have no resident processes. With systemd 254 or later, configure `Delegate=memory` and `DelegateSubgroup=controller` and allow writes to the delegated control groups. Each Box creates a separate child group. The ViteHub controller remains outside the worker group. Configured limits fail closed if delegation is unavailable. Swap defaults to zero.
+
+A worker OOM kills its command group. Command waits reject with `BOX_R0158`, including the limit, peak memory and OOM kill count. Further commands in that session fail. Reduce the workload before retrying. Session close kills all remaining descendants and removes the cgroup. Inspect the configuration with `box.plan.resources`.
+
+These limits cover session `exec` and `spawn`, including the provider's native tools. Checkout preparation, toolchain setup and requirement checks remain under the controller's service budget. Keep a service limit as a second boundary. Trusted-host commands retain host user authority; resource limits do not provide a security sandbox.
+
 ## Pin an exact checkout
 
 Box callbacks receive the Agent invocation context. Resolve repository facts from trusted invocation data when every run must inspect an exact commit.
