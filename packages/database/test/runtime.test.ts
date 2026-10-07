@@ -699,4 +699,20 @@ describe("hosted drizzle runtime", () => {
     await expect(batch()).rejects.toThrow("Cloudflare D1 query 2 failed (200): second query failed")
     await expect(batch()).rejects.toThrow("Cloudflare D1 returned an unexpected query result count")
   })
+
+  it.each([
+    { label: "missing rows", result: { success: true, results: {} } },
+    { label: "non-array rows", result: { results: { rows: { id: 1 } }, success: true } },
+  ])("rejects successful D1 responses with $label", async ({ result }) => {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "account-id")
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "api-token")
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ result: [result], success: true }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    })))
+
+    const { db } = await createHostedAnalyticsDb()
+    const error = await db.select().from(analyticsSchema.analyticsEvents).then(() => undefined, error => error)
+    expect(error).toMatchObject({ cause: { message: "[vitehub] Cloudflare D1 request failed (200)." } })
+  })
 })
