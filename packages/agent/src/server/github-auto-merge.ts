@@ -123,9 +123,12 @@ const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 const githubMentionPattern = /(^|[\s([{])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?=$|[\s.,!?;:)\]}])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
-  return [...new Set(logins
-    .map(login => login.trim().toLowerCase())
-    .filter(login => githubLoginPattern.test(login)))]
+  const normalized = new Set<string>()
+  for (const login of logins) {
+    const value = login.trim().toLowerCase()
+    if (githubLoginPattern.test(value)) normalized.add(value)
+  }
+  return [...normalized]
 }
 
 function assertCommentMentionsAllowed(body: string, allowlist: ReadonlySet<string>): void {
