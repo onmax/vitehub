@@ -21,7 +21,7 @@ provider for production.
 
 ```bash [Terminal]
 pnpm add @vite-hub/blob h3
-pnpm add -D vite
+pnpm add -D @vite-hub/cli vite
 ```
 
 Register Blob and select the local store:

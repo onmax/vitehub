@@ -50,7 +50,8 @@ const docsShellUi = {
 }
 
 .vh-docs-main {
-  max-width: calc(var(--vh-content-width) + var(--vh-toc-width) + 4rem);
+  width: 100%;
+  max-width: none;
 }
 
 .vh-docs-landing {

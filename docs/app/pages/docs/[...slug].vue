@@ -28,7 +28,6 @@ if (!routeState.page || !rawDoc.value) {
 
 const { page } = useDocsPage(routeState.sourcePath, rawDoc, getDocsPageFallback(routeState.page));
 
-const contentTocVariants = useUIConfig("contentToc");
 const isReferencePage = computed(() => route.path.replace(/\/+$/, "") === "/docs/reference");
 const isSupportMatrix = computed(
   () => route.path.replace(/\/+$/, "") === "/docs/frameworks-hosts/support-matrix",
@@ -41,28 +40,11 @@ const isUiPage = computed(() => {
 const landingSection = computed(() =>
   isDocsLandingPath(docsManifest.sections, route.path) ? getDocsSectionForPath(docsManifest.sections, route.path) : null,
 );
-const tocLinks = computed(() => page.value?.body?.toc?.links || []);
+const isTutorialPage = computed(() => page.value?.layout === "tutorial");
 
-const docsPageUi = computed(() =>
-  isUiPage.value
-    ? {
-        root: "lg:!grid-cols-1 lg:!gap-0",
-        center: "lg:!col-span-1",
-        right: "hidden",
-      }
-    : {
-        root: "lg:!grid-cols-[minmax(0,1fr)_var(--vh-toc-width)] lg:!gap-12",
-        center: "lg:!col-span-1",
-        right: "hidden lg:block lg:!col-span-1 lg:w-[var(--vh-toc-width)]",
-      },
-);
-
-const mobileTocUi = {
-  root: "!top-[var(--ui-header-height)] !z-20 !mx-0 !max-h-[calc(100dvh-var(--ui-header-height))] !bg-default !px-4 sm:!px-8 lg:!hidden",
-  container: "!border-s-0 !border-b !border-default !ps-0 !pt-2 !pb-2",
-  trigger: "!py-2 text-sm font-medium text-muted hover:text-highlighted",
-  title: "text-sm font-medium",
-  content: "!pb-2",
+const docsPageUi = {
+  root: "lg:!grid-cols-1 lg:!gap-0",
+  center: "lg:!col-span-1",
 };
 </script>
 
@@ -71,19 +53,9 @@ const mobileTocUi = {
 
   <DocsProductLanding v-else-if="page && landingSection" :page="page" :section="landingSection" />
 
-  <UPage v-else-if="page" :ui="docsPageUi">
-    <UContentToc
-      v-if="tocLinks.length"
-      class="lg:hidden"
-      :highlight="contentTocVariants.highlight ?? true"
-      :highlight-color="contentTocVariants.highlightColor"
-      :highlight-variant="contentTocVariants.highlightVariant"
-      :color="contentTocVariants.color"
-      title="On this page"
-      :links="tocLinks"
-      :ui="mobileTocUi"
-    />
+  <DocsTutorial v-else-if="page && isTutorialPage" :page="page" />
 
+  <UPage v-else-if="page" :ui="docsPageUi">
     <UPageHeader
       :title="page.title"
       :description="page.description"
@@ -107,9 +79,6 @@ const mobileTocUi = {
       <ContentRenderer :value="page" />
     </UPageBody>
 
-    <template #right>
-      <DocsAsideRight v-if="!isUiPage" :page="page" />
-    </template>
   </UPage>
 </template>
 
