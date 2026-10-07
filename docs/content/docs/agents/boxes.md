@@ -257,3 +257,5 @@ Launch diagnostics redact resolved `box.env` values. When `box.home.files` or `b
 Use `@vite-hub/box` directly when application code owns the process lifecycle. Use [`sandbox()`](/docs/sandbox/agent-capability) to give a model-backed Agent an allowlisted executable tool.
 
 Provider status inspection inside an Agent Box is currently unsupported. `agent.status()` reports `readiness: "unsupported"` for boxed provider Drivers. Invocation execution still uses the configured Box.
+
+On kernels without `memory.peak`, the OOM diagnostic reports `peak=unavailable`. Box uses local memory events to distinguish its session limit from ancestor or host OOM kills and removes nested cgroups during close. The launcher restores the command environment only after joining the session group.
