@@ -1,4 +1,3 @@
-import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { createWorkspaceTools } from "../ai.ts"
 import { workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath } from "../core/path.ts"
@@ -80,13 +79,13 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
   const leftBinding = normalizeWorkspaceSource(key, left)
   const rightBinding = normalizeWorkspaceSource(key, right)
   if (leftBinding.source.fingerprint === undefined || rightBinding.source.fingerprint === undefined) return false
-  return stableWorkspaceSourceValue({
+  return sameWorkspaceSourceValue({
     cache: leftBinding.cache,
     materialize: leftBinding.materialize,
     mountPath: leftBinding.mountPath,
     source: leftBinding.source.fingerprint,
     sync: leftBinding.sync,
-  }) === stableWorkspaceSourceValue({
+  }, {
     cache: rightBinding.cache,
     materialize: rightBinding.materialize,
     mountPath: rightBinding.mountPath,
@@ -95,28 +94,43 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
   })
 }
 
-function stableWorkspaceSourceValue(value: unknown): string {
-  if (value === undefined) return "undefined"
-  if (value === null) return "null"
-  if (value instanceof Date) return `date:${JSON.stringify(value.toJSON())}`
-  if (!hasRuntimeType(value, "object")) {
-    const type = hasRuntimeType(value, "string") ? "string"
-      : hasRuntimeType(value, "number") ? "number"
-        : hasRuntimeType(value, "boolean") ? "boolean"
-          : hasRuntimeType(value, "bigint") ? "bigint"
-            : hasRuntimeType(value, "symbol") ? "symbol"
-              : "function"
-    return `${type}:${JSON.stringify(value)}`
+// Only plain data can establish equivalent authority across recreated bindings.
+// Custom serializers, accessors, cycles, and exotic objects retain the outer guard.
+function sameWorkspaceSourceValue(left: unknown, right: unknown, ancestors = new Set<object>()): boolean {
+  try {
+    if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
+      return Object.is(left, right)
+    }
+    const prototype = Object.getPrototypeOf(left)
+    if (Array.isArray(left) !== Array.isArray(right)
+      || prototype !== Object.getPrototypeOf(right)
+      || (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null)
+      || "toJSON" in left || "toJSON" in right
+      || ancestors.has(left) || ancestors.has(right)) return false
+    const leftKeys = Reflect.ownKeys(left)
+    const rightKeys = Reflect.ownKeys(right)
+    if (leftKeys.length !== rightKeys.length) return false
+    ancestors.add(left)
+    ancestors.add(right)
+    try {
+      // Preserve property order, array length, and holes. Source Sync uses JSON order.
+      return leftKeys.every((key, index) => {
+        if (key !== rightKeys[index]) return false
+        const leftProperty = Object.getOwnPropertyDescriptor(left, key)
+        const rightProperty = Object.getOwnPropertyDescriptor(right, key)
+        return !!leftProperty && !!rightProperty
+          && "value" in leftProperty && "value" in rightProperty
+          && leftProperty.enumerable === rightProperty.enumerable
+          && sameWorkspaceSourceValue(leftProperty.value, rightProperty.value, ancestors)
+      })
+    } finally {
+      ancestors.delete(left)
+      ancestors.delete(right)
+    }
+  } catch {
+    // Unknown fingerprints may contain proxies or other values that cannot be inspected.
+    return false
   }
-  const toJSON = Reflect.get(value, "toJSON")
-  if (hasRuntimeType(toJSON, "function")) {
-    const constructorName = value.constructor?.name ?? "object"
-    return `toJSON:${constructorName}:${stableWorkspaceSourceValue(Reflect.apply(toJSON, value, []))}`
-  }
-  if (Array.isArray(value)) return `array:[${value.map(stableWorkspaceSourceValue).join(",")}]`
-  // Preserve JSON property order: Source Sync hashes fingerprints without sorting keys.
-  // SAFETY: The value is a non-null object; own keys are read only for canonical binding comparison.
-  return `object:{${Object.keys(value).map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
 }
 
 function workspaceSessionStarter<Name extends WorkspaceName>(workspace: ReadonlyWorkspaceFacade<Name>): Pick<Workspace, "startSession"> | undefined {

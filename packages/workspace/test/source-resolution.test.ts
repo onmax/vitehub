@@ -1471,6 +1471,46 @@ describe("Workspace Source Resolution", () => {
     await expect(base.readFile("docs/guide.md")).resolves.toBe("parent")
   })
 
+  it.each([
+    { name: "empty and sparse arrays", left: [], right: Array(1) },
+    { name: "sparse array lengths", left: Array(1), right: Array(2) },
+    { name: "symbols", left: Symbol("same"), right: Symbol("same") },
+    { name: "functions", left: () => 1, right: () => 1 },
+    { name: "negative zero", left: 0, right: -0 },
+    { name: "non-finite numbers", left: NaN, right: Infinity },
+    { name: "infinities", left: Infinity, right: -Infinity },
+    { name: "bigints", left: 1n, right: 2n },
+    { name: "cycles", left: (() => { const value: unknown[] = []; value.push(value); return value })(), right: [] },
+    { name: "throwing serializers", left: { toJSON() { throw new Error("serializer") } }, right: {} },
+  ])("retains the parent guard for $name fingerprints", async ({ left, right }) => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    let resolution = 0
+    const definition = {
+      name: "support",
+      sources: {
+        docs: custom({
+          async resolve() {
+            return custom({
+              fingerprint: { value: resolution++ === 0 ? left : right },
+              mount: "docs",
+              sync: { stale: "remove" },
+              async getKeys() { return ["guide.md"] },
+              async getItem(key) { return { key, path: key, content: "child" } },
+            })
+          },
+          async getKeys() { return [] },
+          async getItem(key) { return { key, content: "" } },
+        }),
+      },
+    }
+    await base.writeFile("docs/guide.md", "parent")
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, { invocation, overlay: true })
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, definition, { invocation, overlay: true })
+
+    await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "error" })
+    await expect(base.readFile("docs/guide.md")).resolves.toBe("parent")
+  })
+
   it("keeps the guard when resolved Source fingerprints contain distinct Dates", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     let resolution = 0
