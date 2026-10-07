@@ -242,6 +242,12 @@ export const landingPrimitives = [
     to: "/docs/email",
   },
   {
+    id: "channels",
+    name: "Channels",
+    description: "Named message delivery",
+    to: "/docs/channels",
+  },
+  {
     id: "env",
     name: "Env",
     description: "Typed configuration",

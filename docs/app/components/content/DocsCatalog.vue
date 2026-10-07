@@ -30,6 +30,7 @@ const scenes = new Map([
   ["database", "database"],
   ["env", "env"],
   ["email", "email"],
+  ["channels", "channels"],
   ["kv", "kv"],
   ["queue", "queue"],
   ["rate-limit", "rate-limit"],

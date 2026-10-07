@@ -15,7 +15,7 @@ const isSupportMatrix = computed(
 const navLinks = [
   { label: "Docs", to: "/docs" },
   { label: "Examples", to: "/examples" },
-  { label: "Blog", to: "/blog" },
+  { label: "Tutorials", to: "/docs/getting-started" },
 ];
 
 const mobileLinks = [

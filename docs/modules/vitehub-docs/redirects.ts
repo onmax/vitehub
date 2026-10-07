@@ -24,6 +24,7 @@ const movedServerPrimitives = [
   "source",
   "workflows",
   "workspace",
+  "realtime",
 ];
 
 /** Capability pages that now live inside the product section of the primitive they expose. */
