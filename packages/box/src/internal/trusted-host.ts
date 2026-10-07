@@ -302,8 +302,7 @@ async function createSession(
 async function retrySessionDestroy(session: TrustedHostSession): Promise<void> {
   while (true) {
     await new Promise<void>((resolvePromise) => {
-      const timer = setTimeout(resolvePromise, 250);
-      timer.unref?.();
+      setTimeout(resolvePromise, 250);
     });
     try {
       await session.destroy?.();
@@ -636,10 +635,23 @@ async function createTrustedHostSession(options: {
       if (process.platform === "win32")
         for (const child of active) signalProcessTree(child, "SIGKILL");
       await memory?.kill();
-      await Promise.race([
-        Promise.all(active.map(waitForExit)),
-        new Promise((resolvePromise) => setTimeout(resolvePromise, 10_000)),
-      ]);
+      let timedOut = false;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all(active.map(waitForExit)),
+          new Promise<void>((resolvePromise) => {
+            timeout = setTimeout(() => {
+              timedOut = true;
+              resolvePromise();
+            }, 10_000);
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+      if (timedOut)
+        throw new Error("Timed out waiting for trusted-host processes to exit after SIGKILL.");
       processes.clear();
       processGroups.clear();
     },
