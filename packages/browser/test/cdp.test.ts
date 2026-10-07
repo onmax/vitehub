@@ -129,7 +129,13 @@ describe("cdp controller", () => {
     await expect(attached.client.send("Target.getTargets")).rejects.toThrow("after release")
   })
 
-  it("rejects pending commands when the provider sends malformed protocol data", async () => {
+  it.each([
+    ["invalid JSON", "not-json"],
+    ["an empty object", JSON.stringify({})],
+    ["a non-numeric response id", JSON.stringify({ id: "1", result: {} })],
+    ["a response without a result or error", JSON.stringify({ id: 1 })],
+    ["a response with both result and error", JSON.stringify({ error: { message: "failed" }, id: 1, result: {} })],
+  ] as const)("rejects pending commands when the provider sends malformed protocol data (%s)", async (_name, data) => {
     const socket = new FakeSocket()
     vi.spyOn(socket, "send").mockImplementation(() => {})
     const attached = await cdp({ connect: async () => socket }).attach({
@@ -141,7 +147,7 @@ describe("cdp controller", () => {
     })
 
     const command = attached.client.send("Target.getTargets")
-    socket.dispatchEvent(new MessageEvent("message", { data: "not-json" }))
+    socket.dispatchEvent(new MessageEvent("message", { data }))
 
     await expect(command).rejects.toMatchObject({
       code: "BROWSER_PROVIDER_ERROR",
