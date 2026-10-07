@@ -43,9 +43,8 @@ describe("Cloudflare KV binding", () => {
 
   it("rejects an incomplete page without a cursor", async () => {
     const storage = createCloudflareKVStorage({ binding: "KV", driver: "cloudflare-kv-binding" }) as RuntimeStorage
-    const namespace = {
-      list: async () => ({ keys: [{ name: "smoke" }], list_complete: false }),
-    }
+    const namespace = createNamespace()
+    namespace.list = async () => ({ keys: [{ name: "smoke" }], list_complete: false })
 
     await expect(runWithActiveCloudflareEnv({ KV: namespace }, () => storage.listKeys({ limit: 10 }))).rejects.toThrow(
       "Cloudflare KV list returned an invalid page.",
