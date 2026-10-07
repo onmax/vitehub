@@ -1,3 +1,5 @@
+import { parseMarkdown } from "comark"
+import type { Node as MarkdownNode } from "comark"
 import * as v from "valibot"
 import type { GitHubHost } from "./github-host.ts"
 
@@ -67,7 +69,7 @@ export interface GitHubPullRequestOperationsOptions {
   eligible?: (pullRequest: GitHubPullRequestOperationSnapshot) => boolean | Promise<boolean>
   /** Exact GitHub logins allowed by the explicit mention capability. Defaults to none. */
   mentionAllowlist?: readonly string[]
-  /** Reject unallowlisted `@login` tokens in ordinary comments. Defaults to false for generic callers. */
+  /** Reject live GitHub mentions in ordinary comments. Defaults to false for generic callers. */
   restrictCommentMentions?: boolean
   /** Host-owned prefix that correlates comment webhooks with this worker's activity. */
   commentPrefix?: string
@@ -122,7 +124,7 @@ function nonempty(value: string, name: string): string {
 const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/
 // GitHub renders mentions in Markdown, blockquotes, and quoted text. Keep
 // URL paths, email-like text, and adjacent at-signs out of the token stream.
-const githubMentionPattern = /(^|[^A-Za-z0-9@+./-])@([A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})(?:\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38}))?)(?=$|[^A-Za-z0-9_-])/g
+const githubMentionPattern = /(^|[^A-Za-z0-9@+./-])@([A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9_-]{0,38})?|\/ent:[A-Za-z0-9][A-Za-z0-9_-]*)(?=$|[^A-Za-z0-9_-])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
   const normalized = new Set<string>()
@@ -133,10 +135,22 @@ export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []):
   return [...normalized]
 }
 
-function assertCommentMentionsAllowed(body: string): void {
-  for (const match of body.matchAll(githubMentionPattern)) {
-    if (match[2]) throw new Error("Comments cannot contain GitHub mentions; use the guarded mention capability.")
+async function hasGitHubMention(body: string): Promise<boolean> {
+  // Parse CommonMark without Comark extensions or automatic closing of incomplete
+  // code spans. Only rendered text can notify; code examples must stay usable.
+  const document = await parseMarkdown(body, {
+    registerDefaultPlugins: false,
+    autoClose: false,
+    autoUnwrap: false,
+    linkify: false,
+  })
+  function hasMention(node: MarkdownNode): boolean {
+    if (typeof node === "string") return !!node.match(githubMentionPattern)
+    const [tag, , ...children] = node
+    if (tag === "code" || tag === "pre" || tag === null) return false
+    return children.some(hasMention)
   }
+  return document.nodes.some(hasMention)
 }
 
 /**
@@ -336,7 +350,7 @@ export function createGitHubPullRequestOperations(
     },
     async comment(body) {
       nonempty(body, "Comment")
-      if (options.restrictCommentMentions) assertCommentMentionsAllowed(body)
+      if (options.restrictCommentMentions && await hasGitHubMention(body)) throw new Error("Comments cannot contain GitHub mentions; use the guarded mention capability.")
       await snapshot()
       await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}${body}`], commandOptions)
     },
@@ -346,9 +360,10 @@ export function createGitHubPullRequestOperations(
         throw new Error("GitHub login is not in the configured mention allowlist.")
       }
       const message = nonempty(body, "Mention body")
-      if (message.match(githubMentionPattern)) throw new Error("Mention body must not contain another mention.")
+      if (await hasGitHubMention(message)) throw new Error("Mention body must not contain another mention.")
       await snapshot()
-      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}@${targetLogin} ${message}`], commandOptions)
+      // Keep block Markdown at the start of the validated body on its own line.
+      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}@${targetLogin}\n\n${message}`], commandOptions)
     },
     async resolveThread(id) {
       nonempty(id, "Review thread ID")

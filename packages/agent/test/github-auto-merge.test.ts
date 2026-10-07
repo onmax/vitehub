@@ -78,7 +78,7 @@ describe("native auto-merge", () => {
     if (!mention) throw new Error("Missing configured mention tool.")
     await mention.execute({ login: "stefina", body: "Please restore the service." })
     expect(f.command).toHaveBeenCalledWith(
-      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@stefina Please restore the service."],
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@stefina\n\nPlease restore the service."],
       expect.anything(),
     )
     expect(repairCapability(f.operations, false).tools).not.toHaveProperty("mentionOnPullRequest")
@@ -95,7 +95,7 @@ describe("native auto-merge", () => {
       .map(([args]) => args.find(arg => arg.startsWith("body=")))
     expect(bodies).toEqual([
       `body=${commentPrefix}Verified blocker.`,
-      `body=${commentPrefix}@stefina Please restore the service.`,
+      `body=${commentPrefix}@stefina\n\nPlease restore the service.`,
     ])
   })
 
@@ -103,7 +103,7 @@ describe("native auto-merge", () => {
     const f = fixture({ mentionAllowlist: ["stefina"] })
     await f.operations.mention("Stefina", "Please confirm the product decision.")
     expect(f.command).toHaveBeenCalledWith(
-      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@Stefina Please confirm the product decision."],
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@Stefina\n\nPlease confirm the product decision."],
       expect.anything(),
     )
     await expect(f.operations.mention("someone-else", "Please review this.")).rejects.toThrow(/allowlist/)
@@ -124,6 +124,15 @@ describe("native auto-merge", () => {
     "Open https://example.com/@someone for details.",
     "Use @@someone as the delimiter.",
     "Use @ as the delimiter.",
+    "Use `@someone` in the configuration.",
+    "Use `` `@someone` `` in the configuration.",
+    "Use `first line\n@someone` in the configuration.",
+    "```text\n@someone\n```",
+    "~~~text\n@/ent:platform-sre\n~~~~",
+    "```text\n@someone",
+    "    @someone\n    @acme/ops",
+    "> ```text\n> @someone\n> ```",
+    "- Example:\n\n  ```text\n  @someone\n  ```",
   ])("allows non-mention at-signs in %s", async (body) => {
     const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
     await f.operations.comment(body)
@@ -131,13 +140,19 @@ describe("native auto-merge", () => {
     const bodies = f.command.mock.calls
       .filter(([args]) => args[1] === "/repos/acme/app/issues/12/comments")
       .map(([args]) => args.find(arg => arg.startsWith("body=")))
-    expect(bodies).toEqual([`body=${body}`, `body=@stefina ${body}`])
+    expect(bodies).toEqual([`body=${body}`, `body=@stefina\n\n${body}`])
   })
 
   it.each([
     "**@other-user**", "*@other-user*", "_@other-user_", "~~@other-user~~",
     "> @other-user", ">@other-user", '"@other-user"', "'@other-user'",
     "&quot;@other-user&quot;", "(@other-user)", "**@acme/ops**",
+    "@/ent:platform-sre", "**@/ent:platform-sre**",
+    "`@example` then @other-user",
+    "```text\n@example\n```\n@other-user",
+    "~~~text\n@example\n~~~~\n@other-user",
+    "Use `unclosed @other-user",
+    "Use \\`@other-user\\` as text",
   ])("rejects wrapped mention %s before making GitHub calls", async (body) => {
     const f = fixture({ restrictCommentMentions: true })
     await expect(f.operations.comment(body)).rejects.toThrow(/guarded mention capability/)
@@ -151,7 +166,7 @@ describe("native auto-merge", () => {
     const f = fixture({ mentionAllowlist: ["mona-cat_octo"] })
     await f.operations.mention("mona-cat_octo", "Please restore the service.")
     expect(f.command).toHaveBeenCalledWith(
-      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@mona-cat_octo Please restore the service."],
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@mona-cat_octo\n\nPlease restore the service."],
       expect.anything(),
     )
   })
