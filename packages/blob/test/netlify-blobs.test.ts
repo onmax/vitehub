@@ -240,6 +240,13 @@ describe("Netlify Blobs driver", () => {
     expect(store.getMetadata).not.toHaveBeenCalled()
   })
 
+  it("normalizes omitted blob and directory arrays", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })))
+
+    await expect(createDriver(options).list()).resolves.toMatchObject({ blobs: [], hasMore: false })
+    expect(store.getMetadata).not.toHaveBeenCalled()
+  })
+
   it("retries transient list failures", async () => {
     const cancel = vi.fn()
     vi.stubGlobal("fetch", vi.fn()

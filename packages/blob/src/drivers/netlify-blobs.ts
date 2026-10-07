@@ -266,8 +266,8 @@ async function listPage(fetchPage: (parameters: Record<string, string>) => Promi
   if (!isPlainObject(body)) {
     throw blobErrorDiagnostics.BLOB_R0010({ message: "Netlify Blobs list returned an invalid response." })
   }
-  const blobs = readProperty(body, "blobs")
-  const directories = readProperty(body, "directories")
+  const blobs = Object.hasOwn(body, "blobs") ? readProperty(body, "blobs") : []
+  const directories = Object.hasOwn(body, "directories") ? readProperty(body, "directories") : []
   const nextCursor = readProperty(body, "next_cursor")
   if (
     !Array.isArray(blobs)
