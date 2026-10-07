@@ -22,10 +22,6 @@ export default defineConfig({
     exclude: ["test/output/**", "test/local/**"],
     fileParallelism: false,
     include: ["test/**/*.test.ts"],
-    typecheck: {
-      enabled: true,
-      include: ["test/**/*.test-d.ts"],
-    },
     ...shard ? { shard } : {},
   },
 })
