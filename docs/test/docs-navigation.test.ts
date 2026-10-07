@@ -133,6 +133,19 @@ describe("docs product navigation", () => {
     ]);
   });
 
+  it("gives execution primitives a Concepts lane before configuration reference", () => {
+    for (const sectionId of ["sandbox", "queue", "workflows"]) {
+      const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
+      const groups = getDocsSidebarGroups(section!);
+
+      expect(groups.map(group => group.label), sectionId).toContain("Concepts");
+      expect(groups.find(group => group.label === "Concepts")?.pages.map(page => page.title), sectionId)
+        .toEqual(["Concepts"]);
+      expect(groups.find(group => group.label === "Reference")?.pages.map(page => page.title), sectionId)
+        .toContain("Configure");
+    }
+  });
+
   it("lists each topic once inside a section", () => {
     for (const section of docsManifest.sections) {
       // UI components are named after the feature they render.
