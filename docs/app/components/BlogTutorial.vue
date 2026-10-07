@@ -18,7 +18,7 @@ defineProps<{
   };
 }>();
 
-const chapters: Chapter[] = [
+const chapters: [Chapter, ...Chapter[]] = [
   {
     id: "choose",
     title: "Choose the job",
