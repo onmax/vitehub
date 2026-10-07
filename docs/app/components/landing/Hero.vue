@@ -4,8 +4,6 @@ import AgentPlayground from "./AgentPlayground.vue"
 </script>
 
 <template>
-  <LandingPrimitives />
-
   <section class="border-b border-default bg-default">
     <div
       class="mx-auto grid min-h-[calc(100svh-var(--ui-header-height))] max-w-[90rem] items-center gap-10 px-4 py-12 sm:px-8 sm:py-16 lg:grid-cols-[minmax(23rem,0.76fr)_minmax(0,1.24fr)] lg:gap-14 lg:px-12 lg:py-16"
