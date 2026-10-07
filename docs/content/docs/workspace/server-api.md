@@ -64,7 +64,7 @@ Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRe
 | `movePath(from, to, options?)` | `overwrite?: boolean` | Moves a path. Existing destinations fail unless `overwrite` is enabled. |
 | `copyPath(from, to, options?)` | `overwrite?: boolean` | Copies a path. Existing destinations fail unless `overwrite` is enabled. |
 | `snapshot(options?)` | `name?: string` | Captures the current Workspace tree with an optional snapshot name. |
-| `history.rebase(options?)` | `takeRemote?: string[]` | Reloads a remote Store while preserving staged paths. A listed path takes its remote version only when both sides changed; any other overlapping change remains a conflict. |
+| `history.rebase(options?)` | `takeRemote?: string[]` | Reloads a remote Store while preserving staged paths. A listed path takes its remote version only when both sides changed; any other overlapping change remains a conflict. Each listed path must be writable, so a Source-backed path fails. |
 | `diff(options?)` | `from?: WorkspaceSnapshot` | Compares the current tree with the supplied snapshot or the Store baseline. |
 | `materializeSources(options?)` | `abortSignal?`, `details?: 'paths'`, `onProgress?`, `sources?`, `path?` | Materializes every Source or a selected Source/path subset, with cancellation and progress reporting. |
 | `getMeta(key)` / `setMeta(key, value)` | Store-defined | Reads or writes optional Workspace Store metadata when the configured Store implements it. |
@@ -103,7 +103,7 @@ Build and development integrations materialize Sources at build time. Runtime `s
 | --- | --- | --- | --- |
 | `sync` | `boolean \| WorkspaceSourceSyncPolicy` | `false` | `true` enables sync with default policy; an object configures concurrency and stale paths. |
 | `sync.concurrency` | `skip \| queue` | `queue` | Queues behind an active sync for the same Source, or reports the overlapping Source as skipped. |
-| `sync.stale` | `keep \| remove` | `keep` | Keeps files no longer returned by the Source, or removes them during reconciliation. |
+| `sync.stale` | `keep \| remove` | `keep` | Keeps files no longer returned by the Source, or removes them during reconciliation. Removal changes only paths inside the current Source mount. |
 
 ### `workspace.sync()` options
 

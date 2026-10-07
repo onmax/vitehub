@@ -35,6 +35,7 @@ import type {
   WorkspaceEntry,
   WorkspaceFile,
   WorkspaceName,
+  WorkspaceRebaseOptions,
   WorkspaceSearchHit,
   WorkspaceSearchQuery,
   WorkspaceStore,
@@ -433,14 +434,22 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     // Every base write needs a Source write grant for its exact path.
     // SAFETY: Write paths are checked by the base facade at runtime; the generic facade has no statically known named Workspace paths.
     const rawWrites = resolveWorkspaceRawWriteTarget(workspace)
-    if (!rawWrites) {
-      throw workspaceError("[vitehub] Cannot resolve a writable Source facade from an unregistered object.")
-    }
-    const writes = rawWrites
+    // Built-in facades register a raw target to avoid recursing through their
+    // resolved overlay. Facade wrappers keep using their writable fs
+    // implementation, which remains the underlying authorized write path.
+    const writes = rawWrites ?? workspace.fs
     const baseWrites = {
       mkdir: sourceView.requireWriteGrant(async (path, options?: MkdirOptions) => await writes.mkdir(path, options)),
       rm: sourceView.requireWriteGrant(async (path, options?: RmOptions) => await writes.rm(path, options)),
       writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await writes.writeFile(path, content, options)),
+    }
+    const baseRebase = sourceView.requireRebaseGrants(async options => await workspace.history.rebase(options))
+
+    // A takeRemote path replaces local content, so Source-backed paths are rejected.
+    async function rebase(options?: WorkspaceRebaseOptions) {
+      const grants = []
+      for (const path of options?.takeRemote ?? []) grants.push(await sourceView.assertWritable(path))
+      await baseRebase(grants, options)
     }
 
     async function writeWithPolicy<Result = void>(
@@ -556,7 +565,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         const resolvedStore = createWritableFacadeStore({ ...workspace, fs: writeFs })
         await publishWorkspace(resolvedDefinition, resolvedStore, options)
       },
-      rebase: workspace.history.rebase,
+      rebase,
       readFile: writeFs.readFile,
       rm: writeFs.rm,
       search: writeFs.search,
@@ -602,6 +611,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       ...workspace,
       diff: writeWorkspace.diff,
       fs: writeFs,
+      history: { ...workspace.history, rebase },
       materializeSources,
       publish: writeWorkspace.publish,
       snapshot: writeWorkspace.snapshot,
