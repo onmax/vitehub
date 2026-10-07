@@ -246,6 +246,7 @@ describe("pull request checkout", () => {
     await git(checkout, ["fetch", "-q", "--no-tags", `https://github.com/${headRepository}.git`, "refs/heads/feature"], env)
     await git(checkout, ["checkout", "-q", "-B", "feature", "FETCH_HEAD"])
     await git(checkout, ["remote", "set-url", "--push", "origin", `https://github.com/${headRepository}.git`])
+    // Source-only and explicit forms must push to the same verified head branch.
     await git(checkout, ["config", "remote.origin.push", refspec])
     expect(await git(checkout, ["config", "branch.feature.remote"]).catch(() => "")).toBe("")
     expect(await git(checkout, ["remote"])).toBe("origin")
@@ -296,7 +297,7 @@ describe("pull request checkout", () => {
     ["remote.origin.pushurl", "https://github.com/other/repository.git", "wrong push destination"],
     ["remote.origin.push", "HEAD:refs/heads/other", "wrong push refspec"],
     ["remote.origin.push", "feature:other", "wrong push refspec"],
-    ["remote.origin.push", "+feature", "wrong push refspec"],
+    ["remote.origin.push", "+feature:other", "wrong push refspec"],
     ["remote.origin.mirror", "true", "wrong push refspec"],
     ["push.default", "matching", "wrong default push configuration"],
     ["branch.feature.pushRemote", "other", "wrong push remote"],
