@@ -171,24 +171,29 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
   try {
     const path = resolveBlobPath(root, pathname)
     await assertNoSymlinkPath(root, path)
-    const stats = await stat(path, { bigint: true })
-    if (!stats.isFile()) return null
-    const meta = await readMetadata(root, pathname)
-    const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
-    let contentHash = meta.fileVersion === fileVersion ? meta.contentHash : undefined
-    if (!contentHash) {
-      contentHash = createHash("sha256").update(await readFile(path)).digest("hex")
-      await writeMetadata(root, pathname, { ...meta, contentHash, fileVersion }).catch((error) => {
-        console.error("[vitehub/blob] Filesystem hash cache write failed", error)
-      })
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const stats = await stat(path, { bigint: true })
+      if (!stats.isFile()) return null
+      const meta = await readMetadata(root, pathname)
+      const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+      let contentHash = meta.fileVersion === fileVersion ? meta.contentHash : undefined
+      if (!contentHash) {
+        contentHash = createHash("sha256").update(await readFile(path)).digest("hex")
+        const after = await stat(path, { bigint: true })
+        if (fileVersion !== `${after.dev}:${after.ino}:${after.size}:${after.mtimeNs}:${after.ctimeNs}`) continue
+        await writeMetadata(root, pathname, { ...meta, contentHash, fileVersion }).catch((error) => {
+          console.error("[vitehub/blob] Filesystem hash cache write failed", error)
+        })
+      }
+      return {
+        contentHash,
+        meta,
+        path: pathname,
+        size: Number(stats.size),
+        uploadedAt: stats.mtime,
+      }
     }
-    return {
-      contentHash,
-      meta,
-      path: pathname,
-      size: Number(stats.size),
-      uploadedAt: stats.mtime,
-    }
+    throw new Error("Blob changed while reading its filesystem metadata.")
   }
   catch (error) {
     if (isNotFound(error)) return null
@@ -393,10 +398,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, bytes)
-      const stats = await stat(path, { bigint: true })
       await writeMetadata(root, pathname, {
-        contentHash: createHash("sha256").update(bytes).digest("hex"),
-        fileVersion: `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
         contentType: putOptions.contentType || (body instanceof Blob ? body.type : undefined),
         customMetadata: putOptions.customMetadata,
       })
