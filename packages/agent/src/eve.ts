@@ -12,6 +12,8 @@ interface EveApprovalContext {
   abortSignal: AbortSignal
   callId: string
   getSandbox: () => Promise<never>
+  /** Accepted older Eve contracts expose this accessor. ViteHub does not mount Eve skills. */
+  getSkill: (id: string) => never
   getToken: (provider: unknown, options?: unknown) => Promise<never>
   requireAuth: (provider: unknown, options?: unknown) => never
   session: {
@@ -154,6 +156,7 @@ function toViteHubTool(
             abortSignal: options.abortSignal ?? fallbackAbortSignal,
             callId,
             getSandbox: async () => unsupportedEveRuntimeFeature("ctx.getSandbox()"),
+            getSkill: () => unsupportedEveRuntimeFeature("ctx.getSkill()"),
             getToken: async () => unsupportedEveRuntimeFeature("ctx.getToken()"),
             requireAuth: () => unsupportedEveRuntimeFeature("ctx.requireAuth()"),
             messages: options.messages ?? toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
@@ -174,6 +177,7 @@ function toViteHubTool(
               approvedTools,
               callId,
               getSandbox: async () => unsupportedEveRuntimeFeature("approval ctx.getSandbox()"),
+              getSkill: () => unsupportedEveRuntimeFeature("approval ctx.getSkill()"),
               getToken: async () => unsupportedEveRuntimeFeature("approval ctx.getToken()"),
               requireAuth: () => unsupportedEveRuntimeFeature("approval ctx.requireAuth()"),
               session,

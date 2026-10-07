@@ -1312,6 +1312,34 @@ describe("Eve extension capabilities", () => {
     expect(tools.approval__read).not.toHaveProperty("needsApproval")
   })
 
+  it("reports unsupported skill access in older Eve execution and approval contexts", async () => {
+    const capability = await eveExtensionCapability(
+      "skill-extension",
+      "skill",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({
+        execute: {
+          execute: (_input: unknown, context: { getSkill: (id: string) => unknown }) => context.getSkill("test-skill"),
+        },
+        approve: {
+          approval: (context: { getSkill: (id: string) => unknown }) => context.getSkill("test-skill"),
+          execute: () => "ok",
+        },
+      }),
+    )
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext())
+    const approve = tools.skill__approve as AgentToolDefinition & { needsApproval: (input: unknown) => Promise<boolean> }
+
+    await expect(tools.skill__execute!.execute?.({})).rejects.toMatchObject({
+      code: "AGENT_R0415",
+      message: expect.stringContaining("ctx.getSkill()"),
+    })
+    await expect(approve.needsApproval({})).rejects.toMatchObject({
+      code: "AGENT_R0415",
+      message: expect.stringContaining("approval ctx.getSkill()"),
+    })
+  })
+
   it("rejects Eve approval response authorizers", async () => {
     const capability = await eveExtensionCapability(
       "approval-extension",
