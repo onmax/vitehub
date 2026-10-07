@@ -135,7 +135,7 @@ export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []):
   return [...normalized]
 }
 
-async function hasGitHubMention(body: string): Promise<boolean> {
+async function githubMentionTokens(body: string): Promise<string[]> {
   // Parse CommonMark without Comark extensions or automatic closing of incomplete
   // code spans. Only rendered text can notify; code examples must stay usable.
   const document = await parseMarkdown(body, {
@@ -144,14 +144,23 @@ async function hasGitHubMention(body: string): Promise<boolean> {
     autoUnwrap: false,
     linkify: false,
   })
-  function hasMention(node: MarkdownNode): boolean {
+  const mentions: string[] = []
+  function collectMentions(node: MarkdownNode): void {
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark has already parsed the body into its string-or-element node contract.
-    if (typeof node === "string") return !!node.match(githubMentionPattern)
+    if (typeof node === "string") {
+      for (const match of node.matchAll(githubMentionPattern)) mentions.push(match[2]!.toLowerCase())
+      return
+    }
     const [tag, , ...children] = node
-    if (tag === "code" || tag === "pre" || tag === null) return false
-    return children.some(hasMention)
+    if (tag === "code" || tag === "pre" || tag === null) return
+    children.forEach(collectMentions)
   }
-  return document.nodes.some(hasMention)
+  document.nodes.forEach(collectMentions)
+  return mentions
+}
+
+async function hasGitHubMention(body: string): Promise<boolean> {
+  return (await githubMentionTokens(body)).length > 0
 }
 
 /**
@@ -381,8 +390,15 @@ export function createGitHubPullRequestOperations(
       if (input.title === undefined && input.body === undefined) throw new Error("Provide a pull request title or body.")
       const args = ["api", target, "--method", "PATCH"]
       if (input.title !== undefined) args.push("-f", `title=${nonempty(input.title, "Title")}`)
-      if (input.body !== undefined) args.push("-f", `body=${input.body}`)
-      await snapshot()
+      const current = await snapshot()
+      if (input.body !== undefined) {
+        if (options.restrictCommentMentions) {
+          const existing = new Set(await githubMentionTokens(current.pullRequest.body))
+          const added = (await githubMentionTokens(input.body)).find((mention) => !existing.has(mention))
+          if (added) throw new Error("Pull request bodies cannot add GitHub mentions; use the guarded mention capability.")
+        }
+        args.push("-f", `body=${input.body}`)
+      }
       await github.command(args, commandOptions)
     },
     async push() {

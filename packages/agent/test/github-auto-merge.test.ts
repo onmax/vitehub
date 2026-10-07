@@ -337,6 +337,19 @@ describe("host-owned repair operations", () => {
     expect(f.command).toHaveBeenCalledWith(["api", "/repos/acme/app/issues/12", "--method", "PATCH", "-f", "title=New title", "-f", "body="], expect.anything())
   })
 
+  it("guards new mentions in pull request body updates while preserving existing ones", async () => {
+    const f = fixture({ restrictCommentMentions: true })
+    f.pullRequest.body = "Please contact @existing-user."
+    await expect(f.operations.updateMetadata({ body: "Please contact @new-user." })).rejects.toThrow(/cannot add GitHub mentions/)
+    expect(f.command.mock.calls.some(([args]) => args[1] === "/repos/acme/app/issues/12" && args.includes("body=Please contact @new-user."))).toBe(false)
+
+    await f.operations.updateMetadata({ body: "Updated details for @existing-user." })
+    expect(f.command).toHaveBeenCalledWith(
+      ["api", "/repos/acme/app/issues/12", "--method", "PATCH", "-f", "body=Updated details for @existing-user."],
+      expect.anything(),
+    )
+  })
+
   it("reads bounded failure logs only for a run at the admitted head", async () => {
     const f = fixture()
     expect(await f.operations.readCheckLogs(123)).toEqual({ text: "CI failure", truncated: false })
