@@ -77,6 +77,7 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
   }
   let closed = false;
   let healthError: Error | undefined;
+  const healthMarker = join(path, ".vitehub-oom");
   const inspectHealth = async (): Promise<void> => {
     if (closed || healthError) return;
     const localEvents = await readFile(join(path, "memory.events.local"), "utf8");
@@ -88,6 +89,7 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
         .then(contents => contents.trim())
         .catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? "unavailable" : Promise.reject(error));
       healthError = diagnostics.BOX_R0158({ message: `Box memory limit exceeded: local allocation OOM recorded; limit=${resources.memoryMaxBytes} bytes, peak=${peak} bytes, local_oom=${localOom}, observed_oom_kill=${kills}. Kill count does not identify the OOM cause and may exclude descendants on memory_localevents mounts. Open a new session after reducing the workload or changing its budget.` });
+      await Promise.resolve(writeFile(healthMarker, "1")).catch(() => undefined);
       await writeFile(join(path, "cgroup.kill"), "1");
     }
   };
@@ -107,7 +109,7 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       const environment = Object.entries(options.env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
       return spawn("/bin/sh", [
         "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; shift; exec /usr/bin/env -i -- "$@"',
+        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$1/.vitehub-oom" || exit 125; shift; exec /usr/bin/env -i -- "$@"',
         "vitehub-box",
         path,
         ...environment.map(([name, value]) => `${name}=${value}`),

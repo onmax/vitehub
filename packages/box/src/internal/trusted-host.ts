@@ -278,7 +278,13 @@ async function createSession(
           rm(path, { force: true, recursive: true }).catch(() => undefined)
         ),
       );
-      await Promise.resolve(session.destroy?.()).catch(() => undefined);
+      try {
+        await session.destroy?.();
+      } catch {
+        // Keep the session and its lease owned by a bounded retry loop. This
+        // covers cgroup teardown failures during failed initialization.
+        void retrySessionDestroy(session);
+      }
     }
     else {
       await Promise.all(
@@ -290,6 +296,21 @@ async function createSession(
       await releases();
     }
     throw error;
+  }
+}
+
+async function retrySessionDestroy(session: TrustedHostSession): Promise<void> {
+  while (true) {
+    await new Promise<void>((resolvePromise) => {
+      const timer = setTimeout(resolvePromise, 250);
+      timer.unref?.();
+    });
+    try {
+      await session.destroy?.();
+      return;
+    } catch {
+      // Keep the lease until cgroup cleanup succeeds.
+    }
   }
 }
 
@@ -611,7 +632,10 @@ async function createTrustedHostSession(options: {
       if (process.platform === "win32")
         for (const child of active) signalProcessTree(child, "SIGKILL");
       await memory?.kill();
-      await Promise.all(active.map(waitForExit));
+      await Promise.race([
+        Promise.all(active.map(waitForExit)),
+        new Promise((resolvePromise) => setTimeout(resolvePromise, 10_000)),
+      ]);
       processes.clear();
       processGroups.clear();
     },
