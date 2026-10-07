@@ -1381,6 +1381,30 @@ describe("Workspace Source Resolution", () => {
     await expect(base.exists("docs/guide.md")).resolves.toBe(false)
   })
 
+  it("retains same Source sync authority in scoped nested views", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    const source = custom({
+      mount: "docs",
+      sync: { stale: "remove" },
+      async getKeys() { return ["guide.md"] },
+      async getItem(key) { return { key, path: key, content: "scoped" } },
+    })
+    const definition = { name: "support", sources: { docs: source }}
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, {
+      ...scope("acme", ["docs"]),
+      overlay: true,
+    })
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, definition, {
+      ...scope("acme", ["docs"]),
+      overlay: true,
+    })
+
+    await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({
+      status: "ready",
+    })
+    await expect(base.readFile("docs/guide.md")).resolves.toBe("scoped")
+  })
+
   it("rejects overlay rebases that take remote content under a Source mount", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     const rebase = vi.fn(async (_options?: { takeRemote?: string[] }) => {})

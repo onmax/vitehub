@@ -650,11 +650,12 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       // parent view. Renamed or replaced bindings must pass the parent's guard.
       const guardDefinition = {
         ...sourceViewDefinition,
-        sources: Object.fromEntries(Object.entries(sourceViewDefinition.sources ?? {}).filter(([key, source]) =>
-          childDefinition.name !== resolvedDefinition.name
-          || source !== childDefinition.sources?.[key]
-          || !normalizeWorkspaceSource(key, source).sync,
-        )),
+        sources: Object.fromEntries(Object.entries(sourceViewDefinition.sources ?? {}).filter(([key, source]) => {
+          const resolvedSource = resolvedDefinition.sources?.[key]
+          return childDefinition.name !== resolvedDefinition.name
+            || resolvedSource !== childDefinition.sources?.[key]
+            || !normalizeWorkspaceSource(key, resolvedSource ?? source).sync
+        })),
       }
       const guard = createWorkspaceSourceView(guardDefinition, overlayStore, { reuseStartupSnapshots: true })
       const backing = createWritableFacadeStore(workspace, childDefinition)
