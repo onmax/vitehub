@@ -59,6 +59,18 @@ describe("runtime preflight", () => {
     expect(started).toBe(false)
   })
 
+  it("snapshots check definitions before deferred execution", async () => {
+    const definition = { id: "file:original", kind: "file", required: false, check: () => false }
+    const handle = startRuntimePreflight({ checks: [definition] })
+    definition.id = "tool:mutated"
+    definition.kind = "tool"
+    definition.required = true
+    definition.check = () => true
+    await expect(handle.manifest).resolves.toMatchObject({
+      checks: [{ id: "file:original", kind: "file", required: false, state: "missing" }],
+    })
+  })
+
   it("defers diagnostics until every check settles", async () => {
     let release: ((result: RuntimePreflightCheckResult) => void) | undefined
     const report = vi.fn()
@@ -136,6 +148,15 @@ describe("runtime preflight", () => {
     expect(manifest.capabilities["command:blocking-promise"]).toBe("unknown")
     rejectLate?.(new Error("late failure"))
     await new Promise(resolve => setTimeout(resolve, 0))
+  })
+
+  it("keeps hostile error messages from rejecting the manifest", async () => {
+    const error = Object.create(Error.prototype) as Error
+    Object.defineProperty(error, "message", { get: () => { throw new Error("message getter failed") } })
+    const manifest = await runRuntimePreflight({
+      checks: [{ id: "command:throws", kind: "command", check: () => { throw error } }],
+    })
+    expect(manifest.checks[0]).toMatchObject({ state: "unknown", reason: "The preflight check failed." })
   })
 
   it("does not treat callable result records as available", async () => {

@@ -117,6 +117,15 @@ function normalizeReason(value: unknown): string | undefined {
   return reason || undefined
 }
 
+function normalizeThrownReason(value: unknown): string | undefined {
+  try {
+    return normalizeReason(value instanceof Error ? value.message : value)
+  }
+  catch {
+    return
+  }
+}
+
 function normalizeDetails(value: unknown): RuntimePreflightDetails | undefined {
   if (value === null || !hasRuntimeType(value, "object") || Array.isArray(value)) return
   const details: Record<string, RuntimePreflightValue> = {}
@@ -208,12 +217,19 @@ function diagnosticFor(check: RuntimePreflightCheck, state: RuntimePreflightStat
     : preflightDiagnostics.RUNTIME_R0013(params)
 }
 
-function isRuntimePreflightCheck(value: unknown): value is RuntimePreflightCheck {
-  if (value === null || !hasRuntimeType(value, "object")) return false
-  const id = Reflect.get(value, "id")
-  const kind = Reflect.get(value, "kind")
-  const check = Reflect.get(value, "check")
-  return hasRuntimeType(id, "string") && hasRuntimeType(kind, "string") && hasRuntimeType(check, "function")
+function snapshotRuntimePreflightCheck(value: unknown): RuntimePreflightCheck | undefined {
+  if (value === null || !hasRuntimeType(value, "object")) return
+  try {
+    const id = Reflect.get(value, "id")
+    const kind = Reflect.get(value, "kind")
+    const check = Reflect.get(value, "check")
+    const required = Reflect.get(value, "required")
+    if (!hasRuntimeType(id, "string") || !hasRuntimeType(kind, "string") || !hasRuntimeType(check, "function")) return
+    return { id, kind, check, required: required === true }
+  }
+  catch {
+    return
+  }
 }
 
 function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePreflightCheck[], timeoutMs: number, maxChecks: number } {
@@ -223,16 +239,18 @@ function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePre
   const maxChecks = options.maxChecks ?? 32
   if (!Number.isSafeInteger(maxChecks) || maxChecks < 1 || maxChecks > 128) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight maxChecks must be between 1 and 128." })
   if (options.checks.length > maxChecks) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight checks exceed maxChecks (${maxChecks}).` })
-  const checks = [...options.checks]
+  const checks: RuntimePreflightCheck[] = []
   const ids = new Set<string>()
-  for (const check of checks) {
-    if (!isRuntimePreflightCheck(check) || !check.id.trim() || !check.kind.trim()) {
+  for (const value of options.checks) {
+    const check = snapshotRuntimePreflightCheck(value)
+    if (!check || !check.id.trim() || !check.kind.trim()) {
       throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight checks require an id, kind, and check function." })
     }
     if (check.id.length > maxCheckIdLength) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check id must be at most ${maxCheckIdLength} characters.` })
     if (check.kind.length > maxCheckKindLength) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check kind must be at most ${maxCheckKindLength} characters.` })
     if (ids.has(check.id)) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check "${check.id}" is duplicated.` })
     ids.add(check.id)
+    checks.push(check)
   }
   return { checks, timeoutMs, maxChecks }
 }
@@ -260,7 +278,7 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       catch (error) {
         result = {
           state: "unknown",
-          reason: normalizeReason(error instanceof Error ? error.message : error) || "The preflight check failed.",
+          reason: normalizeThrownReason(error) || "The preflight check failed.",
         }
       }
       finally { bounded.cancel() }
