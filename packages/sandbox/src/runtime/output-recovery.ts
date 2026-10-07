@@ -1,6 +1,7 @@
 import { CLOUDFLARE_RETRIABLE_STARTUP_ERROR_RE, collectCloudflareErrorMessages } from '../internal/shared/cloudflare-retry'
 import { sleep } from '../internal/shared/utils'
 import { sandboxError } from '../sandbox/errors'
+import { hasRuntimeType } from '@vite-hub/runtime/internal/runtime-type'
 import { readSandboxErrorMetadata } from './error-normalization'
 import { EXEC_STDIO_OUTPUT_MARKER } from './entry-script'
 
@@ -74,7 +75,10 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
     return null
 
   try {
-    return JSON.parse(outputRaw) as {
+    const output = JSON.parse(outputRaw) as unknown
+    if (!hasRuntimeType(output, 'object') || output === null || Array.isArray(output) || !hasRuntimeType((output as { ok?: unknown }).ok, 'boolean'))
+      return null
+    return output as {
       ok?: boolean
       result?: TResult
       error?: { message?: string, name?: string, stack?: string, cause?: string }
@@ -82,6 +86,19 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
   }
   catch {
     return null
+  }
+}
+
+function isCompleteSandboxOutput(outputRaw: string) {
+  if (!outputRaw.trim())
+    return false
+
+  try {
+    JSON.parse(outputRaw)
+    return true
+  }
+  catch {
+    return false
   }
 }
 
@@ -216,7 +233,7 @@ async function recoverExecOutput(
     error,
     timeout,
     execution,
-    output => !!tryParseSandboxOutput(output),
+    output => isCompleteSandboxOutput(output),
   )
 }
 
@@ -238,7 +255,7 @@ async function waitForCloudflareOutput(
     error,
     timeout,
     execution,
-    output => !!tryParseSandboxOutput(output),
+    output => isCompleteSandboxOutput(output),
   )
 }
 
@@ -257,6 +274,11 @@ export async function readExecOutputWithRecovery(
   try {
     const output = await sandbox.readFile(outputPath)
     if (tryParseSandboxOutput(output))
+      return output
+    // A completed process owns complete JSON. Preserve malformed envelopes so
+    // the caller can report the invalid contract instead of treating them as a
+    // missing file and replacing the useful diagnostic with recovery failure.
+    if (execution?.code === 0 && isCompleteSandboxOutput(output))
       return output
   }
   catch {
