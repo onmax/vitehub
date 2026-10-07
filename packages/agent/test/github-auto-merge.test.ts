@@ -68,6 +68,20 @@ function fixture(options: Partial<GitHubPullRequestOperationsOptions> = {}) {
 }
 
 describe("native auto-merge", () => {
+  it("marks both comments and mentions as host-authored repair activity", async () => {
+    const commentPrefix = "<!-- vitehub-babysitter-repair:repair -->\n"
+    const f = fixture({ mentionAllowlist: ["stefina"], commentPrefix })
+    await f.operations.comment("Verified blocker.")
+    await f.operations.mention("stefina", "Please restore the service.")
+    const bodies = f.command.mock.calls
+      .filter(([args]) => args[1] === "/repos/acme/app/issues/12/comments")
+      .map(([args]) => args.find(arg => arg.startsWith("body=")))
+    expect(bodies).toEqual([
+      `body=${commentPrefix}Verified blocker.`,
+      `body=${commentPrefix}@stefina Please restore the service.`,
+    ])
+  })
+
   it("exposes a guarded explicit mention operation", async () => {
     const f = fixture({ mentionAllowlist: ["stefina"] })
     await f.operations.mention("Stefina", "Please confirm the product decision.")

@@ -67,6 +67,8 @@ export interface GitHubPullRequestOperationsOptions {
   eligible?: (pullRequest: GitHubPullRequestOperationSnapshot) => boolean | Promise<boolean>
   /** Exact GitHub logins allowed by the explicit mention capability. Defaults to none. */
   mentionAllowlist?: readonly string[]
+  /** Host-owned prefix that correlates comment webhooks with this worker's activity. */
+  commentPrefix?: string
   /** Host-owned checkout push, already bound to its source branch and expected-head lease. */
   push?: () => Promise<string>
   signal?: AbortSignal
@@ -313,7 +315,7 @@ export function createGitHubPullRequestOperations(
     async comment(body) {
       nonempty(body, "Comment")
       await snapshot()
-      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${body}`], commandOptions)
+      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}${body}`], commandOptions)
     },
     async mention(login, body) {
       const targetLogin = nonempty(login, "GitHub login")
@@ -323,7 +325,7 @@ export function createGitHubPullRequestOperations(
       const message = nonempty(body, "Mention body")
       if (message.includes("@")) throw new Error("Mention body must not contain another mention.")
       await snapshot()
-      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=@${targetLogin} ${message}`], commandOptions)
+      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}@${targetLogin} ${message}`], commandOptions)
     },
     async resolveThread(id) {
       nonempty(id, "Review thread ID")

@@ -700,6 +700,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 expectedHeadOid: pullRequest.headRefOid,
                 expectedBaseOid: pullRequest.baseRefOid,
                 mentionAllowlist: presetOptions.mentionAllowlist,
+                // Mark every repair comment, including mentions, so its webhook cannot revoke this pass.
+                commentPrefix: "<!-- vitehub-babysitter-repair:repair -->\n",
                 signal: abortSignal,
                 autoMerge: merge.mode === "auto",
                 eligible: (current) =>
