@@ -114,8 +114,9 @@ function stableWorkspaceSourceValue(value: unknown): string {
     return `toJSON:${constructorName}:${stableWorkspaceSourceValue(Reflect.apply(toJSON, value, []))}`
   }
   if (Array.isArray(value)) return `array:[${value.map(stableWorkspaceSourceValue).join(",")}]`
+  // Preserve JSON property order: Source Sync hashes fingerprints without sorting keys.
   // SAFETY: The value is a non-null object; own keys are read only for canonical binding comparison.
-  return `object:{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
+  return `object:{${Object.keys(value).map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
 }
 
 function workspaceSessionStarter<Name extends WorkspaceName>(workspace: ReadonlyWorkspaceFacade<Name>): Pick<Workspace, "startSession"> | undefined {

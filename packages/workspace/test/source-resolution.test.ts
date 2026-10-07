@@ -1438,6 +1438,39 @@ describe("Workspace Source Resolution", () => {
     await expect(base.readFile("docs/guide.md")).resolves.toBe("resolved")
   })
 
+  it.each([false, true])("keeps the guard when fingerprint property order changes (nested: %s)", async (nested) => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    let resolution = 0
+    const definition = {
+      name: "support",
+      sources: {
+        docs: custom({
+          async resolve() {
+            const fingerprint = resolution++ === 0 ? { a: 1, b: 2 } : { b: 2, a: 1 }
+            return custom({
+              fingerprint: nested ? { config: fingerprint } : fingerprint,
+              mount: "docs",
+              sync: { stale: "remove" },
+              async getKeys() { return ["guide.md"] },
+              async getItem(key) { return { key, path: key, content: "child" } },
+            })
+          },
+          async getKeys() { return [] },
+          async getItem(key) { return { key, content: "" } },
+        }),
+      },
+    }
+    await base.writeFile("docs/guide.md", "parent")
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, { invocation, overlay: true })
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, definition, { invocation, overlay: true })
+
+    await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({
+      status: "error",
+      sources: [expect.objectContaining({ error: expect.stringContaining("read-only") })],
+    })
+    await expect(base.readFile("docs/guide.md")).resolves.toBe("parent")
+  })
+
   it("keeps the guard when resolved Source fingerprints contain distinct Dates", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     let resolution = 0
