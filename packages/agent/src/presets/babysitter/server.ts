@@ -563,7 +563,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       ? await pullRequestInbox.claim(Math.min(5, remainingCapacity), { only: snapshot => ciRecoveryLane.has(laneKey(snapshot)), includeBlocked: true })
       : [];
     for (const claim of lane) ciRecoveryLane.delete(laneKey(claim.snapshot));
-    const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size - lane.length))];
+    // Include progress-blocked rows here as well. The recovery admission is
+    // durable in the inbox; the in-memory lane is only a priority hint and
+    // must not strand work across a host restart.
+    const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size - lane.length), { includeBlocked: true })];
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {
@@ -689,7 +692,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.ci.rerun", { ...owner, runs: ciRecovery.runs.map(run => run.runId) });
             return;
           }
-          if (ciRecovery?.state === "blocked" && !ciRecovery.permission) {
+          if (ciRecovery?.state === "blocked" && (!ciRecovery.permission || await pullRequestInbox.meta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`))) {
             outcome = "waiting";
             await pullRequestInbox.finish(inboxClaim, {
               text: `Automatic GitHub Actions rerun is blocked: ${ciRecovery.reason}`,
@@ -697,6 +700,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
             schedulerEvent("babysitter.ci.rerun.blocked", { ...owner, reason: ciRecovery.reason });
             return;
+          }
+          if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
+            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now() });
           }
           if (ciRecovery?.state === "waiting") {
             outcome = "waiting";

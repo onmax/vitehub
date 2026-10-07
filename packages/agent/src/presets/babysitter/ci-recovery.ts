@@ -44,8 +44,13 @@ export async function rerunFailedActions(
     if (isRuntimeRecord(previous) && previous.status === "succeeded") {
       if (Number.isSafeInteger(run.runAttempt) && Number.isSafeInteger(previous.runAttempt) && run.runAttempt! > Number(previous.runAttempt)) {
         completedRerun = true;
+      } else if (!Number.isSafeInteger(run.runAttempt) || !Number.isSafeInteger(previous.runAttempt)) {
+        // Check-run evidence does not expose Actions run_attempt. A failed
+        // check after our durable rerun record is therefore the completion
+        // signal; let the repair path inspect it instead of parking forever.
+        completedRerun = true;
       }
-      waiting.push({ ...run, reason: "A rerun was already attempted for this PR head; waiting for the next check result." });
+      if (!completedRerun) waiting.push({ ...run, reason: "A rerun was already attempted for this PR head; waiting for the next check result." });
       continue;
     }
     if (isRuntimeRecord(previous) && (previous.status === "blocked" || previous.status === "failed") && Number(previous.retryAt ?? 0) > now) {
