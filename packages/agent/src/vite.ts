@@ -1585,9 +1585,12 @@ const supportedEveExtensionContracts: Record<number, Record<string, number>> = {
   },
   2: {
     config: 1,
-    dynamicTool: 20,
+    // GitHub Tools 0.8.0 is built with Eve 0.64 and uses these contracts.
+    // Keep this gate aligned with the adapter in eve.ts until newer tool
+    // contracts receive their own runtime support.
+    dynamicTool: 52,
     extension: 1,
-    tool: 20,
+    tool: 54,
   },
 }
 
@@ -1618,11 +1621,12 @@ async function resolveEveExtensionPackage(
         const contracts = hasRuntimeType(formatVersion, "number")
           ? supportedEveExtensionContracts[formatVersion]
           : undefined
-        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !contracts || !requires) {
-          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported manifest.` })
+        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !contracts || !requires
+          || !Number.isInteger(formatVersion) || formatVersion < 1) {
+          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
         for (const [contract, version] of Object.entries(requires)) {
-          if (contracts[contract] !== version) {
+          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || contracts[contract] !== version) {
             throw agentDiagnostics.AGENT_B0015({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} requires unsupported ${contract}@${String(version)}.` })
           }
         }

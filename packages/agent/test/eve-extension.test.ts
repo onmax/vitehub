@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
-import { mkdtemp, rm } from "node:fs/promises"
-import { join } from "node:path"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -48,6 +48,35 @@ function capabilityContext(): AgentCapabilityContext {
 }
 
 describe("Eve extension capabilities", () => {
+  it("accepts the current Eve compatibility manifest and publishes Eve as an optional peer", async () => {
+    const packageJson = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>
+      peerDependencies?: Record<string, string>
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>
+    }
+    expect(packageJson.devDependencies?.eve).toBe("0.72.1")
+    expect(packageJson.peerDependencies?.eve).toBe("0.72.1")
+    expect(packageJson.peerDependenciesMeta?.eve).toEqual({ optional: true })
+
+    const extensionEntry = fileURLToPath(import.meta.resolve("@github-tools/eve-extension"))
+    const extensionRoot = dirname(dirname(extensionEntry))
+    const extensionPackage = JSON.parse(await readFile(join(extensionRoot, "package.json"), "utf8")) as {
+      eve?: { extension?: { dist?: string, source?: string } }
+    }
+    expect(extensionPackage.eve?.extension).toMatchObject({ dist: "./dist/extension", source: "./extension" })
+
+    const manifest = JSON.parse(await readFile(join(extensionRoot, "dist", "extension", "_manifest.json"), "utf8")) as {
+      formatVersion?: number
+      kind?: string
+      requires?: Record<string, number>
+    }
+    expect(manifest).toMatchObject({
+      formatVersion: 2,
+      kind: "eve-extension",
+      requires: { config: 1, dynamicTool: 52, extension: 1, tool: 54 },
+    })
+  })
+
   it("uses the injective generated namespace as the Eve configuration scope", async () => {
     const scopes: string[] = []
     const loadExtension = async () => ({
