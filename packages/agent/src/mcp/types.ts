@@ -49,8 +49,8 @@ export type McpToolFingerprints = Record<string, string>
  */
 export interface McpToolOverride {
   description?: string
-  /** JSON Schema validates without coercing or transforming remote arguments. */
-  inputSchema?: JSONSchema7 & { "~standard"?: never }
+  /** Object JSON Schema validates without coercing or transforming remote arguments. */
+  inputSchema?: JSONSchema7 & { type: "object", "~standard"?: never }
   /** Extract and validate structured MCP output. MCP output contracts are objects. */
   outputSchema?: JSONSchema7 & { type: "object", "~standard"?: never }
   title?: string

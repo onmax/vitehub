@@ -14,6 +14,8 @@ import { createServer } from "node:http"
 import { hostname, tmpdir } from "node:os"
 import { basename, delimiter, dirname, extname, join, posix, relative, resolve } from "node:path"
 
+import { Validator } from "@cfworker/json-schema"
+
 import { isViteHubBearerSecretEqual } from "@vite-hub/internal/secret"
 import { formatRuntimeDiagnosticError, getViteHubErrorShape, normalizeExecutionAuthority, resolveRuntimeValue, ViteHubError } from "@vite-hub/runtime"
 import { resolveWorkspaceAutoCommit } from "@vite-hub/workspace"
@@ -1571,7 +1573,6 @@ async function validateToolInput(tool: AgentToolDefinition, input: unknown): Pro
     if (result.issues?.length) throw agentDiagnostics.AGENT_R0697({ message: `[vitehub] Invalid input for Agent tool "${tool.name}".` })
     return "value" in result ? result.value : input
   }
-  const { Validator } = await import("@cfworker/json-schema")
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
   const result = new Validator({ ...tool.inputSchema } as never, "7").validate(input)
   if (!result.valid) throw agentDiagnostics.AGENT_R0698({ message: `[vitehub] Invalid input for Agent tool "${tool.name}": ${result.errors.map(error => error.error).join("; ")}` })
@@ -1601,8 +1602,16 @@ function toolOutputJsonSchema(tool: AgentToolDefinition) {
 
 function toolResult(value: unknown, tool: AgentToolDefinition) {
   const text = hasRuntimeType(value, "string") ? value : JSON.stringify(value) ?? String(value)
-  // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
-  return { content: [{ text, type: "text" as const }], ...(toolOutputJsonSchema(tool) && isRuntimeRecord(value) ? { structuredContent: value } : {}) }
+  const outputSchema = toolOutputJsonSchema(tool)
+  if (outputSchema) {
+    // SAFETY: The advertised output contract is JSON Schema; the validator uses a narrower recursive schema type.
+    const result = new Validator(outputSchema as never, "7").validate(value)
+    if (!result.valid || !isRuntimeRecord(value)) {
+      throw new ViteHubError("AGENT_TOOL_OUTPUT_INVALID", `[vitehub] Invalid output for Agent tool "${tool.name}": result does not match the advertised output schema.`)
+    }
+    return { content: [{ text, type: "text" as const }], structuredContent: value }
+  }
+  return { content: [{ text, type: "text" as const }] }
 }
 
 async function startToolServer(

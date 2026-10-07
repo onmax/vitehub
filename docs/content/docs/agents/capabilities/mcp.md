@@ -40,8 +40,8 @@ mcp({
 
 Use overrides for a contract you own and review. They do not make an unavailable
 server available, or change the server's runtime validation. Override schemas use
-JSON Schema, without transforms or coercion. An `outputSchema` must describe an
-object. The Capability extracts and validates structured output (or JSON text)
+JSON Schema, without transforms or coercion. Both `inputSchema` and `outputSchema`
+must describe an object. The Capability extracts and validates structured output (or JSON text)
 before returning it, and provider Drivers forward that output contract and result.
 Unknown server names and tool names fail resolution; skipped or unavailable
 servers do not require discovered tool matches.

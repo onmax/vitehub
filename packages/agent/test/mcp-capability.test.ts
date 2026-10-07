@@ -188,12 +188,12 @@ describe("mcp capability", () => {
         },
       },
     })
-    const inputSchema: AgentToolSchema = {
+    const inputSchema = {
       additionalProperties: false,
       properties: { id: { type: "string" } },
       required: ["id"],
       type: "object",
-    }
+    } satisfies AgentToolSchema
 
     const resolved = await resolveAgentCapabilities({
       capabilities: [mcp({
@@ -277,6 +277,17 @@ describe("mcp capability", () => {
       servers: { docs: client },
       toolOverrides: { [kind === "server" ? "typo" : "docs"]: { typo: { description: "Pinned" } } },
     })] }, runtime(), {})).rejects.toThrow(/override/i)
+  })
+
+  it.each(["string", "array", "number", "boolean", "null"])("rejects %s MCP input override roots", async (type) => {
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    const client = createClient({ read: { execute: vi.fn() } })
+    await expect(resolveAgentCapabilities({ capabilities: [mcp({
+      servers: { docs: client },
+      // SAFETY: Exercise invalid configuration from untyped callers.
+      toolOverrides: { docs: { read: { inputSchema: { type } as never } } },
+    })] }, runtime(), {})).rejects.toThrow(/input overrides require an object/)
   })
 
   it("allows overrides for skipped and unavailable servers", async () => {

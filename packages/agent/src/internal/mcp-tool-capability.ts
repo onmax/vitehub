@@ -246,6 +246,9 @@ export function defineMcpToolCapability<
               throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool overrides require JSON Schema without transforms.")
             }
           }
+          if (override.inputSchema && override.inputSchema.type !== "object") {
+            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP input overrides require an object JSON Schema.")
+          }
           if (override.outputSchema && override.outputSchema.type !== "object") {
             throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP output overrides require an object JSON Schema.")
           }
