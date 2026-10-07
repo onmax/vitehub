@@ -756,7 +756,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // its GitHub Channel. Extending the base Agent would preserve
               // the host identity, but dropping the whole map loses other
               // channel-scoped capabilities needed by repair passes.
-              const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              const { channels: _baseChannels, github: _baseGitHub, workspace: configuredWorkspace, ...workerSettings } = baseSettings;
               if (workerSettings.box) providerDirectory = checkout;
               const baseChannels = isRuntimeRecord(_baseChannels) ? _baseChannels : {};
               const workerBaseChannels = Object.fromEntries(Object.entries(baseChannels).map(([name, channel]) => {
@@ -788,7 +788,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               Reflect.deleteProperty(workerChannel, Symbol.for("vitehub.githubChannelIdentity"));
               // Keep the base Agent's configured Workspace sources, loaders, and
               // instruction bindings while replacing the checkout-owned fields.
-              const configuredWorkspace = workerSettings.workspace;
               let baseWorkspace: Record<string, unknown> = {};
               if (hasRuntimeType(configuredWorkspace, "string")) {
                 baseWorkspace = { ...await resolveRegisteredWorkspaceDefinition(configuredWorkspace) };
@@ -843,13 +842,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   } }),
                 },
                 ...(workerSettings.box
-                  ? { box: { ...workerSettings.box, cwd: checkout } }
+                  ? { box: { ...workerSettings.box, checkout: undefined, cwd: checkout } }
                   : { workspace: {
                     ...baseWorkspace,
                     commit: false,
                     mode: "write" as const,
                     store: { provider: "local" as const, root: checkout },
-                  } }),
+                  // SAFETY: the prepared local store supplies the dynamically resolved Workspace contract.
+                  } as never }),
               });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
               const snapshotContext = snapshotPrompt(webhookSnapshot);

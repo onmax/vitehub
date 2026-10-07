@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { boxCheckout?: boolean; box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -222,7 +222,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { box?: bo
     })] as never,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
-    ...(preset.box ? { box: { runtime: "trusted-host" as const } } : {}),
+    ...(preset.box ? { box: { runtime: "trusted-host" as const, ...(preset.boxCheckout ? { checkout: { remote: "https://github.com/acme/other.git", ref: "main", sha: "d".repeat(40) } } : {}) } } : {}),
     driver: { kind: "codex", ...(preset.box ? { providerSettings: { binaryPath: "/bin/true" } } : {}), env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
@@ -769,8 +769,8 @@ describe("Babysitter preset runtime", () => {
   });
 
 
-  it("repairs through a trusted-host Box using the prepared PR working tree", async () => {
-    const f = await fixture(false, false, { box: true });
+  it.each([false, true])("repairs through a trusted-host Box using the prepared PR working tree (inherited checkout: %s)", async (boxCheckout) => {
+    const f = await fixture(false, false, { box: true, boxCheckout });
     f.choose("pushRepair");
     await f.reconcile();
     expect(f.prepare).not.toHaveBeenCalled();
