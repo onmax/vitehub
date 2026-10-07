@@ -13,6 +13,22 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
+const remoteBoxes = vi.hoisted(() => new Map<string, { path: string; closed: boolean }>());
+vi.mock("@vite-hub/box", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@vite-hub/box")>();
+  const resolveBox: typeof actual.resolveBox = async (definition, context, options) => {
+    const box = await actual.resolveBox(definition, context, options);
+    const remote = remoteBoxes.get(box.plan.workspace.path ?? "");
+    if (!remote) return box;
+    const copied = await actual.resolveBox({ ...definition, cwd: remote.path }, context, options);
+    return { plan: { ...copied.plan, runtime: "crabbox" }, async open(openOptions) {
+      const session = await copied.open(openOptions);
+      return { ...session, async close() { remote.closed = true; await session.close(); } };
+    } };
+  };
+  return { ...actual, resolveBox };
+});
+
 import { agentWithColocatedInstructions, defineAgent, defineCapability, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { boundedMergeReady, createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
@@ -26,16 +42,28 @@ import type { GitHubHost } from "../src/server/github.ts";
 const roots: string[] = [];
 afterEach(async () => {
   vi.clearAllMocks();
+  remoteBoxes.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { boxCheckout?: boolean; box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
   await mkdir(checkout);
   await writeFile(join(checkout, "source.ts"), "export const value = 1\n");
   let head = "a".repeat(40);
+  const git = async (cwd: string, ...args: string[]) => (await promisify(execFile)("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.test", ...args])).stdout.trim();
+  let remoteBox: { path: string; closed: boolean } | undefined;
+  if (preset.remoteBox) {
+    await git(checkout, "init");
+    await git(checkout, "add", ".");
+    await git(checkout, "commit", "-m", "base");
+    head = await git(checkout, "rev-parse", "HEAD");
+    remoteBox = { path: join(root, "remote"), closed: false };
+    await git(root, "clone", checkout, remoteBox.path);
+    remoteBoxes.set(checkout, remoteBox);
+  }
   let pushed = false;
   let checkoutFailure: Error | undefined;
   const checkoutController = new AbortController();
@@ -163,7 +191,12 @@ async function fixture(autoMerge = false, discovered = false, preset: { boxCheck
   const prepare = vi.fn(async (directory: string) => { workerDirectory = directory });
   const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void }) => {
     pushed = true;
-    head = "b".repeat(40);
+    if (remoteBox) {
+      expect(remoteBox.closed).toBe(false);
+      head = await git(remoteBox.path, "rev-parse", "HEAD");
+      expect(await git(checkout, "rev-parse", "HEAD")).toBe(head);
+      expect(await git(checkout, "show", "HEAD:source.ts")).toContain("value = 2");
+    } else head = "b".repeat(40);
     return head;
   });
   const github: GitHubHost = {
@@ -280,6 +313,10 @@ async function fixture(autoMerge = false, discovered = false, preset: { boxCheck
             runtimeMode,
             approvalPolicy,
           });
+          if (operation === "pushRepair" && remoteBox) {
+            await writeFile(join(remoteBox.path, "source.ts"), "export const value = 2\n");
+            await git(remoteBox.path, "commit", "-am", "repair");
+          }
           if (operation) {
             const result = await client.callTool({ name: operation, arguments: operationArguments });
             if (onAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
@@ -768,6 +805,13 @@ describe("Babysitter preset runtime", () => {
     expect(state.attempts).toBe(1);
   });
 
+
+  it("pushes the committed remote Box HEAD while the provider and Box remain active", async () => {
+    const f = await fixture(false, false, { box: true, remoteBox: true });
+    f.choose("pushRepair");
+    await f.reconcile();
+    expect(f.push).toHaveBeenCalledOnce();
+  });
 
   it.each([false, true])("repairs through a trusted-host Box using the prepared PR working tree (inherited checkout: %s)", async (boxCheckout) => {
     const f = await fixture(false, false, { box: true, boxCheckout });

@@ -7,7 +7,7 @@ import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
 import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";
-import type { AgentCapabilitiesResolver, AgentInput, AgentProviderLaunchContext, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
+import type { AgentCapabilitiesResolver, AgentInput, AgentProviderCredentialContext, AgentProviderLaunchContext, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -34,6 +34,8 @@ import { createHash } from "node:crypto";
 import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
+import { importBoxCommit } from "./box-commit.ts";
+import { activeProviderBox } from "../../internal/provider-box.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
@@ -767,7 +769,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return [name, sanitized];
               }));
               const baseCapabilities = workerSettings.capabilities;
-              const repair = repairCapability(operations, merge.mode === "auto");
+              const repair = repairCapability(operations, merge.mode === "auto", async (context) => {
+                if (!workerSettings.box) return;
+                const session = activeProviderBox(context);
+                if (!session) throw new Error("The repair Box is not prepared.");
+                await assertLease();
+                if (!session.localWorkspace) await importBoxCommit(session.session, checkout, pullRequest.headRefOid, abortSignal);
+              });
               // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
               const workerCapabilities = typeof baseCapabilities === "function"
                 ? async (context: Parameters<AgentCapabilitiesResolver>[0]) => [
@@ -805,7 +813,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Named Workspace references cannot be combined with owned fields.
               // The checkout below replaces the reference with its prepared workspace.
               Reflect.deleteProperty(baseWorkspace, "name");
-              const agent = defineAgent({
+              const workerOptions = {
                 ...workerSettings,
                 name: workerName,
                 // GitHub authority stays in the broker operations above;
@@ -820,8 +828,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   ...workerDriver,
                   // Match the preset: unattended passes cannot escalate native
                   // permissions. Repair tools remain authorized by the host.
-                  permissions: "allow-edits-unattended",
-                  env: async (context) => {
+                  permissions: "allow-edits-unattended" as const,
+                  env: async (context: AgentProviderCredentialContext) => {
                     const environment =
                       workerDriver.env === undefined
                         ? undefined
@@ -841,15 +849,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                       : { command: context.command };
                   } }),
                 },
-                ...(workerSettings.box
-                  ? { box: { ...workerSettings.box, checkout: undefined, cwd: checkout } }
-                  : { workspace: {
+              };
+              const agent = workerSettings.box
+                ? defineAgent({ ...workerOptions, box: { ...workerSettings.box, checkout: undefined, cwd: checkout } })
+                : defineAgent({ ...workerOptions, workspace: {
                     ...baseWorkspace,
                     commit: false,
-                    mode: "write" as const,
-                    store: { provider: "local" as const, root: checkout },
-                  } }),
-              });
+                    mode: "write",
+                    store: { provider: "local", root: checkout },
+                  } });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
               const snapshotContext = snapshotPrompt(webhookSnapshot);
               const userMessage = `${prompt}\n\n${snapshotContext}`;

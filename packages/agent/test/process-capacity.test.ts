@@ -110,6 +110,14 @@ describe("process Agent capacity", () => {
     await expect(sample({ active: 2, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 2 });
   });
 
+  it("keeps a large host reserve separate from a smaller service budget", async () => {
+    resources.hostAvailableMemory = 32 * GiB;
+    resources.availableMemory = 6 * GiB;
+    resources.memoryHigh = 8 * GiB;
+    const sample = createBuiltInSample({ concurrency: 6, memory: { reserveBytes: 8 * GiB, serviceReserveBytes: GiB, perInvocationBytes: 2 * GiB } });
+    await expect(sample({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 2 });
+  });
+
   it("bounds admission by host MemAvailable even when Node reports more", async () => {
     resources.hostAvailableMemory = 2 * GiB;
     const sample = createBuiltInSample();
