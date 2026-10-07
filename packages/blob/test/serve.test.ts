@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -75,6 +75,9 @@ describe("Blob response transforms", () => {
     await storage.serve(third, "private/original", { ...options, transform: { ...options.transform, key: "public-v2" } })
     expect(third.res.headers.get("etag")).not.toBe(second.res.headers.get("etag"))
     expect(run).toHaveBeenCalledTimes(3)
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    // Source changes replace a variant; distinct transform keys keep distinct variants.
+    expect(cache?.blobs).toHaveLength(2)
   })
 
   it("uses h3 conditional GET and HEAD handling without returning a body", async () => {
@@ -97,6 +100,73 @@ describe("Blob response transforms", () => {
     await storage.del("private/original")
     const [error] = await storage.serve(event({ "if-none-match": first.res.headers.get("etag")! }), "private/original", options)
     expect(error?.code).toBe("BLOB_NOT_FOUND")
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    expect(cache?.blobs).toHaveLength(0)
+  })
+
+  it("rejects public writes and multipart uploads into the derived cache", async () => {
+    await storage.serve(event(), "private/original", options)
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    const path = cache!.blobs[0]!.pathname
+    for (const pathname of [path, `elsewhere/../${path}`, path.replace("_", "%5F"), path.replaceAll("/", "\\")]) {
+      await expect(storage.put(pathname, "forged")).rejects.toThrow("reserved derived cache")
+      await expect(storage.createMultipartUpload(pathname)).rejects.toThrow("reserved derived cache")
+      await expect(storage.resumeMultipartUpload(pathname, "forged-upload")).rejects.toThrow("reserved derived cache")
+    }
+    await expect(storage.put("forged", "body", { prefix: "_vitehub/derived" })).rejects.toThrow("reserved derived cache")
+    const [, body] = await storage.serve(event(), "private/original", options)
+    expect(await new Response(body).text()).toBe("public")
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it("detects same-size filesystem changes even when the modification date is restored", async () => {
+    const path = join(directory, "private/original")
+    const date = new Date("2026-01-01T00:00:00.000Z")
+    await writeFile(path, "first:private")
+    await utimes(path, date, date)
+    const first = event()
+    await storage.serve(first, "private/original", options)
+    await writeFile(path, "later:private")
+    await utimes(path, date, date)
+    const second = event({ "if-none-match": first.res.headers.get("etag")! })
+    const [, body] = await storage.serve(second, "private/original", options)
+    expect(second.res.status).not.toBe(304)
+    expect(await new Response(body).text()).toBe("later")
+    expect(second.res.headers.get("etag")).not.toBe(first.res.headers.get("etag"))
+  })
+
+  it("hashes source bytes when the driver has no ETag", async () => {
+    const head = driver.head.bind(driver)
+    vi.spyOn(driver, "head").mockImplementation(async (path) => {
+      const meta = await head(path)
+      return meta ? { ...meta, httpEtag: undefined, uploadedAt: new Date(0) } : null
+    })
+    const first = event()
+    await storage.serve(first, "private/original", options)
+    await storage.put("private/original", "updated:private-camera-data")
+    const second = event({ "if-none-match": first.res.headers.get("etag")! })
+    const [, body] = await storage.serve(second, "private/original", options)
+    expect(second.res.status).not.toBe(304)
+    expect(await new Response(body).text()).toBe("updated")
+  })
+
+  it("does not recreate a derivative after the source is deleted during transformation", async () => {
+    let started!: () => void
+    let finish!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    const pending = storage.serve(event(), "private/original", {
+      transform: { key: "slow", async run() {
+        started()
+        await new Promise<void>(resolve => { finish = resolve })
+        return new Blob(["public"])
+      } },
+    })
+    await ready
+    await storage.del("private/original")
+    finish()
+    await pending
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    expect(cache?.blobs).toHaveLength(0)
   })
 
   it("shares an in-flight transformation between concurrent requests", async () => {
@@ -106,6 +176,29 @@ describe("Blob response transforms", () => {
       expect(await new Response(body).text()).toBe("public")
     }
     expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps concurrent source versions separate and does not overwrite the newer cache", async () => {
+    let started!: () => void
+    let finish!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    const transform = { key: "concurrent", async run(original: Blob) {
+      const text = await original.text()
+      if (text.startsWith("public:")) {
+        started()
+        await new Promise<void>(resolve => { finish = resolve })
+      }
+      return new Blob([text.split(":")[0]])
+    } }
+    const older = storage.serve(event(), "private/original", { transform })
+    await ready
+    await storage.put("private/original", "updated:private")
+    const [, newer] = await storage.serve(event(), "private/original", { transform })
+    expect(await new Response(newer).text()).toBe("updated")
+    finish()
+    await older
+    const [, cached] = await storage.serve(event(), "private/original", { transform })
+    expect(await new Response(cached).text()).toBe("updated")
   })
 
   it("returns transformation failures through the Blob error contract", async () => {
@@ -122,6 +215,16 @@ describe("Blob response transforms", () => {
     const [error, body] = await storage.serve(event(), "private/original", options)
     expect(error).toBeNull()
     expect(await new Response(body).text()).toBe("public")
+    expect(warning).toHaveBeenCalledOnce()
+  })
+
+  it("keeps the original deleted when derived-cache cleanup fails", async () => {
+    await storage.serve(event(), "private/original", options)
+    const warning = vi.spyOn(console, "error").mockImplementation(() => {})
+    vi.spyOn(driver, "list").mockRejectedValue(new Error("cache listing unavailable"))
+    const [error] = await storage.del("private/original")
+    expect(error).toBeNull()
+    expect(await driver.head("private/original")).toBeNull()
     expect(warning).toHaveBeenCalledOnce()
   })
 })

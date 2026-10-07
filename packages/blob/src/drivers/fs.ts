@@ -27,16 +27,21 @@ function partEtag(bytes: Uint8Array) {
 }
 
 interface FsBlobMetadata {
+  contentHash?: string
+  fileVersion?: string
   contentType?: string
   customMetadata?: Record<string, string>
 }
 
 const fsBlobMetadataSchema = object({
+  contentHash: optional(string()),
+  fileVersion: optional(string()),
   contentType: optional(string()),
   customMetadata: optional(record(string(), string())),
 })
 
 interface FsBlobEntry {
+  contentHash: string
   meta: FsBlobMetadata
   path: string
   size: number
@@ -151,14 +156,10 @@ async function removeMetadata(root: string, pathname: string) {
 }
 
 function toBlobObject(entry: FsBlobEntry): BlobObject {
-  const httpEtag = createHash("sha1")
-    .update(`${entry.path}:${entry.size}:${entry.uploadedAt.getTime()}`)
-    .digest("hex")
-
   return {
     contentType: entry.meta.contentType,
     customMetadata: entry.meta.customMetadata || {},
-    httpEtag: `"${httpEtag}"`,
+    httpEtag: `"${entry.contentHash}"`,
     httpMetadata: entry.meta.contentType ? { contentType: entry.meta.contentType } : {},
     pathname: entry.path,
     size: entry.size,
@@ -170,12 +171,17 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
   try {
     const path = resolveBlobPath(root, pathname)
     await assertNoSymlinkPath(root, path)
-    const stats = await stat(path)
+    const stats = await stat(path, { bigint: true })
     if (!stats.isFile()) return null
+    const meta = await readMetadata(root, pathname)
+    const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
     return {
-      meta: await readMetadata(root, pathname),
+      contentHash: meta.fileVersion === fileVersion && meta.contentHash
+        ? meta.contentHash
+        : createHash("sha256").update(await readFile(path)).digest("hex"),
+      meta,
       path: pathname,
-      size: stats.size,
+      size: Number(stats.size),
       uploadedAt: stats.mtime,
     }
   }
@@ -382,7 +388,10 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, bytes)
+      const stats = await stat(path, { bigint: true })
       await writeMetadata(root, pathname, {
+        contentHash: createHash("sha256").update(bytes).digest("hex"),
+        fileVersion: `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`,
         contentType: putOptions.contentType || (body instanceof Blob ? body.type : undefined),
         customMetadata: putOptions.customMetadata,
       })

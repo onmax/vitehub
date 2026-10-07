@@ -43,6 +43,26 @@ function normalizePathname(pathname: string): string {
   }
 }
 
+function assertWritablePath(pathname: string) {
+  const parts: string[] = []
+  for (const part of pathname.replaceAll("\\", "/").split("/")) {
+    if (part === "..") parts.pop()
+    else if (part && part !== ".") parts.push(part)
+  }
+  if (parts[0]?.toLowerCase() === "_vitehub" && parts[1]?.toLowerCase() === "derived") {
+    throw blobErrorDiagnostics.BLOB_R0033({ message: "Blob pathname uses the reserved derived cache namespace." })
+  }
+}
+
+async function hashCacheKey(value: unknown): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value)))
+  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
+}
+
+async function derivedCachePrefix(pathname: string): Promise<string> {
+  return `_vitehub/derived/${await hashCacheKey(pathname)}/`
+}
+
 function joinPath(...parts: Array<string | undefined>): string {
   return parts
     .filter((part): part is string => Boolean(part && part.length > 0))
@@ -98,10 +118,27 @@ function normalizeBlobPath(pathname: string, options: BlobPutOptions) {
 
 export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string = driver.name): BlobStorage {
   const pendingTransforms = new Map<string, Promise<Blob | undefined>>()
+  async function clearDerived(pathname: string) {
+    try {
+      const prefix = await derivedCachePrefix(pathname)
+      const paths: string[] = []
+      let cursor: string | undefined
+      do {
+        const page = await driver.list({ prefix, cursor })
+        paths.push(...page.blobs.map(object => object.pathname))
+        cursor = page.hasMore ? page.cursor : undefined
+      } while (cursor)
+      if (paths.length) await driver.delete(paths)
+    }
+    catch (error) {
+      console.error("[vitehub/blob] Derived cache cleanup failed", error)
+    }
+  }
   const storage: BlobStorage = {
     async createMultipartUpload(pathname, options = {}) {
       if (!driver.createMultipartUpload) throw unsupportedMultipart(driver)
       const normalizedPath = normalizeBlobPath(normalizePathname(pathname), options)
+      assertWritablePath(normalizedPath)
       const contentType = options.contentType || guessContentType(normalizedPath)
       return blobResult("multipart", store, async () => toBlobMultipartUpload(
         await driver.createMultipartUpload!(normalizedPath, { ...options, contentType }),
@@ -113,6 +150,7 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
     async resumeMultipartUpload(pathname, uploadId) {
       if (!driver.resumeMultipartUpload) throw unsupportedMultipart(driver)
       const normalizedPath = normalizePathname(pathname)
+      assertWritablePath(normalizedPath)
       return blobResult("multipart", store, async () => toBlobMultipartUpload(
         await driver.resumeMultipartUpload!(normalizedPath, uploadId),
         store,
@@ -122,6 +160,7 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
       const normalizedPathnames = toArray(pathnames).map(value => normalizePathname(value))
       return blobResult("del", store, async () => {
         await driver.delete(normalizedPathnames)
+        await Promise.all(normalizedPathnames.map(clearDerived))
       })
     },
     async get(pathname: string) {
@@ -145,6 +184,7 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
     },
     async put(pathname: string, body: BlobPutBody, options: BlobPutOptions = {}) {
       const normalizedPath = normalizeBlobPath(normalizePathname(pathname), options)
+      assertWritablePath(normalizedPath)
       const contentType = options.contentType || (body instanceof Blob ? body.type : undefined) || guessContentType(normalizedPath)
       return blobResult("put", store, () => driver.put(normalizedPath, body, {
         ...options,
@@ -165,17 +205,27 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
       const normalizedPath = normalizePathname(pathname)
       const [error, payload] = await blobResult("serve", store, async () => {
         const meta = await driver.head(normalizedPath)
-        if (!meta) return
+        if (!meta) {
+          await clearDerived(normalizedPath)
+          return
+        }
 
         let etag = meta.httpEtag
         let cachePath: string | undefined
+        let originalBody: Blob | null | undefined
         if (options.transform) {
-          const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([
-            normalizedPath, meta.httpEtag ?? meta.uploadedAt.toISOString(), meta.contentType, options.transform.key,
-          ])))
-          const fingerprint = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
+          let sourceVersion = meta.httpEtag
+          if (!sourceVersion) {
+            originalBody = await driver.get(normalizedPath)
+            if (!originalBody) return
+            const hash = await crypto.subtle.digest("SHA-256", await originalBody.arrayBuffer())
+            sourceVersion = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
+          }
+          const fingerprint = await hashCacheKey([
+            normalizedPath, sourceVersion, meta.contentType, options.transform.key,
+          ])
           etag = `"${fingerprint}"`
-          cachePath = `_vitehub/derived/${fingerprint}`
+          cachePath = `${await derivedCachePrefix(normalizedPath)}${await hashCacheKey(options.transform.key)}`
         }
 
         event.res.headers.set("X-Content-Type-Options", "nosniff")
@@ -187,22 +237,33 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
           cacheControls: [cacheControl],
         })) return null
 
-        let body = await driver.get(cachePath ?? normalizedPath)
+        const cachedMeta = cachePath ? await driver.head(cachePath) : undefined
+        let body = !cachePath || cachedMeta?.customMetadata?.vitehubFingerprint === etag
+          ? await driver.get(cachePath ?? normalizedPath)
+          : null
         const transform = options.transform
         if (!body && cachePath && transform) {
           const key = cachePath
-          let pending = pendingTransforms.get(key)
+          const pendingKey = `${key}:${etag}`
+          let pending = pendingTransforms.get(pendingKey)
           if (!pending) {
             pending = (async () => {
-              const original = await driver.get(normalizedPath)
+              const original = originalBody ?? await driver.get(normalizedPath)
               if (!original) return
               const derived = await transform.run(original)
-              await driver.put(key, derived, { access: "private", contentType: derived.type }).catch((error) => {
-                console.error("[vitehub/blob] Transform cache write failed", error)
-              })
+              const current = await driver.head(normalizedPath)
+              if (current?.httpEtag === meta.httpEtag && current?.uploadedAt.getTime() === meta.uploadedAt.getTime()) {
+                await driver.put(key, derived, {
+                  access: "private",
+                  contentType: derived.type,
+                  customMetadata: { vitehubFingerprint: etag! },
+                }).catch((error) => {
+                  console.error("[vitehub/blob] Transform cache write failed", error)
+                })
+              }
               return derived
-            })().finally(() => pendingTransforms.delete(key))
-            pendingTransforms.set(key, pending)
+            })().finally(() => pendingTransforms.delete(pendingKey))
+            pendingTransforms.set(pendingKey, pending)
           }
           body = await pending ?? null
         }
