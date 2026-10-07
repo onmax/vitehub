@@ -1,4 +1,4 @@
-import { setHeader } from "h3"
+import { handleCacheHeaders } from "h3"
 
 import { toArray } from "@vite-hub/internal/arrays"
 
@@ -8,7 +8,7 @@ import { handleBlobMultipartUpload, handleBlobUpload } from "./upload.ts"
 // Generated provider runtime modules import the handlers from this entry.
 export { handleBlobMultipartUpload, handleBlobUpload }
 
-import type { BlobDriverAdapter, BlobDriverMultipartUpload, BlobListOptions, BlobMultipartUpload, BlobPutBody, BlobPutOptions, BlobServeEvent, BlobStorage } from "./types.ts"
+import type { BlobDriverAdapter, BlobDriverMultipartUpload, BlobListOptions, BlobMultipartUpload, BlobPutBody, BlobPutOptions, BlobStorage } from "./types.ts"
 import { blobErrorDiagnostics } from "./error-diagnostics.ts"
 
 // S3, R2, and Vercel Blob all accept part numbers 1 through 10000.
@@ -32,11 +32,6 @@ export function toBlobMultipartUpload(upload: BlobDriverMultipartUpload, store: 
 
 function unsupportedMultipart(driver: BlobDriverAdapter<unknown>): Error {
   return blobErrorDiagnostics.BLOB_R0030({ message: `Blob driver "${driver.name}" does not support multipart uploads. Use the fs, cloudflare-r2, or vercel-blob driver.` })
-}
-
-function setBlobResponseHeader(event: BlobServeEvent, name: string, value: string) {
-  // SAFETY: BlobServeEvent exposes the response headers setHeader mutates and omits only unrelated H3 event fields.
-  setHeader(event as Parameters<typeof setHeader>[0], name, value)
 }
 
 function normalizePathname(pathname: string): string {
@@ -102,6 +97,7 @@ function normalizeBlobPath(pathname: string, options: BlobPutOptions) {
 }
 
 export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string = driver.name): BlobStorage {
+  const pendingTransforms = new Map<string, Promise<Blob | undefined>>()
   const storage: BlobStorage = {
     async createMultipartUpload(pathname, options = {}) {
       if (!driver.createMultipartUpload) throw unsupportedMultipart(driver)
@@ -165,32 +161,62 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
       const normalizedPathname = normalizePathname(pathname)
       return blobResult("sign", store, () => driver.sign!(normalizedPathname, options))
     },
-    async serve(event, pathname: string) {
+    async serve(event, pathname: string, options = {}) {
       const normalizedPath = normalizePathname(pathname)
       const [error, payload] = await blobResult("serve", store, async () => {
-        const arrayBuffer = await driver.getArrayBuffer(normalizedPath)
-        if (!arrayBuffer) return
-
         const meta = await driver.head(normalizedPath)
-        const contentType = meta?.contentType || guessContentType(normalizedPath)
+        if (!meta) return
 
-        setBlobResponseHeader(event, "Content-Length", String(arrayBuffer.byteLength))
-        setBlobResponseHeader(event, "Content-Type", contentType)
-        if (meta?.httpEtag) {
-          setBlobResponseHeader(event, "etag", meta.httpEtag)
+        let etag = meta.httpEtag
+        let cachePath: string | undefined
+        if (options.transform) {
+          const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([
+            normalizedPath, meta.httpEtag ?? meta.uploadedAt.toISOString(), meta.contentType, options.transform.key,
+          ])))
+          const fingerprint = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
+          etag = `"${fingerprint}"`
+          cachePath = `_vitehub/derived/${fingerprint}`
         }
 
-        return new ReadableStream({
-          start(controller) {
-            controller.enqueue(new Uint8Array(arrayBuffer))
-            controller.close()
-          },
-        })
+        event.res.headers.set("X-Content-Type-Options", "nosniff")
+        const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"
+        event.res.headers.set("Cache-Control", cacheControl)
+        if (etag) event.res.headers.set("ETag", etag)
+        if (["GET", "HEAD"].includes(event.req.method) && handleCacheHeaders(event, {
+          etag,
+          cacheControls: [cacheControl],
+        })) return null
+
+        let body = await driver.get(cachePath ?? normalizedPath)
+        const transform = options.transform
+        if (!body && cachePath && transform) {
+          const key = cachePath
+          let pending = pendingTransforms.get(key)
+          if (!pending) {
+            pending = (async () => {
+              const original = await driver.get(normalizedPath)
+              if (!original) return
+              const derived = await transform.run(original)
+              await driver.put(key, derived, { access: "private", contentType: derived.type }).catch((error) => {
+                console.error("[vitehub/blob] Transform cache write failed", error)
+              })
+              return derived
+            })().finally(() => pendingTransforms.delete(key))
+            pendingTransforms.set(key, pending)
+          }
+          body = await pending ?? null
+        }
+        if (!body) return
+        event.res.headers.set("Content-Length", String(body.size))
+        event.res.headers.set("Content-Type", transform
+          ? body.type || "application/octet-stream"
+          : meta.contentType || body.type || guessContentType(normalizedPath))
+        return body.stream()
       })
       if (error) return [error, undefined]
-      return payload
-        ? [null, payload]
-        : [blobError("BLOB_NOT_FOUND", "serve", store), undefined]
+      return payload === undefined
+        ? [blobError("BLOB_NOT_FOUND", "serve", store), undefined]
+        : [null, payload]
     },
     store() {
       throw blobErrorDiagnostics.BLOB_R0026({ message: "Named Blob stores are only available from the @vite-hub/blob runtime export." })

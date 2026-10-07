@@ -79,7 +79,7 @@ Every async method returns `[error, value]`. Expected provider and storage failu
 | `blob.list(options?)` | Lists objects with optional `prefix`, `limit`, `cursor`, and folded folders. |
 | `blob.del(pathnames)` | Deletes one or more objects. |
 | `blob.sign(pathname, options)` | Signs a short-lived `GET` or `PUT` request for one object. |
-| `blob.serve(event, pathname)` | Serves an object stream through an H3 event. |
+| `blob.serve(event, pathname, options?)` | Serves an object stream through an H3 event, or `null` for a conditional `304` response. |
 | `blob.handleUpload(event, options?)` | Stores the files of a `multipart/form-data` request. Read [Upload files](#upload-files). |
 | `blob.createMultipartUpload(pathname, options?)` | Starts a multipart upload. Read [Multipart uploads](#multipart-uploads). |
 | `blob.resumeMultipartUpload(pathname, uploadId)` | Continues a multipart upload in a later request. |
@@ -87,6 +87,34 @@ Every async method returns `[error, value]`. Expected provider and storage failu
 | `blob.store(name)` | Selects a named Blob Store. |
 
 Pass the cursor returned by `blob.list()` unchanged to the next list call on the same Blob Store. Keep `prefix` and `folded` unchanged. Netlify Blobs listings and folded files-sdk listings fail if they cannot decode the cursor.
+
+## Serve a transformed object
+
+Use `blob.serve()` in an application route when authorization or a database lookup decides which object to expose. It sets content headers and handles conditional GET and HEAD requests through h3. Responses default to `private, no-cache`; set `cacheControl` to choose another policy.
+
+The optional `transform` receives the original `Blob` and returns the response `Blob`. ViteHub caches that result privately in the same store under `_vitehub/derived/`. The cache key includes the source path, source ETag or upload time, content type, and your transform key. Change the key when the transformation changes, and include any size or format variants in it. The original remains unchanged. Deleting the original prevents serving the cached result.
+
+```ts [server/api/photos/[id].get.ts]
+import { blob } from '@vite-hub/blob'
+import { createPreview, resolvePhotoPath } from '../../utils/photos'
+
+export default defineEventHandler(async (event) => {
+  const id = getRouterParam(event, 'id')!
+  // Validate access and resolve the private storage path before serving.
+  const path = await resolvePhotoPath(event, id)
+  const [error, response] = await blob.serve(event, path, {
+    cacheControl: 'public, max-age=300, must-revalidate',
+    transform: {
+      key: 'preview-768-v1',
+      run: createPreview,
+    },
+  })
+  if (error) throw error
+  return response
+})
+```
+
+`createPreview` is application code that validates and transforms the image. Return a `Blob` with its response MIME type. Transform failures use the normal Blob error tuple. If storing the derived result fails, ViteHub logs the failure and serves the freshly transformed result. Concurrent requests in one runtime share the transformation.
 
 ## Write options
 

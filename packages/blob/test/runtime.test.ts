@@ -1,3 +1,4 @@
+import { H3Event } from "h3"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { ensureBlob } from "../src/ensure.ts"
@@ -10,6 +11,15 @@ import {
   setBlobRuntimeStorage,
 } from "../src/runtime/state.ts"
 import type { BlobEnsureOptions, BlobResult } from "../src/types.ts"
+
+it("forwards response options through the runtime Blob helper", async () => {
+  const storage = { serve: vi.fn(async () => [null, null] as const) }
+  setBlobRuntimeStorage(storage as unknown as ReturnType<typeof createBlobStorage>)
+  const event = new H3Event(new Request("https://example.test/photo"))
+  const options = { cacheControl: "public, max-age=300", transform: { key: "v1", run: (original: Blob) => original } }
+  expect(await blob.serve(event, "original", options)).toEqual([null, null])
+  expect(storage.serve).toHaveBeenCalledWith(event, "original", options)
+})
 
 function expectBlobSuccess<TResult>(result: BlobResult<TResult>): TResult {
   const [error, value] = result
