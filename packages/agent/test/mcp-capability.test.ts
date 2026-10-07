@@ -226,7 +226,10 @@ describe("mcp capability", () => {
     await expect(resolveAgentCapabilities({ capabilities: [mcp({
       servers: { docs: createClient({ read: { execute: vi.fn() } }) },
       toolOverrides: { docs: { read: { inputSchema: { type } as McpToolInputSchema } } },
-    })] }, runtime(), {})).rejects.toThrow(/object JSON Schema/)
+    })] }, runtime(), {})).rejects.toMatchObject({
+      code: "AGENT_R0983",
+      message: expect.stringContaining("object JSON Schema"),
+    })
   })
 
   it("rejects transform-capable override schemas at runtime", async () => {
@@ -239,7 +242,10 @@ describe("mcp capability", () => {
         // @ts-expect-error MCP overrides accept only non-transforming JSON Schema.
         inputSchema: z.object({ id: z.string().default("changed") }),
       } } },
-    })] }, runtime(), {})).rejects.toThrow(/JSON Schema/)
+    })] }, runtime(), {})).rejects.toMatchObject({
+      code: "AGENT_R0983",
+      message: expect.stringContaining("plain JSON Schema"),
+    })
   })
 
   it.each(["server", "tool"])("rejects unmatched %s override keys", async (kind) => {

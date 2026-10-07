@@ -312,10 +312,10 @@ export function defineMcpToolCapability<
         }
         for (const override of Object.values(overrides)) {
           if (override.inputSchema && hasAgentToolStandardSchema(override.inputSchema)) {
-            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool overrides require JSON Schema without transforms.")
+            throw agentDiagnostics.AGENT_R0983({ message: "mcp({ toolOverrides }) input schemas require plain JSON Schema without transforms." })
           }
           if (override.inputSchema !== undefined && (!isRuntimeRecord(override.inputSchema) || override.inputSchema.type !== "object")) {
-            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool input overrides require object JSON Schema.")
+            throw agentDiagnostics.AGENT_R0983({ message: "mcp({ toolOverrides }) input schemas require an object JSON Schema." })
           }
         }
       }

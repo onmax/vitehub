@@ -36,6 +36,10 @@ describe("Agent diagnostics", () => {
     }
   })
 
+  it("classifies MCP override contract errors as input errors", () => {
+    expect(isAgentTypeDiagnostic(agentDiagnostics.AGENT_R0983({ message: "Invalid MCP input schema" }))).toBe(true)
+  })
+
   it("keeps stable codes in generated Agent runtime errors", () => {
     for (const code of ["AGENT_R0892", "AGENT_R0893", "AGENT_R0894", "AGENT_R0895", "AGENT_R0896", "AGENT_R0897"] as const) {
       expect(agentGeneratedRuntimeError(code, "Generated runtime failed.")).toMatchObject({
