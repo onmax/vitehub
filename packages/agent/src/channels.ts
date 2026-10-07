@@ -1827,6 +1827,16 @@ function githubActivityLinks(links: readonly { label: string, url: string }[]): 
   return links.map(link => `[${githubActivityText(link.label, 160)}](<${link.url.replace(/[<>\r\n|]/g, value => encodeURIComponent(value))}>)`).join(" · ")
 }
 
+function githubActivitySessionMarkdown(entry: GitHubActivityHistoryEntry): string {
+  const link = entry.links[0]
+  return link ? githubActivityLinks([{ ...link, label: "View session" }]) : "Session"
+}
+
+function githubActivityAnswer(entry: GitHubActivityHistoryEntry): string | undefined {
+  if (!entry.summary?.trim()) return
+  return githubActivityText(entry.summary, 2_000)
+}
+
 function renderGithubActivity(
   activity: AgentActivityUpdate,
   state: GitHubActivityCommentState,
@@ -1851,16 +1861,22 @@ function renderGithubActivity(
     }),
   ].join("\n"))
   if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
-  if (current?.summary && ["completed", "failed", "cancelled"].includes(activity.status)) {
-    sections.push(`Latest result\n\n${githubActivityText(current.summary, 2_000)}`)
+  const latestAnswer = [current, ...state.history]
+    .filter((entry): entry is GitHubActivityHistoryEntry => !!entry)
+    .map(entry => githubActivityAnswer(entry))
+    .find((answer): answer is string => answer !== undefined)
+  if (latestAnswer) {
+    sections.push(`Latest answer\n\n${latestAnswer}`)
   }
   if (activity.error) sections.push(`Agent stopped: ${githubActivityText(activity.error, 1_000)}`)
-  if (state.history.length) {
-    const history = state.history
-      .filter(entry => entry.links.length && entry.summary)
-      .map(entry => `<li>\n\n${githubActivityLinks(entry.links)}${entry.updatedAt ? ` · ${githubActivityTime(entry.updatedAt)}` : ""}${entry.status ? ` · ${entry.status}` : ""}${entry.summary ? `\n\n${githubActivityText(entry.summary, 2_000)}` : ""}\n\n</li>`)
-      .join("\n")
-    if (history) sections.push(`<details>\n<summary>Previous results</summary>\n\n<ul>\n${history}\n</ul>\n</details>`)
+  const answers = [current, ...state.history]
+    .filter((entry): entry is GitHubActivityHistoryEntry => !!entry && entry.links.length > 0)
+    .flatMap(entry => {
+      const answer = githubActivityAnswer(entry)
+      return answer ? [`${githubActivitySessionMarkdown(entry)}\n\n${answer}`] : []
+    })
+  if (answers.length) {
+    sections.push(`<details>\n<summary>Final answers</summary>\n\n${answers.join("\n\n")}\n\n</details>`)
   }
   const body = sections.join("\n\n")
   if (Buffer.byteLength(body) <= githubActivityBodyLimit) return body

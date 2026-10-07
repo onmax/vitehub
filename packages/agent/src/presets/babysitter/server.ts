@@ -699,6 +699,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 number,
                 expectedHeadOid: pullRequest.headRefOid,
                 expectedBaseOid: pullRequest.baseRefOid,
+                mentionAllowlist: presetOptions.mentionAllowlist,
                 signal: abortSignal,
                 autoMerge: merge.mode === "auto",
                 eligible: (current) =>

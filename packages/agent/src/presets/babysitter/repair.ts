@@ -87,6 +87,20 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           return { commented: true };
         },
       },
+      mentionOnPullRequest: {
+        name: "mentionOnPullRequest",
+        description: "Mention one configured human on this PR about a verified blocker that needs their action. This sends a notification; use it sparingly.",
+        inputSchema: {
+          type: "object",
+          properties: { login: { type: "string" }, body: { type: "string" } },
+          required: ["login", "body"],
+          additionalProperties: false,
+        },
+        execute: async (input: unknown) => {
+          await operations.mention(stringField(input, "login"), stringField(input, "body"));
+          return { mentioned: true };
+        },
+      },
       resolveReviewThread: {
         name: "resolveReviewThread",
         description: "Resolve an addressed review thread belonging to this PR.",

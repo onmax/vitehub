@@ -157,10 +157,12 @@ describe("agent channels", () => {
       expect(stored?.body).toContain("- [ ] Untrusted \\# \\[link\\]\\(https://example.com\\) \\*text\\*")
       expect(stored?.body).not.toContain("\n# [link]")
       expect(stored?.body).toContain("https://console.test/invocations/run-2")
-      expect(stored?.body).toContain("<summary>Previous results</summary>")
+      expect(stored?.body).toContain("<summary>Final answers</summary>")
       expect(stored?.body).toContain("Review complete.")
+      expect(stored?.body.match(/Latest answer/g)).toHaveLength(1)
       expect(stored?.body).toContain("<relative-time datetime=")
       expect(stored?.body).toContain("https://console.test/invocations/run-1")
+      expect(stored?.body).toContain("[View session](<https://console.test/invocations/run-1>)")
       expect(stored?.body.match(/vitehub-agent-activity:/g)).toHaveLength(1)
 
       // Agent identity keeps equal provider run IDs as separate activity sessions.

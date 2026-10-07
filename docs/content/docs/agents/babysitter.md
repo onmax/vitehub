@@ -37,6 +37,7 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `merge` | `false` | `false`, `'auto'` (request GitHub auto-merge), `'direct'` (merge a ready PR on the host), or `{ strategy: 'direct', method, ready }`. |
 | `reviewChecks` | `[]` | Check names, such as a review bot's check, that keep a PR waiting while they run. |
 | `noFindingsReviews` | `[]` | Body prefixes of comment-only reviews that report no findings, such as `'> ✅ No new issues found.'`. They do not wake a waiting PR. |
+| `mentionAllowlist` | `[]` | Exact GitHub logins the worker may notify through `mentionOnPullRequest`. The tool is reserved for verified blockers that need one person's action. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
 
 ## Share the Console journal

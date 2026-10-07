@@ -65,6 +65,8 @@ export interface GitHubPullRequestOperationsOptions {
   autoMerge?: boolean
   /** Recheck the configured channel filter against current PR state before each operation. */
   eligible?: (pullRequest: GitHubPullRequestOperationSnapshot) => boolean | Promise<boolean>
+  /** Exact GitHub logins allowed by the explicit mention capability. Defaults to none. */
+  mentionAllowlist?: readonly string[]
   /** Host-owned checkout push, already bound to its source branch and expected-head lease. */
   push?: () => Promise<string>
   signal?: AbortSignal
@@ -86,6 +88,7 @@ export interface GitHubBaseCheckEvidence {
 export interface GitHubPullRequestOperations {
   requestAutoMerge(): Promise<GitHubAutoMergeResult>
   comment(body: string): Promise<void>
+  mention(login: string, body: string): Promise<void>
   readCheckLogs(runId: number): Promise<{ text: string, truncated: boolean }>
   readBaseCheckEvidence(): Promise<GitHubBaseCheckEvidence>
   readBaseCheckLogs(runId: number): Promise<{ repository: string, headSha: string, text: string, truncated: boolean }>
@@ -128,6 +131,7 @@ export function createGitHubPullRequestOperations(
   if (!/^[a-f\d]{40}$/i.test(options.expectedHeadOid)) throw new Error("Expected a full GitHub head commit SHA.")
   if (options.expectedBaseOid !== undefined && !/^[a-f\d]{40}$/i.test(options.expectedBaseOid)) throw new Error("Expected a full GitHub base commit SHA.")
   const repository = options.repository
+  const mentionAllowlist = new Set((options.mentionAllowlist ?? []).map(login => login.trim().toLowerCase()).filter(Boolean))
   let expectedHeadOid = options.expectedHeadOid
   const target = `/repos/${repository}/issues/${options.number}`
   const commandOptions = { repository, signal: options.signal, timeout: 60_000 }
@@ -310,6 +314,16 @@ export function createGitHubPullRequestOperations(
       nonempty(body, "Comment")
       await snapshot()
       await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${body}`], commandOptions)
+    },
+    async mention(login, body) {
+      const targetLogin = nonempty(login, "GitHub login")
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(targetLogin) || !mentionAllowlist.has(targetLogin.toLowerCase())) {
+        throw new Error("GitHub login is not in the configured mention allowlist.")
+      }
+      const message = nonempty(body, "Mention body")
+      if (message.includes("@")) throw new Error("Mention body must not contain another mention.")
+      await snapshot()
+      await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=@${targetLogin} ${message}`], commandOptions)
     },
     async resolveThread(id) {
       nonempty(id, "Review thread ID")

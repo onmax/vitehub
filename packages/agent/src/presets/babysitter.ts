@@ -37,6 +37,8 @@ export interface BabysitterOptions {
    * `"> ✅ No new issues found."`. These reviews do not wake a parked PR. Defaults to none.
    */
   noFindingsReviews: string[];
+  /** GitHub logins the worker may notify through its explicit mention capability. Defaults to none. */
+  mentionAllowlist: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
   /** @deprecated Use `merge: "auto"`. */
@@ -176,6 +178,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     reviewChecks: [] as string[],
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
     noFindingsReviews: [] as string[],
+    mentionAllowlist: [] as string[],
     concurrency: 1,
     autoMerge: false,
   },

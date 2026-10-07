@@ -68,6 +68,17 @@ function fixture(options: Partial<GitHubPullRequestOperationsOptions> = {}) {
 }
 
 describe("native auto-merge", () => {
+  it("exposes a guarded explicit mention operation", async () => {
+    const f = fixture({ mentionAllowlist: ["stefina"] })
+    await f.operations.mention("Stefina", "Please confirm the product decision.")
+    expect(f.command).toHaveBeenCalledWith(
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@Stefina Please confirm the product decision."],
+      expect.anything(),
+    )
+    await expect(f.operations.mention("someone-else", "Please review this.")).rejects.toThrow(/allowlist/)
+    await expect(f.operations.mention("stefina", "Also notify @another.")).rejects.toThrow(/another mention/)
+  })
+
   it("is disabled without touching credentials, reads or writes", async () => {
     const f = fixture()
     expect(await f.operations.requestAutoMerge()).toEqual({ status: "blocked", reason: "disabled" })
