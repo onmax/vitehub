@@ -150,7 +150,11 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
         child?.once("close", () => rmSync(environmentFile, { force: true }));
         return child;
       } catch (error) {
-        rmSync(environmentFile, { force: true });
+        try {
+          rmSync(environmentFile, { force: true });
+        } catch {
+          // Preserve the setup failure if best-effort secret-file cleanup fails.
+        }
         throw error;
       }
     },

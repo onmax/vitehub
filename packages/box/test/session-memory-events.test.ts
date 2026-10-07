@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, rmdir, statfs, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,10 @@ vi.mock("node:fs/promises", () => ({
   rmdir: vi.fn(), rm: vi.fn(), statfs: vi.fn(), writeFile: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+vi.mock("node:fs", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:fs")>(),
+  chmodSync: vi.fn(), rmSync: vi.fn(), writeFileSync: vi.fn(),
+}));
 vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn() }));
 
 let events: string;
@@ -34,6 +39,22 @@ beforeEach(() => {
 const open = () => createSessionMemory({ cgroupParent: "/delegated", memoryMaxBytes: 1024 });
 
 describe("session memory events", () => {
+  it.each(["write", "chmod", "spawn"])("preserves the %s failure when environment-file removal also fails", async (stage) => {
+    const group = await open();
+    const originalError = new Error(`${stage} failed`);
+    const fail = () => { throw originalError; };
+    if (stage === "write") vi.mocked(writeFileSync).mockImplementationOnce(fail);
+    else if (stage === "chmod") vi.mocked(chmodSync).mockImplementationOnce(fail);
+    else vi.mocked(spawn).mockImplementationOnce(fail);
+    vi.mocked(rmSync).mockImplementationOnce(() => { throw new Error("cleanup denied"); });
+    try {
+      expect(() => group.spawn("true", { env: { TOKEN: "secret" } })).toThrow(originalError);
+      expect(rmSync).toHaveBeenCalledWith(vi.mocked(writeFileSync).mock.calls[0]![0], { force: true });
+      if (stage !== "spawn") expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      await group.close();
+    }
+  });
   it("does not attribute host or ancestor kills to the session budget", async () => {
     events = "oom 1\noom_kill 1\n";
     localEvents = "oom 0\n";
