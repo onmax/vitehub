@@ -236,7 +236,9 @@ describe("pull request checkout", () => {
     await git(checkout, ["fetch", "-q", "--no-tags", `https://github.com/${headRepository}.git`, "refs/heads/feature"], env)
     await git(checkout, ["checkout", "-q", "-B", "feature", "FETCH_HEAD"])
     await git(checkout, ["remote", "set-url", "--push", "origin", `https://github.com/${headRepository}.git`])
-    await git(checkout, ["config", "remote.origin.push", "HEAD:refs/heads/feature"])
+    // Git also accepts the source-only form, which expands to the same branch
+    // destination when it is pushed.
+    await git(checkout, ["config", "remote.origin.push", forked ? "HEAD:refs/heads/feature" : "feature"])
     expect(await git(checkout, ["config", "branch.feature.remote"]).catch(() => "")).toBe("")
     expect(await git(checkout, ["remote"])).toBe("origin")
 

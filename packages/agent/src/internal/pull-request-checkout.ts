@@ -236,7 +236,8 @@ export async function preparePullRequestCheckout(
       if (push.exitCode === 0) {
         // The GitHub host uses origin's explicit HEAD refspec without upstream metadata.
         const refspecs = push.stdout.trim().split(/\r?\n/)
-        if (refspecs.length !== 1 || ![`HEAD:${expectedBranch}`, `${expectedBranch}:${expectedBranch}`].includes(refspecs[0]!)) {
+        const normalizedRefspec = refspecs.length === 1 ? normalizePushRefspec(refspecs[0]!, plan.headBranch) : undefined
+        if (!normalizedRefspec || normalizedRefspec !== expectedBranch) {
           throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong push refspec." })
         }
       }
@@ -295,4 +296,12 @@ export async function preparePullRequestCheckout(
 
 function normalizeGitRemote(value: string): string {
   return value.trim().replace(/\.git$/, "").replace(/^git@github\.com:/, "https://github.com/").replace(/^https?:\/\/github\.com\//, "https://github.com/").toLowerCase()
+}
+
+function normalizePushRefspec(value: string, branch: string): string | undefined {
+  const refspec = value.trim().replace(/^\+/, "")
+  const expected = `refs/heads/${branch}`
+  if (refspec === branch || refspec === expected) return expected
+  if (refspec === `HEAD:${expected}` || refspec === `${expected}:${expected}`) return expected
+  return
 }
