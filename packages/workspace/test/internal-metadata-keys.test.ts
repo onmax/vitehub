@@ -170,4 +170,21 @@ describe("internal metadata keys", () => {
     })
     await expect(store.stat("docs/old.md")).resolves.toBeUndefined()
   })
+
+  it("supports writable facades that do not register a raw write target", async () => {
+    const store = createMemoryWorkspaceStore()
+    registerWorkspace("support", defineWorkspace({ store }))
+    const base = useWorkspace("support", { mode: "write" })
+    // A wrapper supplied by an integration does not have the private target
+    // registration created by useWorkspace.
+    const wrapped = { ...base } as WritableWorkspaceFacade
+    const definition: WorkspaceDefinition = {
+      name: "support",
+      sources: { docs: docsSource() },
+    }
+
+    const resolved = await createWorkspaceSourceResolutionFacade(wrapped, definition, { invocation, overlay: true })
+    await expect((resolved.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
+    await expect(store.getMeta!(sourceSyncMetaKey("docs"))).resolves.toMatchObject({ source: "docs" })
+  })
 })
