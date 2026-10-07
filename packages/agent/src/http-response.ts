@@ -119,7 +119,7 @@ export function toAgentHttpResult(value: unknown, stream: boolean): Response | u
     return value
   }
   if (stream && isAgentStreamResult(value)) {
-    if (value.toUIMessageStreamResponse) {
+    if (typeof value.toUIMessageStreamResponse === "function") {
       return value.toUIMessageStreamResponse()
     }
     const response = value.toTextStreamResponse?.()
