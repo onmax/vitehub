@@ -166,6 +166,7 @@ import type {
   AgentCapabilitiesInput,
   AgentCapabilitiesResolver,
   AgentChannelDefinition,
+  AgentChannelDataOf,
   AgentChannelInputs,
   AgentChannelMessage,
   AgentChannelMessageContext,
@@ -367,6 +368,7 @@ export type {
   AgentChannelDeliveryStatusInput,
   AgentChannelDeliveryStatusPayload,
   AgentChannelDeliveryStatusState,
+  AgentChannelDataOf,
   AgentChatAgentHookArgs,
   AgentChatErrorHookArgs,
   AgentChatEventHookArgs,
@@ -3068,7 +3070,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = unknown,
+    TData = AgentChannelDataOf<TChannels>,
     TIntercept = never,
     TDataInput = TData,
   >(
@@ -3092,7 +3094,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = unknown,
+    TData = AgentChannelDataOf<TChannels>,
     TIntercept = never,
     TDataInput = TData,
   >(
