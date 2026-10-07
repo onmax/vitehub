@@ -178,6 +178,11 @@ describe("pull request checkout", () => {
     expect(await git(checkout, ["remote", "get-url", "origin"])).toBe("https://github.com/vite-hub/vitehub.git")
     expect(await git(checkout, ["config", "--local", "--get-regexp", "extraheader"]).catch(() => "")).toBe("")
 
+    await expect(preparePullRequestCheckout(fixture.session, plan!, { env: fixture.env })).resolves.toBe(false)
+    await git(checkout, ["remote", "set-url", "origin", "https://github.com/other/repository.git"])
+    await expect(preparePullRequestCheckout(fixture.session, plan!, { env: fixture.env })).rejects.toThrow("wrong origin remote")
+    await git(checkout, ["remote", "set-url", "origin", "https://github.com/vite-hub/vitehub.git"])
+
     await git(checkout, ["fetch", "-q", "origin", "main"], env)
     await writeFile(join(checkout, "CHANGE.md"), "agent\n")
     await git(checkout, ["add", "CHANGE.md"])

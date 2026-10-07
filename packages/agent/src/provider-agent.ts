@@ -2735,6 +2735,11 @@ async function* runProvider<
   let workspaceSession: WorkspaceSession | undefined
   // Filled after the checkout exists. Workspace commands read it when they run.
   const toolchainPath: string[] = []
+  // A pull request can be mounted below the Workspace root. The provider must
+  // run from the checkout itself, while the Workspace session keeps the outer
+  // root so it can preserve unrelated mounted sources.
+  let providerCwd = root
+  let workspaceCommandCwd = "/workspace"
   let sourceProvenance: ProviderSourceProvenance[] = []
   let onProviderExit: AgentProviderLaunchCommand["onExit"]
   let runtime: ProviderRuntime | undefined
@@ -2872,6 +2877,11 @@ async function* runProvider<
     )
     workspaceSession = preparedWorkspace?.session
     sourceProvenance = preparedWorkspace?.provenance || []
+    if (preparedWorkspace?.projectRoot) {
+      providerCwd = preparedWorkspace.projectRoot
+      const mount = relative(root, preparedWorkspace.projectRoot).replace(/\\/g, "/")
+      if (mount && !mount.startsWith("..") && mount !== ".") workspaceCommandCwd = `/workspace/${mount}`
+    }
     if (options.toolchain !== undefined && !options.box && !auxiliary) {
       // SAFETY: The split specifier keeps @vite-hub/box optional for bundlers. It resolves to the toolchain module.
       const { prepareHostToolchain } = await import("@vite-hub/" + "box/_internal/toolchain") as typeof import("@vite-hub/box/_internal/toolchain")
@@ -2896,7 +2906,15 @@ async function* runProvider<
         },
       })
       clearActiveWorkspaceCommands = setActiveAgentWorkspaceCommands(context.context, (command, args, execOptions) => {
-        const execution = workspaceSession!.exec(command, args, execOptions)
+        const browserEnvironment = browserRuntimeEnvironment(context.context)
+        const environment = browserEnvironment
+          ? { ...browserEnvironment, ...execOptions?.env }
+          : execOptions?.env
+        const execution = workspaceSession!.exec(command, args, {
+          ...execOptions,
+          ...(execOptions?.cwd === undefined && workspaceCommandCwd !== "/workspace" ? { cwd: workspaceCommandCwd } : {}),
+          ...(environment ? { env: environment } : {}),
+        })
         activeWorkspaceCommands.add(execution)
         void execution.finally(() => activeWorkspaceCommands.delete(execution)).catch(() => undefined)
         return execution
@@ -2911,7 +2929,16 @@ async function* runProvider<
         const cwd = resolve(root, suffix)
         if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
         const { abortSignal, ...hostOptions } = execOptions || {}
-        const execution = localWorkspaceHost({ path: toolchainPath }).exec(command, args, { ...hostOptions, cwd, signal: abortSignal }).then(result => ({
+        const browserEnvironment = browserRuntimeEnvironment(context.context)
+        const environment = browserEnvironment
+          ? { ...browserEnvironment, ...execOptions?.env }
+          : execOptions?.env
+        const execution = localWorkspaceHost({ path: toolchainPath }).exec(command, args, {
+          ...hostOptions,
+          ...(environment ? { env: environment } : {}),
+          cwd: execOptions?.cwd === undefined ? providerCwd : cwd,
+          signal: abortSignal,
+        }).then(result => ({
           command,
           args: args || [],
           exitCode: result.code,
@@ -2926,17 +2953,17 @@ async function* runProvider<
     let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
     let materializeInstructions = Boolean(instructions)
     if (!instructions && options.provider === "claude-code") {
-      const nativeInstructions = await readFile(join(root, "CLAUDE.md"), "utf8").catch(() => undefined)
+      const nativeInstructions = await readFile(join(providerCwd, "CLAUDE.md"), "utf8").catch(() => undefined)
       if (nativeInstructions !== undefined) instructions = nativeInstructions
       else {
-        instructions = await readFile(join(root, "AGENTS.md"), "utf8").catch(() => undefined)
+        instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
         materializeInstructions = Boolean(instructions)
       }
     }
     const preserveNativeInstructions = !materializeInstructions
     const provenanceInstructions = sourceProvenanceInstructions(sourceProvenance)
     if (!instructions && provenanceInstructions && options.provider === "codex") {
-      instructions = await readFile(join(root, "AGENTS.md"), "utf8").catch(() => undefined)
+      instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
     }
     if (provenanceInstructions) {
       instructions = [instructions, provenanceInstructions].filter(Boolean).join("\n\n")
@@ -2969,12 +2996,12 @@ async function* runProvider<
         // Deliver generated instructions once, without Claude's native @path imports.
         // Preserve native instruction files when only adding source provenance.
         if (!preserveNativeInstructions) {
-          generatedProviderFiles.push(await materializeGeneratedProviderFile(root, join(root, "CLAUDE.md"), ""))
+          generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "CLAUDE.md"), ""))
         }
-        claudePromptFile = join(root, ".claude", "vitehub-system-prompt.md")
-        generatedProviderFiles.push(await materializeGeneratedProviderFile(root, claudePromptFile, promptFileInstructions))
+        claudePromptFile = join(providerCwd, ".claude", "vitehub-system-prompt.md")
+        generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, claudePromptFile, promptFileInstructions))
       } else {
-        const generated = await materializeGeneratedProviderFile(root, join(root, "AGENTS.md"), instructions)
+        const generated = await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "AGENTS.md"), instructions)
         if (preserveNativeInstructions && provenanceInstructions && generated.content !== undefined) {
           // Remove only the injected text so native instruction edits reach Workspace write-back.
           generated.appendedContent = `${generated.content.length ? "\n\n" : ""}${provenanceInstructions}`
@@ -2989,20 +3016,20 @@ async function* runProvider<
         || !("workspacePath" in source)
         || !(hasRuntimeType(source.content, "string") || source.content instanceof Uint8Array)
         || !hasRuntimeType(source.workspacePath, "string")) continue
-      const target = resolve(root, source.workspacePath)
-      if (target !== root && !target.startsWith(`${root}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
+      const target = resolve(providerCwd, source.workspacePath)
+      if (target !== providerCwd && !target.startsWith(`${providerCwd}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
       if (options.box) {
         addProviderBoxSkill(providerBoxHomeFiles, relative(root, target), source.content)
         continue
       }
       // Preserve resolved Workspace Sources only after validating the complete path.
-      const { entry } = await inspectGeneratedProviderFilePath(root, target)
+      const { entry } = await inspectGeneratedProviderFilePath(providerCwd, target)
       if (entry?.isFile()) continue
-      generatedProviderFiles.push(await materializeGeneratedProviderFile(root, target, source.content))
+      generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, target, source.content))
     }
-    generatedProviderFiles.push(...await materializeProviderSkillCompatibility(root))
-    if (pullRequestRoot) {
-      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(root, generatedProviderFiles.map(file => file.path))
+    generatedProviderFiles.push(...await materializeProviderSkillCompatibility(providerCwd))
+    if (pullRequestRoot || preparedWorkspace?.projectRoot) {
+      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(providerCwd, generatedProviderFiles.map(file => file.path))
     }
     // A root pull request checkout is the Driver's repository. Do not add a baseline commit to its branch.
     if (workspaceSession && !pullRequestRoot) {
@@ -3125,7 +3152,7 @@ async function* runProvider<
         ...resolverContext,
         command: providerCommand,
         providerCommand,
-        cwd: root,
+        cwd: providerCwd,
         environment: Object.freeze({ ...providerRuntimeEnvironment }),
         requiredEnvironment,
       }
@@ -3137,7 +3164,7 @@ async function* runProvider<
       onProviderExit = launch.onExit
       if (!launchRoot) throw agentDiagnostics.AGENT_R0717({ message: "[vitehub] Provider launcher root was not prepared." })
       const materializedLauncher = await waitForProviderOperation(
-        materializeProviderLauncher(launchRoot, launch, providerLaunchSecretEnvironmentKeys, providerLaunchDiagnosticSecrets, root),
+        materializeProviderLauncher(launchRoot, launch, providerLaunchSecretEnvironmentKeys, providerLaunchDiagnosticSecrets, providerCwd),
         effectiveSignal,
       )
       providerLauncher = materializedLauncher.path
@@ -3210,7 +3237,7 @@ async function* runProvider<
       ...(launchArgs === undefined ? {} : { launchArgs }),
     }).filter(([, value]) => value !== undefined))
     const runtimeOptions: Parameters<typeof createProviderRuntime>[0] = {
-      cwd: root,
+      cwd: providerCwd,
       environment: providerRuntimeEnvironment,
       provider: options.provider,
       ...(sessionStore ? { sessionStore: sessionStore.runtime } : {}),

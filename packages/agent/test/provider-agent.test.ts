@@ -24,7 +24,7 @@ interface MockProviderSessionStore {
   get: (threadId: string) => Promise<unknown | undefined>
   set: (threadId: string, resumeCursor: unknown) => Promise<void>
 }
-const createProviderRuntime = vi.hoisted(() => vi.fn(async (_options: { environment?: Record<string, string>, sessionStore?: MockProviderSessionStore, settings?: Record<string, unknown> }) => providerRuntimes.shift()))
+const createProviderRuntime = vi.hoisted(() => vi.fn(async (_options: { cwd?: string, environment?: Record<string, string>, sessionStore?: MockProviderSessionStore, settings?: Record<string, unknown> }) => providerRuntimes.shift()))
 const createSqliteProviderRuntimeSessionStore = vi.hoisted(() => vi.fn(async (path: string) => {
   let cursors = durableProviderSessionCursors.get(path)
   if (!cursors) {
@@ -69,6 +69,7 @@ import { cliproxy, defineGateway, vercel } from "../src/gateways.ts"
 import { grantWorkspaceAccessScope } from "../src/access-runtime.ts"
 import { codexDriver, defineAgent, runAgent } from "../src/index.ts"
 import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
+import { executeWorkspaceCommand } from "../src/capabilities/workspace-command.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "../src/internal/agent-invocation-control.ts"
 import { withAgentInvocationResponseOwner } from "../src/internal/agent-invocation-response-owner.ts"
 import { markAuxiliaryMessageChannelInstructionContext } from "../src/internal/channels.ts"
@@ -4346,6 +4347,98 @@ cli_auth_credentials_store = "keyring"
     expect(session.exec.mock.calls[checkout]?.[2]).toMatchObject({ env: { GH_TOKEN: "installation-token" } })
     expect(calls.some(call => call.includes("vitehub provider baseline"))).toBe(baseline)
     expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({ GH_TOKEN: "installation-token" })
+  })
+
+  it("runs a nested pull request checkout as the provider root", async () => {
+    const threadId = "thread-nested-pull-request-provider-root"
+    let root = ""
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onStartSession() {
+        expect(createProviderRuntime.mock.lastCall?.[0].cwd).toBe(join(root, "portal"))
+        await expect(readFile(join(root, "portal", "AGENTS.md"), "utf8")).resolves.toBe("provider instructions")
+      },
+    })
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async (command: string, args: string[] = []) => ({
+        args,
+        command,
+        exitCode: command === "git" && args.join(" ") === "rev-parse --is-inside-work-tree" ? 1 : 0,
+        stderr: "",
+        stdout: "",
+      })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const workspace = {
+      fs: {},
+      startSession: vi.fn(async (options: { target: string }) => {
+        root = options.target
+        return session
+      }),
+      tools: {},
+    }
+    const runContext = context(threadId, {
+      workspace,
+      workspaceDefinition: { mode: "write", name: "docs" },
+      workspaceMode: "write",
+    })
+    runContext.context.set("pullRequest", {
+      pullRequest: {
+        head: { ref: "feature", repo: "acme/portal", sha: "a".repeat(40) },
+        number: 42,
+        source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
+      },
+      repository: { fullName: "acme/portal", name: "portal" },
+    })
+
+    await expect(createProviderAgentAdapter({ instructions: "provider instructions", provider: "codex" }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
+    expect(session.exec.mock.calls.some(([command, args]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
+  })
+
+  it("passes a managed browser PATH to provider Workspace commands", async () => {
+    const threadId = "thread-provider-workspace-browser-path"
+    const session = {
+      close: vi.fn(async () => undefined),
+      commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })),
+      exec: vi.fn(async (command: string, args: string[] = [], options?: { env?: Record<string, string> }) => ({
+        args,
+        command,
+        exitCode: 0,
+        stderr: "",
+        stdout: options?.env?.PATH || "",
+      })),
+      readFile: vi.fn(async () => new Uint8Array()),
+    }
+    const workspace = { fs: {}, startSession: vi.fn(async () => session), tools: {} }
+    const runContext = context(threadId, {
+      tools: {
+        workspace_exec: {
+          description: "Run a workspace command",
+          execute: async (input: { args?: string[], command: string }) => await executeWorkspaceCommand(workspace, input.command, input.args, {}, runContext.context as never),
+          inputSchema: { additionalProperties: false, properties: { args: { items: { type: "string" }, type: "array" }, command: { type: "string" } }, required: ["command"], type: "object" },
+          name: "workspace_exec",
+        },
+      },
+      workspace,
+      workspaceDefinition: { mode: "write", name: "docs" },
+      workspaceMode: "write",
+    })
+    provideBrowserRuntimeEnvironment(runContext.context as never, { PATH: "/managed/bin", VITEHUB_BROWSER_ACTIVE: "1" })
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn(mcp) {
+        const client = new McpClient({ name: "provider-browser-path-test", version: "1" })
+        const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), { requestInit: { headers: { Authorization: mcp!.authorizationHeader } } })
+        await client.connect(transport)
+        await expect(client.callTool({ arguments: { command: "agent-browser" }, name: "workspace_exec" })).resolves.toMatchObject({ content: [{ text: "/managed/bin" }] })
+        await client.close()
+      },
+    })
+
+    await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
+    expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ PATH: "/managed/bin" }) }))
   })
 
   it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {

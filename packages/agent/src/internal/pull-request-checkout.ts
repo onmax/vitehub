@@ -182,6 +182,29 @@ export async function preparePullRequestCheckout(
     if (head.exitCode !== 0 || head.stdout.trim().toLowerCase() !== plan.headSha) {
       throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout does not match the expected SHA." })
     }
+    const origin = await session.exec("git", ["remote", "get-url", "origin"], execOptions)
+    const expectedOrigin = `https://github.com/${plan.repository}.git`
+    if (origin.exitCode !== 0 || normalizeGitRemote(origin.stdout) !== normalizeGitRemote(expectedOrigin)) {
+      throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong origin remote." })
+    }
+    if (plan.headRepository) {
+      const headRemote = await session.exec("git", ["remote", "get-url", "head"], execOptions)
+      const expectedHead = `https://github.com/${plan.headRepository}.git`
+      if (headRemote.exitCode !== 0 || normalizeGitRemote(headRemote.stdout) !== normalizeGitRemote(expectedHead)) {
+        throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong head remote." })
+      }
+    }
+    if (plan.headBranch) {
+      const branch = await session.exec("git", ["branch", "--show-current"], execOptions)
+      const remote = await session.exec("git", ["config", `branch.${plan.headBranch}.remote`], execOptions)
+      const merge = await session.exec("git", ["config", `branch.${plan.headBranch}.merge`], execOptions)
+      const expectedRemote = plan.headRepository ? "head" : "origin"
+      if (branch.exitCode !== 0 || branch.stdout.trim() !== plan.headBranch
+        || remote.exitCode !== 0 || remote.stdout.trim() !== expectedRemote
+        || merge.exitCode !== 0 || merge.stdout.trim() !== `refs/heads/${plan.headBranch}`) {
+        throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong branch tracking metadata." })
+      }
+    }
     return false
   }
 
@@ -226,4 +249,8 @@ export async function preparePullRequestCheckout(
     throw agentDiagnostics.AGENT_R0071({ message: result.stderr || result.stdout || "[vitehub] git could not prepare pull request checkout." })
   }
   return true
+}
+
+function normalizeGitRemote(value: string): string {
+  return value.trim().replace(/\.git$/, "").replace(/^git@github\.com:/, "https://github.com/").replace(/^https?:\/\/github\.com\//, "https://github.com/").toLowerCase()
 }
