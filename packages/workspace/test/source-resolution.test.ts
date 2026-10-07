@@ -1405,6 +1405,39 @@ describe("Workspace Source Resolution", () => {
     await expect(base.readFile("docs/guide.md")).resolves.toBe("scoped")
   })
 
+  it("retains sync authority when scoped resolution recreates a Source binding", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    const definition = {
+      name: "support",
+      sources: {
+        docs: custom({
+          async resolve() {
+            return custom({
+              fingerprint: { provider: "stable-docs" },
+              mount: "docs",
+              sync: { stale: "remove" },
+              async getKeys() { return ["guide.md"] },
+              async getItem(key) { return { key, path: key, content: "resolved" } },
+            })
+          },
+          async getKeys() { return [] },
+          async getItem(key) { return { key, content: "" } },
+        }),
+      },
+    }
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, {
+      ...scope("acme", ["docs"]),
+      overlay: true,
+    })
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, definition, {
+      ...scope("acme", ["docs"]),
+      overlay: true,
+    })
+
+    await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
+    await expect(base.readFile("docs/guide.md")).resolves.toBe("resolved")
+  })
+
   it("rejects overlay rebases that take remote content under a Source mount", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     const rebase = vi.fn(async (_options?: { takeRemote?: string[] }) => {})

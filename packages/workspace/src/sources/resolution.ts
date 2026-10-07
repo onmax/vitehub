@@ -73,6 +73,22 @@ function isWritableWorkspaceFacade<Name extends WorkspaceName>(workspace: Readon
   return typeof (workspace as WritableWorkspaceFacade<Name>).fs.writeFile === "function"
 }
 
+function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | undefined, right: WorkspaceSourceInput | undefined): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  const leftFingerprint = normalizeWorkspaceSource(key, left).source.fingerprint
+  const rightFingerprint = normalizeWorkspaceSource(key, right).source.fingerprint
+  if (leftFingerprint === undefined || rightFingerprint === undefined) return false
+  return stableWorkspaceSourceValue(leftFingerprint) === stableWorkspaceSourceValue(rightFingerprint)
+}
+
+function stableWorkspaceSourceValue(value: unknown): string {
+  if (value === undefined) return "undefined"
+  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableWorkspaceSourceValue).join(",")}]`
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
+}
+
 function workspaceSessionStarter<Name extends WorkspaceName>(workspace: ReadonlyWorkspaceFacade<Name>): Pick<Workspace, "startSession"> | undefined {
   return typeof (workspace as ReadonlyWorkspaceFacade<Name> & Partial<Pick<Workspace, "startSession">>).startSession === "function"
     ? workspace as ReadonlyWorkspaceFacade<Name> & Pick<Workspace, "startSession">
@@ -654,7 +670,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
         sources: Object.fromEntries(Object.entries(sourceViewDefinition.sources ?? {}).filter(([key, source]) => {
           const resolvedSource = resolvedDefinition.sources?.[key]
           return childDefinition.name !== resolvedDefinition.name
-            || resolvedSource !== childDefinition.sources?.[key]
+            || !sameWorkspaceSourceBinding(key, resolvedSource, childDefinition.sources?.[key])
             || !normalizeWorkspaceSource(key, resolvedSource ?? source).sync
         })),
       }
