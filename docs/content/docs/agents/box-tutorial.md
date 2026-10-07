@@ -2,9 +2,9 @@
 title: Run your first Box
 description: "Open a trusted-host Box, run one command, and inspect the result."
 layout: tutorial
-navigation.title: Box tutorial
-navigation.order: 3
-navigation.group: Start
+navigation.title: Tutorial
+navigation.order: 49
+navigation.group: Advanced execution
 icon: i-lucide-rocket
 ---
 

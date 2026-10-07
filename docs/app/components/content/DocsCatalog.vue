@@ -43,8 +43,8 @@ const scenes = new Map([
   ["workflows", "workflow"],
 ]);
 
-const rows = computed<CatalogRow[]>(() =>
-  getDocsCatalog(docsManifest.sections).map((group) => {
+const rows = computed<CatalogRow[]>(() => {
+  const catalogRows = getDocsCatalog(docsManifest.sections).map((group) => {
     const startSection = group.category === "Start"
       ? group.sections.find(section => section.id === docsRootSectionId)
       : null;
@@ -73,8 +73,30 @@ const rows = computed<CatalogRow[]>(() =>
         }));
 
     return { category: group.category, tiles };
-  }),
-);
+  });
+
+  const startSection = docsManifest.sections.find(section => section.id === docsRootSectionId);
+  const learnTiles = startSection?.pages
+    .filter(page => page.navigation !== false && ["Concepts", "AI resources"].includes(page.group || ""))
+    .map(page => ({
+      description: page.description,
+      icon: sidebarPageIcon(page),
+      kind: page.group || "Learn",
+      key: page.path,
+      scene: null,
+      title: page.sourceTitle || page.title,
+      to: page.path,
+    })) || [];
+
+  if (!learnTiles.length) return catalogRows;
+  const startIndex = catalogRows.findIndex(row => row.category === "Start");
+  const insertAt = startIndex < 0 ? 0 : startIndex + 1;
+  return [
+    ...catalogRows.slice(0, insertAt),
+    { category: "Learn", tiles: learnTiles },
+    ...catalogRows.slice(insertAt),
+  ];
+});
 
 const catalog = useTemplateRef<HTMLElement>("catalog");
 const visible = ref(false);

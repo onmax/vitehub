@@ -63,7 +63,7 @@ useSeoMeta({
           variant="link"
           color="neutral"
           icon="i-lucide-arrow-left"
-          label="Tutorials"
+          label="Back to writing"
           class="p-0"
         />
         <span v-if="formattedDate" class="text-muted" aria-hidden="true">·</span>

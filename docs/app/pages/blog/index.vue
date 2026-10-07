@@ -2,7 +2,7 @@
 import { computed } from "vue"
 
 const { data: posts } = await useAsyncData(
-  "blog:tutorials",
+  "blog:writing",
   () => queryCollection("blog").all(),
 )
 
@@ -25,8 +25,8 @@ const tutorials = computed(() => {
 })
 
 useSeoMeta({
-  title: "Tutorials",
-  ogTitle: "Tutorials · ViteHub",
+  title: "Writing",
+  ogTitle: "Writing · ViteHub",
   description: "Notes on building Agents with ViteHub and the Server Primitives they call.",
 })
 </script>

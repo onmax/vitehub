@@ -29,17 +29,17 @@ function primitiveKind(id: string) {
         class="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(22rem,0.6fr)] lg:items-end lg:gap-20"
       >
         <div>
-          <p class="mb-5 font-mono text-xs uppercase tracking-[0.14em] text-dimmed">Server primitives</p>
+          <p class="mb-5 font-mono text-xs uppercase tracking-[0.14em] text-dimmed">Build with ViteHub</p>
           <h1
             class="max-w-[16ch] text-3xl/9 font-semibold tracking-[-0.03em] text-highlighted text-balance sm:text-4xl/10"
           >
-            One server API, Agents included.
+            Server pieces, Agents, and UI in one place.
           </h1>
         </div>
         <div class="max-w-[40ch] lg:justify-self-end">
           <p class="text-base/7 text-muted">
-            The Agent is one primitive among the others. Call any primitive from a route, a job, or
-            an Agent. Each one works without the others.
+            Pick the building block that matches the work. Call server APIs from routes and jobs,
+            add Agent runtimes when you need them, and use UI components to inspect what is running.
           </p>
           <NuxtLink
             to="/docs/getting-started/server-primitives"

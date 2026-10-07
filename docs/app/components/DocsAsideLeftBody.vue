@@ -80,7 +80,7 @@ function isActive(path: string) {
 
     <section class="vh-docs-sidebar-related" aria-label="Learn ViteHub">
       <h2 class="vh-docs-sidebar-heading">Learn</h2>
-      <NuxtLink to="/docs/getting-started" class="vh-docs-sidebar-link">
+      <NuxtLink v-if="section.id !== 'getting-started'" to="/docs/getting-started" class="vh-docs-sidebar-link">
         <UIcon name="i-lucide-book-open" class="size-4 shrink-0" />
         <span class="min-w-0 truncate">Getting started</span>
       </NuxtLink>

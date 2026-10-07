@@ -29,7 +29,7 @@ icon: i-lucide-package
 
 Install the package and its peers:
 
-```bash
+```bash [Terminal]
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue @iconify-json/lucide @iconify-json/ph
 ```
 
@@ -53,7 +53,7 @@ For explicit imports, each public component also has a kebab-case entry such as 
 
 Install the package, its peers, and the Vite tooling:
 
-```bash
+```bash [Terminal]
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue
 pnpm add -D vite @vitejs/plugin-vue
 ```
@@ -92,7 +92,7 @@ Load Tailwind CSS, Nuxt UI, and the package styles in this order:
 
 The Vite plugin does not register ViteHub UI components. Import them where you use them:
 
-```vue
+```vue [src/components/Example.vue]
 <script setup lang="ts">
 import { AgentChat } from "@vite-hub/ui";
 </script>

@@ -105,7 +105,7 @@ describe("landing page", () => {
 
     expect(source).toContain("Any agent, anywhere.");
     expect(source).toContain("The server layer for Vite apps");
-    expect(source).toContain("One server API, Agents included.");
+    expect(source).toContain("Server pieces, Agents, and UI in one place.");
     expect(source).toContain("Coming from NuxtHub?");
     expect(normalizedSource).toContain(
       "Bring any model or coding provider, compose your own Capabilities around a persistent Workspace",

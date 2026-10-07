@@ -95,7 +95,7 @@ ready to send messages:
 pnpm add @ai-sdk/vue
 ```
 
-```ts
+```ts [src/composables/use-chat.ts]
 import { useChat } from "@ai-sdk/vue";
 
 const { messages, status, sendMessage, stop } = useChat();
