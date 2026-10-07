@@ -114,7 +114,7 @@ describe("Eve extension capabilities", () => {
       peerDependenciesMeta?: Record<string, { optional?: boolean }>
     }
     expect(packageJson.devDependencies?.eve).toBe("0.72.1")
-    expect(packageJson.peerDependencies?.eve).toBe("0.72.1")
+    expect(packageJson.peerDependencies?.eve).toBe("0.46.1 || 0.72.1")
     expect(packageJson.peerDependenciesMeta?.eve).toEqual({ optional: true })
 
     const extensionEntry = fileURLToPath(import.meta.resolve("@github-tools/eve-extension"))
