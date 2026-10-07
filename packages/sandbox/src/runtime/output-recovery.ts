@@ -75,7 +75,7 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
     return null
 
   try {
-    const output = JSON.parse(outputRaw) as unknown
+    const output: unknown = JSON.parse(outputRaw)
     if (!hasRuntimeType(output, 'object') || output === null || Array.isArray(output) || !hasRuntimeType((output as { ok?: unknown }).ok, 'boolean'))
       return null
     return output as {
@@ -275,10 +275,10 @@ export async function readExecOutputWithRecovery(
     const output = await sandbox.readFile(outputPath)
     if (tryParseSandboxOutput(output))
       return output
-    // A completed process owns complete JSON. Preserve malformed envelopes so
-    // the caller can report the invalid contract instead of treating them as a
-    // missing file and replacing the useful diagnostic with recovery failure.
-    if (execution?.code === 0 && isCompleteSandboxOutput(output))
+    // A complete output file belongs to this execution. Preserve malformed
+    // envelopes so the caller can report the invalid contract instead of
+    // replacing the useful diagnostic with recovery failure.
+    if (isCompleteSandboxOutput(output))
       return output
   }
   catch {

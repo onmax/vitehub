@@ -998,4 +998,27 @@ describe("executeSandboxDefinition", () => {
       message: "Sandbox definition output is not valid JSON.",
     } satisfies Partial<ViteHubError>)
   })
+
+  it("preserves malformed output from a failed Vercel execution", async () => {
+    const { sandbox } = createFakeSandbox({
+      onExecute({ args, write }) {
+        write(args.at(-1)!, new TextEncoder().encode(JSON.stringify({ ok: 1, result: true })))
+        return Promise.resolve({ ok: false, stdout: "", stderr: "handler failed", code: 1 })
+      },
+    })
+
+    await expect(executeSandboxDefinition(
+      sandbox,
+      "malformed-output",
+      undefined,
+      {
+        entry: "definition.mjs",
+        execution: "module",
+        modules: { "definition.mjs": "export default async () => true" },
+      },
+    )).rejects.toMatchObject({
+      code: "SANDBOX_HANDLER_ERROR",
+      message: "Sandbox definition output is not valid JSON.",
+    } satisfies Partial<ViteHubError>)
+  })
 })
