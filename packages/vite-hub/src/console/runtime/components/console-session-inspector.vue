@@ -606,7 +606,7 @@ function message(error: unknown) {
       :invocation="invocation"
       :show-capabilities="false"
       :show-error="false"
-      :show-sources="!props.workspaceBase"
+      :show-sources="!workspace || !!workspaceError"
       :show-status="false"
       :show-timeline="false"
       class="session-inspector__details"
