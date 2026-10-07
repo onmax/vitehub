@@ -279,6 +279,18 @@ describe("resolveAuthViteConfig", () => {
     expect(() => resolveAuthViteConfig(undefined, rootDir)).toThrow(/options must use static object keys/)
   })
 
+  it("accepts comments before static Auth Definition options", async () => {
+    const rootDir = await createTempProject()
+    await writeAuth(rootDir, "server/auth.ts", [
+      "  // Keep the public route stable.",
+      "  basePath: '/auth',",
+      "  /* Better Auth reads this at runtime. */",
+      "  route: false,",
+    ])
+
+    expect(resolveAuthViteConfig(undefined, rootDir)).toMatchObject({ basePath: "/auth", route: false })
+  })
+
   it("rejects non-inline Auth Definition options", async () => {
     const rootDir = await createTempProject()
     const file = join(rootDir, "server", "auth.ts")

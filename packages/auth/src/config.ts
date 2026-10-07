@@ -88,9 +88,9 @@ function arrayLiteralBody(value: string | undefined): string | undefined {
 }
 
 function readEntryKey(entry: string): string | undefined {
-  const property = /^\s*(?:([A-Za-z_$][\w$]*)|["'`]([^"'`]+)["'`])\s*(?::|$)/.exec(entry)
+  const property = /^(?:\s*(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$)))*\s*(?:([A-Za-z_$][\w$]*)|["'`]([^"'`]+)["'`])\s*(?::|$)/.exec(entry)
   if (property) return property[1] || property[2]
-  return /^\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/.exec(entry)?.[1]
+  return /^(?:\s*(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$)))*\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/.exec(entry)?.[1]
 }
 
 function readEntryValue(entry: string): string | undefined {
