@@ -33,6 +33,16 @@ const namedInterfaceChannel = createChannel("named-interface", defineOutboundCha
 
 namedInterfaceChannel.send("Build finished.", { connector: "webhook", destination: "endpoint-1" })
 
+const metadataChannel = createChannel("metadata-only", defineOutboundChannel({
+  connectors: {
+    webhook: {
+      send: async () => ({ status: "accepted" }),
+    },
+  },
+}))
+
+metadataChannel.send("Build finished.", { connector: "webhook" })
+
 async function checkSendTuple() {
   const [error, receipt] = await channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
   if (error) {

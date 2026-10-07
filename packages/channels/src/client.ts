@@ -39,7 +39,7 @@ function logDelivery(event: string, deliveryId: string, channel: string, connect
   }
 }
 
-function normalizeConnectorResult(result: ChannelConnectorResult): ChannelConnectorResult {
+function normalizeConnectorResult(result: object): ChannelConnectorResult {
   const entries: Array<[PropertyKey, unknown]> = []
   try {
     for (const key of Reflect.ownKeys(result)) {
@@ -57,7 +57,7 @@ function normalizeConnectorResult(result: ChannelConnectorResult): ChannelConnec
   }
   const normalized: ChannelConnectorResult = Object.fromEntries(entries)
   try {
-    const id = result.id
+    const id = Reflect.get(result, "id")
     if (id !== undefined) normalized.id = id
   }
   catch {
