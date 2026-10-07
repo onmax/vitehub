@@ -15,7 +15,7 @@ export interface ChannelConnector<TOptions = Record<string, unknown>, TResult ex
   send(text: string, options: TOptions): Promise<TResult> | TResult
 }
 
-export type ChannelConnectorMap = Record<string, ChannelConnector<unknown, ChannelConnectorResult>>
+export type ChannelConnectorMap = Record<string, ChannelConnector<Record<string, unknown>, ChannelConnectorResult>>
 
 export interface ChannelDefinition<
   TConnectors extends ChannelConnectorMap = ChannelConnectorMap,
@@ -43,6 +43,10 @@ type ExplicitChannelSendOptions<TConnectors extends ChannelConnectorMap> = {
   } & ConnectorOptions<TConnectors[TName]>
 }[keyof TConnectors & string]
 
+type DynamicChannelSendOptions = {
+  connector?: string
+} & Record<string, unknown>
+
 type DefaultChannelSendOptions<
   TConnectors extends ChannelConnectorMap,
   TDefault extends keyof TConnectors & string,
@@ -53,8 +57,10 @@ type DefaultChannelSendOptions<
 export type ChannelSendOptions<
   TConnectors extends ChannelConnectorMap,
   TDefault extends keyof TConnectors & string = never,
-> = ExplicitChannelSendOptions<TConnectors>
-  | ([TDefault] extends [never] ? never : DefaultChannelSendOptions<TConnectors, TDefault>)
+> = string extends keyof TConnectors
+  ? DynamicChannelSendOptions
+  : ExplicitChannelSendOptions<TConnectors>
+    | ([TDefault] extends [never] ? never : DefaultChannelSendOptions<TConnectors, TDefault>)
 
 export interface ChannelClient<
   TConnectors extends ChannelConnectorMap = ChannelConnectorMap,

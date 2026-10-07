@@ -44,7 +44,9 @@ discovered.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
 useChannel("alrets")
 
 const runtimeName: string = "runtime-channel"
-useChannel(runtimeName)
+const dynamic = useChannel(runtimeName)
+dynamic.send("Build finished.", { connector: "runtime", destination: "room-1" })
+dynamic.send("Build finished.", {})
 
 // @ts-expect-error Discovered Channel names retain connector-specific options.
 discovered.send("Build finished.", { connector: "telegram", channelId: "channel-1" })
