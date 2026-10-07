@@ -4364,6 +4364,8 @@ cli_auth_credentials_store = "keyring"
         expect(instructions).toContain("provider instructions")
         expect(instructions).toContain('"mount": ""')
         expect(instructions).not.toContain('"mount": "portal"')
+        expect(instructions).toContain(`"id": "${"a".repeat(40)}"`)
+        await expect(readFile(join(root, "portal", ".agents/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Browser\n")
       },
     })
     const session = {
@@ -4384,10 +4386,12 @@ cli_auth_credentials_store = "keyring"
         directories: 0,
         files: 1,
         path: "",
-        sources: [{ mountPath: "portal", provider: "github", revision: { id: "a".repeat(40), immutable: true }, source: "portal", status: "ready" }],
+        sources: [{ mountPath: "portal", provider: "github", revision: { id: "b".repeat(40), immutable: true }, source: "portal", status: "ready" }],
       })),
       startSession: vi.fn(async (options: { target: string }) => {
         root = options.target
+        await mkdir(join(root, ".agents/skills/agent-browser"), { recursive: true })
+        await writeFile(join(root, ".agents/skills/agent-browser/SKILL.md"), "# Browser\n")
         const checkout = join(root, "portal")
         await mkdir(checkout)
         const git = (...args: string[]) => {

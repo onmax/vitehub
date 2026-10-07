@@ -191,15 +191,25 @@ async function handleRelayConnection(
   const redact = (text: string) => options.box.omitDiagnosticOutput ? "[Box Home diagnostic output omitted]" : Object.values(options.box.environment ?? {}).filter((value): value is string => Boolean(value)).toSorted((left, right) => right.length - left.length)
     .reduce((safe, value) => safe.replaceAll(value, "[REDACTED]"), text)
   const boxCwd = options.box.session.cwd
-  const mapPath = (value: string) => value === options.localRoot
-    ? boxCwd
-    : value.startsWith(`${options.localRoot}/`)
-      ? `${boxCwd}${value.slice(options.localRoot.length)}`
+  const workspacePath = options.box.workspace?.path
+  const mappingRoot = workspacePath === undefined
+    ? options.localCwd || options.localRoot
+    : workspacePath === options.localRoot || workspacePath === options.localCwd
+      ? workspacePath
       : undefined
-  const boxWorkingDirectory = options.box.workspace?.path === undefined || options.localCwd === undefined
+  const mapPath = (value: string) => mappingRoot && (value === mappingRoot
     ? boxCwd
-    : mapPath(options.localCwd)
-  const mapText = (value: string) => value.replaceAll(options.localRoot, boxCwd)
+    : value.startsWith(`${mappingRoot}/`)
+      ? `${boxCwd}${value.slice(mappingRoot.length)}`
+      : undefined)
+  const boxWorkingDirectory = options.localCwd === undefined || workspacePath === undefined
+    ? boxCwd
+    : workspacePath === options.localRoot
+      ? mapPath(options.localCwd)
+      : workspacePath === options.localCwd
+        ? boxCwd
+        : undefined
+  const mapText = (value: string) => mappingRoot ? value.replaceAll(mappingRoot, boxCwd) : value
   const selectedArgs = options.filterArgs ? options.filterArgs(args, mapPath) : [...args]
   let disconnected = socket.destroyed
   socket.once("close", () => {

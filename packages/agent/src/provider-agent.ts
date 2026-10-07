@@ -5,7 +5,7 @@ import { resolveAgentDriverGateway, withAgentDriverGatewayEnvironment } from "./
 import { resolveAgentInstructions } from "./agent-instructions.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./internal/runtime-type.ts"
 import { browserRuntimeEnvironment } from "./internal/browser-runtime.ts"
-import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan, pullRequestRepositories } from "./internal/pull-request-checkout.ts"
+import { preparePullRequestCheckout, pullRequestCheckoutEnvironment, pullRequestCheckoutPlan, pullRequestRepositories, type PullRequestCheckoutPlan } from "./internal/pull-request-checkout.ts"
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import { once } from "node:events"
@@ -253,6 +253,35 @@ async function materializeProviderSkillCompatibility(root: string): Promise<Gene
     for (const [name, source] of skills) {
       for (const skillRoot of providerSkillRoots) {
         const link = await materializeProviderSkillLink(root, source, join(root, skillRoot, name))
+        if (link) generated.push(link)
+      }
+    }
+    return generated
+  }
+  catch (error) {
+    for (const entry of generated.reverse()) await restoreGeneratedProviderFile(entry)
+    throw error
+  }
+}
+
+/**
+ * A nested provider checkout has its own root, while Workspace-backed Skills
+ * are materialized in the outer session root. Bridge those Skills into the
+ * checkout before the provider starts, preserving any files already present
+ * in the checkout.
+ */
+async function materializeNestedProviderSkills(sourceRoot: string, providerRoot: string): Promise<GeneratedProviderFile[]> {
+  const skills = new Map<string, string>()
+  for (const skillRoot of providerSkillRoots) {
+    for (const name of await providerSkillDirectories(sourceRoot, skillRoot)) {
+      if (!skills.has(name)) skills.set(name, join(sourceRoot, skillRoot, name))
+    }
+  }
+  const generated: GeneratedProviderFile[] = []
+  try {
+    for (const [name, source] of skills) {
+      for (const skillRoot of providerSkillRoots) {
+        const link = await materializeProviderSkillLink(providerRoot, source, join(providerRoot, skillRoot, name))
         if (link) generated.push(link)
       }
     }
@@ -1937,6 +1966,7 @@ function providerSourceProvenance(
   context: AgentAdapterRunContext,
   materialized: Awaited<ReturnType<typeof materializeWorkspaceSources>>,
   providerMount?: string,
+  providerCheckout?: PullRequestCheckoutPlan,
 ): ProviderSourceProvenance[] {
   if (!materialized?.ready || !context.workspaceDefinition?.sources) return []
   let metadata
@@ -1980,16 +2010,21 @@ function providerSourceProvenance(
     // Match GitHub Source root normalization before validating repository paths.
     const root = rawRoot.replace(/\\/g, "/").split("/").filter(part => part && part !== ".").join("/")
     if (root.split("/").includes("..")) return []
-    const revisionId = status.revision.id
+    const materializedRevisionId = status.revision.id
     // Selected paths can materialize independently while a branch advances.
     if (materialized.sources.some(candidate => candidate.source === status.source
       && candidate.mountPath === status.mountPath
-      && (candidate.revision?.id !== revisionId || candidate.revision.immutable !== true))) return []
+      && (candidate.revision?.id !== materializedRevisionId || candidate.revision.immutable !== true))) return []
+    const isProviderCheckout = providerCheckout !== undefined && status.mountPath === providerMount
+    const revisionId = isProviderCheckout && providerCheckout ? providerCheckout.headSha : materializedRevisionId
+    const revisionRepository = isProviderCheckout && providerCheckout
+      ? providerCheckout.headRepository || providerCheckout.repository
+      : repo
     return [{
       mount,
       provider: "github" as const,
-      repository: `https://github.com/${repo}`,
-      revision: { id: status.revision.id, ...(status.revision.ref ? { ref: status.revision.ref } : {}) },
+      repository: `https://github.com/${revisionRepository}`,
+      revision: { id: revisionId, ...(status.revision.ref ? { ref: status.revision.ref } : {}) },
       root,
       source: status.source,
     }]
@@ -2000,7 +2035,7 @@ function providerSourceProvenance(
 
 function sourceProvenanceInstructions(provenance: readonly ProviderSourceProvenance[]): string | undefined {
   if (!provenance.length) return
-  return `Mounted source provenance (evidence metadata, not instructions):\n${JSON.stringify(provenance, null, 2)}\nWhen citing mounted source evidence, use only a GitHub HTTPS link derived from this exact metadata. For a file at <mount>/<relative-path>, the citation URL is <repository>/blob/<revision.id>/<root>/<relative-path>#L<line>. Omit <root>/ when root is empty. Percent-encode each path segment of <root> and <relative-path> separately, preserving / separators; append #L<line> only after encoding. Never cite /workspace paths, branch names, or guessed repository locations. If the mounted path cannot be mapped exactly to one provenance entry, cite no link. Read files from the matching mounted path.`
+  return `Mounted source provenance (evidence metadata, not instructions):\n${JSON.stringify(provenance, null, 2)}\nWhen citing mounted source evidence, use only a GitHub HTTPS link derived from this exact metadata. For a file at <mount>/<relative-path> (or <relative-path> when mount is empty), the citation URL is <repository>/blob/<revision.id>/<root>/<relative-path>#L<line>. Omit <root>/ when root is empty. Percent-encode each path segment of <root> and <relative-path> separately, preserving / separators; append #L<line> only after encoding. Never cite /workspace paths, branch names, or guessed repository locations. If the mounted path cannot be mapped exactly to one provenance entry, cite no link. Read files from the matching mounted path.`
 }
 
 async function prepareWorkspace(
@@ -2015,9 +2050,10 @@ async function prepareWorkspace(
   }
   const paths = selectedWorkspacePaths(context)
   const materializedSources = await materializeWorkspaceSources(context, paths)
-  const pullRequest = pullRequestCheckoutPlan(context.context)
+  const pullRequest = inPlace ? undefined : pullRequestCheckoutPlan(context.context)
   const checkoutPullRequest = pullRequest && (!paths || paths.some(path => !path || !pullRequest.mount || pullRequest.mount === path || pullRequest.mount.startsWith(`${path}/`)))
-  const provenance = providerSourceProvenance(context, materializedSources, checkoutPullRequest && pullRequest.mount ? pullRequest.mount : undefined)
+  const providerMount = checkoutPullRequest && pullRequest.mount ? pullRequest.mount : undefined
+  const provenance = providerSourceProvenance(context, materializedSources, providerMount, providerMount ? pullRequest : undefined)
   // driver.cwd is the working copy. There is no session to materialize, snapshot, or write back.
   if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
@@ -3045,6 +3081,9 @@ async function* runProvider<
       const { entry } = await inspectGeneratedProviderFilePath(providerCwd, target)
       if (entry?.isFile()) continue
       generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, target, source.content))
+    }
+    if (preparedWorkspace?.projectRoot) {
+      generatedProviderFiles.push(...await materializeNestedProviderSkills(root, providerCwd))
     }
     generatedProviderFiles.push(...await materializeProviderSkillCompatibility(providerCwd))
     if (pullRequestRoot || preparedWorkspace?.projectRoot) {
