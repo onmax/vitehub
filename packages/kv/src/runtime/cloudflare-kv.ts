@@ -19,6 +19,7 @@ interface CloudflareKVListPage {
 
 function isCloudflareKVListPage(value: unknown): value is CloudflareKVListPage {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  // SAFETY: The guard reads only unknown properties and validates every field before returning true.
   const page = value as { cursor?: unknown; keys?: unknown; list_complete?: unknown }
   if (typeof page.list_complete !== "boolean" || !Array.isArray(page.keys)) return false
   if (!page.keys.every(key => {
