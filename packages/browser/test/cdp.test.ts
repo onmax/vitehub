@@ -129,6 +129,27 @@ describe("cdp controller", () => {
     await expect(attached.client.send("Target.getTargets")).rejects.toThrow("after release")
   })
 
+  it("rejects pending commands when the provider sends malformed protocol data", async () => {
+    const socket = new FakeSocket()
+    vi.spyOn(socket, "send").mockImplementation(() => {})
+    const attached = await cdp({ connect: async () => socket }).attach({
+      endpoint: "ws://127.0.0.1:9222/devtools/browser/id",
+      kind: "cdp",
+    }, {
+      provider: { features: { liveHandoff: false }, isolation: "trusted-host", name: "local" },
+      sessionId: "public-id",
+    })
+
+    const command = attached.client.send("Target.getTargets")
+    socket.dispatchEvent(new MessageEvent("message", { data: "not-json" }))
+
+    await expect(command).rejects.toMatchObject({
+      code: "BROWSER_PROVIDER_ERROR",
+      details: { operation: "parse a protocol message" },
+    })
+    await attached.release()
+  })
+
   it("forwards protocol events to subscribers", async () => {
     const socket = new FakeSocket()
     const attached = await cdp({ connect: async () => socket }).attach({

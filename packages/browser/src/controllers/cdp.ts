@@ -71,14 +71,27 @@ export function cdp(options: CDPControllerOptions = {}): BrowserController<CDPCl
       let releasePromise: Promise<void> | undefined
       const pending = new Map<number, { reject(error: unknown): void, resolve(value: unknown): void }>()
       const listeners = new Map<string, Set<(params: unknown, sessionId?: string) => void>>()
+      const rejectPending = (error: unknown) => {
+        for (const request of pending.values()) request.reject(error)
+        pending.clear()
+      }
       socket.addEventListener("message", (event) => {
-        const message = JSON.parse(String((event as MessageEvent).data)) as {
+        let message: {
           error?: { message?: string }
           id?: number
           method?: string
           params?: unknown
           result?: unknown
           sessionId?: string
+        }
+        try {
+          const parsed: unknown = JSON.parse(String((event as MessageEvent).data))
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new TypeError("CDP message must be an object")
+          message = parsed as typeof message
+        }
+        catch (cause) {
+          rejectPending(browserProviderError("cdp", "parse a protocol message", { cause }))
+          return
         }
         if (!message.id) {
           if (message.method) {
@@ -95,8 +108,7 @@ export function cdp(options: CDPControllerOptions = {}): BrowserController<CDPCl
         else request.resolve(message.result)
       })
       socket.addEventListener("close", () => {
-        for (const request of pending.values()) request.reject(browserProviderError("cdp", "complete a command before disconnect"))
-        pending.clear()
+        rejectPending(browserProviderError("cdp", "complete a command before disconnect"))
       })
 
       return {
