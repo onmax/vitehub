@@ -97,11 +97,17 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
 
 function stableWorkspaceSourceValue(value: unknown): string {
   if (value === undefined) return "undefined"
-  if (value instanceof Date) return JSON.stringify(value.toJSON())
-  if (value === null || !hasRuntimeType(value, "object")) return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(stableWorkspaceSourceValue).join(",")}]`
+  if (value === null) return "null"
+  if (value instanceof Date) return `date:${JSON.stringify(value.toJSON())}`
+  if (!hasRuntimeType(value, "object")) return `${typeof value}:${JSON.stringify(value)}`
+  const toJSON = (value as { toJSON?: () => unknown }).toJSON
+  if (typeof toJSON === "function") {
+    const constructorName = value.constructor?.name ?? "object"
+    return `toJSON:${constructorName}:${stableWorkspaceSourceValue(toJSON.call(value))}`
+  }
+  if (Array.isArray(value)) return `array:[${value.map(stableWorkspaceSourceValue).join(",")}]`
   // SAFETY: The value is a non-null object; own keys are read only for canonical binding comparison.
-  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
+  return `object:{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
 }
 
 function workspaceSessionStarter<Name extends WorkspaceName>(workspace: ReadonlyWorkspaceFacade<Name>): Pick<Workspace, "startSession"> | undefined {
