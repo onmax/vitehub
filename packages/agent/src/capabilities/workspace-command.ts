@@ -43,8 +43,6 @@ interface BoxCommandOptions {
   cwd?: string
   env?: Record<string, string>
   timeout?: number
-  /** Preserve an omitted cwd for provider drivers that route their checkout below /workspace. */
-  useProviderCwdWhenRoot?: boolean
 }
 
 const unsafeCommand = /[\s\x00-\x1F\x7F]/
@@ -161,7 +159,7 @@ export async function executeWorkspaceCommand(
   if (activeExecute) {
     const result = await activeExecute(command, args, {
       abortSignal: options.abortSignal,
-      cwd: options.useProviderCwdWhenRoot ? undefined : options.cwd,
+      cwd: options.cwd,
       env: options.env,
       timeout: options.timeout,
     })
@@ -180,7 +178,7 @@ export async function executeWorkspaceCommand(
   try {
     result = await session.exec(command, args, {
       abortSignal: options.abortSignal,
-      cwd: options.cwd,
+      cwd: options.cwd ?? "/workspace",
       env: options.env,
       timeout: options.timeout,
     })
@@ -249,7 +247,7 @@ export function workspaceCommandTools(
         if (unrestricted) normalizeWorkspaceCommandEntries([value.command], `${toolName} command`)
         else if (!commandNames.includes(value.command)) throw agentDiagnostics.AGENT_R0296({ message: `[vitehub] Workspace command "${value.command}" is not allowed.` })
         const args = stringArray(value.args, "args")
-        const cwd = normalizeCwd(value.cwd)
+        const cwd = value.cwd === undefined ? undefined : normalizeCwd(value.cwd)
         const env = envRecord(value.env)
         const commandTimeout = normalizeWorkspaceCommandTimeout(value.timeout, `${toolName} timeout`) ?? timeout ?? defaultWorkspaceCommandTimeout
         assertWorkspace(workspace, options.missingWorkspaceMessage || "[vitehub] workspaceShell({ commands }) requires an execution-capable writable Workspace Session.")
@@ -259,7 +257,6 @@ export function workspaceCommandTools(
           cwd,
           env,
           timeout: commandTimeout,
-          ...(value.cwd === undefined ? { useProviderCwdWhenRoot: true } : {}),
         }, options.context)
       },
     }),

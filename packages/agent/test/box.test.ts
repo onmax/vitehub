@@ -1,6 +1,6 @@
 import { execFile, spawn, spawnSync } from "node:child_process"
 import { once } from "node:events"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
 import { promisify } from "node:util"
@@ -315,7 +315,7 @@ describe("Agent Box relay", () => {
         stdin: "",
       })
       expect(launched).toMatchObject({ code: 0 })
-      expect(launched.stdout).toBe(join(openedBoxSession.current!.cwd, "portal"))
+      expect(launched.stdout).toBe(await realpath(join(openedBoxSession.current!.cwd, "portal")))
     })
     const session = {
       close: vi.fn(async () => undefined),
