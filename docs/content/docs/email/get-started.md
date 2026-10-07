@@ -1,6 +1,8 @@
 ---
+
 title: Send your first Email
 description: Install Email, configure Resend, and send a first message from server code.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -17,8 +19,7 @@ The quick start takes about ten minutes and sends a real message through Resend.
 
 ## Send your first message
 
-::steps{level="3"}
-
+::tutorial-step{title="Install the email dependencies"}
 ### Install the email dependencies
 
 ```bash [Terminal]
@@ -27,6 +28,9 @@ pnpm add vite-hub
 
 `vite-hub` includes the Email runtime plus built-in Resend and Cloudflare Email drivers.
 
+::
+
+::tutorial-step{title="Configure Resend"}
 ### Configure Resend
 
 ```ts [vite.config.ts]
@@ -49,6 +53,9 @@ export default defineConfig({
 
 The stable driver name selects a ViteHub-owned provider implementation. The Env declaration is serialized, but its source value is resolved in the server runtime for every send, so the API key stays out of build output and request-scoped Cloudflare secrets stay current. Literal options and non-secret Env defaults are serialized into the build; never use literal options for credentials, and ViteHub rejects defaults on declarations marked secret.
 
+::
+
+::tutorial-step{title="Provide the Resend secret"}
 ### Provide the Resend secret
 
 Set `RESEND_API_KEY` in the server process:
@@ -59,6 +66,9 @@ export RESEND_API_KEY='re_...'
 
 Use your deployment platform's secret store in production. Do not use a `VITE_` prefix because Vite-prefixed values can be exposed to browser code.
 
+::
+
+::tutorial-step{title="Send from server code"}
 ### Send from server code
 
 Replace both addresses with values accepted by Resend. The request performs a real delivery. In `vite dev`, the [development outbox](/docs/email/hosts#development-outbox) also records the message.
@@ -77,6 +87,9 @@ export default defineEventHandler(async () => {
 })
 ```
 
+::
+
+::tutorial-step{title="Verify the result"}
 ### Verify the result
 
 Start the application with its normal development command and send a `POST` request to `/api/welcome`. A successful response has this shape:

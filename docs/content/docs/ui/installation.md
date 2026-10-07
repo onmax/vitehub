@@ -1,6 +1,8 @@
 ---
 title: Installation
 description: Add ViteHub UI to a Nuxt or Vue application.
+layout: tutorial
+navigation.title: Tutorial
 navigation.order: 2
 navigation.group: Start
 icon: i-lucide-package
@@ -19,6 +21,8 @@ icon: i-lucide-package
 | `@iconify-json/lucide`, `@iconify-json/ph` | The Nuxt module. It adds the component icons to the `@nuxt/icon` client bundle. |
 
 `@nuxt/ui` and `vite` are optional peers, so an application that only uses the headless entry point does not install them.
+
+::tutorial-step{title="Install for Nuxt"}
 
 ## Nuxt
 
@@ -39,6 +43,10 @@ export default defineNuxtConfig({
 The module installs Nuxt UI, loads `@vite-hub/ui/styles.css`, and auto-imports every public component, for example `AgentChat`, `AgentMarkdown`, and `AgentInvocation`. You do not register a Vue plugin.
 
 For explicit imports, each public component also has a kebab-case entry such as `@vite-hub/ui/agent-chat`. These entries export the same component objects as `@vite-hub/ui` and keep the development import graph focused.
+
+::
+
+::tutorial-step{title="Install for Vue with Vite"}
 
 ## Vue with Vite
 
@@ -89,6 +97,8 @@ import { AgentChat } from "@vite-hub/ui";
 </script>
 ```
 
+::
+
 The examples in these pages use Nuxt auto-imports. In Vue with Vite, add the import for each component.
 
 ### Vite plugin options
@@ -98,17 +108,23 @@ The examples in these pages use Nuxt auto-imports. In Vue with Vite, add the imp
 | `nuxtUI` | `Record<string, unknown>`       | Options for the Nuxt UI Vite plugin.                     |
 | `comark` | `false \| { prose?: boolean }`  | Options for the Comark plugin. Set `false` to remove it. |
 
+::tutorial-step{title="Verify the setup"}
+
 ## Verify the setup
 
 Render one component:
 
-```vue
+```vue [app.vue]
 <template>
   <AgentMarkdown value="**ViteHub UI is ready.**" />
 </template>
 ```
 
 The page shows **ViteHub UI is ready.** in bold. This proves that the component and the Markdown renderer load. It does not configure a model or a chat endpoint.
+
+::
+
+::tutorial-step{title="Keep the Console defaults"}
 
 ## Defaults
 
@@ -145,11 +161,15 @@ app.use(
 
 Read the resolved defaults in your own components with `useViteHubUI()`.
 
+::
+
+::tutorial-step{title="Tune the theme"}
+
 ## Theme
 
 The stylesheet maps its CSS variables to Nuxt UI tokens. Override them on any element to change one view:
 
-```css
+```css [src/assets/main.css]
 .support-chat {
   --vh-ui-border: var(--ui-border-accented);
   --vh-ui-bg-elevated: var(--ui-bg-muted);
@@ -158,6 +178,8 @@ The stylesheet maps its CSS variables to Nuxt UI tokens. Override them on any el
 ```
 
 The variables are `--vh-ui-radius`, `--vh-ui-border`, `--vh-ui-text`, `--vh-ui-muted`, `--vh-ui-dimmed`, `--vh-ui-bg`, `--vh-ui-bg-muted`, `--vh-ui-bg-elevated`, `--vh-ui-error`, `--vh-ui-info`, `--vh-ui-success`, and `--vh-ui-warning`.
+
+::
 
 ## Server rendering
 

@@ -2,6 +2,7 @@
 title: First Agent
 navigation.title: First Agent
 description: Define a server-side Agent, call it from H3, and see the response.
+layout: tutorial
 navigation.order: 4
 icon: i-lucide-bot
 ---
@@ -18,6 +19,7 @@ offline and needs no credentials.
 You need Node.js 24.15 or newer and `pnpm`. This project runs completely offline.
 ::
 
+::tutorial-step{title="Create the project"}
 ## Create the project
 
 Create an empty ESM project, then install ViteHub with Vite and H3.
@@ -30,6 +32,9 @@ pnpm pkg set type=module
 pnpm add vite-hub h3 vite
 ```
 
+::
+
+::tutorial-step{title="Configure the server build"}
 ## Configure the server build
 
 Add `vitehub()` with the `node` preset and `agent: true`. Vite builds
@@ -64,6 +69,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Define the greeting Agent"}
 ## Define the greeting Agent
 
 Create `server/agents/greeting.ts`. Its required `driver.run` function reads the
@@ -85,6 +93,9 @@ export default defineAgent({
 })
 ```
 
+::
+
+::tutorial-step{title="Call the Agent from H3"}
 ## Call the Agent from H3
 
 `runAgent()` takes the Definition, runtime values for the current request, and
@@ -130,6 +141,9 @@ createServer(toNodeHandler(app)).listen(port, () => {
 The route imports the Definition directly, so the greeting returns in the same
 request.
 
+::
+
+::tutorial-step{title="Run the Agent and see the response"}
 ## Run the Agent and see the response
 
 Build the project and start the generated Node.js server. The server listens on
@@ -153,6 +167,8 @@ The Agent returns the greeting:
 ```json [Response]
 {"text":"Hello, Ada. This result came from an Agent Invocation."}
 ```
+
+::
 
 ## Next steps
 

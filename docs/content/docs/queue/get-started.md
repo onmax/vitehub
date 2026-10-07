@@ -1,6 +1,8 @@
 ---
+
 title: Process a welcome job with Queue
 description: Enqueue a job from a route, then let a provider deliver it after the request ends.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -12,6 +14,7 @@ Queue moves work out of the request. Your route gets a provider acceptance resul
 Queue has hosted providers only. This tutorial uses Cloudflare Queues. Use Vercel Queues by changing the provider and installing `@vercel/queue`.
 ::
 
+::tutorial-step{title="Install and configure"}
 ## Install and configure
 
 ```bash [Terminal]
@@ -32,6 +35,9 @@ export default defineConfig({
 
 With the `vite-hub` distribution, use `vitehub({ preset: 'cloudflare', queue: true })` and import from `vite-hub/queue`.
 
+::
+
+::tutorial-step{title="Define the job"}
 ## Define the job
 
 Create `server/queues/welcome-email.ts`:
@@ -46,6 +52,9 @@ export default defineQueue<{ email: string }>(async ({ payload, id }) => {
 
 The file name becomes the Queue Definition name. The handler runs in the provider consumer, after the route has returned.
 
+::
+
+::tutorial-step{title="Enqueue from a route"}
 ## Enqueue from a route
 
 ```ts [server/api/welcome.post.ts]
@@ -67,6 +76,9 @@ The response is an acceptance signal:
 
 `status: 'queued'` does not contain the handler result. The provider will deliver the job later and may retry it after a failure. Make the handler safe to run more than once. Cloudflare does not support Vercel's `idempotencyKey`; use that option only when you select the Vercel provider.
 
+::
+
+::tutorial-step{title="Inspect the definition"}
 ## Inspect the definition
 
 Build the app and inspect the generated definition before deploying:
@@ -77,6 +89,8 @@ pnpm vitehub inspect definitions --kind queue
 ```
 
 You should see `welcome-email` with its source file and payload registry. Send a request, then look for the handler log in the provider consumer.
+
+::
 
 ## Continue
 

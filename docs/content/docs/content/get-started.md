@@ -1,6 +1,8 @@
 ---
+
 title: Read your first Content document
 description: Install Comark Content, define server/content.ts, and read the first document.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,8 +10,7 @@ icon: i-lucide-rocket
 
 ## Quick start
 
-::steps{level="3"}
-
+::tutorial-step{title="Install"}
 ### Install
 
 `comark-content` is an optional peer dependency of `vite-hub`. Install it with the framework package.
@@ -18,10 +19,14 @@ icon: i-lucide-rocket
 pnpm add vite-hub comark-content
 ```
 
+::
+
 ### Configure
 
 Content needs no extra configuration key. The `vitehub()` Vite plugin and the Nuxt module discover `server/content.ts` and serve its exported `content` instance at `/api/content/**`. Do not add a framework route or a `fetch()` wrapper.
 
+
+::tutorial-step{title="Start using it"}
 ### Start using it
 
 ```ts [server/content.ts]
@@ -62,5 +67,6 @@ await content.search('runtime', { instances: ['docs'] })
 ```
 
 ::
+
 
 Read [Server API](/docs/content/server-api) for every Content method.

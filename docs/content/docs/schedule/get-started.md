@@ -1,6 +1,8 @@
 ---
+
 title: Schedule a daily report
 description: Declare a UTC schedule, run it on demand during development, and inspect the generated provider output.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,6 +10,7 @@ icon: i-lucide-rocket
 
 A Static Schedule is part of your build. The host triggers it at the declared cron time. Start with this path when the schedule is known at deploy time. Runtime Schedules belong in the [Server API](/docs/schedule/server-api) when users need to create or change records while the app runs.
 
+::tutorial-step{title="Install and configure"}
 ## Install and configure
 
 ```bash [Terminal]
@@ -24,6 +27,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Declare the schedule"}
 ## Declare the schedule
 
 Create `server/schedules/daily-report.ts`:
@@ -42,6 +48,9 @@ export default defineSchedule({
 
 Static Schedule cron expressions use UTC. `scheduledAt` is the occurrence time chosen by the host. Replace the log with the report work after the manual run succeeds.
 
+::
+
+::tutorial-step{title="Build and inspect"}
 ## Build and inspect
 
 ```bash [Terminal]
@@ -60,6 +69,8 @@ pnpm vitehub schedule run daily-report --server http://localhost:5173 --json
 ```
 
 The result includes the run status and the `scheduledAt` value passed to the handler. A provider wake, not the build itself, starts production runs.
+
+::
 
 ## Choose the next path
 

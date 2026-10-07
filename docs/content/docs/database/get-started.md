@@ -1,6 +1,8 @@
 ---
+
 title: Query your first Database
 description: Install Database, define a schema, apply the first migration, and query it.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,8 +10,7 @@ icon: i-lucide-rocket
 
 ## Quick start
 
-::steps{level="3"}
-
+::tutorial-step{title="Install"}
 ### Install
 
 ```bash [Terminal]
@@ -17,6 +18,9 @@ pnpm add @vite-hub/database drizzle-orm
 pnpm add -D @vite-hub/cli drizzle-kit
 ```
 
+::
+
+::tutorial-step{title="Configure"}
 ### Configure
 
 ```ts [vite.config.ts]
@@ -28,6 +32,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Start using it"}
 ### Start using it
 
 Define the schema in `src/database.ts`:
@@ -65,6 +72,7 @@ export default defineEventHandler(() => {
 ```
 
 ::
+
 
 ## Generate and apply migrations
 

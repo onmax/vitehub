@@ -2,6 +2,7 @@
 title: First Server Primitive
 navigation.title: First Server Primitive
 description: Add local KV to a small Vite server and return one stored value.
+layout: tutorial
 navigation.order: 3
 icon: i-lucide-server-cog
 ---
@@ -15,6 +16,7 @@ You need Node.js 24.15 or newer and `pnpm`. The first result runs locally withou
 an account or credential.
 ::
 
+::tutorial-step{title="Create the project"}
 ## Create the project
 
 Create an empty ESM project and install ViteHub with Vite and H3.
@@ -27,6 +29,9 @@ pnpm pkg set type=module
 pnpm add vite-hub h3 vite
 ```
 
+::
+
+::tutorial-step{title="Configure the Vite integration"}
 ## Configure the Vite integration
 
 Register `vitehub()` with the `node` preset and enable KV with the file-backed
@@ -62,6 +67,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Write and read one value"}
 ## Write and read one value
 
 Create one H3 route and use `kv` to write and read the setting.
@@ -91,6 +99,9 @@ createServer(toNodeHandler(app)).listen(port, () => {
 })
 ```
 
+::
+
+::tutorial-step{title="Run the server"}
 ## Run the server
 
 Build and start the generated Node.js entry. The server listens on port `5173`
@@ -117,6 +128,8 @@ The response proves that the route wrote and read through ViteHub:
 
 To move to a hosted store, change the preset or the KV driver in
 `vite.config.ts`. The server route keeps importing `kv` from `vite-hub/kv`.
+
+::
 
 ## Next steps
 

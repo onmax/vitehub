@@ -1,11 +1,14 @@
 ---
+
 title: Create your first collaborative room
 description: Install Realtime, enable it with Workspace, define a room, and connect a TipTap editor.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
+::tutorial-step{title="Configure Realtime"}
 ## Configure Realtime
 
 Install the ViteHub distribution in a Vue or Nuxt application.
@@ -64,6 +67,9 @@ Set `auth: true` on the Realtime Definition when every WebSocket and checkpoint
 request must have a valid ViteHub Auth session. Connections are public when
 `auth` is omitted.
 
+::
+
+::tutorial-step{title="Connect a TipTap editor"}
 ## Connect a TipTap editor
 
 Call `useRealtimeTiptap()` with the Realtime Definition name and a safe
@@ -97,3 +103,4 @@ session. It must not be used as an authorization or verified-identity boundary.
 `realtime.workspace.change` reports file changes published by other Workspace
 clients. Call `realtime.workspace.notify(change)` after an application changes
 a Workspace path outside the collaborative editor.
+::

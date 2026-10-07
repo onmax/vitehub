@@ -1,6 +1,8 @@
 ---
+
 title: Run an image optimizer in a Sandbox
 description: Create a package project, run it outside the app process, and read its native Response.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,6 +10,7 @@ icon: i-lucide-rocket
 
 Sandbox runs a named package project outside your app process. The project can carry its own dependencies and the Vite configuration chooses Cloudflare or Vercel Sandbox. Your route only sees a native `Response`.
 
+::tutorial-step{title="Install and choose a provider"}
 ## Install and choose a provider
 
 This tutorial uses Vercel Sandbox:
@@ -28,6 +31,9 @@ export default defineConfig({
 
 For Cloudflare, install `@cloudflare/sandbox` and change `provider` to `cloudflare`. The package project and route stay the same.
 
+::
+
+::tutorial-step{title="Create the package project"}
 ## Create the package project
 
 Create the package manifest and entrypoint under `server/sandboxes/image-optimizer`:
@@ -55,6 +61,9 @@ export default async function optimize({ width, height }: ImageInput) {
 
 The folder name is the Definition name. The entrypoint is ordinary ESM code and does not import the Sandbox package.
 
+::
+
+::tutorial-step{title="Call it from a route"}
 ## Call it from a route
 
 ```ts [server/api/image-optimizer.post.ts]
@@ -80,6 +89,9 @@ You should see:
 
 Check `response.ok` before reading the body. A timeout is a non-2xx response with a `SANDBOX_TIMEOUT` error. The provider decides the execution boundary and its available network, filesystem, and process access.
 
+::
+
+::tutorial-step{title="Inspect and continue"}
 ## Inspect and continue
 
 ```bash [Terminal]
@@ -90,3 +102,4 @@ pnpm vitehub inspect definitions --kind sandbox
 - Read [Configure](/docs/sandbox/configure) for package projects and free-form Definitions.
 - Read [Set timeouts and handle failures](/docs/sandbox/limits-and-errors) for response errors and cleanup.
 - Read [Hosts](/docs/sandbox/hosts) before switching providers.
+::

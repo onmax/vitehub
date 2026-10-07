@@ -1,6 +1,8 @@
 ---
+
 title: Start your first Workflow
 description: Install Workflows, register the Vite integration, and start the first run.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,14 +10,16 @@ icon: i-lucide-rocket
 
 ## Quick start
 
-::steps{level="3"}
-
+::tutorial-step{title="Install"}
 ### Install
 
 ```bash [Terminal]
 pnpm add @vite-hub/runtime @vite-hub/workflow
 ```
 
+::
+
+::tutorial-step{title="Configure"}
 ### Configure
 
 ```ts [vite.config.ts]
@@ -27,6 +31,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Start using it"}
 ### Start using it
 
 ```ts [server/workflows/onboard-user.ts]

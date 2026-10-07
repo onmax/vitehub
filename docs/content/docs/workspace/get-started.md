@@ -1,6 +1,8 @@
 ---
+
 title: Build your first Workspace
 description: Install Workspace, register the Vite integration, define a Workspace, and read and write files from server code.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -10,14 +12,16 @@ Install the Workspace package, register the Vite integration, and make the first
 
 ## Quick start
 
-::steps{level="3"}
-
+::tutorial-step{title="Install"}
 ### Install
 
 ```bash [Terminal]
 pnpm add @vite-hub/workspace
 ```
 
+::
+
+::tutorial-step{title="Configure"}
 ### Configure
 
 ```ts [vite.config.ts]
@@ -29,6 +33,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Start using it"}
 ### Start using it
 
 ```ts [server/workspaces/docs.ts]
@@ -42,6 +49,7 @@ export default defineWorkspace({
 ```
 
 ::
+
 
 ## Use it at runtime
 

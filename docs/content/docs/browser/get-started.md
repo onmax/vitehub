@@ -1,6 +1,8 @@
 ---
+
 title: Run your first Browser Definition
 description: Install ViteHub, enable Browser on the Cloudflare preset, and run a first Browser Definition.
+layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,14 +10,16 @@ icon: i-lucide-rocket
 
 ## Quick start
 
-::steps{level="3"}
-
+::tutorial-step{title="Install"}
 ### Install
 
 ```bash [Terminal]
 pnpm add vite-hub
 ```
 
+::
+
+::tutorial-step{title="Configure"}
 ### Configure
 
 Enable Browser on the Cloudflare deployment preset.
@@ -31,6 +35,9 @@ export default {
 }
 ```
 
+::
+
+::tutorial-step{title="Define a browser operation"}
 ### Define a browser operation
 
 Place Browser Definitions in `server/browsers/` or name them `*.browser.ts`.
@@ -46,6 +53,9 @@ export default defineBrowser(async (
 })
 ```
 
+::
+
+::tutorial-step{title="Run it by name"}
 ### Run it by name
 
 ```ts [server/api/page-html.post.ts]
@@ -58,5 +68,6 @@ export default defineEventHandler(async (event) => {
 ```
 
 ::
+
 
 The generated Browser registry infers each Definition's input type. `runBrowser()` returns a native `Response`. Discovery and provider failures return a non-2xx JSON `Response`.
