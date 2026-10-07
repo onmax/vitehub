@@ -7,6 +7,7 @@ import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { parseAst } from "vite"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { asSchema } from "ai"
 import { defineDurableSchema } from "eve/tools"
 import { z } from "zod"
 
@@ -1180,9 +1181,11 @@ describe("Eve extension capabilities", () => {
     const read = tools.github__getFileContent as AgentToolDefinition & {
       toModelOutput: (options: { output: unknown }) => Promise<unknown>
     }
-    const inputSchema = read.inputSchema?.["~standard"]
+    const liveInputSchema = read.inputSchema
     const outputSchema = read.outputSchema?.["~standard"]
-    if (!inputSchema || !outputSchema) throw new Error("Expected live GitHub durable schemas")
+    if (!liveInputSchema?.["~standard"] || !outputSchema) throw new Error("Expected live GitHub durable schemas")
+    const inputSchema = liveInputSchema["~standard"]
+    const modelInputSchema = asSchema(liveInputSchema)
 
     expect(inputSchema.vendor).toBe("eve")
     expect(outputSchema.vendor).toBe("eve")
@@ -1199,6 +1202,14 @@ describe("Eve extension capabilities", () => {
     const input = { owner: "vite-hub", repo: "vitehub", path: "README.md" }
     expect(await inputSchema.validate(input)).toEqual({ value: input })
     expect((await inputSchema.validate({ ...input, path: 42 })).issues?.length).toBeGreaterThan(0)
+    expect(await modelInputSchema.jsonSchema).toMatchObject({
+      additionalProperties: false,
+      properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } },
+      required: ["owner", "repo", "path"],
+      type: "object",
+    })
+    expect(await modelInputSchema.validate?.(input)).toEqual({ success: true, value: input })
+    expect(await modelInputSchema.validate?.({ ...input, path: 42 })).toMatchObject({ success: false })
 
     const output = await read.execute?.(input, { toolCallId: "github-read-1" })
     expect(output).toMatchObject({ content: " ViteHub ", path: "README.md", totalLines: 1, type: "file" })
