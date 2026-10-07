@@ -9,12 +9,14 @@ const props = defineProps<{
 
 const tree = ref<Record<string, unknown>>({});
 const activePath = ref("");
+const selectedPath = ref("");
 provide("codeTree", tree);
 provide("codeTreeActive", activePath);
 
 watch(() => props.page.path, () => {
   tree.value = {};
   activePath.value = "";
+  selectedPath.value = "";
 });
 
 const treeItems = computed(() => Object.entries(tree.value)
@@ -22,7 +24,10 @@ const treeItems = computed(() => Object.entries(tree.value)
   .map(([label, component]) => ({ label, component })));
 
 function selectCodePath(path?: string) {
-  if (path && treeItems.value.some(item => item.label === path)) activePath.value = path;
+  if (path && treeItems.value.some(item => item.label === path)) {
+    activePath.value = path;
+    selectedPath.value = path;
+  }
 }
 
 function isVNode(value: unknown): value is VNode {
@@ -74,7 +79,7 @@ const codeTreeUi = {
           <span v-if="activePath" class="vh-tutorial-code-current">{{ activePath }}</span>
         </div>
         <div class="sr-only" aria-live="polite" aria-atomic="true">
-          <span v-if="activePath">Showing {{ activePath }}</span>
+          <span v-if="selectedPath">Selected {{ selectedPath }}</span>
         </div>
         <ProseCodeTree
           v-if="activePath && treeItems.length"
@@ -113,7 +118,7 @@ const codeTreeUi = {
   top: var(--ui-header-height);
   display: flex;
   height: calc(100dvh - var(--ui-header-height));
-  min-height: 32rem;
+  min-height: 0;
   flex-direction: column;
   overflow: hidden;
 }

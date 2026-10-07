@@ -53,7 +53,9 @@ const docsPageUi = {
 
   <DocsProductLanding v-else-if="page && landingSection" :page="page" :section="landingSection" />
 
-  <DocsTutorial v-else-if="page && isTutorialPage" :page="page" />
+  <!-- Key tutorial pages by their route so scroll markers and the code tree are
+       rebuilt when Nuxt reuses this page component during client navigation. -->
+  <DocsTutorial v-else-if="page && isTutorialPage" :key="page.path" :page="page" />
 
   <UPage v-else-if="page" :ui="docsPageUi">
     <UPageHeader

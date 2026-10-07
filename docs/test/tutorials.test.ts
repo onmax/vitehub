@@ -99,11 +99,17 @@ describe("documentation tutorials", () => {
     expect(tutorial).toContain("xl:!w-full")
     expect(tutorial).toContain("aria-labelledby=\"tutorial-code-heading\"")
     expect(tutorial).toContain("watch(() => props.page.path")
+    expect(tutorial).toContain("selectedPath")
     expect(tutorial).toContain(":model-value=\"activePath\"")
     expect(tutorial).toContain("@update:model-value=\"selectCodePath\"")
     expect(step).toContain("@media (min-width: 80rem)")
     expect(step).toContain("@media (max-width: 79.99rem)")
     expect(step).toContain(":deep(div:has(> pre))")
+  })
+
+  it("remounts the tutorial rail when navigating between packages", async () => {
+    const source = await readFile(resolve(docsRoot, "app/pages/docs/[...slug].vue"), "utf8")
+    expect(source).toContain('<DocsTutorial v-else-if="page && isTutorialPage" :key="page.path" :page="page" />')
   })
 
   it("keeps the Agents editorial tutorial cold-rendered", async () => {
