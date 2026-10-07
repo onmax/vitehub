@@ -1,5 +1,9 @@
 import { createChannel, defineOutboundChannel, useChannel } from "../src/index.ts"
 
+interface NamedConnectorOptions {
+  destination: string
+}
+
 declare global {
   interface ViteHubChannelDefinitionModules {
     alerts: { default: typeof definition }
@@ -18,6 +22,16 @@ const definition = defineOutboundChannel({
 })
 
 const channel = createChannel("alerts", definition)
+
+const namedInterfaceChannel = createChannel("named-interface", defineOutboundChannel({
+  connectors: {
+    webhook: {
+      send: async (_text: string, options: NamedConnectorOptions) => ({ id: options.destination }),
+    },
+  },
+}))
+
+namedInterfaceChannel.send("Build finished.", { connector: "webhook", destination: "endpoint-1" })
 
 async function checkSendTuple() {
   const [error, receipt] = await channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })

@@ -15,7 +15,7 @@ export interface ChannelConnector<TOptions = Record<string, unknown>, TResult ex
   send(text: string, options: TOptions): Promise<TResult> | TResult
 }
 
-export type ChannelConnectorMap = Record<string, ChannelConnector<Record<string, unknown>, ChannelConnectorResult>>
+export type ChannelConnectorMap = Record<string, ChannelConnector<object, ChannelConnectorResult>>
 
 export interface ChannelDefinition<
   TConnectors extends ChannelConnectorMap = ChannelConnectorMap,
