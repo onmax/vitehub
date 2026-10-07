@@ -16,6 +16,7 @@ import { markLiveWorkspaceSource } from "./live.ts"
 import { attachWorkspaceSourceRequestExecution, createWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "./request-execution.ts"
 import { resolveWorkspacePath } from "./resolver.ts"
 import { createWorkspaceSourceView, type WorkspaceSourceWriteGrant } from "./view.ts"
+import { isWorkspaceSourceSyncMetaKey } from "./sync-state.ts"
 
 import type {
   ReadonlyWorkspaceFacade,
@@ -191,9 +192,9 @@ function createOverlaySourceStore<Name extends WorkspaceName>(
         ?? await workspace.getMeta?.(key)
     },
     async setMeta(key, value) {
-      // Internal metadata must survive overlay recreation. Resolve the backing
-      // Workspace target directly so Source Sync does not write only to memory.
-      if (isInternalWorkspaceMetaKey(key)) {
+      // Source Sync state must survive overlay recreation. Keep other internal
+      // metadata local to this overlay because it describes materialized files.
+      if (isInternalWorkspaceMetaKey(key) && isWorkspaceSourceSyncMetaKey(key)) {
         const mutationTarget = backingMetadataTarget
           ? resolveWorkspaceMetadataMutationTarget(backingMetadataTarget)
           : undefined

@@ -1,3 +1,5 @@
+import { normalizeWorkspacePath } from "../core/path.ts"
+
 export interface WorkspaceSourceSyncStatePath {
   digest: string
   mountPath?: string
@@ -14,6 +16,12 @@ export interface WorkspaceSourceSyncState {
 
 export function sourceSyncMetaKey(sourceKey: string, workspace?: string) {
   return workspace ? `workspace:${workspace}:source:${sourceKey}:sync` : `source:${sourceKey}:sync`
+}
+
+/** Identifies the durable metadata record owned by Source Sync. */
+export function isWorkspaceSourceSyncMetaKey(key: string): boolean {
+  const forms = [key.toLowerCase(), normalizeWorkspacePath(key).toLowerCase()]
+  return forms.some(form => /^(?:workspace:.+:)?source:.+:sync$/.test(form))
 }
 
 export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyncState | undefined {
