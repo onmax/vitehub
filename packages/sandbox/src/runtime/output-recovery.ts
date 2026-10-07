@@ -76,7 +76,7 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
 
   try {
     const output: unknown = JSON.parse(outputRaw)
-    if (!hasRuntimeType(output, 'object') || output === null || Array.isArray(output) || !hasRuntimeType((output as { ok?: unknown }).ok, 'boolean'))
+    if (!hasRuntimeType(output, 'object') || output === null || Array.isArray(output) || !hasRuntimeType(Reflect.get(output, 'ok'), 'boolean'))
       return null
     return output as {
       ok?: boolean
