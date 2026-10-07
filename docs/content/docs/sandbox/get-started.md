@@ -112,6 +112,15 @@ pnpm vite build
 pnpm vitehub inspect definitions --kind sandbox
 ```
 
+Start the generated Nitro server with Vercel Sandbox credentials in the environment, then call the route from another terminal:
+
+```bash [Terminal]
+VERCEL_TOKEN=... VERCEL_TEAM_ID=... VERCEL_PROJECT_ID=... node .output/server/index.mjs
+curl -X POST http://localhost:3000/api/image-optimizer \
+  -H 'content-type: application/json' \
+  -d '{"width":1024,"height":768}'
+```
+
 - Read [Configure](/docs/sandbox/configure) for package projects and free-form Definitions.
 - Read [Set timeouts and handle failures](/docs/sandbox/limits-and-errors) for response errors and cleanup.
 - Read [Hosts](/docs/sandbox/hosts) before switching providers.
