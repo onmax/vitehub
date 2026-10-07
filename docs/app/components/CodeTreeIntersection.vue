@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, ref, useTemplateRef } from "vue";
+import { computed, inject, markRaw, onMounted, ref, shallowRef, useTemplateRef } from "vue";
 import type { Ref, VNode } from "vue";
 import { useIntersectionObserver } from "@vueuse/core";
 
@@ -12,7 +12,7 @@ const props = defineProps<{
 
 const slots = defineSlots<{ default?: () => VNode[] }>();
 
-type CodeTreeItem = { label: string; component: VNode };
+type CodeTreeItem = { baseLabel: string; label: string; component: VNode };
 type SlotRecord = { default?: () => unknown };
 
 const target = useTemplateRef<HTMLDivElement>("target");
@@ -41,44 +41,43 @@ function propString(slot: VNode, name: "filename" | "label") {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function findCodeBlock(slot: VNode): VNode | null {
-  if (propString(slot, "filename") || propString(slot, "label")) return slot;
-
-  for (const child of defaultChildren(slot)) {
-    const found = findCodeBlock(child);
-    if (found) return found;
+function collectCodeBlocks(slot: VNode): CodeTreeItem[] {
+  const baseLabel = propString(slot, "filename") || propString(slot, "label");
+  if (baseLabel) {
+    return [{ baseLabel, label: baseLabel, component: slot }];
   }
 
-  return null;
+  return defaultChildren(slot).flatMap((child) => collectCodeBlocks(child));
 }
 
-function collectCodeBlocks(slot: VNode, index = 0): CodeTreeItem[] {
-  if (typeof slot.type === "symbol") {
-    return defaultChildren(slot).flatMap((child, childIndex) => collectCodeBlocks(child, childIndex));
-  }
+const children = computed(() => (slots.default?.() || []).flatMap((node) => collectCodeBlocks(node)));
+const records = shallowRef<CodeTreeItem[]>([]);
 
-  const codeBlock = findCodeBlock(slot);
-  if (!codeBlock) return [];
+function resolveRecords() {
+  if (records.value.length === children.value.length) return records.value;
 
-  return [{
-    label: propString(codeBlock, "filename") || propString(codeBlock, "label") || `${index}`,
-    component: codeBlock,
-  }];
+  const labels = new Set(Object.keys(tree.value));
+  records.value = children.value.map((child, index) => {
+    const previous = records.value[index];
+    if (previous && previous.baseLabel === child.baseLabel) {
+      labels.add(previous.label);
+      return { ...child, label: previous.label };
+    }
+
+    let label = child.baseLabel;
+    let suffix = 2;
+    while (labels.has(label)) label = `${child.baseLabel} (${suffix++})`;
+    labels.add(label);
+    return { ...child, label };
+  });
+
+  return records.value;
 }
-
-const children = computed(() => (slots.default?.() || []).flatMap((node, index) => collectCodeBlocks(node, index)));
-const registered = ref(false);
 
 function register() {
-  if (registered.value) return;
-  registered.value = true;
-
-  for (const child of children.value) {
-    let label = child.label;
-    let suffix = 2;
-    while (tree.value[label]) label = `${child.label} (${suffix++})`;
-    tree.value[label] = child.component;
-    activePath.value = label;
+  for (const child of resolveRecords()) {
+    if (!tree.value[child.label]) tree.value[child.label] = markRaw(child.component);
+    activePath.value = child.label;
   }
 }
 

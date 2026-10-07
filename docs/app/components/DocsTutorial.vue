@@ -21,7 +21,7 @@ function isVNode(value: unknown): value is VNode {
 }
 
 const pageUi = {
-  root: "grid w-full max-w-none grid-cols-1 gap-8 px-4 sm:px-6 lg:grid-cols-[minmax(0,48rem)_minmax(0,1fr)] lg:gap-8 lg:pl-8 lg:pr-0 xl:grid-cols-[minmax(0,54rem)_minmax(0,1fr)] xl:gap-10 xl:pl-12 xl:pr-0",
+  root: "grid w-full max-w-none grid-cols-1 gap-8 px-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,42%)] lg:gap-8 xl:gap-10",
   center: "min-w-0 max-w-none mx-0 lg:col-span-1",
   right: "hidden lg:col-span-1 lg:order-none lg:block w-full min-w-0 self-stretch border-l border-default",
 };
@@ -33,7 +33,7 @@ const pageHeaderUi = {
 };
 
 const codeTreeUi = {
-  root: "my-0 h-full min-h-0 w-full rounded-none border-0",
+  root: "my-0 h-full min-h-0 w-full rounded-none border-0 lg:!grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]",
   list: "h-full min-h-0 border-default p-1 pr-2",
   listWithChildren: "ms-3 border-s border-default",
   itemWithChildren: "ps-1 -ms-px",
