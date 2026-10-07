@@ -135,6 +135,13 @@ async function readInvocationInputTokens(file: string, since: number) {
   });
 }
 
+/** Sums the cached per-invocation maxima for a budget window. */
+export function sumInvocationInputTokens(usage: Map<string, { updatedAt: number; tokens: number }>, since: number): number {
+  let total = 0;
+  for (const entry of usage.values()) if (entry.updatedAt >= since) total += entry.tokens;
+  return total;
+}
+
 export function createBabysitterAdmission(options: { invocationsFile: string; limits: BabysitterAdmissionLimits }) {
   const usage = new Map<string, { updatedAt: number; tokens: number }>();
   let readAt: number | undefined;
@@ -152,8 +159,8 @@ export function createBabysitterAdmission(options: { invocationsFile: string; li
       cursor = now;
     } catch (error) { state.errors = [...state.errors ?? [], `tokens: ${error instanceof Error ? error.message : String(error)}`]; }
     if (readAt !== undefined) {
-      state.hourlyInputTokens = [...usage.values()].filter(entry => entry.updatedAt >= windows.hourStart).reduce((sum, entry) => sum + entry.tokens, 0);
-      state.dailyInputTokens = [...usage.values()].reduce((sum, entry) => sum + entry.tokens, 0);
+      state.hourlyInputTokens = sumInvocationInputTokens(usage, windows.hourStart);
+      state.dailyInputTokens = sumInvocationInputTokens(usage, windows.dayStart);
     }
     try { state.proxy = summarizeProxyAccounts(JSON.parse(await readFile(options.limits.proxyStatusFile, "utf8")), options.limits.proxyProvider, now, options.limits.proxyStatusMaxAgeMs); }
     catch (error) { state.proxy = { state: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unknown" : "unreadable" }; }

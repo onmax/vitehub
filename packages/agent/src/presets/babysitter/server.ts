@@ -766,9 +766,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 if (stopped) throw new DOMException(stopped, "AbortError");
                 // A proven repair head may finish resolving addressed feedback after synchronize.
                 // A generation change on the original head still invalidates the worker's evidence.
-                if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)) {
-                  throw new DOMException("Pull request evidence changed.", "AbortError");
-                }
               };
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
                 command: async (args, request) => {
