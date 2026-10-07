@@ -169,9 +169,10 @@ function normalizeResult(value: unknown): RuntimePreflightCheckResult {
   return { state: "unknown", reason: "The preflight check returned an invalid result." }
 }
 
-function timeoutSignal(parent: AbortSignal, timeoutMs: number): { signal: AbortSignal, deadline: number, cancel: () => void } {
+function timeoutSignal(parent: AbortSignal, timeoutMs: number): { signal: AbortSignal, deadline: number, cancel: () => void, expire: () => void } {
   const controller = new AbortController()
   const abort = () => controller.abort(parent.reason)
+  const expire = () => controller.abort(new Error("The preflight check timed out."))
   if (parent.aborted) abort()
   else parent.addEventListener("abort", abort, { once: true })
   const deadline = Date.now() + timeoutMs
@@ -180,10 +181,10 @@ function timeoutSignal(parent: AbortSignal, timeoutMs: number): { signal: AbortS
     clearTimeout(timer)
     parent.removeEventListener("abort", abort)
   }
-  return { signal: controller.signal, deadline, cancel }
+  return { signal: controller.signal, deadline, cancel, expire }
 }
 
-async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, deadline: number): Promise<RuntimePreflightCheckResult> {
+async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, deadline: number, expire: () => void): Promise<RuntimePreflightCheckResult> {
   let removeAbortListener: (() => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
     const rejectAbort = () => reject(signal.reason || new Error("Runtime preflight check was aborted."))
@@ -195,11 +196,15 @@ async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, d
   })
   const operation = Promise.resolve().then(() => {
     if (signal.aborted) throw signal.reason || new Error("Runtime preflight check was aborted.")
-    if (Date.now() >= deadline) return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
+    if (Date.now() >= deadline) {
+      expire()
+      return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
+    }
     const value = check.check({ signal })
     // A synchronous callback blocks the event loop, so its timer cannot fire
     // until the callback returns. Apply the same deadline after it returns.
     if (Date.now() >= deadline) {
+      expire()
       // Do not leave a thenable returned by an over-budget callback unobserved.
       void Promise.resolve(value).catch(() => undefined)
       return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
@@ -210,9 +215,11 @@ async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, d
   void operation.catch(() => undefined)
   try {
     const result = normalizeResult(await Promise.race([operation, aborted]))
-    return Date.now() >= deadline
-      ? { state: "unknown", reason: "The preflight check timed out." }
-      : result
+    if (Date.now() >= deadline) {
+      expire()
+      return { state: "unknown", reason: "The preflight check timed out." }
+    }
+    return result
   }
   finally { removeAbortListener?.() }
 }
@@ -285,7 +292,7 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       const bounded = timeoutSignal(controller.signal, normalized.timeoutMs)
       let result: RuntimePreflightCheckResult
       try {
-        result = await resolveCheck(check, bounded.signal, bounded.deadline)
+        result = await resolveCheck(check, bounded.signal, bounded.deadline, bounded.expire)
         if (bounded.signal.aborted && !controller.signal.aborted) result = { state: "unknown", reason: "The preflight check timed out." }
       }
       catch (error) {
