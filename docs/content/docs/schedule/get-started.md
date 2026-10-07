@@ -1,6 +1,6 @@
 ---
-title: Schedule a daily report
-description: Declare a UTC schedule, run it on demand during development, and inspect the generated provider output.
+title: Run a daily report once with Schedule
+description: Declare a UTC schedule and execute one occurrence with the direct runtime API.
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
@@ -8,20 +8,16 @@ icon: i-lucide-rocket
 
 A Static Schedule is part of your build. The host triggers it at the declared cron time. Start with this path when the schedule is known at deploy time. Runtime Schedules belong in the [Server API](/docs/schedule/server-api) when users need to create or change records while the app runs.
 
-## Install and configure
+## Install
+
+Use Node.js 24.15 or newer. This first run uses the direct execution API with an in-memory run store. It needs no Vite server or hosted scheduler.
+
+Start in an empty directory:
 
 ```bash [Terminal]
+pnpm init
+pnpm pkg set type=module
 pnpm add @vite-hub/schedule
-pnpm add -D @vite-hub/cli vite
-```
-
-```ts [vite.config.ts]
-import { hubSchedule } from '@vite-hub/schedule/vite'
-import { defineConfig } from 'vite'
-
-export default defineConfig({
-  plugins: [hubSchedule()],
-})
 ```
 
 ## Declare the schedule
@@ -42,24 +38,38 @@ export default defineSchedule({
 
 Static Schedule cron expressions use UTC. `scheduledAt` is the occurrence time chosen by the host. Replace the log with the report work after the manual run succeeds.
 
-## Build and inspect
+## Execute one occurrence
 
-```bash [Terminal]
-pnpm vite build
-pnpm vitehub inspect definitions --kind schedule
+Create a script that imports the Definition and executes a fixed occurrence:
+
+```ts [run.ts]
+import { executeStaticSchedule } from '@vite-hub/schedule/runtime'
+import dailyReport from './server/schedules/daily-report.ts'
+
+const run = await executeStaticSchedule({
+  cron: dailyReport.cron,
+  definition: dailyReport,
+  name: 'daily-report',
+  scheduledAt: new Date('2026-08-27T08:00:00.000Z'),
+})
+
+console.log(run.status)
 ```
 
-The generated output contains the schedule name and provider wiring. Because `manual: true` is set, run the definition without waiting for 08:00:
+Node.js can run this TypeScript script directly:
 
 ```bash [Terminal]
-# Terminal 1
-pnpm vite dev
-
-# Terminal 2
-pnpm vitehub schedule run daily-report --server http://localhost:5173 --json
+node run.ts
 ```
 
-The result includes the run status and the `scheduledAt` value passed to the handler. A provider wake, not the build itself, starts production runs.
+The process prints:
+
+```txt [Output]
+Daily report scheduled for 2026-08-27T08:00:00.000Z
+succeeded
+```
+
+This proves handler execution and in-memory run bookkeeping. It does not install a recurring wake or produce deployment output. Production runs need a provider wake or a long-lived process runtime. The `vitehub schedule run` development command requires a Nitro Vite host; plain Vite cannot serve that runtime endpoint.
 
 ## Choose the next path
 
