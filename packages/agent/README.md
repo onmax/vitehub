@@ -26,6 +26,14 @@ pnpm add @vite-hub/agent @vite-hub/workspace ai
 
 Add the AI SDK model provider you pass to `model`.
 
+Eve extensions are optional. Install the compatible pair before mounting one in a static Capability list:
+
+```sh
+pnpm add @github-tools/eve-extension@0.8.0 eve@0.72.1
+```
+
+The bridge supports one `session.started`, `turn.started`, or `step.started` handler per dynamic tool. It does not provide Eve sandbox, token, auth, or dynamic-skill adapters. Approval definitions may use `{ request }`; response authorizers are rejected. See [Eve extension capabilities](https://vitehub.dev/docs/agents/capabilities#use-an-eve-extension).
+
 The built-in `"codex"` and `"claude-code"` drivers use ViteHub's pinned T3 provider runtime. Install only the provider packages an Agent uses:
 
 ```sh
