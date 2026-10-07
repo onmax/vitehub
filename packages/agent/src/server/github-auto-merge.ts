@@ -120,7 +120,10 @@ function nonempty(value: string, name: string): string {
 }
 
 const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/
-const githubMentionPattern = /(^|[\s([{])@([A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})(?:\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38}))?)(?=$|[\s.,!?;:)\]}])/g
+// GitHub renders mentions in Markdown, blockquotes, and quoted text. Treat an
+// at-sign as a mention when it is not part of an email or identifier, then
+// apply the same tokenization to ordinary and explicit mention bodies.
+const githubMentionPattern = /(^|[^A-Za-z0-9])@([A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})(?:\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38}))?)(?=$|[^A-Za-z0-9_-])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
   const normalized = new Set<string>()
@@ -345,7 +348,7 @@ export function createGitHubPullRequestOperations(
         throw new Error("GitHub login is not in the configured mention allowlist.")
       }
       const message = nonempty(body, "Mention body")
-      if (message.includes("@")) throw new Error("Mention body must not contain another mention.")
+      if (message.match(githubMentionPattern)) throw new Error("Mention body must not contain another mention.")
       await snapshot()
       await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}@${targetLogin} ${message}`], commandOptions)
     },

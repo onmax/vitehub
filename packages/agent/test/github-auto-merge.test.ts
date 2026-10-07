@@ -118,6 +118,29 @@ describe("native auto-merge", () => {
     await expect(f.operations.comment("Please ask @acme/ops to confirm.")).rejects.toThrow(/outside.*allowlist/)
   })
 
+  it.each(["Contact ops@example.com to restore service.", "Use @ as the delimiter."])("allows non-mention at-signs in %s", async (body) => {
+    const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
+    await f.operations.comment(body)
+    await f.operations.mention("stefina", body)
+    const bodies = f.command.mock.calls
+      .filter(([args]) => args[1] === "/repos/acme/app/issues/12/comments")
+      .map(([args]) => args.find(arg => arg.startsWith("body=")))
+    expect(bodies).toEqual([`body=${body}`, `body=@stefina ${body}`])
+  })
+
+  it.each([
+    "**@other-user**", "*@other-user*", "_@other-user_", "~~@other-user~~",
+    "> @other-user", ">@other-user", '"@other-user"', "'@other-user'",
+    "&quot;@other-user&quot;", "(@other-user)", "**@acme/ops**",
+  ])("rejects wrapped mention %s before making GitHub calls", async (body) => {
+    const f = fixture({ restrictCommentMentions: true })
+    await expect(f.operations.comment(body)).rejects.toThrow(/outside.*allowlist/)
+    expect(f.command).not.toHaveBeenCalled()
+    const explicit = fixture({ mentionAllowlist: ["stefina"] })
+    await expect(explicit.operations.mention("stefina", body)).rejects.toThrow(/another mention/)
+    expect(explicit.command).not.toHaveBeenCalled()
+  })
+
   it("accepts managed-user logins in the mention allowlist", async () => {
     const f = fixture({ mentionAllowlist: ["mona-cat_octo"] })
     await f.operations.mention("mona-cat_octo", "Please restore the service.")
