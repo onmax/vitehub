@@ -272,6 +272,8 @@ Telegram exposes the registered URL and delivery errors through `getWebhookInfo`
 
 `channels history` loads the same stage-specific Agent and Channel configuration, then authenticates to the deployed webhook route with its configured webhook secret. Adapter-backed Channels keep the Chat SDK export. A Channel with `history` exports its Collection items, supports `--query key=value` (repeatable), optional `--thread`, and pages until the Collection ends. Add `--invocations` to join retained Invocations and recorded deliveries to each item.
 
+The join uses `vitehub.channel.key` annotations first. For older Invocations without that annotation, a Channel can provide `history.invocationItem(invocation)`, which returns a history item or `undefined`. The exporter calls `history.key()` and optional `history.thread()` on that item. The journal retains observations and run annotations, but does not retain raw webhook trigger input or trusted `input.context`. Recover only identities supported by retained evidence. A missing item, invalid key, or throwing hook leaves the Invocation unjoined. The exporter scans the journal once per Collection page and never runs the Channel trigger or changes journal records.
+
 ```bash [Terminal]
 pnpm vitehub channels history \
   --stage production \

@@ -112,6 +112,8 @@ If several Agents declare the same path, their configured `publicUrl` hosts sele
 
 Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/source/server-api#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID. Optional `history.thread` returns its conversation ID. `vitehub channels history` uses this Collection for custom Channels and accepts `--thread`, repeatable `--query key=value`, and `--invocations`.
 
+To join legacy Invocations without `vitehub.channel.key`, add `history.invocationItem(invocation): TItem | undefined | Promise<TItem | undefined>`. This read-only hook receives the retained `AgentInvocationRecord` and reconstructs an item for `key()` and optional `thread()`. Existing key annotations take precedence. The journal does not retain raw trigger input or `input.context`, so return `undefined` when observations and annotations cannot identify the item. Hook errors also leave the record unjoined.
+
 ```ts [server/agents/labeller.ts]
 import { defineAgent } from 'vite-hub/agent'
 import { defineChannel, defineChannelTrigger } from 'vite-hub/agent/channels'

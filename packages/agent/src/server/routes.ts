@@ -7214,46 +7214,63 @@ function channelHistoryInvocationDeliveries(
   })
 }
 
+interface ChannelHistoryInvocationEntry {
+  thread?: string
+  invocation: Record<string, unknown>
+}
+
 async function channelHistoryInvocations(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   channel: string,
-  key: string,
+  history: AgentChannelHistory,
+  keys: ReadonlySet<string>,
   agentName?: string,
-): Promise<Array<Record<string, unknown>>> {
-  if (!agent.invocations) return []
-  const summaries: Array<{ id: string, channelId?: string, annotations?: Record<string, unknown>, status: string, createdAt: string, updatedAt: string }> = []
+): Promise<Map<string, ChannelHistoryInvocationEntry[]>> {
+  const result = new Map<string, ChannelHistoryInvocationEntry[]>()
+  if (!agent.invocations || !keys.size) return result
   let cursor: string | undefined
   do {
     const page = await agent.invocations.list({ ...(agentName ? { agentName } : {}), ...(cursor ? { cursor } : {}), limit: 1000 })
-    summaries.push(...page.invocations.map(summary => ({
-      id: summary.id,
-      channelId: summary.channelId,
-      annotations: summary.annotations as Record<string, unknown> | undefined,
-      status: summary.status,
-      createdAt: summary.createdAt,
-      updatedAt: summary.updatedAt,
-    })))
+    for (const summary of page.invocations) {
+      if (summary.channelId !== channel) continue
+      const annotatedKey = summary.annotations?.["vitehub.channel.key"]
+      // A declared key remains authoritative. Only legacy records use the recovery hook.
+      if (annotatedKey !== undefined ? !isRuntimeString(annotatedKey) || !keys.has(annotatedKey) : !history.invocationItem) continue
+      const record = await agent.invocations.get(summary.id)
+      if (!record) continue
+      let key = annotatedKey
+      let thread = summary.annotations?.["vitehub.channel.thread"]
+      if (annotatedKey === undefined && history.invocationItem) {
+        try {
+          const item = await history.invocationItem(record)
+          if (item === undefined) continue
+          key = history.key(item)
+          thread = history.thread?.(item)
+        }
+        catch { continue }
+      }
+      if (!isRuntimeString(key) || !key.trim() || !keys.has(key)) continue
+      const start = record.observations.find(observation => observation.name === "agent.invocation.start")
+      const dryRun = start?.attributes?.["input.hasDryRun"] === true
+      const label = isRuntimeString(record.annotations?.triggeredBy) && record.annotations.triggeredBy.trim() ? record.annotations.triggeredBy : null
+      const entries = result.get(key) || []
+      entries.push({
+        ...(isRuntimeString(thread) && thread.trim() ? { thread } : {}),
+        invocation: {
+          id: record.id,
+          status: record.status,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          dryRun,
+          label,
+          deliveries: channelHistoryInvocationDeliveries(record),
+          ...(channelHistoryInvocationText(record) !== undefined ? { text: channelHistoryInvocationText(record) } : {}),
+        },
+      })
+      result.set(key, entries)
+    }
     cursor = page.cursor
   } while (cursor)
-  const result: Array<Record<string, unknown>> = []
-  for (const summary of summaries) {
-    if (summary.channelId !== channel || summary.annotations?.["vitehub.channel.key"] !== key) continue
-    const record = await agent.invocations.get(summary.id)
-    if (!record) continue
-    const start = record.observations.find(observation => observation.name === "agent.invocation.start")
-    const dryRun = start?.attributes?.["input.hasDryRun"] === true
-    const label = isRuntimeString(record.annotations?.triggeredBy) && record.annotations.triggeredBy.trim() ? record.annotations.triggeredBy : null
-    result.push({
-      id: record.id,
-      status: record.status,
-      createdAt: record.createdAt,
-      updatedAt: record.updatedAt,
-      dryRun,
-      label,
-      deliveries: channelHistoryInvocationDeliveries(record),
-      ...(channelHistoryInvocationText(record) !== undefined ? { text: channelHistoryInvocationText(record) } : {}),
-    })
-  }
   return result
 }
 
@@ -7302,9 +7319,16 @@ async function createCollectionChannelHistoryResponse(
       catch {}
     }
     if (threadId && thread !== threadId) continue
-    items.push({ key, ...(thread !== undefined ? { thread } : {}), item,
-      ...(body.invocations === true && key ? { invocations: await channelHistoryInvocations(agent, channelId, key, context.agentIdentity?.name) } : {}),
-    })
+    items.push({ key, ...(thread !== undefined ? { thread } : {}), item })
+  }
+  if (body.invocations === true) {
+    const keys = new Set(items.flatMap(item => isRuntimeString(item.key) && item.key ? [item.key] : []))
+    const joined = await channelHistoryInvocations(agent, channelId, history, keys, context.agentIdentity?.name)
+    for (const item of items) {
+      item.invocations = (isRuntimeString(item.key) ? joined.get(item.key) || [] : [])
+        .filter(entry => entry.thread === undefined || item.thread === undefined || entry.thread === item.thread)
+        .map(entry => entry.invocation)
+    }
   }
   const responseBody = {
     agent: context.agentIdentity?.name || "agent",
