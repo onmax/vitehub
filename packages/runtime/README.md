@@ -79,15 +79,17 @@ path. `startRuntimePreflight()` runs a bounded set of checks in parallel and
 returns a promise for a compact, serializable manifest. A failed or missing
 optional capability becomes data and a Nostics diagnostic; it never rejects the
 manifest or the invocation. The diagnostic callback is best effort and does not
-delay the checks.
+delay the checks. Check functions must be declared `async` and yield to asynchronous I/O.
+Synchronous checks and blocking work inside async functions are unsupported.
+Use a worker or process boundary for providers that can block the event loop.
 
 ```ts
 import { startRuntimePreflight } from "@vite-hub/runtime"
 
 const preflight = startRuntimePreflight({
   checks: [
-    { id: "command:git", kind: "command", required: true, check: ({ signal }) => runWhich("git", signal) },
-    { id: "file:AGENTS.md", kind: "file", check: ({ signal }) => readFile("AGENTS.md", signal) },
+    { id: "command:git", kind: "command", required: true, check: async ({ signal }) => runWhich("git", signal) },
+    { id: "file:AGENTS.md", kind: "file", check: async ({ signal }) => readFile("AGENTS.md", signal) },
   ],
   onDiagnostic: issue => reportDiagnostic(issue.diagnostic),
 })
@@ -97,8 +99,11 @@ const manifest = await preflight.manifest
 ```
 
 Keep `details` on a check result small and redacted. The framework limits each
-reason and details object, and caps the number and duration of checks so a
-broken provider cannot hold an invocation open.
+reason and details object. Results must be plain data records without proxies
+or accessors. Only the first 12 detail properties are inspected; accessors are
+skipped. More checks than `maxChecks` rejects the configuration before any run.
+Timeouts bound waiting on asynchronous operations, even if they ignore cancellation;
+they cannot preempt JavaScript that blocks the host event loop.
 
 `createRuntimeContext()` gives each operation a fresh memo cache and tracks work
 registered with `waitUntil()`. Pass the host's `waitUntil` method to forward that

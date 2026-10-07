@@ -30,7 +30,8 @@ export interface RuntimePreflightCheck {
   kind: RuntimePreflightKind
   /** Required only affects the diagnostic metadata. Missing optional checks never fail an invocation. */
   required?: boolean
-  check: (context: RuntimePreflightCheckContext) => MaybePromise<RuntimePreflightCheckResult | RuntimePreflightState | boolean>
+  /** Must be an async function that yields to asynchronous I/O. Blocking work is unsupported. */
+  check: (context: RuntimePreflightCheckContext) => Promise<RuntimePreflightCheckResult | RuntimePreflightState | boolean>
 }
 
 export type RuntimePreflightDiagnosticData = Record<string, unknown> & {
@@ -104,17 +105,23 @@ const maxDetailCount = 12
 
 function normalizeReason(value: unknown): string | undefined {
   if (!hasRuntimeType(value, "string")) return
-  const reason = value.trim()
+  const reason = value.slice(0, maxReasonLength).trim()
   return reason ? reason.slice(0, maxReasonLength) : undefined
 }
 
 function normalizeDetails(value: unknown): RuntimePreflightDetails | undefined {
   if (value === null || !hasRuntimeType(value, "object") || Array.isArray(value)) return
   const details: Record<string, RuntimePreflightValue> = {}
-  for (const [key, child] of Object.entries(value)) {
-    if (Object.keys(details).length >= maxDetailCount) break
+  let count = 0
+  for (const key in value) {
+    if (count++ >= maxDetailCount) break
     if (!key || key.length > 64) continue
-    if (child === null || hasRuntimeType(child, "string") || hasRuntimeType(child, "number") || hasRuntimeType(child, "boolean")) details[key] = hasRuntimeType(child, "string") ? child.slice(0, maxReasonLength) : child
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !("value" in descriptor)) continue
+    const child: unknown = descriptor.value
+    if (child === null || hasRuntimeType(child, "string") || hasRuntimeType(child, "boolean") || (hasRuntimeType(child, "number") && Number.isFinite(child))) {
+      Object.defineProperty(details, key, { value: hasRuntimeType(child, "string") ? child.slice(0, maxReasonLength) : child, enumerable: true })
+    }
   }
   return Object.keys(details).length ? details : undefined
 }
@@ -160,19 +167,20 @@ async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, t
       removeAbortListener = () => signal.removeEventListener("abort", rejectAbort)
     }
   })
+  const deadline = Date.now() + timeoutMs
   const operation = Promise.resolve().then(() => {
     if (signal.aborted) throw signal.reason || new Error("Runtime preflight check was aborted.")
-    const started = Date.now()
-    const value = check.check({ signal })
-    // A synchronous callback blocks the event loop, so its timer cannot fire
-    // until the callback returns. Apply the same deadline after it returns.
-    if (Date.now() - started > timeoutMs) return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
-    return value
+    return check.check({ signal })
+  }).then(value => {
+    if (signal.aborted) throw signal.reason
+    const result = normalizeResult(value)
+    if (Date.now() >= deadline) throw new Error("Runtime preflight check timed out.")
+    return result
   })
   // The abort race owns completion, but the check may still reject after it loses the race.
   void operation.catch(() => undefined)
   try {
-    return normalizeResult(await Promise.race([operation, aborted]))
+    return await Promise.race([operation, aborted])
   }
   finally { removeAbortListener?.() }
 }
@@ -190,7 +198,7 @@ function isRuntimePreflightCheck(value: unknown): value is RuntimePreflightCheck
   const id = Reflect.get(value, "id")
   const kind = Reflect.get(value, "kind")
   const check = Reflect.get(value, "check")
-  return hasRuntimeType(id, "string") && hasRuntimeType(kind, "string") && hasRuntimeType(check, "function")
+  return hasRuntimeType(id, "string") && hasRuntimeType(kind, "string") && hasRuntimeType(check, "function") && Object.prototype.toString.call(check) === "[object AsyncFunction]"
 }
 
 function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePreflightCheck[], timeoutMs: number, maxChecks: number } {
@@ -199,11 +207,12 @@ function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePre
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000) throw new TypeError("[vitehub] Runtime preflight timeoutMs must be between 1 and 10000.")
   const maxChecks = options.maxChecks ?? 32
   if (!Number.isSafeInteger(maxChecks) || maxChecks < 1 || maxChecks > 128) throw new TypeError("[vitehub] Runtime preflight maxChecks must be between 1 and 128.")
-  const checks = options.checks.slice(0, maxChecks)
+  if (options.checks.length > maxChecks) throw new TypeError("[vitehub] Runtime preflight checks exceed maxChecks.")
+  const checks = options.checks.slice()
   const ids = new Set<string>()
   for (const check of checks) {
     if (!isRuntimePreflightCheck(check) || !check.id.trim() || !check.kind.trim()) {
-      throw new TypeError("[vitehub] Runtime preflight checks require an id, kind, and check function.")
+      throw new TypeError("[vitehub] Runtime preflight checks require an id, kind, and async check function.")
     }
     if (ids.has(check.id)) throw new TypeError(`[vitehub] Runtime preflight check "${check.id}" is duplicated.`)
     ids.add(check.id)
@@ -239,13 +248,6 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       }
       finally { bounded.cancel() }
       const diagnostic = diagnosticFor(check, result.state)
-      const issue = diagnostic ? { check, state: result.state, diagnostic } satisfies RuntimePreflightIssue : undefined
-      if (issue && options.onDiagnostic) {
-        setTimeout(() => {
-          try { void Promise.resolve(options.onDiagnostic!(issue)).catch(() => undefined) }
-          catch { /* Reporter callbacks are best effort. */ }
-        }, 0)
-      }
       const summary: RuntimePreflightCheckSummary = {
         id: check.id,
         kind: check.kind,
@@ -255,17 +257,27 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       if (result.details) summary.details = result.details
       if (result.reason) summary.reason = result.reason
       if (diagnostic) summary.diagnostic = diagnostic.toJSON()
-      return summary
+      return { summary, issue: diagnostic ? { check, state: result.state, diagnostic } satisfies RuntimePreflightIssue : undefined }
     }))
-    const capabilities = Object.fromEntries(summaries.map(summary => [summary.id, summary.state]))
-    return {
+    const manifestSummaries = summaries.map(({ summary }) => summary)
+    const capabilities = Object.fromEntries(manifestSummaries.map(summary => [summary.id, summary.state]))
+    const manifest = {
       version: 1 as const,
       checkedAt: new Date().toISOString(),
       durationMs: Math.max(0, Date.now() - startedAt),
-      checks: summaries,
+      checks: manifestSummaries,
       capabilities,
-      diagnostics: summaries.flatMap(summary => summary.diagnostic ? [summary.diagnostic] : []),
+      diagnostics: manifestSummaries.flatMap(summary => summary.diagnostic ? [summary.diagnostic] : []),
     }
+    if (options.onDiagnostic) {
+      const issues = summaries.flatMap(({ issue }) => issue ? [issue] : [])
+      setTimeout(() => {
+        for (const issue of issues) {
+          void Promise.resolve().then(() => options.onDiagnostic!(issue)).catch(() => undefined)
+        }
+      }, 0)
+    }
+    return manifest
   }).finally(() => {
     settled = true
     options.signal?.removeEventListener("abort", abort)
