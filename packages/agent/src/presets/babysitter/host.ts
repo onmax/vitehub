@@ -106,7 +106,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
   const admission = createBabysitterAdmission({
-    invocationsFile: join(context.dataDir, "invocations.sqlite"),
+    invocations: agent.invocations,
     limits: readBabysitterAdmissionLimits(),
   });
   const github = createGitHubHost({ credentials: credentials.credentials, identity });

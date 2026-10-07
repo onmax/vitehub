@@ -40,7 +40,7 @@ import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snaps
 import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
-import type { BabysitterAdmissionResult } from "./admission.ts";
+import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admission.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -713,9 +713,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.ci.rerun.blocked", { ...owner, reason: ciRecovery.reason });
             return;
           }
-          if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
-            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now() });
-          }
           if (ciRecovery?.state === "waiting") {
             outcome = "waiting";
             await pullRequestInbox.finish(inboxClaim, {
@@ -724,6 +721,19 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
             schedulerEvent("babysitter.ci.rerun.waiting", { ...owner, reason: ciRecovery.reason });
             return;
+          }
+          if (!babysitterModelAdmission(modelAdmission, inboxClaim.snapshot)) {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: modelAdmission
+                ? "CI reconciliation completed; the same-head repair budget is exhausted."
+                : "CI reconciliation completed; model work is waiting for host admission.",
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: modelAdmission ? undefined : Date.now() + 60_000 },
+            });
+            return;
+          }
+          if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
+            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now() });
           }
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
@@ -766,6 +776,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 if (stopped) throw new DOMException(stopped, "AbortError");
                 // A proven repair head may finish resolving addressed feedback after synchronize.
                 // A generation change on the original head still invalidates the worker's evidence.
+                if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)) {
+                  throw new DOMException("Pull request evidence changed.", "AbortError");
+                }
               };
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
                 command: async (args, request) => {

@@ -1,3 +1,5 @@
+import { createCheckWait } from "../src/presets/babysitter/wait.ts";
+import { babysitterBudgetWindows, readBabysitterAdmissionLimits, type BabysitterAdmissionResult } from "../src/presets/babysitter/admission.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -29,7 +31,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -232,6 +234,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
     repositories: ["acme/app"],
     concurrency: 1,
     activityAuthors: ["vitehub-agent"],
+    admission: preset.admission,
     error: errors,
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
@@ -348,6 +351,20 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
 }
 
 describe("Babysitter preset runtime", () => {
+  it("keeps a recovery claim parked when admission permits only host work", async () => {
+    const f = await fixture(false, false, { admission: async () => ({ accepting: false, hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
+    try {
+      await f.runtime.inbox.seed("acme/app", f.pr());
+      const [claim] = await f.runtime.inbox.claim(1);
+      await f.runtime.inbox.finish(claim!, { text: "Waiting for CI", wait: createCheckWait(claim!.snapshot, { workerAuthors: new Set(), noFindingsReviews: [] }) });
+      const waiting = (await f.runtime.inbox.get("acme/app", 12))!;
+      await f.runtime.inbox.wake(waiting, "ci-recovery", { recovery: true });
+      await f.reconcile();
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lastResult).toContain("waiting for host admission");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("bounds stalled readiness hooks and propagates rejection and cancellation", async () => {
     await expect(boundedMergeReady(() => new Promise(() => {}), new AbortController().signal, 5)).rejects.toThrow("timed out");
     await expect(boundedMergeReady(() => Promise.reject(new Error("offline")), new AbortController().signal)).rejects.toThrow("offline");

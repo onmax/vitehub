@@ -1,3 +1,6 @@
+import { hasRuntimeType } from "../../internal/runtime-type.ts";
+import type { AgentInvocations } from "../../invocations.ts";
+import type { Snapshot } from "../../server/github-inbox.ts";
 import { readFile, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 export interface BabysitterAdmissionLimits {
@@ -118,21 +121,31 @@ export function babysitterAdmissionDecision(state: BabysitterAdmissionState, lim
   return { accepting: true };
 }
 
-async function readInvocationInputTokens(file: string, since: number) {
-  const { Worker } = await import("node:worker_threads");
-  const worker = new Worker(`
-    const { parentPort, workerData } = require("node:worker_threads");
-    const { DatabaseSync } = require("node:sqlite");
-    const db = new DatabaseSync(workerData.file, { readOnly: true, timeout: 500 });
-    try { parentPort.postMessage(db.prepare(\`SELECT i.id AS id, i.updated_at AS updatedAt, MAX(json_extract(o.value, '$.attributes."usage.inputTokens"')) AS tokens FROM vitehub_agent_invocations i, json_each(i.record, '$.observations') o WHERE i.updated_at >= ? GROUP BY i.id\`).all(workerData.since)); }
-    finally { db.close(); }
-  `, { eval: true, workerData: { file, since: new Date(since).toISOString() } });
-  return await new Promise<Array<{ id: string; updatedAt: string; tokens: number }>>((resolve, reject) => {
-    const timer = setTimeout(() => { void worker.terminate(); reject(new Error("Token usage read timed out.")); }, 60_000);
-    worker.once("message", value => { clearTimeout(timer); resolve(value); });
-    worker.once("error", error => { clearTimeout(timer); reject(error); });
-    worker.once("exit", code => { if (code !== 0) { clearTimeout(timer); reject(new Error(`Token usage reader exited with code ${code}.`)); } });
-  });
+async function readInvocationInputTokens(invocations: Pick<AgentInvocations, "list" | "get"> | undefined, since: number) {
+  if (!invocations) throw new Error("No invocation journal is assigned.");
+  const usage: Array<{ id: string; updatedAt: string; tokens: number }> = [];
+  let cursor: string | undefined;
+  do {
+    const page = await invocations.list({ cursor, limit: 100 });
+    for (const summary of page.invocations) {
+      if (Date.parse(summary.updatedAt) < since) continue;
+      const record = await invocations.get(summary.id);
+      if (!record) continue;
+      let tokens = 0;
+      for (const observation of record.observations) {
+        const value = observation.attributes?.["usage.inputTokens"];
+        if (hasRuntimeType(value, "number") && Number.isFinite(value)) tokens = Math.max(tokens, value);
+      }
+      usage.push({ id: record.id, updatedAt: record.updatedAt, tokens });
+    }
+    cursor = page.cursor;
+  } while (cursor);
+  return usage;
+}
+
+/** Host reconciliation may bypass a progress block, but model dispatch may not. */
+export function babysitterModelAdmission(accepting: boolean, snapshot: Pick<Snapshot, "pr" | "progressBudget">): boolean {
+  return accepting && !(snapshot.progressBudget?.exhausted && snapshot.progressBudget.head === snapshot.pr?.head?.sha);
 }
 
 /** Sums the cached per-invocation maxima for a budget window. */
@@ -142,7 +155,7 @@ export function sumInvocationInputTokens(usage: Map<string, { updatedAt: number;
   return total;
 }
 
-export function createBabysitterAdmission(options: { invocationsFile: string; limits: BabysitterAdmissionLimits }) {
+export function createBabysitterAdmission(options: { invocations?: Pick<AgentInvocations, "list" | "get">; limits: BabysitterAdmissionLimits }) {
   const usage = new Map<string, { updatedAt: number; tokens: number }>();
   let readAt: number | undefined;
   let cursor: number | undefined;
@@ -153,7 +166,7 @@ export function createBabysitterAdmission(options: { invocationsFile: string; li
     catch (error) { state.errors = [`tmp: ${error instanceof Error ? error.message : String(error)}`]; }
     if (readAt === undefined || now - readAt >= 60_000) try {
       const since = cursor === undefined ? windows.dayStart : Math.max(windows.dayStart, cursor - 60_000);
-      for (const entry of await readInvocationInputTokens(options.invocationsFile, since)) usage.set(entry.id, { updatedAt: Date.parse(entry.updatedAt), tokens: Number(entry.tokens) || 0 });
+      for (const entry of await readInvocationInputTokens(options.invocations, since)) usage.set(entry.id, { updatedAt: Date.parse(entry.updatedAt), tokens: Number(entry.tokens) || 0 });
       for (const [id, entry] of usage) if (entry.updatedAt < windows.dayStart) usage.delete(id);
       readAt = now;
       cursor = now;
