@@ -636,11 +636,19 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     writeTools.inspect = createTools as WorkspaceWriteToolSet["inspect"]
     writeTools.none = (() => ({})) as WorkspaceWriteToolSet["none"]
     writeTools.write = createWriteTools as WorkspaceWriteToolSet["write"]
+    // Keep the original history receiver and prototype intact. A spread would
+    // lose class methods and can change the `this` value used by checkpoints.
+    const history = new Proxy(workspace.history, {
+      get(target, property) {
+        if (property === "rebase") return rebase
+        return Reflect.get(target, property, target)
+      },
+    })
     const writableWorkspace: WritableWorkspaceFacade<Name> = {
       ...workspace,
       diff: writeWorkspace.diff,
       fs: writeFs,
-      history: { ...workspace.history, rebase },
+      history,
       materializeSources,
       publish: writeWorkspace.publish,
       snapshot: writeWorkspace.snapshot,
