@@ -85,7 +85,7 @@ function resolveCloudflareInspectionBinding(event: unknown, binding: string | un
   return resolveCloudflareBinding(event, binding, name, getWorkflowRuntimeRegistry()?.[name])
 }
 
-function normalizeCloudflareWorkflowStart(value: unknown): { id: string } {
+function normalizeCloudflareWorkflowStart(value: unknown, expectedId: string): { id: string } {
   if (!hasRuntimeType(value, "object") || value === null) {
     throw new Error("Cloudflare Workflow provider returned an invalid workflow instance.")
   }
@@ -98,7 +98,7 @@ function normalizeCloudflareWorkflowStart(value: unknown): { id: string } {
     throw new Error("Cloudflare Workflow provider returned an invalid workflow instance.", { cause })
   }
 
-  if (!hasRuntimeType(id, "string") || !id) {
+  if (!hasRuntimeType(id, "string") || !id || id !== expectedId) {
     throw new Error("Cloudflare Workflow provider returned an invalid workflow instance.")
   }
 
@@ -169,7 +169,7 @@ function createCloudflareAdapter(config: ResolvedWorkflowOptions): WorkflowRunti
         const start = () => runWorkflowProviderOperation(
           "cloudflare",
           "create",
-          async () => normalizeCloudflareWorkflowStart((await binding.createBatch([{ id, params: payload }]))[0] || await binding.get(id)),
+          async () => normalizeCloudflareWorkflowStart((await binding.createBatch([{ id, params: payload }]))[0] || await binding.get(id), id),
           { acknowledgementUnknown: (_error, status) => status === undefined },
         )
         const creation = start().catch(async (firstError) => {
