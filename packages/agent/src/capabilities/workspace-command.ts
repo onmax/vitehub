@@ -43,6 +43,8 @@ interface BoxCommandOptions {
   cwd?: string
   env?: Record<string, string>
   timeout?: number
+  /** Preserve an omitted cwd for provider drivers that route their checkout below /workspace. */
+  useProviderCwdWhenRoot?: boolean
 }
 
 const unsafeCommand = /[\s\x00-\x1F\x7F]/
@@ -159,7 +161,7 @@ export async function executeWorkspaceCommand(
   if (activeExecute) {
     const result = await activeExecute(command, args, {
       abortSignal: options.abortSignal,
-      cwd: options.cwd,
+      cwd: options.useProviderCwdWhenRoot ? undefined : options.cwd,
       env: options.env,
       timeout: options.timeout,
     })
@@ -257,6 +259,7 @@ export function workspaceCommandTools(
           cwd,
           env,
           timeout: commandTimeout,
+          ...(value.cwd === undefined ? { useProviderCwdWhenRoot: true } : {}),
         }, options.context)
       },
     }),

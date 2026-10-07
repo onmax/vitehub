@@ -69,7 +69,7 @@ import { cliproxy, defineGateway, vercel } from "../src/gateways.ts"
 import { grantWorkspaceAccessScope } from "../src/access-runtime.ts"
 import { codexDriver, defineAgent, runAgent } from "../src/index.ts"
 import { readAgentWorkspaceDiff } from "../src/agent-workspace-runtime.ts"
-import { executeWorkspaceCommand } from "../src/capabilities/workspace-command.ts"
+import { executeWorkspaceCommand, workspaceCommandTools } from "../src/capabilities/workspace-command.ts"
 import { agentInvocationInputSupport, sendAgentInvocationInput } from "../src/internal/agent-invocation-control.ts"
 import { withAgentInvocationResponseOwner } from "../src/internal/agent-invocation-response-owner.ts"
 import { markAuxiliaryMessageChannelInstructionContext } from "../src/internal/channels.ts"
@@ -4402,6 +4402,7 @@ cli_auth_credentials_store = "keyring"
       tools: {},
     }
     const runContext = context(threadId, {
+      tools: {},
       workspace,
       workspaceDefinition: { mode: "write", name: "docs" },
       workspaceMode: "write",
@@ -4413,6 +4414,13 @@ cli_auth_credentials_store = "keyring"
         source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
       },
       repository: { fullName: "acme/portal", name: "portal" },
+    })
+    const generatedTools = workspaceCommandTools("all", "write", undefined, workspace, { context: runContext.context as never })
+    runContext.tools = generatedTools
+    provider.sendTurn.mockImplementationOnce(async () => {
+      const result = await generatedTools.workspace_exec!.execute?.({ command: "pwd" })
+      expect(result?.stdout).toBe(`${join(root, "portal")}\n`)
+      return { threadId, turnId: "turn-1" }
     })
 
     await expect(createProviderAgentAdapter({
