@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 
 const docsRoot = resolve(import.meta.dirname, "..")
-const fixturesRoot = resolve(docsRoot, "../../fixtures/tutorials")
+const fixturesRoot = resolve(import.meta.dirname, "../../fixtures/tutorials")
 
 function normalize(source: string) {
   return source.trim().replaceAll("\r\n", "\n")
@@ -81,10 +81,10 @@ describe("documentation tutorials", () => {
   it("keeps the scroll code rail reversible and stable for repeated filenames", async () => {
     const source = await readFile(resolve(docsRoot, "app/components/CodeTreeIntersection.vue"), "utf8")
 
-    expect(source).toContain("if (entry?.isIntersecting) register()")
+    expect(source).toContain("if (!entry.isIntersecting) continue")
     expect(source).toContain("records.value")
     expect(source).toContain("while (labels.has(label))")
-    expect(source).toContain("data.vhTutorialCodeIndex")
+    expect(source).toContain("marker.dataset.vhTutorialCodeIndex")
     expect(source).toContain("block.before(marker)")
     expect(source).toContain("new IntersectionObserver")
     expect(source).not.toContain("const registered = ref(false)")
