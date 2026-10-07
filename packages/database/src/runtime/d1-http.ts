@@ -10,12 +10,16 @@ interface D1HttpQuery {
   sql: string
 }
 
+type D1HttpMethod = "run" | "all" | "values" | "get"
+
+type D1HttpExecutionQuery = D1HttpQuery & { method: D1HttpMethod }
+
 interface D1HttpPayload {
   errors?: D1HttpErrorInfo[]
   result?: Array<{
     error?: string
     errors?: D1HttpErrorInfo[]
-    results?: { rows?: unknown[][] }
+    results?: unknown
     success?: boolean
   }>
   success?: boolean
@@ -65,20 +69,15 @@ function isD1HttpPayload(value: unknown): value is D1HttpPayload {
 }
 
 function isD1HttpResult(value: unknown): value is D1HttpResult {
-  if (!isRecord(value) || (value.success !== true && value.success !== false)) return false
-  // Failed queries can omit result rows, but a successful query must expose
-  // the row matrix that Drizzle's sqlite proxy expects. Treating a malformed
-  // success as an empty result would turn a provider contract failure into a
-  // valid-looking query result.
-  if (value.success === false) return true
-  const results = value.results
-  return isRecord(results)
-    && Array.isArray(results.rows)
-    && results.rows.every(Array.isArray)
+  return isRecord(value) && (value.success === true || value.success === false)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Object.prototype.toString.call(value) === "[object Object]"
+}
+
+function isRowMatrix(value: unknown): value is unknown[][] {
+  return Array.isArray(value) && value.every(row => Array.isArray(row))
 }
 
 function resolveCloudflareD1HttpConnection(config: RuntimeDrizzleDatabaseConfig, databaseId: string) {
@@ -110,9 +109,10 @@ function createCloudflareD1HttpDb<TSchema extends Record<string, unknown>>(
   schema: TSchema,
   request: typeof fetch,
 ) {
-  async function execute(queries: D1HttpQuery[]) {
+  async function execute(queries: D1HttpExecutionQuery[]) {
+    const requestQueries = queries.map(({ params, sql }) => ({ params, sql }))
     const response = await request(config.url, {
-      body: JSON.stringify(queries.length === 1 ? queries[0] : { batch: queries }),
+      body: JSON.stringify(requestQueries.length === 1 ? requestQueries[0] : { batch: requestQueries }),
       headers: {
         Authorization: `Bearer ${config.token}`,
         "Content-Type": "application/json",
@@ -138,10 +138,22 @@ function createCloudflareD1HttpDb<TSchema extends Record<string, unknown>>(
     }
 
     return payload.result.map((result, index) => {
+      const query = queries[index]!
       if (result.success !== true) {
         throw cloudflareD1HttpError(response, `query ${index + 1}`, result, payload)
       }
-      return Array.isArray(result.results?.rows) ? result.results.rows : []
+      if (query.method === "run" && result.results === undefined) return []
+      if (!isRecord(result.results)) {
+        throw cloudflareD1HttpError(response, `query ${index + 1}`, result, payload)
+      }
+      if (!("rows" in result.results) || result.results.rows === undefined) {
+        if (query.method === "run") return []
+        throw cloudflareD1HttpError(response, `query ${index + 1}`, result, payload)
+      }
+      if (!isRowMatrix(result.results.rows)) {
+        throw cloudflareD1HttpError(response, `query ${index + 1}`, result, payload)
+      }
+      return result.results.rows
     })
   }
 
@@ -152,8 +164,8 @@ function createCloudflareD1HttpDb<TSchema extends Record<string, unknown>>(
 
   // SAFETY: drizzleProxy returns the runtime database interface for the supplied schema.
   return drizzleProxy(
-    async (sql, params, method) => formatResult((await execute([{ params, sql }]))[0]!, method),
-    async queries => (await execute(queries.map(({ params, sql }) => ({ params, sql }))))
+    async (sql, params, method) => formatResult((await execute([{ method, params, sql }]))[0]!, method),
+    async queries => (await execute(queries.map(({ method, params, sql }) => ({ method, params, sql }))))
       .map((rows, index) => formatResult(rows, queries[index]!.method)),
     { casing: config.casing, schema },
   ) as RuntimeDrizzleDatabase<TSchema>
