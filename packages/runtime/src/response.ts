@@ -88,7 +88,7 @@ export function isSerializedResponse(value: unknown): value is SerializedRespons
   try {
     // Keep validation aligned with the native constructor used by deserialization.
     new Response(null, {
-      headers: headers.map(([name, headerValue]) => [name, headerValue]),
+      headers: headers.map(([name, headerValue]): [string, string] => [name, headerValue]),
       status: record.status,
       statusText: record.statusText,
     })
