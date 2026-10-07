@@ -121,7 +121,7 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
           closed = true;
           return;
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "EBUSY" || attempt === 39) throw error;
+          if (!(error instanceof Error) || !("code" in error) || error.code !== "EBUSY" || attempt === 39) throw error;
           await delay(25);
         }
       }

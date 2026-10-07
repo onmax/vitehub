@@ -115,18 +115,21 @@ const trustedHostExecutionAuthority = {
 } as const satisfies ExecutionAuthority;
 
 export function createTrustedHostRuntime(options: TrustedHostOptions = {}): BoxRuntime {
-  const preparedInputs = new WeakMap<BoxRuntimeInput, Awaited<ReturnType<typeof resolveTrustedHostInput>>>();
+  const preparedInputs = new WeakMap<BoxRuntimeInput, Awaited<ReturnType<typeof resolveTrustedHostInput>> & {
+    resources?: TrustedHostResources;
+  }>();
   return markBuiltInBoxRuntime({
     name: "trusted-host",
     async prepare(input) {
-      if (options.resources) validateTrustedHostResources(options.resources);
+      const resources = options.resources ? Object.freeze({ ...options.resources }) : undefined;
+      if (resources) validateTrustedHostResources(resources);
       const { cwd, stateRoot } = await resolveTrustedHostInput(input, options);
-      preparedInputs.set(input, { cwd, stateRoot });
+      preparedInputs.set(input, { cwd, stateRoot, resources });
       return {
         cache: { state: "disposable" },
         environment: { env: {} },
         executionAuthority: trustedHostExecutionAuthority,
-        ...(options.resources ? { resources: Object.freeze({ ...options.resources }) } : {}),
+        ...(resources ? { resources } : {}),
         home: stateRoot
           ? {
               state: input.plan.state.map(state => ({
@@ -146,11 +149,13 @@ export function createTrustedHostRuntime(options: TrustedHostOptions = {}): BoxR
       } satisfies BoxRuntimePlan;
     },
     async open(input, openOptions) {
-      const resolved = preparedInputs.get(input) ?? await resolveTrustedHostInput(input, options);
+      const prepared = preparedInputs.get(input);
+      const resolved = prepared ?? await resolveTrustedHostInput(input, options);
+      const resources = prepared ? prepared.resources : options.resources ? Object.freeze({ ...options.resources }) : undefined;
       let initializedSession: ReturnType<typeof createBoxSession> | undefined;
       const runtimeSession = await createSession(
         { ...input, ...(resolved.cwd ? { cwd: resolved.cwd } : {}) },
-        { ...options, stateRoot: resolved.stateRoot },
+        { ...options, resources, stateRoot: resolved.stateRoot },
         {
           abortSignal: openOptions?.signal,
           ...(openOptions?.initialize
