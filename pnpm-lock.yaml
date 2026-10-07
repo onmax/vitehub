@@ -11863,7 +11863,7 @@ packages:
     engines: {node: '>= 0.4'}
 
   forges@https://pkg.pr.new/danielroe/forges@43be2a6:
-    resolution: {tarball: https://pkg.pr.new/danielroe/forges@43be2a6}
+    resolution: {integrity: sha512-ahanYLa4/fWGU8CiV5Q6AaVfJQsa2nZxqG7UtrQEpr6tcXurZgiBzdOPQZCOFR1Y1PsjhtdwdEHjpF77NdAYLA==, tarball: https://pkg.pr.new/danielroe/forges@43be2a6}
     version: 0.0.0
     engines: {node: '>=22.18'}
 
