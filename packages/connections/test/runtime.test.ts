@@ -552,6 +552,7 @@ describe("calls", () => {
       fetch: async (input, init) => String(input) === "https://mail.example.com/mail/v1/users/me/labels"
         ? new Response("truncated response", { status: 200 })
         : await test.provider.fetch(input, init),
+      now: () => test.now.value,
       store: test.store,
     })
     await expect(runtime.client("mail", {}).call("mail.labels.list", { userId: "me" }))
