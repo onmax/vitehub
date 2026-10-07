@@ -848,8 +848,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     commit: false,
                     mode: "write" as const,
                     store: { provider: "local" as const, root: checkout },
-                  // SAFETY: the prepared local store supplies the dynamically resolved Workspace contract.
-                  } as never }),
+                  } }),
               });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
               const snapshotContext = snapshotPrompt(webhookSnapshot);
