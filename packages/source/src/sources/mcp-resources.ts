@@ -319,6 +319,57 @@ function shouldInclude(path: string, options: Pick<McpResourcesSourceOptions, "i
   return true
 }
 
+function isRecord(value: unknown): value is object {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- MCP responses cross a runtime protocol boundary.
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isDenseArray(value: unknown): value is unknown[] {
+  if (!Array.isArray(value)) return false
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.hasOwn(value, index)) return false
+  }
+  return true
+}
+
+function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
+  return isRecord(value)
+    && typeof Reflect.get(value, "name") === "string"
+    && typeof Reflect.get(value, "uri") === "string"
+}
+
+function isResourceContent(value: unknown): value is McpResourceContent {
+  if (!isRecord(value) || typeof Reflect.get(value, "uri") !== "string") return false
+  const hasText = Object.hasOwn(value, "text") && typeof Reflect.get(value, "text") === "string"
+  const hasBlob = Object.hasOwn(value, "blob") && typeof Reflect.get(value, "blob") === "string"
+  return hasText !== hasBlob
+}
+
+function parseResourceListPage(value: unknown): { nextCursor?: string, resources: McpResourceDescriptor[] } {
+  if (!isRecord(value)) {
+    throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
+  }
+  const resources = Reflect.get(value, "resources")
+  const nextCursor = Reflect.get(value, "nextCursor")
+  if (!isDenseArray(resources) || resources.some(resource => !isResourceDescriptor(resource)) || (nextCursor !== undefined && typeof nextCursor !== "string")) {
+    throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
+  }
+  // SAFETY: Every resource has the string name and URI required by the MCP listing contract.
+  return { nextCursor, resources: resources as McpResourceDescriptor[] }
+}
+
+function parseResourceContents(value: unknown): McpResourceContent[] {
+  if (!isRecord(value)) {
+    throw sourceError("[vitehub] mcpResources server returned an invalid readResource response.")
+  }
+  const contents = Reflect.get(value, "contents")
+  if (!isDenseArray(contents) || contents.some(content => !isResourceContent(content))) {
+    throw sourceError("[vitehub] mcpResources server returned an invalid readResource response.")
+  }
+  // SAFETY: Every content entry is an object with the string URI required by the MCP response contract.
+  return contents as McpResourceContent[]
+}
+
 async function listAllResources(client: McpResourcesClient, request: McpResourcesRequestOptions | undefined) {
   const resources: McpResourceDescriptor[] = []
   const seenCursors = new Set<string>()
@@ -330,7 +381,7 @@ async function listAllResources(client: McpResourcesClient, request: McpResource
       }
       seenCursors.add(cursor)
     }
-    const page = await client.listResources(cursor === undefined ? undefined : { cursor }, request)
+    const page = parseResourceListPage(await client.listResources(cursor === undefined ? undefined : { cursor }, request))
     resources.push(...page.resources)
     cursor = page.nextCursor
   } while (cursor !== undefined)
@@ -342,7 +393,7 @@ async function readResourceContents(
   resource: McpResourceDescriptor,
   request: McpResourcesRequestOptions | undefined,
 ) {
-  return (await client.readResource({ uri: resource.uri }, request)).contents
+  return parseResourceContents(await client.readResource({ uri: resource.uri }, request))
 }
 
 async function createEntries<TKey extends string>(

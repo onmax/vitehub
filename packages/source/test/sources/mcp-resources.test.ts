@@ -2,7 +2,37 @@ import { describe, expect, it, vi } from "vitest"
 
 import { mcpResources } from "../../src/mcp.ts"
 
-import type { McpResourcesClient } from "../../src/mcp.ts"
+import type { McpResourceContent, McpResourceDescriptor, McpResourcesClient } from "../../src/mcp.ts"
+
+function sparseArray<T>(): T[] {
+  const values: T[] = []
+  values.length = 1
+  return values
+}
+
+function malformedListClient(response: unknown): McpResourcesClient {
+  return {
+    async listResources() {
+      // SAFETY: This fixture reproduces malformed responses from a caller-owned MCP client.
+      return response as { nextCursor?: string, resources: McpResourceDescriptor[] }
+    },
+    async readResource() {
+      return { contents: [] }
+    },
+  }
+}
+
+function malformedReadClient(response: unknown): McpResourcesClient {
+  return {
+    async listResources() {
+      return { resources: [{ name: "item.txt", uri: "resource://example/item.txt" }] }
+    },
+    async readResource() {
+      // SAFETY: This fixture reproduces malformed responses from a caller-owned MCP client.
+      return response as { contents: McpResourceContent[] }
+    },
+  }
+}
 
 function createClient(): McpResourcesClient {
   return {
@@ -291,6 +321,29 @@ describe("mcpResources", () => {
     await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/pagination cursor/i)
   })
 
+  it.each([
+    { resources: undefined },
+    { resources: sparseArray() },
+    { resources: [undefined] },
+    { resources: [], nextCursor: null },
+  ])("rejects malformed listResources responses", async response => {
+    const source = mcpResources({ server: malformedListClient(response) })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/invalid listResources response/i)
+  })
+
+  it.each([
+    { contents: undefined },
+    { contents: sparseArray() },
+    { contents: [undefined] },
+    { contents: [{ uri: "resource://example/item.txt" }] },
+    { contents: [{ blob: "AAAA", text: "both", uri: "resource://example/item.txt" }] },
+  ])("rejects malformed readResource responses", async response => {
+    const source = mcpResources({ server: malformedReadClient(response) })
+
+    await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
+  })
+
   it("rejects inherited MCP client and transport discriminators", async () => {
     const inheritedClient = Object.create({
       listResources: async () => ({ resources: [] }),
@@ -316,7 +369,7 @@ describe("mcpResources", () => {
     expect(() => mcpResources(inheritedOptions)).toThrow(/requires an MCP server/i)
   })
 
-  it("ignores inherited MCP content discriminators", async () => {
+  it("rejects inherited MCP content discriminators", async () => {
     const content = Object.assign(Object.create({ blob: "not-base64" }), { uri: "resource://example/item" })
     const source = mcpResources({
       server: {
@@ -329,7 +382,7 @@ describe("mcpResources", () => {
       },
     })
 
-    await expect(source.getItem("example/item", { rootDir: "/tmp" })).resolves.toMatchObject({ content: "" })
+    await expect(source.getItem("example/item", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
   })
 
   it("rejects inherited capabilities on forged class prototypes", async () => {
