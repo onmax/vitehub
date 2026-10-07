@@ -2074,13 +2074,14 @@ async function prepareWorkspace(
     // Workspace setup can resolve the channel's pull request metadata while it
     // creates the session. Use that current plan for both checkout validation
     // and provenance so the provider sees the verified head SHA and repository.
-    pullRequest = pullRequestCheckoutPlan(context.context)
-    checkoutPullRequest = Boolean(pullRequest && (!paths || paths.some(path => !path || !pullRequest!.mount || pullRequest!.mount === path || pullRequest!.mount.startsWith(`${path}/`))))
-    if (pullRequest && checkoutPullRequest) {
+    const resolvedPullRequest = pullRequestCheckoutPlan(context.context)
+    pullRequest = resolvedPullRequest
+    checkoutPullRequest = Boolean(resolvedPullRequest && (!paths || paths.some(path => !path || !resolvedPullRequest.mount || resolvedPullRequest.mount === path || resolvedPullRequest.mount.startsWith(`${path}/`))))
+    if (resolvedPullRequest && checkoutPullRequest) {
       // Give the Driver shell a real checkout so it can fetch, commit, and push with the Agent GitHub identity.
-      await preparePullRequestCheckout(session, pullRequest, {
+      await preparePullRequestCheckout(session, resolvedPullRequest, {
         abortSignal: context.input.abortSignal,
-        env: await pullRequestCheckoutEnvironment(context.runtime.githubIdentity, pullRequest.repository, context.input.abortSignal, pullRequest.headRepository),
+        env: await pullRequestCheckoutEnvironment(context.runtime.githubIdentity, resolvedPullRequest.repository, context.input.abortSignal, resolvedPullRequest.headRepository),
       })
     }
   }

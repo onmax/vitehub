@@ -4349,7 +4349,7 @@ cli_auth_credentials_store = "keyring"
     expect(createProviderRuntime.mock.lastCall?.[0].environment).toMatchObject({ GH_TOKEN: "installation-token" })
   })
 
-  it("runs a nested pull request checkout as the provider root", async () => {
+  it.each(["", "docs"])("runs a nested pull request checkout as the provider root with source root %j", async (sourceRoot) => {
     const threadId = "thread-nested-pull-request-provider-root"
     let root = ""
     let checkoutSha = ""
@@ -4366,6 +4366,8 @@ cli_auth_credentials_store = "keyring"
         expect(instructions).toContain('"mount": ""')
         expect(instructions).not.toContain('"mount": "portal"')
         expect(instructions).toContain(`"id": "${checkoutSha}"`)
+        expect(instructions).toContain('"root": ""')
+        expect(instructions).not.toContain('"root": "docs"')
         await expect(readFile(join(root, "portal", ".agents/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Browser\n")
       },
     })
@@ -4420,7 +4422,7 @@ cli_auth_credentials_store = "keyring"
     const runContext = context(threadId, {
       tools: {},
       workspace,
-      workspaceDefinition: { mode: "write", name: "docs", sources: { portal: github({ repo: "acme/portal" }) } },
+      workspaceDefinition: { mode: "write", name: "docs", sources: { portal: github({ repo: "acme/portal", root: sourceRoot }) } },
       workspaceMode: "write",
     })
     runContext.context.set("pullRequest", {
