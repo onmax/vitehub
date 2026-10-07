@@ -210,6 +210,13 @@ async function planSourceSync(
 
 async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) {
   const sourceStore = sourceSyncGrants.store(sourceSyncGrants.grant(plan.source), store)
+  const current = await store.getMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName)).then(readWorkspaceSourceSyncState)
+  for (const path of Object.keys(plan.nextState.paths)) {
+    const existing = current?.paths[path]
+    if (existing && existing.mountPath !== undefined && existing.mountPath !== plan.source.mountPath) {
+      throw workspaceError(`[vitehub] Workspace Source Sync produced overlapping mount claims for path: ${path}.`)
+    }
+  }
   if (plan.source.mountPath) await sourceStore.mkdir(plan.source.mountPath, { recursive: true })
   for (const file of plan.files) {
     await sourceStore.writeFile(file.path, file)
@@ -219,7 +226,6 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
   }
   await pruneEmptySourceDirectories(sourceStore, plan.source, plan.removals)
   if (plan.stateChanged) {
-    const current = await store.getMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName)).then(readWorkspaceSourceSyncState)
     const paths = { ...current?.paths }
     for (const [path, metadata] of Object.entries(paths)) {
       if ((metadata.mountPath ?? plan.source.mountPath) === plan.source.mountPath && !plan.nextState.paths[path]) delete paths[path]

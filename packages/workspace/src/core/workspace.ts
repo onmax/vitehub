@@ -5,7 +5,7 @@ import { createWorkspaceSourceView } from "../sources/view.ts"
 import { createWorkspaceStoreFromProvider } from "../storage/provider.ts"
 import { forwardWorkspaceRevisionMaterializer } from "../storage/materialization.ts"
 import { forwardWorkspaceStoreTarget } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, workspaceInternalMetadataCapability, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { getCachedWorkspaceStore } from "./workspace-cache.ts"
@@ -47,9 +47,9 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
     async getMeta(key) {
       return await store.getMeta?.(key)
     },
-    async setMeta(key, value) {
+    async setMeta(key, value, capability?: typeof workspaceInternalMetadataCapability) {
       // Internal writers use the Store. Public callers cannot forge their records.
-      await store.setMeta?.(assertPublicWorkspaceMetaKey(key), value)
+      await store.setMeta?.(capability === workspaceInternalMetadataCapability ? key : assertPublicWorkspaceMetaKey(key), value)
     },
     async readFile(path, options) {
       return await files.readFile(path, options)
