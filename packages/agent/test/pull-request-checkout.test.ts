@@ -297,6 +297,7 @@ describe("pull request checkout", () => {
     ["remote.origin.pushurl", "https://github.com/other/repository.git", "wrong push destination"],
     ["remote.origin.push", "HEAD:refs/heads/other", "wrong push refspec"],
     ["remote.origin.push", "feature:other", "wrong push refspec"],
+    ["remote.origin.push", "+feature", "wrong push refspec"],
     ["remote.origin.push", "+feature:other", "wrong push refspec"],
     ["remote.origin.mirror", "true", "wrong push refspec"],
     ["push.default", "matching", "wrong default push configuration"],

@@ -299,7 +299,9 @@ function normalizeGitRemote(value: string): string {
 }
 
 function normalizePushRefspec(value: string, branch: string): string | undefined {
-  const [source, destination, ...extra] = value.trim().replace(/^\+/, "").split(":")
+  const refspec = value.trim()
+  if (refspec.startsWith("+")) return
+  const [source, destination, ...extra] = refspec.split(":")
   if (!source || extra.length) return
   const expected = `refs/heads/${branch}`
   const sourceRef = source === "HEAD" ? expected : remoteRef(source)
