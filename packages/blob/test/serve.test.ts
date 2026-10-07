@@ -45,6 +45,23 @@ describe("Blob response transforms", () => {
     expect(request.res.headers.get("cache-control")).toBe("private, no-cache")
   })
 
+  it("revalidates normal reads when another writer replaces the body and content type", async () => {
+    const get = driver.get.bind(driver)
+    let replace = true
+    vi.spyOn(driver, "get").mockImplementation(async (path) => {
+      if (replace) {
+        replace = false
+        await storage.put(path, "updated", { contentType: "text/html" })
+      }
+      return get(path)
+    })
+    const request = event()
+    const [, body] = await storage.serve(request, "private/original")
+    expect(await new Response(body).text()).toBe("updated")
+    expect(request.res.headers.get("content-type")).toBe("text/html")
+    expect(request.res.headers.get("etag")).toBe((await driver.head("private/original"))?.httpEtag)
+  })
+
   it("caches only the derived body and keeps the original unchanged", async () => {
     for (let count = 0; count < 2; count++) {
       const request = event()

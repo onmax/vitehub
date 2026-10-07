@@ -267,6 +267,11 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             ? await readDerived(await driver.get(cachePath), etag!)
             : await driver.get(normalizedPath)
           const transform = options.transform
+          if (body && !transform) {
+            const snapshot = await driver.head(normalizedPath)
+            if (!snapshot) return
+            if (snapshot.httpEtag !== meta.httpEtag || snapshot.contentType !== meta.contentType) return false
+          }
           if (!body && cachePath && transform) {
             const key = cachePath
             const pendingKey = `${key}:${etag}`
