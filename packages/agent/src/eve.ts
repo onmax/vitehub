@@ -125,9 +125,9 @@ function eveSession(context: AgentCapabilityContext): EveToolContext["session"] 
 }
 
 function eveLifecycleEvent(type: string, turn: EveToolContext["session"]["turn"]) {
-  const data = type === "session.started"
-    ? {}
-    : { sequence: turn.sequence, turnId: turn.id, ...(type === "step.started" ? { stepIndex: 0 } : {}) }
+  if (type === "session.started") return { data: {}, type }
+  const data = { sequence: turn.sequence, turnId: turn.id }
+  if (type === "step.started") return { data: { ...data, stepIndex: 0 }, type }
   return { data, type }
 }
 
