@@ -145,6 +145,7 @@ async function hasGitHubMention(body: string): Promise<boolean> {
     linkify: false,
   })
   function hasMention(node: MarkdownNode): boolean {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark has already parsed the body into its string-or-element node contract.
     if (typeof node === "string") return !!node.match(githubMentionPattern)
     const [tag, , ...children] = node
     if (tag === "code" || tag === "pre" || tag === null) return false
