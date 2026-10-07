@@ -19,7 +19,7 @@ import { attachWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecuti
 import { forwardWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
-import { forwardWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
+import { forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
 import { createHostedWorkspaceSession } from "../session/host.ts"
 
 import type { Tool, ToolSet } from "ai"
@@ -633,7 +633,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
     tools.none = emptyTools
     // SAFETY: The writable facade delegates all operations to the lazy Workspace and carries its Store accessor.
     const facade = {
-      [workspaceMetadataTarget]: async () => await (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.(),
+      [workspaceMetadataTarget]: async () => await resolveWorkspaceMetadataTarget(workspace),
       [workspaceStoreTarget]: async () => {
         return await (workspace as Workspace & WorkspaceStoreTargetCarrier)[workspaceStoreTarget]?.()
       },

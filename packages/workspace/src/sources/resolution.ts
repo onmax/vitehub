@@ -10,6 +10,7 @@ import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../s
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
+import { isInternalWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { markLiveWorkspaceSource } from "./live.ts"
 import { attachWorkspaceSourceRequestExecution, createWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "./request-execution.ts"
@@ -193,6 +194,13 @@ function createOverlaySourceStore<Name extends WorkspaceName>(
         ?? await workspace.getMeta?.(key)
     },
     async setMeta(key, value) {
+      // Internal metadata must survive overlay recreation. Resolve the backing
+      // Workspace target directly so Source Sync does not write only to memory.
+      if (isInternalWorkspaceMetaKey(key)) {
+        const backing = await resolveWorkspaceMetadataTarget(workspace)
+        const mutationTarget = backing ? resolveWorkspaceMetadataMutationTarget(backing) : undefined
+        if (mutationTarget && await setWorkspaceMetadata(mutationTarget, key, value)) return
+      }
       await memory.setMeta?.(key, value)
     },
   }
