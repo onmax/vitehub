@@ -4360,7 +4360,10 @@ cli_auth_credentials_store = "keyring"
       async onStartSession() {
         expect(createProviderRuntime.mock.lastCall?.[0].cwd).toBe(join(root, "portal"))
         expect(provider.startSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: join(root, "portal") }))
-        await expect(readFile(join(root, "portal", "AGENTS.md"), "utf8")).resolves.toBe("provider instructions")
+        const instructions = await readFile(join(root, "portal", "AGENTS.md"), "utf8")
+        expect(instructions).toContain("provider instructions")
+        expect(instructions).toContain('"mount": ""')
+        expect(instructions).not.toContain('"mount": "portal"')
       },
     })
     const session = {
@@ -4376,6 +4379,13 @@ cli_auth_credentials_store = "keyring"
     }
     const workspace = {
       fs: {},
+      materializeSources: vi.fn(async () => ({
+        bytes: 0,
+        directories: 0,
+        files: 1,
+        path: "",
+        sources: [{ mountPath: "portal", provider: "github", revision: { id: "a".repeat(40), immutable: true }, source: "portal", status: "ready" }],
+      })),
       startSession: vi.fn(async (options: { target: string }) => {
         root = options.target
         const checkout = join(root, "portal")
@@ -4404,7 +4414,7 @@ cli_auth_credentials_store = "keyring"
     const runContext = context(threadId, {
       tools: {},
       workspace,
-      workspaceDefinition: { mode: "write", name: "docs" },
+      workspaceDefinition: { mode: "write", name: "docs", sources: { portal: github({ repo: "acme/portal" }) } },
       workspaceMode: "write",
     })
     runContext.context.set("pullRequest", {

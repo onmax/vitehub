@@ -1933,7 +1933,11 @@ interface ProviderSourceProvenance {
   source: string
 }
 
-function providerSourceProvenance(context: AgentAdapterRunContext, materialized: Awaited<ReturnType<typeof materializeWorkspaceSources>>): ProviderSourceProvenance[] {
+function providerSourceProvenance(
+  context: AgentAdapterRunContext,
+  materialized: Awaited<ReturnType<typeof materializeWorkspaceSources>>,
+  providerMount?: string,
+): ProviderSourceProvenance[] {
   if (!materialized?.ready || !context.workspaceDefinition?.sources) return []
   let metadata
   try {
@@ -1949,6 +1953,17 @@ function providerSourceProvenance(context: AgentAdapterRunContext, materialized:
     if (status.status !== "ready" || status.provider !== "github" || status.revision?.immutable !== true || !/^(?:[\da-f]{40}|[\da-f]{64})$/i.test(status.revision.id)) return []
     const source = metadata.get(status.source)
     if (!source || source.mountPath !== status.mountPath) return []
+    // A nested pull-request checkout becomes the provider root. Keep only sources
+    // that are inside that root and rebase their mount so citations stay relative
+    // to the directory the provider actually reads.
+    const mount = providerMount === undefined
+      ? status.mountPath
+      : status.mountPath === providerMount
+        ? ""
+        : status.mountPath.startsWith(`${providerMount}/`)
+          ? status.mountPath.slice(providerMount.length + 1)
+          : undefined
+    if (mount === undefined) return []
     // Only overlaps within the session's selected paths can make ownership ambiguous.
     if ([...metadata.values()].some(candidate => candidate.key !== source.key
       && overlaps(candidate.mountPath, source.mountPath)
@@ -1971,7 +1986,7 @@ function providerSourceProvenance(context: AgentAdapterRunContext, materialized:
       && candidate.mountPath === status.mountPath
       && (candidate.revision?.id !== revisionId || candidate.revision.immutable !== true))) return []
     return [{
-      mount: status.mountPath,
+      mount,
       provider: "github" as const,
       repository: `https://github.com/${repo}`,
       revision: { id: status.revision.id, ...(status.revision.ref ? { ref: status.revision.ref } : {}) },
@@ -2000,7 +2015,9 @@ async function prepareWorkspace(
   }
   const paths = selectedWorkspacePaths(context)
   const materializedSources = await materializeWorkspaceSources(context, paths)
-  const provenance = providerSourceProvenance(context, materializedSources)
+  const pullRequest = pullRequestCheckoutPlan(context.context)
+  const checkoutPullRequest = pullRequest && (!paths || paths.some(path => !path || !pullRequest.mount || pullRequest.mount === path || pullRequest.mount.startsWith(`${path}/`)))
+  const provenance = providerSourceProvenance(context, materializedSources, checkoutPullRequest && pullRequest.mount ? pullRequest.mount : undefined)
   // driver.cwd is the working copy. There is no session to materialize, snapshot, or write back.
   if (inPlace) return { provenance, pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
@@ -2015,8 +2032,6 @@ async function prepareWorkspace(
   }
   if (context.workspaceMode !== "write") sessionOptions.writeBack = false
   const session = await workspaceSessionStarter(context.workspace)(sessionOptions)
-  const pullRequest = pullRequestCheckoutPlan(context.context)
-  const checkoutPullRequest = pullRequest && (!paths || paths.some(path => !path || !pullRequest.mount || pullRequest.mount === path || pullRequest.mount.startsWith(`${path}/`)))
   if (pullRequest && checkoutPullRequest) {
     try {
       // Give the Driver shell a real checkout so it can fetch, commit, and push with the Agent GitHub identity.

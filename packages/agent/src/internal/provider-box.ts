@@ -4,7 +4,7 @@ import { chmod, writeFile } from "node:fs/promises"
 import { createServer } from "node:net"
 import { join } from "node:path"
 import type { Server, Socket } from "node:net"
-import type { BoxDefinition, BoxFile, BoxProcess, BoxRuntimeDefinition, BoxSession } from "@vite-hub/box"
+import type { BoxDefinition, BoxFile, BoxPlan, BoxProcess, BoxRuntimeDefinition, BoxSession } from "@vite-hub/box"
 
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
@@ -34,6 +34,8 @@ export interface ProviderBoxSession {
   readonly environment?: Readonly<Record<string, string | undefined>>
   /** Absolute Home path inside the Box. */
   readonly home: string
+  /** Resolved Box workspace; a missing path means the Box owns its checkout. */
+  readonly workspace?: BoxPlan["workspace"]
   readonly session: BoxSession
   readonly spawn: NonNullable<BoxSession["spawn"]>
 }
@@ -89,7 +91,7 @@ export async function openProviderBox<Context>(options: {
       throw agentDiagnostics.AGENT_R0952({ message: "[vitehub] Agent Box did not report an absolute HOME path." })
     }
     const omitDiagnosticOutput = Object.keys(declared).length > 0 || Object.keys(options.definition.home?.state ?? {}).length > 0
-    return { environment, omitDiagnosticOutput, home: home.stdout, session, spawn: spawn.bind(session) }
+    return { environment, omitDiagnosticOutput, home: home.stdout, session, spawn: spawn.bind(session), workspace: box.plan.workspace }
   }
   catch (error) {
     await session.close().catch(() => undefined)
@@ -194,7 +196,9 @@ async function handleRelayConnection(
     : value.startsWith(`${options.localRoot}/`)
       ? `${boxCwd}${value.slice(options.localRoot.length)}`
       : undefined
-  const boxWorkingDirectory = options.localCwd === undefined ? boxCwd : mapPath(options.localCwd)
+  const boxWorkingDirectory = options.box.workspace?.path === undefined || options.localCwd === undefined
+    ? boxCwd
+    : mapPath(options.localCwd)
   const mapText = (value: string) => value.replaceAll(options.localRoot, boxCwd)
   const selectedArgs = options.filterArgs ? options.filterArgs(args, mapPath) : [...args]
   let disconnected = socket.destroyed
