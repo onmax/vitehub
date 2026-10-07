@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import type { Mock } from "vitest"
 import type { JSONRPCMessage, MCPClient, MCPTransport } from "@ai-sdk/mcp"
+import type { AgentToolSchema } from "../src/types.ts"
 
 const runtime = () => ({
   agentIdentity: createAgentEnvIdentity({ name: "agent" }),
@@ -187,12 +188,12 @@ describe("mcp capability", () => {
         },
       },
     })
-    const inputSchema = {
+    const inputSchema: AgentToolSchema = {
       additionalProperties: false,
       properties: { id: { type: "string" } },
       required: ["id"],
       type: "object",
-    } as const
+    }
 
     const resolved = await resolveAgentCapabilities({
       capabilities: [mcp({
