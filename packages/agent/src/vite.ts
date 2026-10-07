@@ -1576,7 +1576,7 @@ export async function transformEveExtensionCapabilities(
   return applyCodeReplacements(code, replacements)
 }
 
-const supportedEveExtensionContracts: Record<number, Record<string, readonly number[]>> = {
+const supportedEveExtensionContracts = {
   1: {
     config: [1],
     dynamicTool: [8],
@@ -1591,7 +1591,7 @@ const supportedEveExtensionContracts: Record<number, Record<string, readonly num
     extension: [1],
     tool: [20, 54],
   },
-}
+} satisfies Record<number, Record<string, readonly number[]>>
 
 async function resolveEveExtensionPackage(
   config: Pick<ResolvedConfig, "createResolver">,
@@ -1618,15 +1618,13 @@ async function resolveEveExtensionPackage(
         const formatVersion = isRecord(manifest) ? manifest.formatVersion : undefined
         const requires = isRecord(manifest) && isRecord(manifest.requires) ? manifest.requires : undefined
         if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !requires
-          || !hasRuntimeType(formatVersion, "number") || !Number.isInteger(formatVersion) || formatVersion < 1) {
+          || (formatVersion !== 1 && formatVersion !== 2)) {
           throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
         const contracts = supportedEveExtensionContracts[formatVersion]
-        if (!contracts) {
-          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
-        }
         for (const [contract, version] of Object.entries(requires)) {
-          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || (!Object.hasOwn(contracts, contract) || !contracts[contract]!.includes(version))) {
+          const versions = Object.entries(contracts).find(([name]) => name === contract)?.[1]
+          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || !versions?.includes(version)) {
             throw agentDiagnostics.AGENT_B0015({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} requires unsupported ${contract}@${String(version)}.` })
           }
         }
