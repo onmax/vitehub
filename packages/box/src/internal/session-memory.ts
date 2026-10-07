@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, rmdir, statfs, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineDiagnostics } from "nostics";
 
@@ -50,8 +50,22 @@ export interface SessionMemory {
   close(): Promise<void>;
 }
 
+async function resolveEnvExecutable(): Promise<string> {
+  for (const directory of (process.env.PATH ?? "").split(":")) {
+    const candidate = resolve(directory || ".", "env");
+    try {
+      await access(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue through PATH entries until the host's executable is found.
+    }
+  }
+  throw diagnostics.BOX_R0157({ message: "Box resource-limited sessions require an executable env utility on the host PATH." });
+}
+
 export async function createSessionMemory(resources: TrustedHostResources): Promise<SessionMemory> {
   validateTrustedHostResources(resources);
+  const envExecutable = await resolveEnvExecutable();
   const parent = resources.cgroupParent;
   // Never silently create ordinary files in a directory that is not a cgroup mount.
   if ((await statfs(parent)).type !== 0x63677270) {
@@ -120,8 +134,8 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       const environment = Object.entries(options.env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
       return spawn("/bin/sh", [
         "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; grep -q "^oom 0$" "$3" || exit 125; shift 3; exec /usr/bin/env -i -- "$@"',
-        "vitehub-box",
+        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; grep -q "^oom 0$" "$3" || exit 125; shift 3; exec "$0" -i -- "$@"',
+        envExecutable,
         path,
         healthMarker,
         join(path, "memory.events.local"),
