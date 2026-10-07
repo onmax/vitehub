@@ -71,6 +71,35 @@ Running the file prints:
 node:health
 ```
 
+## Bounded runtime preflight
+
+Hosts that start an Agent can check commands, files, browsers, MCP servers, or
+tools before model execution without making those checks part of the critical
+path. `startRuntimePreflight()` runs a bounded set of checks in parallel and
+returns a promise for a compact, serializable manifest. A failed or missing
+optional capability becomes data and a Nostics diagnostic; it never rejects the
+manifest or the invocation. The diagnostic callback is best effort and does not
+delay the checks.
+
+```ts
+import { startRuntimePreflight } from "@vite-hub/runtime"
+
+const preflight = startRuntimePreflight({
+  checks: [
+    { id: "command:git", kind: "command", required: true, check: ({ signal }) => runWhich("git", signal) },
+    { id: "file:AGENTS.md", kind: "file", check: ({ signal }) => readFile("AGENTS.md", signal) },
+  ],
+  onDiagnostic: issue => reportDiagnostic(issue.diagnostic),
+})
+
+// The host may expose this to inspection or model instructions when ready.
+const manifest = await preflight.manifest
+```
+
+Keep `details` on a check result small and redacted. The framework limits each
+reason and details object, and caps the number and duration of checks so a
+broken provider cannot hold an invocation open.
+
 `createRuntimeContext()` gives each operation a fresh memo cache and tracks work
 registered with `waitUntil()`. Pass the host's `waitUntil` method to forward that
 work to a real provider lifetime. Without one, await `flushWaitUntil()` before
