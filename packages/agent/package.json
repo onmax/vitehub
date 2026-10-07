@@ -217,6 +217,7 @@
     "comark": "catalog:markdown",
     "effect": "catalog:effect",
     "esbuild": "catalog:esbuild-v27",
+    "forges": "catalog:",
     "nostics": "catalog:runtime",
     "proper-lockfile": "catalog:",
     "valibot": "catalog:runtime"
