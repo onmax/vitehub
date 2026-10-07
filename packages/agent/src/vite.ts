@@ -1576,21 +1576,20 @@ export async function transformEveExtensionCapabilities(
   return applyCodeReplacements(code, replacements)
 }
 
-const supportedEveExtensionContracts: Record<number, Record<string, number>> = {
+const supportedEveExtensionContracts: Record<number, Record<string, readonly number[]>> = {
   1: {
-    config: 1,
-    dynamicTool: 8,
-    extension: 1,
-    tool: 5,
+    config: [1],
+    dynamicTool: [8],
+    extension: [1],
+    tool: [5],
   },
   2: {
-    config: 1,
-    // GitHub Tools 0.8.0 is built with Eve 0.64 and uses these contracts.
-    // Keep this gate aligned with the adapter in eve.ts until newer tool
-    // contracts receive their own runtime support.
-    dynamicTool: 52,
-    extension: 1,
-    tool: 54,
+    config: [1],
+    // Preserve ViteHub's accepted epochs alongside GitHub Tools 0.8.0.
+    // This adapter-specific list is independent of Eve's runtime support table.
+    dynamicTool: [20, 52],
+    extension: [1],
+    tool: [20, 54],
   },
 }
 
@@ -1627,7 +1626,7 @@ async function resolveEveExtensionPackage(
           throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
         for (const [contract, version] of Object.entries(requires)) {
-          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || contracts[contract] !== version) {
+          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || (!Object.hasOwn(contracts, contract) || !contracts[contract]!.includes(version))) {
             throw agentDiagnostics.AGENT_B0015({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} requires unsupported ${contract}@${String(version)}.` })
           }
         }

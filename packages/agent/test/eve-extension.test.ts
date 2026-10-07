@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -22,6 +22,29 @@ const temporaryDirectories: string[] = []
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { force: true, recursive: true })))
 })
+
+async function transformManifest(manifest: { formatVersion: number, requires: object }): Promise<string | undefined> {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-eve-manifest-"))
+  temporaryDirectories.push(root)
+  const extensionRoot = join(root, "extension")
+  await mkdir(extensionRoot)
+  await writeFile(join(extensionRoot, "package.json"), JSON.stringify({ name: "test-extension", eve: { extension: { dist: "." } } }))
+  await writeFile(join(extensionRoot, "_manifest.json"), JSON.stringify({ kind: "eve-extension", ...manifest }))
+  const plugin = hubAgent()
+  await (plugin.configResolved as (config: unknown) => Promise<void>)({
+    command: "build",
+    createResolver: () => async (specifier: string) => specifier === "test-extension" ? join(extensionRoot, "index.js") : undefined,
+    plugins: [],
+    root,
+  })
+  return (plugin.transform as (...args: unknown[]) => Promise<string | undefined>).call(
+    { parse: parseAst },
+    `import { defineAgent } from "@vite-hub/agent"
+import extension from "test-extension"
+export default defineAgent({ capabilities: [extension()] })`,
+    join(root, "server", "agents", "reviewer.ts"),
+  )
+}
 
 function capabilityContext(): AgentCapabilityContext {
   const messages = () => []
@@ -75,6 +98,25 @@ describe("Eve extension capabilities", () => {
       kind: "eve-extension",
       requires: { config: 1, dynamicTool: 52, extension: 1, tool: 54 },
     })
+  })
+
+  it.each([
+    { formatVersion: 1, dynamicTool: 8, tool: 5 },
+    { formatVersion: 2, dynamicTool: 20, tool: 20 },
+    { formatVersion: 2, dynamicTool: 52, tool: 54 },
+  ])("accepts supported Eve contracts $formatVersion/$dynamicTool/$tool", async ({ formatVersion, dynamicTool, tool }) => {
+    await expect(transformManifest({ formatVersion, requires: { config: 1, dynamicTool, extension: 1, tool } })).resolves.toContain(`from "@vite-hub/agent/eve"`)
+  })
+
+  it.each([
+    { requires: { dynamicTool: 21 }, error: "unsupported dynamicTool@21" },
+    { requires: { tool: 53 }, error: "unsupported tool@53" },
+    { requires: { tool: 55 }, error: "unsupported tool@55" },
+    { requires: { unknownContract: 1 }, error: "unsupported unknownContract@1" },
+    { requires: { tool: "20" }, error: "unsupported tool@20" },
+    { requires: { tool: 20.5 }, error: "unsupported tool@20.5" },
+  ])("rejects unsupported Eve contracts: $error", async ({ requires, error }) => {
+    await expect(transformManifest({ formatVersion: 2, requires })).rejects.toThrow(error)
   })
 
   it("uses the injective generated namespace as the Eve configuration scope", async () => {
