@@ -392,6 +392,29 @@ describe("Vite db provider outputs", () => {
     expect(config.cloudflare).toEqual({ binding: "DB" })
   })
 
+  it("preserves effective Nuxt D1 identifiers when a definition only opts into Cloudflare", () => {
+    const rootDir = "/tmp/vitehub-d1-runtime-expression"
+    const runtimeConfig = createRuntimeConfig(rootDir, {
+      cloudflare: {
+        binding: "NUXT_DB",
+        databaseId: "nuxt-d1-id",
+        databaseName: "nuxt-d1-name",
+        previewDatabaseId: "nuxt-preview-id",
+        migrationsTable: "__nuxt_migrations",
+      },
+    })
+    const expression = renderDatabaseConfigExpression("primary", runtimeConfig, "definition")
+    const config = Function("definition", `return (${expression})`)({ cloudflare: {}, connection: undefined, drizzle: {}, schema: {} })
+
+    expect(config.cloudflare).toMatchObject({
+      binding: "NUXT_DB",
+      databaseId: "nuxt-d1-id",
+      databaseName: "nuxt-d1-name",
+      migrationsTable: "__nuxt_migrations",
+      previewDatabaseId: "nuxt-preview-id",
+    })
+  })
+
   it.each([
     ["blob-db", "hubBlob({ driver: 'vercel-blob', token: 'vercel_blob_rw_test' }), hubDb()"],
     ["db-blob", "hubDb(), hubBlob({ driver: 'vercel-blob', token: 'vercel_blob_rw_test' })"],
