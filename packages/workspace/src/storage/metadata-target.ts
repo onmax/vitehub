@@ -10,17 +10,21 @@ export interface WorkspaceMetadataTarget {
   mkdir?(path: string, options?: MkdirOptions): Promise<void>
   rm?(path: string, options?: RmOptions): Promise<void>
   getMeta?(key: string): Promise<unknown>
-  /** Owner-only metadata write. It accepts internal keys that public `setMeta` rejects. */
-  setMeta?(key: string, value: unknown): Promise<void>
   list?(path: string, options?: ListOptions): Promise<WorkspaceEntry[]>
 }
 
-const metadataTargetsByStore = new WeakMap<WorkspaceMetadataTarget, Map<string, WorkspaceMetadataTarget>>()
+type WorkspaceMetadataStore = WorkspaceMetadataTarget & {
+  setMeta?(key: string, value: unknown): Promise<void>
+}
 
-export function createWorkspaceMetadataTarget(store: WorkspaceMetadataTarget, workspaceName: string): WorkspaceMetadataTarget {
+const metadataTargetsByStore = new WeakMap<WorkspaceMetadataTarget, Map<string, WorkspaceMetadataTarget>>()
+const metadataSetters = new WeakMap<WorkspaceMetadataTarget, (key: string, value: unknown) => Promise<void>>()
+
+export function createWorkspaceMetadataTarget(store: WorkspaceMetadataStore, workspaceName: string): WorkspaceMetadataTarget {
   const targets = metadataTargetsByStore.get(store) ?? new Map<string, WorkspaceMetadataTarget>()
   const existing = targets.get(workspaceName)
   if (existing) return existing
+  const setMeta = store.setMeta?.bind(store)
   const target: WorkspaceMetadataTarget = {
     workspaceName,
     readFile: store.readFile?.bind(store),
@@ -28,13 +32,21 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataTarget, wo
     mkdir: store.mkdir?.bind(store),
     rm: store.rm?.bind(store),
     getMeta: store.getMeta?.bind(store),
-    setMeta: store.setMeta?.bind(store),
     list: store.list?.bind(store),
   }
+  if (setMeta) metadataSetters.set(target, setMeta)
   forwardWorkspaceStoreTarget(store, target)
   targets.set(workspaceName, target)
   metadataTargetsByStore.set(store, targets)
   return target
+}
+
+/** Writes internal metadata without exposing the privileged setter on a facade. */
+export async function setWorkspaceMetadata(target: WorkspaceMetadataTarget, key: string, value: unknown): Promise<boolean> {
+  const setter = metadataSetters.get(target)
+  if (!setter) return false
+  await setter(key, value)
+  return true
 }
 
 export type WorkspaceMetadataTargetCarrier = {

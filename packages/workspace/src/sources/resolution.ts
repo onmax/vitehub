@@ -8,7 +8,7 @@ import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
 import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { markLiveWorkspaceSource } from "./live.ts"
@@ -65,7 +65,6 @@ export interface WorkspaceSourceResolutionFacade<Name extends WorkspaceName = Wo
 
 type WorkspaceMetadataTarget = {
   getMeta?(key: string): Promise<unknown>
-  setMeta?(key: string, value: unknown): Promise<void>
 }
 
 export function hasWorkspaceSourceResolvers(definition: Pick<WorkspaceDefinition, "sources"> | undefined): boolean {
@@ -272,7 +271,9 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
     async setMeta(key, value) {
       // Source Sync state uses internal keys, which public setMeta rejects.
       const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
-      if (target?.setMeta) return await target.setMeta(key, value)
+      if (target) {
+        if (await setWorkspaceMetadata(target, key, value)) return
+      }
       if (metadata.setMeta) {
         await metadata.setMeta(key, value)
         return
