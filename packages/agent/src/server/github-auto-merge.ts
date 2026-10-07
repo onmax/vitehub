@@ -120,10 +120,9 @@ function nonempty(value: string, name: string): string {
 }
 
 const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/
-// GitHub renders mentions in Markdown, blockquotes, and quoted text. Treat an
-// at-sign as a mention when it is not part of an email or identifier, then
-// apply the same tokenization to ordinary and explicit mention bodies.
-const githubMentionPattern = /(^|[^A-Za-z0-9])@([A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})(?:\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38}))?)(?=$|[^A-Za-z0-9_-])/g
+// GitHub renders mentions in Markdown, blockquotes, and quoted text. Keep
+// URL paths, email-like text, and adjacent at-signs out of the token stream.
+const githubMentionPattern = /(^|[^A-Za-z0-9@+./-])@([A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})(?:\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38}))?)(?=$|[^A-Za-z0-9_-])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
   const normalized = new Set<string>()
@@ -134,10 +133,9 @@ export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []):
   return [...normalized]
 }
 
-function assertCommentMentionsAllowed(body: string, allowlist: ReadonlySet<string>): void {
+function assertCommentMentionsAllowed(body: string): void {
   for (const match of body.matchAll(githubMentionPattern)) {
-    const login = match[2]
-    if (login && !allowlist.has(login.toLowerCase())) throw new Error("Comment contains a GitHub login outside the configured mention allowlist.")
+    if (match[2]) throw new Error("Comments cannot contain GitHub mentions; use the guarded mention capability.")
   }
 }
 
@@ -338,7 +336,7 @@ export function createGitHubPullRequestOperations(
     },
     async comment(body) {
       nonempty(body, "Comment")
-      if (options.restrictCommentMentions) assertCommentMentionsAllowed(body, mentionAllowlist)
+      if (options.restrictCommentMentions) assertCommentMentionsAllowed(body)
       await snapshot()
       await github.command(["api", `${target}/comments`, "--method", "POST", "-f", `body=${options.commentPrefix ?? ""}${body}`], commandOptions)
     },

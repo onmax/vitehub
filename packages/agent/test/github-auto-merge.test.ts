@@ -112,13 +112,19 @@ describe("native auto-merge", () => {
 
   it("does not let ordinary Babysitter comments bypass the mention allowlist", async () => {
     const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
-    await f.operations.comment("Please email ops@example.com and ask @stefina to confirm.")
-    await expect(f.operations.comment("Please ask @other-user to confirm.")).rejects.toThrow(/outside.*allowlist/)
-    await expect(f.operations.comment("Please ask @stefina and @other-user to confirm.")).rejects.toThrow(/outside.*allowlist/)
-    await expect(f.operations.comment("Please ask @acme/ops to confirm.")).rejects.toThrow(/outside.*allowlist/)
+    await expect(f.operations.comment("Please ask @stefina to confirm.")).rejects.toThrow(/guarded mention capability/)
+    await expect(f.operations.comment("Please ask @other-user to confirm.")).rejects.toThrow(/guarded mention capability/)
+    await expect(f.operations.comment("Please ask @stefina and @other-user to confirm.")).rejects.toThrow(/guarded mention capability/)
+    await expect(f.operations.comment("Please ask @acme/ops to confirm.")).rejects.toThrow(/guarded mention capability/)
   })
 
-  it.each(["Contact ops@example.com to restore service.", "Use @ as the delimiter."])("allows non-mention at-signs in %s", async (body) => {
+  it.each([
+    "Contact ops@example.com to restore service.",
+    "Contact ops+alerts@example.com to restore service.",
+    "Open https://example.com/@someone for details.",
+    "Use @@someone as the delimiter.",
+    "Use @ as the delimiter.",
+  ])("allows non-mention at-signs in %s", async (body) => {
     const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
     await f.operations.comment(body)
     await f.operations.mention("stefina", body)
@@ -134,7 +140,7 @@ describe("native auto-merge", () => {
     "&quot;@other-user&quot;", "(@other-user)", "**@acme/ops**",
   ])("rejects wrapped mention %s before making GitHub calls", async (body) => {
     const f = fixture({ restrictCommentMentions: true })
-    await expect(f.operations.comment(body)).rejects.toThrow(/outside.*allowlist/)
+    await expect(f.operations.comment(body)).rejects.toThrow(/guarded mention capability/)
     expect(f.command).not.toHaveBeenCalled()
     const explicit = fixture({ mentionAllowlist: ["stefina"] })
     await expect(explicit.operations.mention("stefina", body)).rejects.toThrow(/another mention/)
