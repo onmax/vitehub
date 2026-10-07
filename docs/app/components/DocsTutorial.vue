@@ -68,9 +68,9 @@ const codeTreeUi = {
     </UPageBody>
 
     <template #right>
-      <aside class="vh-tutorial-code-panel" aria-label="Tutorial files and code">
+      <aside class="vh-tutorial-code-panel" aria-labelledby="tutorial-code-heading">
         <div class="vh-tutorial-code-heading">
-          <span>Files and code</span>
+          <h2 id="tutorial-code-heading">Files and code</h2>
           <span v-if="activePath" class="vh-tutorial-code-current">{{ activePath }}</span>
         </div>
         <div class="sr-only" aria-live="polite" aria-atomic="true">
@@ -130,6 +130,11 @@ const codeTreeUi = {
   font: 600 0.6875rem/1.2 var(--font-mono, ui-monospace);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.vh-tutorial-code-heading h2 {
+  margin: 0;
+  font: inherit;
 }
 
 .vh-tutorial-code-current {

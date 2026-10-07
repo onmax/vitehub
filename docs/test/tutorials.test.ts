@@ -95,6 +95,7 @@ describe("documentation tutorials", () => {
 
     expect(tutorial).toContain("xl:!grid-cols-[minmax(0,1fr)_minmax(20rem,42%)]")
     expect(tutorial).toContain("xl:!w-full")
+    expect(tutorial).toContain("aria-labelledby=\"tutorial-code-heading\"")
     expect(tutorial).toContain("watch(() => props.page.path")
     expect(tutorial).toContain(":model-value=\"activePath\"")
     expect(tutorial).toContain("@update:model-value=\"selectCodePath\"")
