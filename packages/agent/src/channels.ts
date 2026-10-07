@@ -1860,7 +1860,6 @@ function renderGithubActivity(
       return `| ${links || "Pending"} | ${entry.status ? labels[entry.status] : "Unknown"} | ${entry.startedAt ? githubActivityTime(entry.startedAt) : "Not started"} | ${githubActivityDuration(entry)} |`
     }),
   ].join("\n"))
-  if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
   let latestAnswer: string | undefined
   for (const entry of [current, ...state.history]) {
     if (!entry) continue
@@ -1870,6 +1869,7 @@ function renderGithubActivity(
   if (latestAnswer) {
     sections.push(`Latest answer\n\n${latestAnswer}`)
   }
+  if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
   if (activity.error) sections.push(`Agent stopped: ${githubActivityText(activity.error, 1_000)}`)
   const answers = [current, ...state.history]
     .filter((entry): entry is GitHubActivityHistoryEntry => !!entry)
