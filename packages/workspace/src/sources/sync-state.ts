@@ -1,5 +1,6 @@
 export interface WorkspaceSourceSyncStatePath {
   digest: string
+  mountPath?: string
   mediaType?: string
   sourcePath: string
 }
@@ -26,6 +27,7 @@ export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyn
     const entry = state.paths[path]
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return
     if (typeof entry.digest !== "string" || typeof entry.sourcePath !== "string") return
+    if (entry.mountPath !== undefined && typeof entry.mountPath !== "string") return
   }
 
   return state

@@ -110,8 +110,11 @@ describe("internal metadata keys", () => {
     const resolveMetadata = Reflect.get(writable, Symbol.for("vitehub.workspace.metadataTarget"))
 
     expect(resolveMetadata).toBeTypeOf("function")
-    const metadata = await Reflect.apply(resolveMetadata as (...args: never[]) => unknown, writable, []) as { setMeta?: unknown }
+    const metadata = await Reflect.apply(resolveMetadata as (...args: never[]) => unknown, writable, []) as { setMeta?: unknown; writeFile?: unknown; mkdir?: unknown; rm?: unknown }
     expect(metadata?.setMeta).toBeUndefined()
+    expect(metadata?.writeFile).toBeUndefined()
+    expect(metadata?.mkdir).toBeUndefined()
+    expect(metadata?.rm).toBeUndefined()
   })
 
   it("does not let a caller forge sync state that removes a user file", async () => {

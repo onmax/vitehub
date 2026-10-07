@@ -19,6 +19,8 @@ type WorkspaceMetadataStore = WorkspaceMetadataTarget & {
 
 const metadataTargetsByStore = new WeakMap<WorkspaceMetadataTarget, Map<string, WorkspaceMetadataTarget>>()
 const metadataSetters = new WeakMap<WorkspaceMetadataTarget, (key: string, value: unknown) => Promise<void>>()
+const publicMetadataTargets = new WeakMap<WorkspaceMetadataTarget, WorkspaceMetadataTarget>()
+const privateMetadataTargets = new WeakMap<WorkspaceMetadataTarget, WorkspaceMetadataTarget>()
 
 export function createWorkspaceMetadataTarget(store: WorkspaceMetadataStore, workspaceName: string): WorkspaceMetadataTarget {
   const targets = metadataTargetsByStore.get(store) ?? new Map<string, WorkspaceMetadataTarget>()
@@ -35,6 +37,14 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataStore, wor
     list: store.list?.bind(store),
   }
   if (setMeta) metadataSetters.set(target, setMeta)
+  const publicTarget = {
+    workspaceName,
+    readFile: target.readFile,
+    getMeta: target.getMeta,
+    list: target.list,
+  }
+  publicMetadataTargets.set(target, publicTarget)
+  privateMetadataTargets.set(publicTarget, target)
   forwardWorkspaceStoreTarget(store, target)
   targets.set(workspaceName, target)
   metadataTargetsByStore.set(store, targets)
@@ -43,7 +53,7 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataStore, wor
 
 /** Writes internal metadata without exposing the privileged setter on a facade. */
 export async function setWorkspaceMetadata(target: WorkspaceMetadataTarget, key: string, value: unknown): Promise<boolean> {
-  const setter = metadataSetters.get(target)
+  const setter = metadataSetters.get(target) || metadataSetters.get(privateMetadataTargets.get(target) ?? target)
   if (!setter) return false
   await setter(key, value)
   return true
@@ -61,6 +71,10 @@ export function forwardWorkspaceMetadataTarget(source: unknown, target: unknown)
 }
 
 export async function resolveWorkspaceMetadataTarget(source: unknown): Promise<WorkspaceMetadataTarget | undefined> {
-  // SAFETY: Metadata target forwarding probes only the private symbol member owned by this module.
-  return await (source as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.()
+  const target = await (source as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.()
+  return target ? publicMetadataTargets.get(target) ?? target : undefined
+}
+
+export function resolveWorkspaceMetadataMutationTarget(target: WorkspaceMetadataTarget): WorkspaceMetadataTarget {
+  return privateMetadataTargets.get(target) ?? target
 }

@@ -720,7 +720,10 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
           throw workspaceError(`[vitehub] Workspace rebase to take remote ${path} requires a Source write grant for that path.`)
         }
       }
-      await rebase(options?.takeRemote ? { ...options, takeRemote: grants.map(grant => grant.path) } : options)
+      await withWorkspaceStoreMutation(store, async () => {
+        for (const path of takeRemote) await assertWritableCurrentPath(normalizeWorkspacePath(path))
+        await rebase(options?.takeRemote ? { ...options, takeRemote: grants.map(grant => grant.path) } : options)
+      })
     }
   }
 

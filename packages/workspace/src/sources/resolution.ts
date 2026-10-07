@@ -8,7 +8,7 @@ import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
 import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { markLiveWorkspaceSource } from "./live.ts"
@@ -208,7 +208,7 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
   const metadata = workspace as WritableWorkspaceFacade & WorkspaceMetadataTarget
   const store: WorkspaceStore = {
     async readFile(path) {
-      const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
+      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.readFile) return await target.readFile(path)
       try {
         const stat = await workspace.fs.stat(path as never)
@@ -226,7 +226,7 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
     },
     async writeFile(path, file) {
       // Source Sync owns its provenance; public writes must still enforce write policy.
-      const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
+      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.writeFile) return await target.writeFile(path, file)
       // SAFETY: Store paths are checked by the facade at runtime; the generic facade has no statically known named Workspace paths.
       await workspace.fs.writeFile(path as never, file.content, { mediaType: file.mediaType, metadata: file.metadata })
@@ -246,12 +246,12 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
       }
     },
     async mkdir(path, options) {
-      const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
+      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.mkdir) return await target.mkdir(path, options)
       await workspace.fs.mkdir(path as never, options)
     },
     async rm(path, options) {
-      const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
+      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.rm) return await target.rm(path, options)
       await workspace.fs.rm(path as never, options)
     },
@@ -270,7 +270,7 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
     },
     async setMeta(key, value) {
       // Source Sync state uses internal keys, which public setMeta rejects.
-      const target = sourceSync ? await resolveWorkspaceMetadataTarget(workspace) : undefined
+      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target) {
         if (await setWorkspaceMetadata(target, key, value)) return
       }

@@ -162,6 +162,7 @@ async function planSourceSync(
     nextPaths[path] = {
       digest,
       mediaType: item.mediaType,
+      mountPath: source.mountPath,
       sourcePath,
     }
     files.push({
@@ -177,6 +178,7 @@ async function planSourceSync(
     for (const [path, metadata] of Object.entries(previousState.paths)) {
       if (nextPaths[path]) continue
       // The sync state key is shared by Workspaces on one Store. Remove only paths in this Source mount.
+      if ((metadata.mountPath ?? source.mountPath) !== source.mountPath) continue
       if (!sourceMountOwnsPath(source, path)) continue
       if (!await shouldRemoveStalePath(store, path, metadata)) continue
       const removal = { path, sourcePath: metadata.sourcePath, status: "removed" as const }
@@ -214,7 +216,15 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
     await sourceStore.rm(removal.path, { force: true })
   }
   await pruneEmptySourceDirectories(sourceStore, plan.source, plan.removals)
-  if (plan.stateChanged) await store.setMeta?.(sourceSyncMetaKey(plan.source.key), plan.nextState)
+  if (plan.stateChanged) {
+    const current = await store.getMeta?.(sourceSyncMetaKey(plan.source.key)).then(readWorkspaceSourceSyncState)
+    const paths = { ...current?.paths }
+    for (const [path, metadata] of Object.entries(paths)) {
+      if ((metadata.mountPath ?? plan.source.mountPath) === plan.source.mountPath && !plan.nextState.paths[path]) delete paths[path]
+    }
+    for (const [path, metadata] of Object.entries(plan.nextState.paths)) paths[path] = metadata
+    await store.setMeta?.(sourceSyncMetaKey(plan.source.key), { ...plan.nextState, paths })
+  }
 }
 
 async function pruneEmptySourceDirectories(store: WorkspaceStore, source: ResolvedWorkspaceSource, removals: WorkspaceSourceSyncPathResult[]) {
