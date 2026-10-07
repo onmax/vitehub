@@ -178,6 +178,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     reviewChecks: [] as string[],
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
     noFindingsReviews: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login allowlist.
     mentionAllowlist: [] as string[],
     concurrency: 1,
     autoMerge: false,

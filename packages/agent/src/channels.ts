@@ -1861,10 +1861,12 @@ function renderGithubActivity(
     }),
   ].join("\n"))
   if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
-  const latestAnswer = [current, ...state.history]
-    .filter((entry): entry is GitHubActivityHistoryEntry => !!entry)
-    .map(entry => githubActivityAnswer(entry))
-    .find((answer): answer is string => answer !== undefined)
+  let latestAnswer: string | undefined
+  for (const entry of [current, ...state.history]) {
+    if (!entry) continue
+    latestAnswer = githubActivityAnswer(entry)
+    if (latestAnswer !== undefined) break
+  }
   if (latestAnswer) {
     sections.push(`Latest answer\n\n${latestAnswer}`)
   }
