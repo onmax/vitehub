@@ -373,7 +373,7 @@ describe("Agent Box relay", () => {
       repository: { fullName: "acme/portal", name: "portal" },
     })
 
-    await expect(createProviderAgentAdapter({ box: { runtime: "trusted-host" }, provider: "codex", providerSettings: { binaryPath: process.execPath } }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
+    await expect(createProviderAgentAdapter({ box: { cwd: () => root, runtime: "trusted-host" }, provider: "codex", providerSettings: { binaryPath: process.execPath } }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
     expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
   })
 
