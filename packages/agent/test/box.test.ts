@@ -560,7 +560,7 @@ describe("Agent Box provider execution", () => {
       url = `URL=file://${cwd}#section`
       command = `CMD=${cwd}&pwd`
       atReference = `@${cwd}/notes.txt`
-      quotedPath = `${String.fromCharCode(96)}${cwd}/notes.txt${String.fromCharCode(96)}`
+      quotedPath = `\`${cwd}/notes.txt\``
       unicodeSibling = `${cwd}é/config`
       plusSibling = `${cwd}+archive/config`
       const options = createProviderRuntime.mock.lastCall?.[0]
@@ -575,7 +575,7 @@ describe("Agent Box provider execution", () => {
       expect(JSON.parse(launched.stdout)).toMatchObject({
         argv: [`${boxCwd}/notes.txt`, sibling],
         cwd: await realpath(boxCwd),
-        input: `${boxCwd}/notes.txt\n${sibling}\n${unicodeSibling}\n${plusSibling}\n${embeddedPrefix}\nURL=file://${boxCwd}#section\nCMD=${boxCwd}&pwd\n@${boxCwd}/notes.txt\n${String.fromCharCode(96)}${boxCwd}/notes.txt${String.fromCharCode(96)}\n`,
+        input: `${boxCwd}/notes.txt\n${sibling}\n${unicodeSibling}\n${plusSibling}\n${embeddedPrefix}\nURL=file://${boxCwd}#section\nCMD=${boxCwd}&pwd\n@${boxCwd}/notes.txt\n\`${boxCwd}/notes.txt\`\n`,
         mapped: `${boxCwd}/notes.txt`,
         readme: "independent checkout\n",
         sibling,
@@ -584,7 +584,7 @@ describe("Agent Box provider execution", () => {
         url: `URL=file://${boxCwd}#section`,
         command: `CMD=${boxCwd}&pwd`,
         atReference: `@${boxCwd}/notes.txt`,
-        quotedPath: `${String.fromCharCode(96)}${boxCwd}/notes.txt${String.fromCharCode(96)}`,
+        quotedPath: `\`${boxCwd}/notes.txt\``,
         unicodeSibling,
         plusSibling,
       })
