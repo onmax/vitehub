@@ -364,6 +364,8 @@ export type {
   McpClientConfig,
   McpServerConfig,
   McpToolFingerprints,
+  McpToolOverride,
+  McpToolOverrides,
 } from "../mcp/types.ts"
 export type {
   WebReadToolDefinition,

@@ -172,6 +172,52 @@ describe("mcp capability", () => {
     expect(client.close).not.toHaveBeenCalled()
   })
 
+  it("applies application-owned tool contract overrides after MCP discovery", async () => {
+    const { jsonSchema } = await import("ai")
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    const execute = vi.fn(async () => "ok")
+    const client = createClient({
+      threads_get: {
+        description: "Read a thread.",
+        execute,
+        inputSchema: jsonSchema({
+          additionalProperties: false,
+          properties: {},
+          type: "object",
+        }),
+      },
+    })
+    const inputSchema = jsonSchema({
+      additionalProperties: false,
+      properties: { id: { type: "string" } },
+      required: ["id"],
+      type: "object",
+    })
+
+    const resolved = await resolveAgentCapabilities({
+      capabilities: [mcp({
+        servers: { productlane: client },
+        toolOverrides: {
+          productlane: {
+            threads_get: {
+              description: "Read one Productlane thread by id.",
+              inputSchema,
+            },
+          },
+        },
+      })],
+    }, runtime(), {})
+
+    expect(resolved.tools?.mcp_productlane_threads_get).toMatchObject({
+      description: "Read one Productlane thread by id.",
+      inputSchema,
+      metadata: { mcpServer: "productlane", originalName: "threads_get" },
+    })
+    expect(resolved.tools?.mcp_productlane_threads_get?.execute).toBe(execute)
+    await resolved.close()
+  })
+
   it("keeps a static direct client usable across invocations", async () => {
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { mcp } = await import("../src/capabilities.ts")

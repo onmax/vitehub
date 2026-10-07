@@ -166,6 +166,9 @@ export function mcp<
     ...(options.unavailableNotice !== undefined
       ? { unavailableNotice: options.unavailableNotice }
       : {}),
+    ...(options.toolOverrides !== undefined
+      ? { toolOverrides: options.toolOverrides }
+      : {}),
     ...(usesConnections ? { requires: [{ primitive: "connections" }] } : {}),
     servers: Object.entries(options.servers).map(([name, server]) => ({
       name,
