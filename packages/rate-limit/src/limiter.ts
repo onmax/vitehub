@@ -47,7 +47,7 @@ function resolveDriverCapabilities(options: CreateRateLimiterOptions): RateLimit
   if (capabilities.rejectedAttempts !== "counted" && capabilities.rejectedAttempts !== "not-counted" && capabilities.rejectedAttempts !== "unknown") {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0022({ message: `[vitehub] Rate Limit driver "${options.driver.name}" must declare rejected-attempt behavior.` })
   }
-  if (capabilities.windows !== undefined && (!Array.isArray(capabilities.windows) || capabilities.windows.some(window => !Number.isInteger(window) || window <= 0))) {
+  if (capabilities.windows !== undefined && hasInvalidSupportedWindows(capabilities.windows)) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0023({ message: `[vitehub] Rate Limit driver "${options.driver.name}" windows must contain positive integer milliseconds.` })
   }
   return {
@@ -56,6 +56,16 @@ function resolveDriverCapabilities(options: CreateRateLimiterOptions): RateLimit
     scope: capabilities.scope,
     ...(capabilities.windows ? { windows: [...capabilities.windows] } : {}),
   }
+}
+
+function hasInvalidSupportedWindows(value: unknown): boolean {
+  if (!Array.isArray(value)) return true
+  for (let index = 0; index < value.length; index++) {
+    const window: unknown = value[index]
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Driver capabilities cross a provider boundary as unknown values.
+    if (typeof window !== "number" || !Number.isInteger(window) || window <= 0) return true
+  }
+  return false
 }
 
 function normalizeOptionalInteger(value: number | undefined, label: string): number | undefined {
