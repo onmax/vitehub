@@ -1,7 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, mkdir, readFile, readdir, rmdir, statfs, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, rmdir, statfs, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineDiagnostics } from "nostics";
@@ -77,7 +78,9 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
   }
   let closed = false;
   let healthError: Error | undefined;
-  const healthMarker = join(path, ".vitehub-oom");
+  // cgroupfs only accepts kernel-defined interface files. Keep the launcher
+  // fence in a private filesystem path instead of the virtual cgroup directory.
+  const healthMarker = join(tmpdir(), `vitehub-box-oom-${randomUUID()}`);
   const inspectHealth = async (): Promise<void> => {
     if (closed || healthError) return;
     const localEvents = await readFile(join(path, "memory.events.local"), "utf8");
@@ -129,6 +132,7 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       await waitForCgroupEmpty(path);
       await removeDescendantCgroups(path);
       await rmdir(path);
+      await rm(healthMarker, { force: true }).catch(() => undefined);
       closed = true;
     },
   };

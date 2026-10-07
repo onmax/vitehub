@@ -495,7 +495,7 @@ async function createTrustedHostSession(options: {
     processes,
     root: options.root,
     async destroy() {
-      destroyPromise ??= (async () => {
+      const cleanup = async () => {
         await this.stop();
         // Keep the state lease while cgroup descendants may still access it.
         await memory?.close();
@@ -504,11 +504,15 @@ async function createTrustedHostSession(options: {
         } finally {
           await options.release();
         }
-      })();
+      };
+      const attempt = destroyPromise ?? cleanup();
+      if (!destroyPromise) destroyPromise = attempt;
       try {
-        await destroyPromise;
+        await attempt;
       } catch (error) {
-        destroyPromise = undefined;
+        // A rejected attempt must never poison future retries. Keep an
+        // in-flight attempt shared, but allow the next call to rebuild it.
+        if (destroyPromise === attempt) destroyPromise = undefined;
         throw error;
       }
     },
