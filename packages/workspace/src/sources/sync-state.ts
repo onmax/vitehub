@@ -1,3 +1,4 @@
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { normalizeWorkspacePath } from "../core/path.ts"
 
 export interface WorkspaceSourceSyncStatePath {
@@ -35,7 +36,7 @@ export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyn
     const entry = state.paths[path]
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return
     if (typeof entry.digest !== "string" || typeof entry.sourcePath !== "string") return
-    if (entry.mountPath !== undefined && typeof entry.mountPath !== "string") return
+    if (entry.mountPath !== undefined && !hasRuntimeType(entry.mountPath, "string")) return
   }
 
   return state

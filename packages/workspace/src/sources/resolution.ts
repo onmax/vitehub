@@ -1,3 +1,4 @@
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { createWorkspaceTools } from "../ai.ts"
 import { workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath } from "../core/path.ts"
@@ -96,8 +97,9 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
 
 function stableWorkspaceSourceValue(value: unknown): string {
   if (value === undefined) return "undefined"
-  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (value === null || !hasRuntimeType(value, "object")) return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map(stableWorkspaceSourceValue).join(",")}]`
+  // SAFETY: The value is a non-null object; own keys are read only for canonical binding comparison.
   return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableWorkspaceSourceValue((value as Record<string, unknown>)[key])}`).join(",")}}`
 }
 
@@ -482,10 +484,13 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     // Source grant. Always compose through the facade so nested resolutions
     // retain guards established by their parent view.
     const writes = {
+      // SAFETY: Source grant validation checks these runtime paths before forwarding to the typed facade.
       writeFile: async (path: string, content: WorkspaceContent, options?: WriteFileOptions) =>
         await workspace.fs.writeFile(path as never, content, options),
+      // SAFETY: The enclosing write guard validates this directory path at runtime.
       mkdir: async (path: string, options?: MkdirOptions) =>
         await workspace.fs.mkdir(path as never, options),
+      // SAFETY: The enclosing write guard validates this removal path at runtime.
       rm: async (path: string, options?: RmOptions) =>
         await workspace.fs.rm(path as never, options),
     }

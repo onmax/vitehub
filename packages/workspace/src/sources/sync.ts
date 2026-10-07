@@ -179,7 +179,10 @@ async function planSourceSync(
     for (const [path, metadata] of Object.entries(previousState.paths)) {
       if (nextPaths[path]) continue
       // The sync state key is shared by Workspaces on one Store. Remove only paths in this Source mount.
-      if ((metadata.mountPath ?? source.mountPath) !== source.mountPath) continue
+      // Entries written before per-path mount paths were recorded belong to
+      // the mount stored on the previous state record, not the current
+      // binding. This keeps legacy ownership when a Source moves mounts.
+      if ((metadata.mountPath ?? previousState.mountPath) !== source.mountPath) continue
       if (!sourceMountOwnsPath(source, path)) continue
       if (!await shouldRemoveStalePath(store, path, metadata)) continue
       const removal = { path, sourcePath: metadata.sourcePath, status: "removed" as const }
@@ -213,7 +216,7 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
   const current = await store.getMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName)).then(readWorkspaceSourceSyncState)
   for (const path of Object.keys(plan.nextState.paths)) {
     const existing = current?.paths[path]
-    if (existing && existing.mountPath !== undefined && existing.mountPath !== plan.source.mountPath) {
+    if (existing && (existing.mountPath ?? current?.mountPath) !== plan.source.mountPath) {
       throw workspaceError(`[vitehub] Workspace Source Sync produced overlapping mount claims for path: ${path}.`)
     }
   }
@@ -226,9 +229,11 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
   }
   await pruneEmptySourceDirectories(sourceStore, plan.source, plan.removals)
   if (plan.stateChanged) {
-    const paths = { ...current?.paths }
+    const paths: WorkspaceSourceSyncState["paths"] = Object.fromEntries(Object.entries(current ? current.paths : {}).map(([path, metadata]) => [
+      path, { ...metadata, mountPath: metadata.mountPath ?? current?.mountPath },
+    ]))
     for (const [path, metadata] of Object.entries(paths)) {
-      if ((metadata.mountPath ?? plan.source.mountPath) === plan.source.mountPath && !plan.nextState.paths[path]) delete paths[path]
+      if (metadata.mountPath === plan.source.mountPath && !plan.nextState.paths[path]) delete paths[path]
     }
     for (const [path, metadata] of Object.entries(plan.nextState.paths)) paths[path] = metadata
     await store.setMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName), { ...plan.nextState, paths })

@@ -68,11 +68,14 @@ export type WorkspaceMetadataTargetCarrier = {
 }
 
 export function forwardWorkspaceMetadataTarget(source: unknown, target: unknown): void {
-  // Forward only the read-only public target, including direct symbol calls.
+  // SAFETY: Forwarding probes only this module's optional metadata resolver symbol.
   const resolveTarget = (source as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]
   if (!resolveTarget) return
   const resolve = async () => publicMetadataTarget(await resolveTarget.call(source))
-  ;(target as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget] = resolve
+  // SAFETY: The target is a facade object; this writes only our metadata resolver symbol.
+  const targetCarrier = target as WorkspaceMetadataTargetCarrier
+  targetCarrier[workspaceMetadataTarget] = resolve
+  // SAFETY: Facades may have a filesystem object used only as a WeakMap identity.
   const fs = (target as { fs?: object }).fs
   if (fs) facadeMetadataTargets.set(fs, resolve)
 }
@@ -82,6 +85,7 @@ function publicMetadataTarget(target: WorkspaceMetadataTarget | undefined) {
 }
 
 export async function resolveWorkspaceMetadataTarget(source: unknown): Promise<WorkspaceMetadataTarget | undefined> {
+  // SAFETY: Only the optional resolver symbol and filesystem identity are probed on the supplied facade.
   const carrier = source as WorkspaceMetadataTargetCarrier & { fs?: object }
   const target = await carrier[workspaceMetadataTarget]?.()
     ?? (carrier.fs ? await facadeMetadataTargets.get(carrier.fs)?.() : undefined)
