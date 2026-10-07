@@ -97,8 +97,15 @@ const manifest = await preflight.manifest
 ```
 
 Keep `details` on a check result small and redacted. The framework limits each
-reason and details object, and caps the number and duration of checks so a
-broken provider cannot hold an invocation open.
+reason and details object, and caps the check count and asynchronous waiting
+time.
+
+Checks run on the host event loop. Use non-blocking asynchronous APIs for
+external processes, filesystem work, and network requests, and honor the
+provided `AbortSignal`. ViteHub cannot interrupt a synchronous callback; when
+one runs past its budget, the result is reported as `unknown` after that
+callback returns. A timed-out asynchronous operation may still need to cancel
+its own underlying work when it observes the signal.
 
 `createRuntimeContext()` gives each operation a fresh memo cache and tracks work
 registered with `waitUntil()`. Pass the host's `waitUntil` method to forward that

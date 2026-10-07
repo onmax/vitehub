@@ -59,6 +59,24 @@ describe("runtime preflight", () => {
     expect(started).toBe(false)
   })
 
+  it("defers diagnostics until every check settles", async () => {
+    let release: ((result: RuntimePreflightCheckResult) => void) | undefined
+    const report = vi.fn()
+    const handle = startRuntimePreflight({
+      checks: [
+        { id: "file:missing", kind: "file", check: () => false },
+        { id: "file:pending", kind: "file", check: () => new Promise<RuntimePreflightCheckResult>(resolve => { release = resolve }) },
+      ],
+      onDiagnostic: report,
+    })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(report).not.toHaveBeenCalled()
+    release?.({ state: "available" })
+    await handle.manifest
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(report).toHaveBeenCalledTimes(1)
+  })
+
   it("bounds a blocking synchronous check and isolates reporter errors", async () => {
     const report = vi.fn(() => { throw new Error("reporter failed") })
     const manifest = await runRuntimePreflight({
@@ -91,5 +109,6 @@ describe("runtime preflight", () => {
     await expect(runRuntimePreflight({ checks: [{ id: "same", kind: "tool", check: () => true }, { id: "same", kind: "tool", check: () => true }] })).rejects.toThrow("duplicated")
     await expect(runRuntimePreflight({ timeoutMs: 0, checks: [] })).rejects.toThrow("timeoutMs")
     await expect(runRuntimePreflight({ maxChecks: 129, checks: [] })).rejects.toThrow("maxChecks")
+    await expect(runRuntimePreflight({ maxChecks: 1, checks: [{ id: "one", kind: "tool", check: () => true }, { id: "two", kind: "tool", check: () => true }] })).rejects.toThrow("exceed maxChecks")
   })
 })
