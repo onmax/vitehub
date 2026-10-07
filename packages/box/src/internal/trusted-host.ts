@@ -689,8 +689,10 @@ async function createTrustedHostSession(options: {
 }
 
 function assertCommandEnvironment(env: Record<string, string> | undefined) {
-  const name = Object.keys(env || {}).find((name) => runtimeEnvironmentKeys.has(name));
-  if (name) throw boxErrorDiagnostics.BOX_R0137({ message: `[vitehub] Box commands cannot override ${name}.` });
+  const name = Object.keys(env || {}).find((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+  if (name) throw boxErrorDiagnostics.BOX_R0112({ message: `[vitehub] Invalid Box environment variable: ${name}` });
+  const reservedName = Object.keys(env || {}).find((name) => runtimeEnvironmentKeys.has(name));
+  if (reservedName) throw boxErrorDiagnostics.BOX_R0137({ message: `[vitehub] Box commands cannot override ${reservedName}.` });
 }
 
 async function validateRequirements(
