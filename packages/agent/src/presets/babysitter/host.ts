@@ -179,7 +179,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
       const queue = await inbox.summary();
       const guard = await admission();
       const lastSkip = await inbox.meta("admission-skipped");
-      return { ...health, repositories, queue: {
+      return { ...health, release: agent.version, concurrency: agent.options.concurrency, repositories, queue: {
         working: queue.filter(item => item.status === "working").length,
         ready: queue.filter(item => item.status === "ready" && item.dirty && !item.stackBlocked).length,
         stackBlocked: queue.filter(item => item.stackBlocked).length,
