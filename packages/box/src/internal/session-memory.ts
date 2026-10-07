@@ -79,17 +79,18 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
   return {
     async assertHealthy() {
       if (closed) throw diagnostics.BOX_R0157({ message: "Box resource group is closed." });
-      const events = await readFile(join(path, "memory.events"), "utf8");
-      const kills = Number(/^oom_kill (\d+)/m.exec(events)?.[1] ?? 0);
       const localEvents = await readFile(join(path, "memory.events.local"), "utf8");
       const localOom = Number(/^oom (\d+)/m.exec(localEvents)?.[1] ?? 0);
-      // oom_kill also includes kills initiated by an ancestor cgroup or the host.
-      // Only local oom events prove that this session hit memory.max.
-      if (kills > 0 && localOom > 0) {
+      // A local allocation OOM identifies this group's exhausted budget, even
+      // without a kill. Kill counters cannot establish the OOM domain and may
+      // include unrelated host/ancestor kills. Do not use them for attribution.
+      if (localOom > 0) {
+        const events = await readFile(join(path, "memory.events"), "utf8");
+        const kills = Number(/^oom_kill (\d+)/m.exec(events)?.[1] ?? 0);
         const peak = await readFile(join(path, "memory.peak"), "utf8")
           .then(contents => contents.trim())
           .catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? "unavailable" : Promise.reject(error));
-        throw diagnostics.BOX_R0158({ message: `Box memory limit exceeded: limit=${resources.memoryMaxBytes} bytes, peak=${peak} bytes, oom_kill=${kills}. Retry only after reducing the workload or changing its budget.` });
+        throw diagnostics.BOX_R0158({ message: `Box memory limit exceeded: local allocation OOM recorded; limit=${resources.memoryMaxBytes} bytes, peak=${peak} bytes, local_oom=${localOom}, observed_oom_kill=${kills}. Kill count does not identify the OOM cause and may exclude descendants on memory_localevents mounts. Open a new session after reducing the workload or changing its budget.` });
       }
     },
     spawn(command: string, options: SpawnOptionsWithoutStdio) {

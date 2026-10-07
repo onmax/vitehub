@@ -14,7 +14,7 @@ let localEvents: string;
 let peakError: NodeJS.ErrnoException | undefined;
 beforeEach(() => {
   vi.resetAllMocks();
-  events = "oom_kill 1\n";
+  events = "oom 1\noom_kill 1\n";
   localEvents = "oom 1\n";
   peakError = undefined;
   vi.mocked(statfs).mockResolvedValue({ type: 0x63677270 } as Awaited<ReturnType<typeof statfs>>);
@@ -32,7 +32,8 @@ const open = () => createSessionMemory({ cgroupParent: "/delegated", memoryMaxBy
 
 describe("session memory events", () => {
   it("does not attribute host or ancestor kills to the session budget", async () => {
-    localEvents = "oom 0\nmax 0\n";
+    events = "oom 1\noom_kill 1\n";
+    localEvents = "oom 0\n";
     await expect((await open()).assertHealthy()).resolves.toBeUndefined();
   });
   it("attributes a local OOM even when the killed process was in a descendant", async () => {
@@ -41,6 +42,24 @@ describe("session memory events", () => {
   it("keeps the OOM diagnostic on kernels without memory.peak", async () => {
     peakError = Object.assign(new Error("missing"), { code: "ENOENT" });
     await expect((await open()).assertHealthy()).rejects.toThrow(/memory limit exceeded.*peak=unavailable/);
+  });
+  it("invalidates on local allocation OOM before any kill, without attributing a later external kill", async () => {
+    events = "oom 1\noom_kill 0\n";
+    const group = await open();
+    await expect(group.assertHealthy()).rejects.toThrow(/local allocation OOM recorded.*observed_oom_kill=0/);
+    events = "oom 1\noom_kill 1\n";
+    await expect(group.assertHealthy()).rejects.toThrow(/local allocation OOM recorded.*Kill count does not identify the OOM cause/);
+  });
+  it("detects local OOMs on memory_localevents mounts with descendant victims", async () => {
+    events = "oom 1\noom_kill 0\n";
+    const group = await open();
+    await expect(group.assertHealthy()).rejects.toThrow(/local allocation OOM recorded/);
+    await expect(group.assertHealthy()).rejects.toThrow(/local allocation OOM recorded/);
+  });
+  it("rejects concurrent health checks after a local allocation OOM", async () => {
+    const group = await open();
+    const results = await Promise.allSettled([group.assertHealthy(), group.assertHealthy()]);
+    expect(results.map(result => result.status)).toEqual(["rejected", "rejected"]);
   });
   it("does not swallow other peak read failures", async () => {
     peakError = Object.assign(new Error("denied"), { code: "EACCES" });
