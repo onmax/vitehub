@@ -8,20 +8,28 @@ navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-## Quick start
+Database gives server code a typed Drizzle client for a discovered schema. This
+tutorial creates one SQLite table, applies its first migration, and reads it
+from an H3 route.
+
+::note
+You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
+local SQLite store is for development. Read [Hosts](/docs/database/hosts) before
+choosing a hosted database.
+::
 
 ::tutorial-step{title="Install"}
-### Install
+## Install
 
 ```bash [Terminal]
 pnpm add @vite-hub/database drizzle-orm
-pnpm add -D @vite-hub/cli drizzle-kit
+pnpm add -D @vite-hub/cli drizzle-kit vite
 ```
 
 ::
 
 ::tutorial-step{title="Configure"}
-### Configure
+## Configure
 
 ```ts [vite.config.ts]
 import { hubDb } from '@vite-hub/database/vite'
@@ -34,8 +42,8 @@ export default defineConfig({
 
 ::
 
-::tutorial-step{title="Start using it"}
-### Start using it
+::tutorial-step{title="Define the schema"}
+## Define the schema
 
 Define the schema in `src/database.ts`:
 
@@ -63,6 +71,7 @@ pnpm vitehub db migrate
 Query it from server code:
 
 ```ts [server/api/notes.get.ts]
+import { defineEventHandler } from 'h3'
 import { useDatabase } from '@vite-hub/database/drizzle'
 
 export default defineEventHandler(() => {
@@ -74,6 +83,7 @@ export default defineEventHandler(() => {
 ::
 
 
+::tutorial-step{title="Inspect migrations"}
 ## Generate and apply migrations
 
 The Database integration adds the `db` commands to the ViteHub CLI. `vite-hub` includes the CLI. Direct package installations need `@vite-hub/cli`, as shown in the quick start. Run the commands from the project root:
@@ -89,3 +99,19 @@ pnpm vitehub db migrate
 | `vitehub db migrate` | Refreshes the generated Drizzle config and applies pending migrations. |
 
 Migrations go to a `migrations` directory next to each Database Definition file.
+::
+
+::tutorial-step{title="Query the table"}
+## Query the table
+
+Start Vite and call the route:
+
+```bash [Terminal]
+pnpm vite dev
+curl http://localhost:5173/api/notes
+```
+
+The first response is an empty array. Insert a row from your application, then
+call the route again to read it through the generated Drizzle client.
+
+::

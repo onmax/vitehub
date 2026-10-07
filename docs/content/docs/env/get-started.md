@@ -8,19 +8,28 @@ navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-## Quick start
+Env declares public values at build time and server values at runtime. This
+tutorial exposes one safe application name through the generated Public Env
+module.
+
+::note
+You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. Public
+values are included in browser output. Keep credentials in `env.server` and
+read them only from server code.
+::
 
 ::tutorial-step{title="Install"}
-### Install
+## Install
 
 ```bash [Terminal]
 pnpm add @vite-hub/env @vite-hub/runtime
+pnpm add -D vite
 ```
 
 ::
 
 ::tutorial-step{title="Configure"}
-### Configure
+## Configure
 
 ```ts [vite.config.ts]
 import { env, hubEnv } from '@vite-hub/env/vite'
@@ -38,8 +47,8 @@ export default defineConfig({
 
 ::
 
-::tutorial-step{title="Start using it"}
-### Start using it
+::tutorial-step{title="Read the value"}
+## Read the value
 
 ```ts [src/app.ts]
 import { usePublicEnv } from '#vitehub/env/public'
@@ -47,5 +56,18 @@ import { usePublicEnv } from '#vitehub/env/public'
 const publicEnv = usePublicEnv()
 console.log(publicEnv.appName)
 ```
+
+::
+
+::tutorial-step{title="Build and verify"}
+## Build and verify
+
+Build the app to generate the aliased module and its types:
+
+```bash [Terminal]
+pnpm vite build
+```
+
+The generated `#vitehub/env/public` module resolves `appName` to `Acme`.
 
 ::

@@ -8,19 +8,17 @@ navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-## Before you begin
+Email sends a real message through a configured provider. This tutorial uses
+Resend and ends with a request you can inspect in the development outbox.
 
-The quick start takes about ten minutes and sends a real message through Resend. You need:
-
-- Node.js 24.15 or later and an existing Vite 8 or later server application.
-- pnpm and a POSIX-compatible shell for the commands below.
-- A Resend API key and a sender address accepted by Resend.
-- A real recipient address you can check.
-
-## Send your first message
+::note
+You need Node.js 24.15 or later, Vite 8 or later, `pnpm`, a POSIX-compatible
+shell, a Resend API key, a verified sender address, and a recipient address you
+can check. The final request sends a real message.
+::
 
 ::tutorial-step{title="Install the email dependencies"}
-### Install the email dependencies
+## Install the email dependencies
 
 ```bash [Terminal]
 pnpm add vite-hub
@@ -31,7 +29,7 @@ pnpm add vite-hub
 ::
 
 ::tutorial-step{title="Configure Resend"}
-### Configure Resend
+## Configure Resend
 
 ```ts [vite.config.ts]
 import { vitehub } from 'vite-hub'
@@ -56,7 +54,7 @@ The stable driver name selects a ViteHub-owned provider implementation. The Env 
 ::
 
 ::tutorial-step{title="Provide the Resend secret"}
-### Provide the Resend secret
+## Provide the Resend secret
 
 Set `RESEND_API_KEY` in the server process:
 
@@ -69,7 +67,7 @@ Use your deployment platform's secret store in production. Do not use a `VITE_` 
 ::
 
 ::tutorial-step{title="Send from server code"}
-### Send from server code
+## Send from server code
 
 Replace both addresses with values accepted by Resend. The request performs a real delivery. In `vite dev`, the [development outbox](/docs/email/hosts#development-outbox) also records the message.
 
@@ -90,11 +88,11 @@ export default defineEventHandler(async () => {
 ::
 
 ::tutorial-step{title="Verify the result"}
-### Verify the result
+## Verify the result
 
 Start the application with its normal development command and send a `POST` request to `/api/welcome`. A successful response has this shape:
 
-```json
+```json [Response]
 {
   "id": "<provider-message-id>",
   "driver": "resend"
