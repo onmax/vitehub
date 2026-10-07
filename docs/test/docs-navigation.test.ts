@@ -5,7 +5,6 @@ import {
   docsRootSectionId,
   getDocsCatalog,
   getDocsSectionForPath,
-  getDocsSectionSelectItems,
   getDocsSectionSubpages,
   getDocsSidebarGroups,
   getUncategorizedDocsSections,
@@ -94,16 +93,17 @@ describe("docs product navigation", () => {
     expect(getDocsSectionForPath(docsManifest.sections, "/docs/unknown")).toBeNull();
   });
 
-  it("lists each product once in the select, grouped by category", () => {
-    const groups = getDocsSectionSelectItems(docsManifest.sections);
-
-    expect(groups.map(group => group[0]?.label)).toEqual([...docsCategoryOrder]);
-    expect(groups.every(group => group[0]?.type === "label")).toBe(true);
-
-    const values = groups.flat().filter(item => item.value).map(item => item.value);
-    expect(new Set(values).size).toBe(values.length);
-    expect(values).toHaveLength(docsManifest.sections.length);
-    expect(groups.flat().find(item => item.value === "kv")).toMatchObject({ label: "KV", to: "/docs/kv" });
+  it("keeps the UI sidebar Console-first", () => {
+    const ui = docsManifest.sections.find(section => section.id === "ui");
+    expect(getDocsSidebarGroups(ui!).map(group => group.label)).toEqual([
+      "Start",
+      "Console",
+      "Chat",
+      "Agent work",
+      "Utilities",
+    ]);
+    expect(getDocsSidebarGroups(ui!).find(group => group.label === "Console")?.pages.map(page => page.title))
+      .toEqual(["Chat App", "Invocation Dashboard", "Code Review"]);
   });
 
   it("groups every navigable page of a large section", () => {

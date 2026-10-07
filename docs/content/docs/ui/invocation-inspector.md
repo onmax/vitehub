@@ -44,12 +44,12 @@ The error appears in the outcome section with the Invocation status.
 
 ### Compact panel
 
-Hide the timeline and Capabilities with `show-timeline` and `show-capabilities`. Use the `actions` slot for a close button and `metadata` for your own section.
+Set `:show-timeline="false"` to hide the timeline. Set `show-capabilities` to include the grouped Capability summary. Use the `actions` slot for a close button and `metadata` for your own section.
 
 ::component-preview{name="InvocationInspectorCompactExample" reset}
 ::
 
-Set `showCapabilities` to `false` when a separate [Capability inspector](/docs/ui/capability-inspector) shows them, as in the Console.
+The default keeps all recorded tool contracts in the inspector. Use the separate [Capability inspector](/docs/ui/capability-inspector) for Capability details, as in the Console. Set `showCapabilities` to `true` to embed them in a standalone inspector.
 
 ## Captured configuration
 
@@ -88,7 +88,7 @@ Include instruction content only when the current viewer may inspect it. The com
 | `showStatus`       | `boolean`             | `true`   | Shows the status row in the outcome section.          |
 | `showError`        | `boolean`             | `true`   | Shows the terminal error in the outcome section.      |
 | `showTimeline`     | `boolean`             | `true`   | Shows the run timeline.                               |
-| `showCapabilities` | `boolean`             | `true`   | Shows the embedded Capability summary.                |
+| `showCapabilities` | `boolean`             | `false`  | Shows the embedded Capability summary.                |
 | `showSources`      | `boolean`             | `true`   | Shows captured Workspace Sources in Agent setup.      |
 
 #### Events

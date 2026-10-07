@@ -68,7 +68,7 @@ describe("UI documentation", () => {
     expect(blockPages.length).toBeGreaterThanOrEqual(3);
     for (const page of blockPages) {
       expect(page.source, page.name).toMatch(/::component-preview\{name="[A-Za-z]+Block" flush reset\}/);
-      expect(page.source, page.name).toContain("navigation.group: Blocks");
+      expect(page.source, page.name).toContain("navigation.group: Console");
     }
   });
 
@@ -143,13 +143,25 @@ describe("UI documentation", () => {
     expect(inspector).toContain('class="h-full border-x border-default"');
   });
 
+  it("uses a static context link instead of a product disclosure control", () => {
+    const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
+
+    expect(sidebarTop).toContain("vh-docs-context");
+    expect(sidebarTop).toContain('<NuxtLink');
+    expect(sidebarTop).not.toContain("USelectMenu");
+    expect(sidebarTop).not.toContain("getDocsSectionSelectItems");
+  });
+
   it("keeps the docs sidebar visible without disclosure toggles", () => {
     const sidebar = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftBody.vue"), "utf8");
+    const layout = readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8");
 
     expect(sidebar).toContain("flex: 1 1 0");
     expect(sidebar).toContain("min-height: 0");
     expect(sidebar).not.toContain("<details");
     expect(sidebar).not.toContain("<summary");
+    expect(layout).toContain("height: calc(100dvh - var(--ui-header-height));");
+    expect(layout).toContain("overflow: hidden;");
   });
 
   it("lists the Vue ecosystem perspective in the getting started sidebar", () => {
