@@ -600,6 +600,7 @@ export async function resolveDevRuntimeCapabilities(
   options: Pick<AgentDevRuntimeOptions, "schedule" | "scheduleRuntimeImport">,
 ): Promise<Record<string, unknown>> {
   const capabilities: Record<string, unknown> = {}
+  // Generated capability modules are independent package imports. Resolve them together so one slow module does not block the others.
   const resolved = await Promise.all(definitions.map(async definition => ({
     name: definition.name,
     value: definition.packageName === false
