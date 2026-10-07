@@ -4362,19 +4362,36 @@ cli_auth_credentials_store = "keyring"
       close: vi.fn(async () => undefined),
       commit: vi.fn(async () => undefined),
       diff: vi.fn(async () => ({ entries: [] })),
-      exec: vi.fn(async (command: string, args: string[] = []) => ({
-        args,
-        command,
-        exitCode: command === "git" && args.join(" ") === "rev-parse --is-inside-work-tree" ? 1 : 0,
-        stderr: "",
-        stdout: "",
-      })),
+      exec: vi.fn(async (command: string, args: string[] = [], options?: { cwd?: string }) => {
+        const cwd = options?.cwd?.replace(/^\/workspace/, root) || root
+        const result = spawnSync(command, args, { cwd, encoding: "utf8" })
+        return { args, command, exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+      }),
       readFile: vi.fn(async () => new Uint8Array()),
     }
     const workspace = {
       fs: {},
       startSession: vi.fn(async (options: { target: string }) => {
         root = options.target
+        const checkout = join(root, "portal")
+        await mkdir(checkout)
+        const git = (...args: string[]) => {
+          const result = spawnSync("git", ["-C", checkout, ...args], { encoding: "utf8" })
+          if (result.status !== 0) throw new Error(result.stderr)
+          return result.stdout
+        }
+        git("init", "-q", "-b", "feature")
+        git("remote", "add", "origin", "https://github.com/acme/portal.git")
+        git("config", "branch.feature.remote", "origin")
+        git("config", "branch.feature.merge", "refs/heads/feature")
+        git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "--allow-empty", "-qm", "initial repository")
+        runContext.context.set("pullRequest", {
+          pullRequest: {
+            head: { ref: "feature", repo: "acme/portal", sha: git("rev-parse", "HEAD").trim() },
+            source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
+          },
+          repository: { fullName: "acme/portal", name: "portal" },
+        })
         return session
       }),
       tools: {},
@@ -4394,7 +4411,7 @@ cli_auth_credentials_store = "keyring"
     })
 
     await expect(createProviderAgentAdapter({ instructions: "provider instructions", provider: "codex" }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
-    expect(session.exec.mock.calls.some(([command, args]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
+    expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
   })
 
   it("passes a managed browser PATH to provider Workspace commands", async () => {
@@ -4432,13 +4449,13 @@ cli_auth_credentials_store = "keyring"
         const client = new McpClient({ name: "provider-browser-path-test", version: "1" })
         const transport = new StreamableHTTPClientTransport(new URL(mcp!.endpoint), { requestInit: { headers: { Authorization: mcp!.authorizationHeader } } })
         await client.connect(transport)
-        await expect(client.callTool({ arguments: { command: "agent-browser" }, name: "workspace_exec" })).resolves.toMatchObject({ content: [{ text: "/managed/bin" }] })
+        await expect(client.callTool({ arguments: { command: "agent-browser" }, name: "workspace_exec" })).resolves.toMatchObject({ content: [{ text: expect.stringContaining('"stdout":"/managed/bin:') }] })
         await client.close()
       },
     })
 
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
-    expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ PATH: "/managed/bin" }) }))
+    expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ PATH: expect.stringMatching(/^\/managed\/bin:/) }) }))
   })
 
   it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {
@@ -4474,6 +4491,10 @@ cli_auth_credentials_store = "keyring"
       startSession: vi.fn(async ({ target }: { target: string }) => {
         root = target
         git("init", "-q")
+        git("remote", "add", "origin", "https://github.com/acme/portal.git")
+        git("checkout", "-q", "-b", "feature")
+        git("config", "branch.feature.remote", "origin")
+        git("config", "branch.feature.merge", "refs/heads/feature")
         git("config", "user.name", "Test")
         git("config", "user.email", "test@localhost")
         await writeFile(`${root}/AGENTS.md`, "native instructions")

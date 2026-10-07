@@ -479,6 +479,16 @@ function withPathPrefix(env: NodeJS.ProcessEnv, prefix: readonly string[] | unde
   return { ...env, PATH: [...prefix, env.PATH].filter(Boolean).join(delimiter) }
 }
 
+function workspaceBrowserEnvironment(browser: Readonly<Record<string, string>> | undefined, environment: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!browser) return environment
+  return {
+    ...browser,
+    ...environment,
+    ...(browser.PATH ? { PATH: [browser.PATH, environment?.PATH || process.env.PATH].filter(Boolean).join(delimiter) } : {}),
+    ...(browser.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: [browser.LD_LIBRARY_PATH, environment?.LD_LIBRARY_PATH || process.env.LD_LIBRARY_PATH].filter(Boolean).join(delimiter) } : {}),
+  }
+}
+
 function normalizedProviderEnvironment(value: unknown): AgentProviderEnvironment {
   if (!isRuntimeRecord(value) || Array.isArray(value)) {
     throw agentDiagnostics.AGENT_R0672({ message: "[vitehub] driver.env must resolve to an object containing only string or undefined values." })
@@ -2906,10 +2916,7 @@ async function* runProvider<
         },
       })
       clearActiveWorkspaceCommands = setActiveAgentWorkspaceCommands(context.context, (command, args, execOptions) => {
-        const browserEnvironment = browserRuntimeEnvironment(context.context)
-        const environment = browserEnvironment
-          ? { ...browserEnvironment, ...execOptions?.env }
-          : execOptions?.env
+        const environment = workspaceBrowserEnvironment(browserRuntimeEnvironment(context.context), execOptions?.env)
         const execution = workspaceSession!.exec(command, args, {
           ...execOptions,
           ...(execOptions?.cwd === undefined && workspaceCommandCwd !== "/workspace" ? { cwd: workspaceCommandCwd } : {}),
@@ -2929,10 +2936,7 @@ async function* runProvider<
         const cwd = resolve(root, suffix)
         if (cwd !== root && !cwd.startsWith(`${root}/`)) throw new Error("[vitehub] Workspace command cwd must stay inside the provider checkout.")
         const { abortSignal, ...hostOptions } = execOptions || {}
-        const browserEnvironment = browserRuntimeEnvironment(context.context)
-        const environment = browserEnvironment
-          ? { ...browserEnvironment, ...execOptions?.env }
-          : execOptions?.env
+        const environment = workspaceBrowserEnvironment(browserRuntimeEnvironment(context.context), execOptions?.env)
         const execution = localWorkspaceHost({ path: toolchainPath }).exec(command, args, {
           ...hostOptions,
           ...(environment ? { env: environment } : {}),
