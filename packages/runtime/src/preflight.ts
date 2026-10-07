@@ -48,7 +48,7 @@ export type RuntimePreflightDiagnosticData = Record<string, unknown> & {
 }
 
 const preflightDiagnostics = defineDiagnostics({
-  docsBase: () => "https://vitehub.dev/docs/reference/errors-diagnostics",
+  docsBase: () => "https://vitehub.dev/docs/reference/errors-diagnostics#runtime-preflight",
   codes: {
     RUNTIME_R0012: {
       why: ({ checkId, kind }: RuntimePreflightDiagnosticData) => `Runtime preflight could not find ${kind} capability "${checkId}".`,
@@ -108,6 +108,8 @@ export interface RuntimePreflightHandle {
 
 const maxReasonLength = 256
 const maxDetailCount = 12
+const maxCheckIdLength = 128
+const maxCheckKindLength = 64
 
 function normalizeReason(value: unknown): string | undefined {
   if (!hasRuntimeType(value, "string")) return
@@ -202,8 +204,8 @@ function diagnosticFor(check: RuntimePreflightCheck, state: RuntimePreflightStat
   if (state === "available") return
   const params = { checkId: check.id, kind: check.kind, required: check.required === true, state }
   return state === "missing"
-    ? preflightDiagnostics.RUNTIME_PREFLIGHT_MISSING(params)
-    : preflightDiagnostics.RUNTIME_PREFLIGHT_UNKNOWN(params)
+    ? preflightDiagnostics.RUNTIME_R0012(params)
+    : preflightDiagnostics.RUNTIME_R0013(params)
 }
 
 function isRuntimePreflightCheck(value: unknown): value is RuntimePreflightCheck {
@@ -227,6 +229,8 @@ function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePre
     if (!isRuntimePreflightCheck(check) || !check.id.trim() || !check.kind.trim()) {
       throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight checks require an id, kind, and check function." })
     }
+    if (check.id.length > maxCheckIdLength) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check id must be at most ${maxCheckIdLength} characters.` })
+    if (check.kind.length > maxCheckKindLength) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check kind must be at most ${maxCheckKindLength} characters.` })
     if (ids.has(check.id)) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check "${check.id}" is duplicated.` })
     ids.add(check.id)
   }

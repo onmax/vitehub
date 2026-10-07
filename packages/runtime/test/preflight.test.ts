@@ -24,7 +24,7 @@ describe("runtime preflight", () => {
     })
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(report).toHaveBeenCalledTimes(2)
-    expect(report.mock.calls[0]![0].diagnostic.code).toBe("RUNTIME_PREFLIGHT_MISSING")
+    expect(report.mock.calls[0]![0].diagnostic.code).toBe("RUNTIME_R0012")
   })
 
   it("bounds slow checks and keeps the reporter off the critical path", async () => {
@@ -148,13 +148,15 @@ describe("runtime preflight", () => {
 
   it("does not read accessors or properties beyond the detail cap", async () => {
     const getter = vi.fn(() => { throw new Error("must not be read") })
-    const details = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`key${i}`, i]))
+    const details: Record<string, string | number> = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`key${i}`, i]))
+    details.key0 = "x".repeat(300)
     Object.defineProperty(details, "extra", { enumerable: true, get: getter })
     Object.defineProperty(details, "infinity", { enumerable: true, value: Number.POSITIVE_INFINITY })
     const manifest = await runRuntimePreflight({
       checks: [{ id: "details", kind: "tool", check: () => ({ state: "available", details }) }],
     })
     expect(Object.keys(manifest.checks[0]!.details!)).toHaveLength(12)
+    expect(manifest.checks[0]!.details!.key0).toHaveLength(256)
     expect(manifest.checks[0]!.details).not.toHaveProperty("infinity")
     expect(getter).not.toHaveBeenCalled()
     const accessorDetails = Object.defineProperty({}, "value", { enumerable: true, get: getter })
@@ -170,5 +172,7 @@ describe("runtime preflight", () => {
     await expect(runRuntimePreflight({ timeoutMs: 0, checks: [] })).rejects.toThrow("timeoutMs")
     await expect(runRuntimePreflight({ maxChecks: 129, checks: [] })).rejects.toThrow("maxChecks")
     await expect(runRuntimePreflight({ maxChecks: 1, checks: [{ id: "one", kind: "tool", check: () => true }, { id: "two", kind: "tool", check: () => true }] })).rejects.toThrow("exceed maxChecks")
+    await expect(runRuntimePreflight({ checks: [{ id: "x".repeat(129), kind: "tool", check: () => true }] })).rejects.toMatchObject({ name: "RUNTIME_R0014" })
+    await expect(runRuntimePreflight({ checks: [{ id: "valid", kind: "k".repeat(65), check: () => true }] })).rejects.toThrow("kind must be at most")
   })
 })
