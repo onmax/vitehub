@@ -7,6 +7,7 @@ import { createBasicWorkspaceSession } from "../session/basic.ts"
 import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
 import { setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
+import { resolveWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceInternalMetadataCapability, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
@@ -232,8 +233,17 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
     },
     async writeFile(path, file) {
       // Source Sync owns its provenance; public writes must still enforce write policy.
-      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
+      const target = sourceSync && !sourceSyncStores.has(workspace) ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.writeFile) return await target.writeFile(path, file)
+      if (sourceSyncStores.has(workspace)) {
+        const raw = resolveWorkspaceRawWriteTarget(workspace)
+        if (raw && file.metadata?.source !== undefined) {
+          const { source: _source, ...metadata } = file.metadata
+          await workspace.fs.writeFile(path as never, file.content, { mediaType: file.mediaType, metadata })
+          const privateTarget = resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {})
+          return await privateTarget.writeFile?.(path, file)
+        }
+      }
       // SAFETY: Store paths are checked by the facade at runtime; the generic facade has no statically known named Workspace paths.
       await workspace.fs.writeFile(path as never, file.content, { mediaType: file.mediaType, metadata: file.metadata })
     },
@@ -252,12 +262,12 @@ function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSyn
       }
     },
     async mkdir(path, options) {
-      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
+      const target = sourceSync && !sourceSyncStores.has(workspace) ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.mkdir) return await target.mkdir(path, options)
       await workspace.fs.mkdir(path as never, options)
     },
     async rm(path, options) {
-      const target = sourceSync ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
+      const target = sourceSync && !sourceSyncStores.has(workspace) ? resolveWorkspaceMetadataMutationTarget(await resolveWorkspaceMetadataTarget(workspace) ?? {}) : undefined
       if (target?.rm) return await target.rm(path, options)
       await workspace.fs.rm(path as never, options)
     },
@@ -434,7 +444,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     const syncStore = createWritableFacadeStore(workspace, true)
     // Source Sync must share the overlay's mutation queue with guarded writes
     // and materialization, even though it uses a facade Store wrapper.
-    registerWorkspaceStoreAlias(syncStore, overlayStore)
+    if (!sourceSyncStores.has(workspace)) registerWorkspaceStoreAlias(syncStore, overlayStore)
     let writeWorkspace!: Workspace
 
     async function previousStat(path: string) {
