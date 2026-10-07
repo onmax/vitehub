@@ -1986,7 +1986,7 @@ function providerSourceProvenance(
     // A nested pull-request checkout becomes the provider root. Keep only sources
     // that are inside that root and rebase their mount so citations stay relative
     // to the directory the provider actually reads.
-    const mount = providerMount === undefined
+    const mount = !providerMount
       ? status.mountPath
       : status.mountPath === providerMount
         ? ""
@@ -2008,14 +2008,18 @@ function providerSourceProvenance(
     if (!hasRuntimeType(repo, "string") || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return []
     if (!hasRuntimeType(rawRoot, "string")) return []
     // Match GitHub Source root normalization before validating repository paths.
-    const root = rawRoot.replace(/\\/g, "/").split("/").filter(part => part && part !== ".").join("/")
-    if (root.split("/").includes("..")) return []
+    const configuredRoot = rawRoot.replace(/\\/g, "/").split("/").filter(part => part && part !== ".").join("/")
+    if (configuredRoot.split("/").includes("..")) return []
     const materializedRevisionId = status.revision.id
     // Selected paths can materialize independently while a branch advances.
     if (materialized.sources.some(candidate => candidate.source === status.source
       && candidate.mountPath === status.mountPath
       && (candidate.revision?.id !== materializedRevisionId || candidate.revision.immutable !== true))) return []
     const isProviderCheckout = providerCheckout !== undefined && status.mountPath === providerMount
+    // The managed checkout replaces the mounted source subtree with the full
+    // repository, so a source-level root no longer describes the provider's
+    // filesystem or its GitHub citation path.
+    const root = isProviderCheckout ? "" : configuredRoot
     const revisionId = isProviderCheckout && providerCheckout ? providerCheckout.headSha : materializedRevisionId
     const revisionRepository = isProviderCheckout && providerCheckout
       ? providerCheckout.headRepository || providerCheckout.repository
@@ -2050,12 +2054,10 @@ async function prepareWorkspace(
   }
   const paths = selectedWorkspacePaths(context)
   const materializedSources = await materializeWorkspaceSources(context, paths)
-  const pullRequest = inPlace ? undefined : pullRequestCheckoutPlan(context.context)
-  const checkoutPullRequest = pullRequest && (!paths || paths.some(path => !path || !pullRequest.mount || pullRequest.mount === path || pullRequest.mount.startsWith(`${path}/`)))
-  const providerMount = checkoutPullRequest && pullRequest.mount ? pullRequest.mount : undefined
-  const provenance = providerSourceProvenance(context, materializedSources, providerMount, providerMount ? pullRequest : undefined)
+  const initialPullRequest = inPlace ? undefined : pullRequestCheckoutPlan(context.context)
+  const checkoutPullRequest = initialPullRequest && (!paths || paths.some(path => !path || !initialPullRequest.mount || initialPullRequest.mount === path || initialPullRequest.mount.startsWith(`${path}/`)))
   // driver.cwd is the working copy. There is no session to materialize, snapshot, or write back.
-  if (inPlace) return { provenance, pullRequestRoot: false }
+  if (inPlace) return { provenance: providerSourceProvenance(context, materializedSources), pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
     abortSignal: context.input.abortSignal,
     // The Driver owns this temporary root and removes it after the run, so close() must not restore it.
@@ -2068,8 +2070,15 @@ async function prepareWorkspace(
   }
   if (context.workspaceMode !== "write") sessionOptions.writeBack = false
   const session = await workspaceSessionStarter(context.workspace)(sessionOptions)
+  let pullRequest = initialPullRequest
   if (pullRequest && checkoutPullRequest) {
     try {
+      // Workspace setup can resolve the channel's pull request metadata while it
+      // creates the session. Use that current plan for both checkout validation
+      // and provenance so an earlier context snapshot cannot advertise a stale
+      // head SHA or repository.
+      pullRequest = pullRequestCheckoutPlan(context.context)
+      if (!pullRequest) throw new Error("[vitehub] pull request metadata disappeared during Workspace setup.")
       // Give the Driver shell a real checkout so it can fetch, commit, and push with the Agent GitHub identity.
       await preparePullRequestCheckout(session, pullRequest, {
         abortSignal: context.input.abortSignal,
@@ -2081,6 +2090,8 @@ async function prepareWorkspace(
       throw error
     }
   }
+  const providerMount = checkoutPullRequest ? pullRequest?.mount : undefined
+  const provenance = providerSourceProvenance(context, materializedSources, providerMount, checkoutPullRequest ? pullRequest : undefined)
   const gitInit = await session.exec("git", ["init", "-q"], { abortSignal: context.input.abortSignal })
   // Workspace adapters may return the legacy host-style `code` field.
   // SAFETY: legacy workspace adapters expose `code` while the production contract exposes `exitCode`.
@@ -2090,7 +2101,7 @@ async function prepareWorkspace(
     throw new Error("Unable to initialize workspace Git repository")
   }
   return {
-    ...(checkoutPullRequest && pullRequest.mount ? { projectRoot: join(root, pullRequest.mount) } : {}),
+    ...(checkoutPullRequest && pullRequest?.mount ? { projectRoot: join(root, pullRequest.mount) } : {}),
     provenance,
     pullRequestRoot: Boolean(checkoutPullRequest && pullRequest?.mount === ""),
     session,

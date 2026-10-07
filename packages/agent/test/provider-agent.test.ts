@@ -4352,6 +4352,7 @@ cli_auth_credentials_store = "keyring"
   it("runs a nested pull request checkout as the provider root", async () => {
     const threadId = "thread-nested-pull-request-provider-root"
     let root = ""
+    let checkoutSha = ""
     const onExit = vi.fn(async ({ cwd }: { cwd: string }) => {
       expect(cwd).toBe(join(root, "portal"))
       await access(cwd)
@@ -4364,7 +4365,7 @@ cli_auth_credentials_store = "keyring"
         expect(instructions).toContain("provider instructions")
         expect(instructions).toContain('"mount": ""')
         expect(instructions).not.toContain('"mount": "portal"')
-        expect(instructions).toContain(`"id": "${"a".repeat(40)}"`)
+        expect(instructions).toContain(`"id": "${checkoutSha}"`)
         await expect(readFile(join(root, "portal", ".agents/skills/agent-browser/SKILL.md"), "utf8")).resolves.toBe("# Browser\n")
       },
     })
@@ -4404,9 +4405,10 @@ cli_auth_credentials_store = "keyring"
         git("config", "branch.feature.remote", "origin")
         git("config", "branch.feature.merge", "refs/heads/feature")
         git("-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "--allow-empty", "-qm", "initial repository")
+        checkoutSha = git("rev-parse", "HEAD").trim()
         runContext.context.set("pullRequest", {
           pullRequest: {
-            head: { ref: "feature", repo: "acme/portal", sha: git("rev-parse", "HEAD").trim() },
+            head: { ref: "feature", repo: "acme/portal", sha: checkoutSha },
             source: { mount: "portal", ref: "refs/pull/42/head", repo: "acme/portal" },
           },
           repository: { fullName: "acme/portal", name: "portal" },
@@ -4430,18 +4432,18 @@ cli_auth_credentials_store = "keyring"
       repository: { fullName: "acme/portal", name: "portal" },
     })
     const generatedTools = workspaceCommandTools("all", "write", undefined, workspace, { context: runContext.context as never })
-    runContext.tools = generatedTools
+    const providerContext = Object.assign(runContext, { tools: generatedTools })
     provider.sendTurn.mockImplementationOnce(async () => {
       const result = await generatedTools.workspace_exec!.execute?.({ command: "pwd" })
-      expect(result?.stdout).toBe(`${join(root, "portal")}\n`)
-      return { threadId, turnId: "turn-1" }
+      expect(result).toMatchObject({ stdout: `${join(root, "portal")}\n` })
+      return { threadId, turnId: "turn-1", resumeCursor: undefined }
     })
 
     await expect(createProviderAgentAdapter({
       instructions: "provider instructions",
       launch: async ({ command }) => ({ command, onExit }),
       provider: "codex",
-    }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
+    }).generate(providerContext as never)).resolves.toMatchObject({ text: "" })
     expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
     expect(onExit).toHaveBeenCalledOnce()
   })
