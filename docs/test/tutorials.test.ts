@@ -72,7 +72,7 @@ describe("documentation tutorials", () => {
     ]) {
       const source = await readFile(resolve(docsRoot, page), "utf8")
       expect(source, page).toContain("layout: tutorial")
-      expect(source, page).toContain("navigation.title: Tutorial")
+      expect(source, page).toContain(page.endsWith("agents/box-tutorial.md") ? "navigation.title: Box tutorial" : "navigation.title: Tutorial")
       expect(source, page).toContain("::tutorial-step")
       expect(source.match(/```[^\n]*\[[^\]]+\]/g)?.length || 0, page).toBeGreaterThan(0)
     }
@@ -81,7 +81,7 @@ describe("documentation tutorials", () => {
   it("keeps the scroll code rail reversible and stable for repeated filenames", async () => {
     const source = await readFile(resolve(docsRoot, "app/components/CodeTreeIntersection.vue"), "utf8")
 
-    expect(source).toContain("if (entry?.isIntersecting) register()")
+    expect(source).toContain("if (!entry.isIntersecting) continue")
     expect(source).toContain("records.value")
     expect(source).toContain("while (labels.has(label))")
     expect(source).toContain("data.vhTutorialCodeIndex")
