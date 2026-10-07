@@ -345,6 +345,8 @@ function contentEquals(left: string | Uint8Array, right: string | Uint8Array) {
   return leftBytes.byteLength === rightBytes.byteLength && leftBytes.every((byte, index) => byte === rightBytes[index])
 }
 
+// Measure the interval from when the previous report finished. A slow observer, such as an Invocation
+// journal under write contention, would otherwise exceed the interval on every file and report each one.
 function shouldReportMaterializationUpdate(lastReportedAt: number, files: number) {
   return files === 1 || files % 25 === 0 || Date.now() - lastReportedAt >= 1_000
 }
@@ -419,12 +421,16 @@ async function removeStaleMaterializedSourceFiles(
         ? await Promise.all(scopedPreviousPaths.map(async path => await store.stat(path)))
         : await store.list("", { recursive: true })
   for (const path of previousPaths) {
+    if (source.mountPath && !sourceMountContainsPath(source, path)) {
+      if (previousSnapshot?.mountPath === source.mountPath) throw workspaceError(`[vitehub] Source materialization path ${path} is outside its mount ${source.mountPath}.`)
+      continue
+    }
     if (!nextPaths.has(path) && materializationPathMatches(path, scope)) {
       await control.mutate(() => withWorkspaceStoreMutation(store, () => readWorkspaceFileOwner(store, path, true)))
     }
   }
   for (const entry of entries) {
-    if (!entry || !materializationPathMatches(entry.path, scope) || nextPaths.has(entry.path) || entry.type !== "file") continue
+    if (!entry || source.mountPath && !sourceMountContainsPath(source, entry.path) || !materializationPathMatches(entry.path, scope) || nextPaths.has(entry.path) || entry.type !== "file") continue
     await control.mutate(() => withWorkspaceStoreMutation(store, async () => {
       const file = await store.readFile(entry.path)
       // Legacy snapshots can be shared; only file ownership authorizes deletion.
@@ -580,6 +586,7 @@ async function reconcileRemovedStartupSourcesInternal(
     const staleDirectories = new Set([...(snapshot?.ownedAncestors || []), ...(snapshot?.ownedDirectories || []).filter(path => sourceOwnsDirectory(source, path))])
     if (source.mountPath && snapshot?.ownsMount) staleDirectories.add(source.mountPath)
     for (const path of previousPaths) {
+      if (source.mountPath && !sourceMountContainsPath(source, path)) continue
       await control.mutate(() => withWorkspaceStoreMutation(store, async () => {
         const file = await store.readFile(path)
         const durableOwner = await readWorkspaceFileOwner(store, path, true)
@@ -1037,7 +1044,6 @@ async function materializeWorkspaceSourcesInternal(
           counts.unchanged++
           paths.push({ path, status: "unchanged" })
           if (shouldReportMaterializationUpdate(lastProgressAt, sourceFiles)) {
-            lastProgressAt = Date.now()
             await reportMaterializationProgress(options, source, {
               bytes: sourceBytes,
               cacheStatus,
@@ -1046,6 +1052,7 @@ async function materializeWorkspaceSourcesInternal(
               revision,
               status: "updating",
             })
+            lastProgressAt = Date.now()
           }
           continue
         }
@@ -1115,7 +1122,6 @@ async function materializeWorkspaceSourcesInternal(
         counts[status]++
         paths.push({ path, status })
         if (shouldReportMaterializationUpdate(lastProgressAt, sourceFiles)) {
-          lastProgressAt = Date.now()
           await reportMaterializationProgress(options, source, {
             bytes: sourceBytes,
             cacheStatus,
@@ -1124,6 +1130,7 @@ async function materializeWorkspaceSourcesInternal(
             revision,
             status: "updating",
           })
+          lastProgressAt = Date.now()
         }
       }
       throwIfAborted(options.abortSignal)

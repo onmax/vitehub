@@ -2075,6 +2075,35 @@ describe("agent CLI", () => {
     })
   })
 
+  it("sends the private Dev Loop token with Agent messages, Capability CLI calls, and Agent inspection", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-dev-token-"))
+    const tokenServerId = "pid-1:5173"
+    const token = await refreshWorkspaceDevToken(rootDir, { serverId: tokenServerId })
+    try {
+      const discovery = { agents: [{ name: "chat", triggers: ["chat.message"] }], root: rootDir, workspaceDevTokenServerId: tokenServerId }
+      const fetchAgentStream = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return JSON.parse(String(init.body)).cli ? Response.json({ exitCode: 0, stdout: "" }) : ndjson([{ text: "hi", type: "text-delta" }, { type: "done" }])
+        }
+        return Response.json(String(url).includes("inspect=1") ? { inspection: { name: "chat" }, root: rootDir } : discovery)
+      })
+      const context = { cwd: rootDir, env: {}, rootDir, spawn: vi.fn(), stderr: stream(), stdout: stream() }
+
+      expect(await runAgentDevCli(["-p", "hello"], context, { fetch: fetchAgentStream as never })).toBe(0)
+      expect(await runAgentDevCli(["--cli", "inventory", "--", "list"], context, { fetch: fetchAgentStream as never })).toBe(0)
+      expect(await runAgentInfoCli([], context, { fetch: fetchAgentStream as never })).toBe(0)
+
+      const tokenRequests = fetchAgentStream.mock.calls.filter(([url, init]) => init?.method === "POST" || String(url).includes("inspect=1"))
+      expect(tokenRequests).toHaveLength(3)
+      for (const [, init] of tokenRequests) expect(init?.headers).toMatchObject({ [workspaceDevTokenHeader]: token })
+      const discoveries = fetchAgentStream.mock.calls.filter(([url, init]) => init?.method !== "POST" && !String(url).includes("inspect=1"))
+      for (const [, init] of discoveries) expect(init?.headers).not.toHaveProperty(workspaceDevTokenHeader)
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
   it("runs ! commands with the nested Vite server root's Workspace token", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-agent-dev-cli-"))
     const serverRoot = join(rootDir, "app")

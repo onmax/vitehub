@@ -53,7 +53,7 @@ export function createCredentials(options: {
   })
   const bridge = createEnvBridge({
     ...store,
-    runtimeContext: () => ({ actor: { kind: 'service', id: 'application' } }),
+    runtimeActor: { kind: 'service', id: 'application' },
   })
   const authenticate = createEnvAuthenticator({
     getSession: options.getSession,
@@ -100,7 +100,7 @@ export default defineConfig({
 An administrator stores the first value and grants `use` to the service principal. Run this from trusted server code, or use the Console.
 
 ```ts
-// owner is an EnvAccessContext returned by your server authentication policy.
+// owner is the administrator context that authenticate(request) returns.
 await bridge.replace(owner, {
   key: 'github/token',
   value: newToken,
@@ -128,9 +128,9 @@ const token = env.githubToken.unseal()
 
 | Import | Use |
 | --- | --- |
-| `createEnvBridge` from `vite-hub/env/bridge` | Build a bridge from a secret store, an access store, and a runtime context. |
+| `createEnvBridge` from `vite-hub/env/bridge` | Build a bridge from a secret store, an access store, and the actor of the runtime. |
 | `createDatabaseEnvStore` from `vite-hub/env/database` | Store encrypted values, grants, and activity in a SQLite Drizzle database. |
-| `createEnvAuthenticator` from `vite-hub/env/auth` | Turn a management request into a trusted `EnvAccessContext` from a Better Auth session or a verified Agent session. |
+| `createEnvAuthenticator` from `vite-hub/env/auth` | Turn a request into an `EnvAccessContext` from a Better Auth session or a verified Agent session. It is the only way to get a user, Agent token, or administrator context. |
 | `createEnvBridgeHandler` from `vite-hub/env/http` | Handle management requests on a server route. The Console uses it through the generated Server Env module. |
 | `importSealKey`, `seal`, `unseal`, `sealKeyId` from `@vite-hub/env/seal` | AES-GCM helpers in the database store format, for owner packages that store sealed values. |
 
@@ -142,7 +142,8 @@ Types such as `EnvAccessContext`, `EnvPermission`, `EnvGrant`, `EnvActivity`, `E
 | --- | --- | --- |
 | `secrets` | `EnvSecretStore` | Reads, inspects, and conditionally replaces stored values. |
 | `access` | `EnvAccessStore` | Stores grants and appends activity. |
-| `runtimeContext` | `() => EnvAccessContext \| Promise<EnvAccessContext>` | Supplies attribution when `loadServerEnv()` has no explicit access context. Derive it from trusted invocation or request context. |
+| `runtimeActor` | `EnvActor` | The fixed identity of this runtime. `loadServerEnv()` uses it when it has no explicit access context. It gets only its own durable grants, on this bridge only. |
+| `runtimeAttribution` | `() => { traceId?, invocationId? } \| undefined` | Optional. Adds trace and invocation IDs to runtime reads. It cannot change the actor. |
 | `emit` | `(event: EnvActivity) => void \| Promise<void>` | Optional. Exports each event after it is persisted. See [Export persisted events to evlog](#export-persisted-events-to-evlog). |
 
 `createDatabaseEnvStore()` returns `secrets` and `access`, so you can spread it into `createEnvBridge()`. It accepts these options:
@@ -182,7 +183,13 @@ Each grant targets one actor kind (`user`, `agent`, or `service`), one actor ID,
 | `replace` | Replace the stored value conditionally. |
 | `use` | Resolve the value at runtime, or run a trusted `bridge.use()` operation. |
 
-- Only administrators manage grants and read activity. An administrator context without a `scope` passes every permission check.
+- Only administrators manage grants and read activity. An administrator context passes every permission check.
+- Only Env creates an `EnvAccessContext`. Each producer gets only the identity that it can prove:
+  - The bridge runtime reads as its `runtimeActor`.
+  - `createEnvAuthenticator()` returns the authenticated user, or the Agent of a verified Agent token. It returns an administrator context only when your `isAdmin` policy returns `true`.
+  - The ViteHub Agent runtime creates `agent:<name>` for the Agent Definition that runs, and gives it to the Connection capabilities. A caller cannot select the name.
+- The context is frozen. Keep it within the request or invocation that created it, and never persist it.
+- The bridge rejects a context that Env did not create with `ENV_BRIDGE_UNTRUSTED`. This includes `{ actor }`, `{ actor, admin: true }`, a spread copy, and a JSON copy. Durable grants are keyed by actor, so a context that you build cannot claim the grants of another actor. TypeScript also rejects a context that you build.
 - A verified Agent token can add a `scope`. The scope is a ceiling over the Agent's durable grants. A context with a `scope` never gets administrator access.
 - Revocation applies to the next permission check. It cannot retract a secret that an operation already resolved.
 - Never accept actor IDs, administrator flags, or token scopes from a request body.
@@ -191,7 +198,7 @@ In the Console, select **Manage credential** in the provider details. Preview ac
 
 ## Distinguish retrieval from actual use
 
-`loadServerEnv(undefined, { access: context })` attributes credential resolution to a trusted request or invocation context. Without an explicit context, the bridge uses `runtimeContext`.
+`loadServerEnv(undefined, { access: context })` attributes credential resolution to a context from Env. Without an explicit context, the bridge uses `runtimeActor`.
 
 | Action | Recorded when |
 | --- | --- |
@@ -217,14 +224,15 @@ import { createLogger } from 'evlog'
 
 const bridge = createEnvBridge({
   ...store,
-  runtimeContext: () => trustedInvocationContext(),
+  runtimeActor: { kind: 'service', id: 'application' },
+  runtimeAttribution: () => trustedInvocationIds(),
   emit(event) {
     createLogger({ event: 'env.activity', env: event }).emit()
   },
 })
 ```
 
-Set `traceId` and `invocationId` in the trusted access context to correlate these records with your Agent run.
+Return `traceId` and `invocationId` from `runtimeAttribution` to correlate runtime reads with your Agent run. Contexts from the ViteHub Agent runtime carry the invocation ID.
 
 ## Structured errors
 
@@ -237,6 +245,7 @@ Bridge operations throw `ViteHubError` with a fixed public message. Other failur
 | `ENV_BRIDGE_MISSING` | The credential is unavailable. |
 | `ENV_BRIDGE_INVALID` | The request, actor, grant, or store option is invalid. |
 | `ENV_BRIDGE_AUDIT_FAILED` | Activity could not be persisted. |
+| `ENV_BRIDGE_UNTRUSTED` | Env did not create the access context. The management route returns `503`. |
 | `ENV_BRIDGE_OPERATION_FAILED` | Any other failure, including a store or callback error. |
 
 ## Limits
@@ -287,25 +296,20 @@ const authenticate = createEnvAuthenticator({
 
 ### Run brokered operations
 
-For brokered use, register a capability in the plugin's `onExecute` handler. The handler receives an already verified `agentSession`. Derive the context from that session and reuse your scope mapping. Do not call `getAgentSession` again on the same credential, because Agent Auth checks replay protection.
+ViteHub Agents call third-party APIs through their Connection capabilities, for example `gmail()`, `mcp()`, and `openapi()`. The Agent runtime gives the Connection the `agent:<name>` context of the Agent Definition that runs. The Connection access map then decides what that Agent can do.
 
-```ts
-// Inside the plugin's onExecute handler for the fixed github-review capability:
-const context = {
-  actor: { kind: 'agent' as const, id: agentSession.agent.id },
-  scope: agentScope(agentSession),
-}
-const result = await bridge.use(context, 'github/token', 'github.review', async secret => {
-  const response = await fetch('https://api.github.com/user', {
-    headers: { authorization: `Bearer ${secret.unseal()}` },
-  })
-  if (!response.ok) throw new Error('GitHub request failed')
-  const user = await response.json()
-  return { login: user.login }
-})
-```
+An Agent Auth `onExecute` handler cannot create an Env context. Env cannot verify the session object again, and a context that you build from it fails with `ENV_BRIDGE_UNTRUSTED`. Send the Agent request to a route that calls `authenticate(request)` instead.
 
-Keep the callback in trusted server code and return only the tool's intended result. Never return the raw credential to an Agent. Validate capability inputs and constraints before you call external services. The Agent Auth plugin is still evolving: pin and test its version in your application.
+Keep each callback in trusted server code and return only the tool's intended result. Never return the raw credential to an Agent. Validate capability inputs and constraints before you call external services. The Agent Auth plugin is still evolving: pin and test its version in your application.
+
+## Migrate to Env-created contexts
+
+Env now creates every `EnvAccessContext`. A context that your code builds fails with `ENV_BRIDGE_UNTRUSTED`.
+
+- Replace `runtimeContext: () => ({ actor })` with `runtimeActor: actor`. Move dynamic trace IDs to `runtimeAttribution`.
+- Get request contexts from `createEnvAuthenticator()`. A custom `authenticate` must return the context from `createEnvAuthenticator()`.
+- Replace a context that you build for an Agent with a Connection capability in a ViteHub Agent, or with an Agent token through `createEnvAuthenticator()`.
+- Keep `EnvAccessContext` in your types. Only the value must come from Env.
 
 ## Next steps
 

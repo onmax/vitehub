@@ -1341,6 +1341,46 @@ describe("Workspace Source Resolution", () => {
     await expect(base.exists("pull-request")).resolves.toBe(false)
   })
 
+  it("preserves a custom history checkpoint receiver", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    class History {
+      #base = base
+      async checkpoint() { return await this.#base.snapshot() }
+      async rebase() {}
+    }
+    const facade = writableFacade(base)
+    facade.history = new History()
+    const resolved = await createWorkspaceSourceResolutionFacade(facade, { name: "support" }, { invocation, overlay: true })
+    await expect((resolved.workspace as WritableWorkspaceFacade).history.checkpoint()).resolves.toMatchObject({})
+  })
+
+  it("keeps parent Source guards during nested sync and permits ordinary nested writes", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), {
+      name: "support",
+      sources: { protected: custom({
+        mount: "docs", materialize: "lazy",
+        async getKeys() { return ["guide.md"] },
+        async getItem(key) { return { key, path: key, content: "parent" } },
+      }) },
+    }, { invocation, overlay: true })
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, {
+      name: "support",
+      sources: { child: custom({
+        mount: "docs", sync: { stale: "remove" },
+        async getKeys() { return ["guide.md"] },
+        async getItem(key) { return { key, path: key, content: "child" } },
+      }) },
+    }, { invocation, overlay: true })
+    const writable = child.workspace as WritableWorkspaceFacade
+    await writable.fs.writeFile("notes.md", "allowed")
+    await expect(base.readFile("notes.md")).resolves.toBe("allowed")
+    await expect(writable.sync({ sources: ["child"] })).resolves.toMatchObject({
+      status: "error", sources: [expect.objectContaining({ error: expect.stringContaining("read-only") })],
+    })
+    await expect(base.exists("docs/guide.md")).resolves.toBe(false)
+  })
+
   it("rejects overlay rebases that take remote content under a Source mount", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     const rebase = vi.fn(async (_options?: { takeRemote?: string[] }) => {})

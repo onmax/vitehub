@@ -57,7 +57,7 @@ Available namespaces:
 | `vitehub agent eval` | Opt-in tooling | Agent Package | Run discovered Agent Evals through ViteHub defaults. |
 | `vitehub agent info` | Available | Agent Package | Inspect resolved Agent metadata through a running Vite Development Server. |
 | `vitehub agent dev` | Available | Agent Package | Talk to a discovered Agent through a running Vite Development Server. |
-| `vitehub agent invocations` | Available | Agent Package | List, inspect, follow, or cancel records in the application's Agent Invocation journal. |
+| `vitehub agent invocations` | Available | Agent Package | List, inspect, follow, or cancel records in the application's Agent Invocation journal, locally or on a deployed Console. |
 | `vitehub blob list` | Available | Blob Package | List blobs of a Blob store, one page at a time. |
 | `vitehub blob head` | Available | Blob Package | Show the metadata of one blob. |
 | `vitehub blob get` | Available | Blob Package | Download one blob to a file or to stdout, byte for byte. |
@@ -428,6 +428,8 @@ Use `--json` for the structured inspection contract at `config.driver.executionA
 When multiple Agents are discovered, `--agent` is required.
 `agent info` reads resolved runtime metadata from the guarded Agent Dev Loop endpoint exposed by `hubAgent()`.
 
+`agent info`, `agent dev`, and `channels replay` send a private token to this endpoint. The dev server stores the token with user-only permissions outside the served project tree, and the CLI reads it locally. The discovery request needs no token and returns the Agent names, aliases, trigger names, server root, and token server ID. It does not return the token. The endpoint rejects Agent inspection, Agent messages, Capability CLI calls, Workspace commands, and Channel replay without the token, including requests to a server exposed with `--host`. Run these commands on the machine that runs the dev server.
+
 ## Cancel an Agent Invocation
 
 Start the app's Vite + Nitro Development Server, then cancel one pending or running Agent Invocation by its journal id.
@@ -453,7 +455,31 @@ Nuxt runs Nitro outside the Vite process, and plain Vite has no Nitro. On these 
 | `already <status>` | The Invocation already finished. | 0 for `cancelled`; 1 for `completed` or `failed` |
 | `not found` | The journal has no Invocation with this id. | 1 |
 
-`--json` prints the `AgentInvocationCancelResult` from `invocations.cancel(id)`. The command is development-only. In a deployed app, call `invocations.cancel(id)` from your own authorized server route.
+`--json` prints the `AgentInvocationCancelResult` from `invocations.cancel(id)`.
+
+### Inspect and cancel on a deployed app
+
+Pass the deployed app URL with `--url` to list, show, follow, or cancel Invocations through the deployment's [Console](/docs/development/console). The Console must be enabled, and `cancel` also requires `invoke: true`, as the Console cancel button does. The command does not load the project config, so a local config error cannot stop it.
+
+```bash [Terminal]
+export VITEHUB_CONSOLE_COOKIE='__Secure-vitehub_console.session_token=...'
+pnpm vitehub agent invocations list --url https://app.example.com --status running
+pnpm vitehub agent invocations show ainv_0123 --url https://app.example.com
+pnpm vitehub agent invocations tail ainv_0123 --url https://app.example.com
+pnpm vitehub agent invocations cancel ainv_0123 --url https://app.example.com
+```
+
+Each command posts to `/_vitehub/rpc/__call` under the app URL, and the Console access policy checks it like a Console page request. Set the credentials that the policy accepts:
+
+| Variable | Value |
+| --- | --- |
+| `VITEHUB_CONSOLE_COOKIE` | A `Cookie` header value from a signed-in Console session. With `access: 'auth'`, copy the `vitehub_console.session_token` cookie, which has the `__Secure-` prefix on HTTPS. |
+| `VITEHUB_CONSOLE_AUTHORIZATION` | An `Authorization` header value, for example the Bearer token that a `host-managed` `authorize` function checks. |
+| `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` | A Cloudflare Access service token for `access: 'cloudflare-access'`. |
+
+A URL selects the Console when its host is not `localhost`, or when its path contains `/_vitehub`, such as a Console page URL that you copy from the browser or `http://localhost:3000/_vitehub` for a local production build. Other localhost URLs keep their local meaning. Remote URLs must use HTTPS and must not contain credentials, a query, or a fragment. The command does not follow redirects. A `401` or a redirect reports a Console authentication failure.
+
+The Console has no status filter, so `list --status` reads Console pages until it has `--limit` matches (default 50). `tail` asks the Console only for observations after the last one it printed. The cancel outcomes and exit statuses are the same as in development.
 
 ## Talk to an Agent during development
 

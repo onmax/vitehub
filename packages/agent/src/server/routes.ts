@@ -1,8 +1,8 @@
 import { isDurableAgentState, requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
-import { createExecutionContext, createRuntimeContext as createHostRuntimeContext } from "@vite-hub/runtime"
-import { Chat, StreamingPlan, ThreadImpl, convertEmojiPlaceholders } from "chat"
+import { consoleInvocationUrl, createExecutionContext, createRuntimeContext as createHostRuntimeContext, getViteHubErrorShape, resolvePublicUrl, ViteHubError } from "@vite-hub/runtime"
+import { Chat, Message, StreamingPlan, ThreadImpl, convertEmojiPlaceholders } from "chat"
 
 import {
   portableAgentWorkflowInput,
@@ -57,7 +57,7 @@ import { isWorkflowRun } from "../http-response.ts"
 import { messageChannelStateContextKey } from "../internal/channels.ts"
 import { chatFinalReplyContextKey, chatFinishDeliveryRegistrarKey, chatFinishDirectReplyTrace, chatFinishPrimaryReplyTrace } from "../internal/chat-finish-delivery.ts"
 import type { ChatFinalReplyMode, ChatFinishDeliveryCallback, ChatFinishDeliveryCapture, ChatFinishDeliveryRegistrar } from "../internal/chat-finish-delivery.ts"
-import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl } from "../internal/chat-approvals.ts"
+import { createAgentChatApprovalCustody, resolveAgentChatApprovalTtl, withAgentChatApprovalGrant } from "../internal/chat-approvals.ts"
 import { agentChatInvocationIdHeader } from "../internal/routes.ts"
 import { requireAtomicAgentStateQueue } from "../internal/state-queue.ts"
 import { isAmbiguousAgentWorkflowStartFailure } from "../internal/workflow-start.ts"
@@ -116,6 +116,7 @@ import type {
   PublishedAgentDeliveryArtifact,
   AgentInput,
   AgentHostIdentity,
+  AgentInvocationReference,
   AgentInvoker,
   AgentMessageDeliveryKind,
   AgentRunInput,
@@ -1424,9 +1425,85 @@ async function queuedWebhookInvocationCancelled(
   error: unknown,
 ): Promise<boolean> {
   if (!runId) return false
-  const agentName = (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || routeAgentIdentity(handlerOptions)?.name
-  const id = await agentInvocationId(runId, agentName)
+  const id = await agentInvocationId(runId, routeAgentInvocationName(agent, routeAgentIdentity(handlerOptions)))
   return isAgentInvocationCancellationError(error, id)
+}
+
+/** The name that identifies this Agent's Invocations. It matches the name of the Invocation journal. */
+function routeAgentInvocationName(agent: AgentInput<ViteAgentRouteRuntimeContext>, identity: AgentHostIdentity | undefined): string | undefined {
+  return (isRuntimeRecord(agent) && hasRuntimeType(agent.name, "string") && agent.name) || identity?.name
+}
+
+/** The Invocation ID and Console URL of a run. */
+async function runInvocationReference(agentName: string | undefined, run: AgentRunMetadata | undefined): Promise<AgentInvocationReference | undefined> {
+  if (!run?.runId) return
+  try {
+    const id = await agentInvocationId(run.runId, agentName)
+    const origin = agentName ? resolvePublicUrl({ agentName }) : undefined
+    return { id, ...(origin && agentName ? { consoleUrl: consoleInvocationUrl(origin, agentName, id) } : {}) }
+  }
+  catch {
+    return undefined
+  }
+}
+
+async function notifyQueuedWebhookFailure(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  delivery: AgentWebhookQueueDelivery,
+  error: unknown,
+  attempts: number,
+  invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
+): Promise<void> {
+  try {
+    const request = requestFromPersistedWebhook(delivery)
+    const identity = routeAgentIdentity(handlerOptions)
+    const context = createRuntimeContext(request, invocation?.run, undefined, handlerOptions.cloudflare, handlerOptions.runtime, handlerOptions.capabilities, identity)
+    const match = await runWithRuntimeCloudflareEnv(context, () => findAgentWebhookRegistration(agent, context, request, delivery.webhookId))
+    const failed = match?.trigger.definition.failed
+    if (!isRuntimeFunction(failed)) return
+    const reference = await runInvocationReference(routeAgentInvocationName(agent, identity), invocation?.run)
+    await failed({
+      attempts,
+      deliveryId: delivery.deliveryId,
+      error,
+      publicError: toAgentPublicError(error, "http"),
+      ...(invocation?.input ? { input: invocation.input } : {}),
+      ...(reference ? { invocation: reference } : {}),
+      ...(invocation?.run ? { run: invocation.run } : {}),
+    })
+  }
+  catch (callbackError) {
+    console.error(`[vitehub] The failed callback of webhook delivery "${delivery.deliveryId}" threw an error.`, callbackError)
+  }
+}
+
+async function deliverQueuedWebhookFailure(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  state: AgentWebhookQueueStateAdapter,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  delivery: AgentWebhookQueueLease,
+  error: unknown,
+  attempts: number,
+  invocation: { input?: AgentRunInput, run?: AgentRunMetadata } | undefined,
+): Promise<boolean> {
+  const failure = { error: error instanceof Error ? error.message : String(error), attempts }
+  if (state.markWebhookDeliveryFailure && state.beginWebhookFailureNotification) {
+    // A notification claim is permanent. If completion failed after dispatch,
+    // recovery only finalizes the durable row and must not call the user hook again.
+    if (delivery.failure?.notificationStarted) {
+      return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+    }
+    if (!delivery.failure && !await state.markWebhookDeliveryFailure(delivery.scope, delivery.deliveryId, delivery.leaseToken, failure)) return false
+    // The dispatch marker is permanent, while queue ownership can expire.
+    // Recovery finalizes the failure without repeating a paused callback.
+    if (!await state.beginWebhookFailureNotification(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
+    await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+    return await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
+  }
+  if (!await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) return false
+  await notifyQueuedWebhookFailure(agent, handlerOptions, delivery, error, attempts, invocation)
+  return true
 }
 
 async function executeQueuedWebhookDelivery(
@@ -1438,6 +1515,20 @@ async function executeQueuedWebhookDelivery(
   handlerOptions: AgentChannelWebhookRouteOptions,
   lifecycleSignal: AbortSignal,
 ): Promise<number | undefined> {
+  if (delivery.failure) {
+    // SAFETY: The queue persists invocation input and run metadata from this route contract.
+    const recoveredInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
+    const delivered = await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(delivery.failure.error), delivery.failure.attempts, recoveredInvocation)
+    if (delivered) {
+      const channelDelivery = delivery.channelDeliveryId ? await resumeAgentChannelDelivery(state, delivery.channelDeliveryId) : undefined
+      if (channelDelivery) await settleChannelDeliveryInvocation(channelDelivery, "failed", "failed", {
+        attempt: delivery.failure.attempts,
+        error: delivery.failure.error,
+        runId: recoveredInvocation?.run?.runId,
+      })
+    }
+    return
+  }
   const steeringClaim = await state.get(webhookOwnershipKey(delivery.scope, "steer", delivery.deliveryId))
   if (steeringClaim === "invalid-state" || steeringClaim === "steered") {
     await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)
@@ -1451,7 +1542,8 @@ async function executeQueuedWebhookDelivery(
   }
   if (delivery.attempts >= maxWebhookQueueAttempts) {
     const channelDelivery = delivery.channelDeliveryId ? await resumeAgentChannelDelivery(state, delivery.channelDeliveryId) : undefined
-    if (await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
+    // SAFETY: The queue persists invocation input and run metadata from this route contract.
+    if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, new Error(`[vitehub] Queued webhook delivery exhausted ${maxWebhookQueueAttempts} execution leases.`), delivery.attempts, delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined)) {
       await channelDelivery
         ?.event({
           attempt: delivery.attempts,
@@ -1528,6 +1620,8 @@ async function executeQueuedWebhookDelivery(
   let context: ViteAgentRouteRuntimeContext
   let channelDelivery: Awaited<ReturnType<typeof resumeAgentChannelDelivery>>
   let invocationRunId: string | undefined
+  // SAFETY: The queue persists this value from the asserted route contract.
+  let failedInvocation = delivery.invocation as { input?: AgentRunInput, run?: AgentRunMetadata } | undefined
   try {
     if (delivery.concurrencyKey) {
       const fenceAcquisition = state.acquireLock(webhookConcurrencyFenceKey(delivery.concurrencyKey), delivery.leaseTtlMs)
@@ -1624,6 +1718,7 @@ async function executeQueuedWebhookDelivery(
       }
     }
     if (invocation) {
+      failedInvocation = invocation
       armExecutionTimeout(webhookQueueExecutionTimeout(agent, invocation.input))
       invocationRunId = invocation.run?.runId
       const baseRunContext = createRuntimeContext(
@@ -1787,7 +1882,9 @@ async function executeQueuedWebhookDelivery(
       return
     }
     if (executionTimedOut || (!lifecycleSignal.aborted && delivery.attempts + 1 >= maxWebhookQueueAttempts)) {
-      if (await state.completeWebhookDelivery(delivery.scope, delivery.deliveryId, delivery.leaseToken)) {
+      const failedInvocationWithRun = { ...failedInvocation }
+      if (failedInvocationWithRun.run === undefined && invocationRunId) failedInvocationWithRun.run = { runId: invocationRunId }
+      if (await deliverQueuedWebhookFailure(agent, state, handlerOptions, delivery, error, delivery.attempts + 1, failedInvocationWithRun)) {
         if (channelDelivery)
           await settleChannelDeliveryInvocation(channelDelivery, "failed", "failed", {
             attempt: delivery.attempts + 1,
@@ -3677,6 +3774,7 @@ async function postDurableSteerErrorFallback(
   maximumInvocationDeadline: number,
   verifyOwnership?: () => Promise<void>,
 ): Promise<void> {
+  const invocation = runInvocationReference(routeAgentInvocationName(agent, context.agentIdentity), delivery.run)
   const baseOptions = getAgentChatOptions(agent)
   const options = getChannelChatOptions(agent, registration.channelId, baseOptions)
   const deliveryContext: ViteAgentRouteRuntimeContext = {
@@ -3708,6 +3806,7 @@ async function postDurableSteerErrorFallback(
     [],
     undefined,
     maximumInvocationDeadline,
+    await invocation,
   )
   if (!delivered) throw agentDiagnostics.AGENT_R0806({ message: "[vitehub] Durable steered Channel error fallback was not delivered before its deadline." })
 }
@@ -4508,6 +4607,8 @@ function chatErrorHookArgs(
   toolResults: AgentToolStepItem[],
   abortSignal?: AbortSignal,
   onPost?: () => void,
+  invocation?: AgentInvocationReference,
+  errorConsoleLink = false,
 ): AgentChatErrorHookArgs<ViteAgentRouteRuntimeConfig> {
   const inputMessage = input?.messages.at(-1)
   // SAFETY: The surrounding route guards establish this record shape before the value crosses the internal boundary.
@@ -4522,11 +4623,20 @@ function chatErrorHookArgs(
       text: message.text,
     },
     run,
+    ...(invocation ? { invocation } : {}),
     toolResults: [...toolResults],
     thread: {
       post: async (postedMessage) => {
+        const consoleUrl = errorConsoleLink ? invocation?.consoleUrl : undefined
+        // SAFETY: The error hook accepts the same chat message payloads as postChatMessage.
+        const posted = postedMessage as AgentChatMessage
+        const message = consoleUrl && isRuntimeString(postedMessage) && !postedMessage.includes(consoleUrl)
+          ? `${postedMessage}\n\nDetails: ${consoleUrl}`
+          : consoleUrl && isTextChatMessage(posted) && !posted.text.includes(consoleUrl)
+            ? { ...posted, text: `${posted.text}\n\nDetails: ${consoleUrl}` }
+            : postedMessage
         // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
-        await postChatMessage(thread, postedMessage as AgentChatMessage, abortSignal)
+        await postChatMessage(thread, message as AgentChatMessage, abortSignal)
         // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
         onPost?.()
       },
@@ -4661,6 +4771,7 @@ export async function postChatErrorFallback(
   toolResults: AgentToolStepItem[],
   manualDelivery?: ManualChatDeliveryState,
   maximumInvocationDeadline?: number,
+  invocation?: AgentInvocationReference,
 ): Promise<boolean> {
   console.error({
     component: "@vite-hub/agent",
@@ -4684,7 +4795,7 @@ export async function postChatErrorFallback(
     chatErrorHookArgs(thread, message, input, run, error, toolResults, fallbackResolutionAbort?.signal, () => {
       callbackDelivered = true
       resolveCallbackDelivery?.()
-    }),
+    }, invocation, options?.errorConsoleLink),
     () => callbackDelivered,
     (resolution) => enforceChatInvocationTimeout(resolution, fallbackResolutionTimeout, fallbackResolutionAbort),
   )
@@ -5065,6 +5176,7 @@ function chatInvocationTimeout(timeout: number | undefined, maximum: number | un
 async function enforceChatInvocationTimeout<T>(task: Promise<T>, timeout: number | undefined, abortController?: AbortController): Promise<T> {
   if (timeout === undefined) return await task
   let timeoutId: ReturnType<typeof setTimeout> | undefined
+  let onAbort: (() => void) | undefined
   try {
     return await Promise.race([
       task,
@@ -5074,10 +5186,16 @@ async function enforceChatInvocationTimeout<T>(task: Promise<T>, timeout: number
           abortController?.abort(error)
           reject(error)
         }, timeout)
+        // A host restart interrupts the turn now, so the restart notice is posted before the process exits.
+        if (isHostRestartedError(abortController?.signal.reason)) reject(abortController!.signal.reason)
+        abortController?.signal.addEventListener("abort", onAbort = () => {
+          if (isHostRestartedError(abortController.signal.reason)) reject(abortController.signal.reason)
+        }, { once: true })
       }),
     ])
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
+    if (onAbort) abortController?.signal.removeEventListener("abort", onAbort)
   }
 }
 
@@ -5203,6 +5321,300 @@ async function admitChatSdkMessage(
 
 type ChatSdkMessageAdmission = NonNullable<Awaited<ReturnType<typeof admitChatSdkMessage>>>
 
+// Inline chat invocations live only in this process. Persist each inbound message so
+// the next process can tell the thread about a restart and retry the work once.
+interface InlineChatInvocation {
+  interrupted: boolean
+  persisted: Promise<void>
+  settled: Promise<void>
+  interrupt(): void
+  setPlaceholder(placeholder: unknown): void
+  forget(): Promise<void>
+  finish(): void
+}
+
+interface InterruptedChatRecord {
+  agentName: string
+  channelId?: string
+  message: ReturnType<Message["toJSON"]>
+  placeholderId?: string
+  /** Durable, one-shot replay reservation. It must never expire into another dispatch. */
+  recoveryToken?: string
+  runId: string
+  startedAt: string
+  threadId: string
+}
+
+export interface DrainInlineChatInvocationsOptions {
+  /** How long running inline chat invocations get to finish before they are interrupted. */
+  timeoutMs?: number
+  /** How long interrupted invocations get to persist their record and post their HOST_RESTARTED notice. */
+  settleMs?: number
+}
+
+export interface DrainInlineChatInvocationsResult {
+  active: number
+  interrupted: number
+  unsettled: number
+}
+
+const inlineChatInvocations = new Set<InlineChatInvocation>()
+const interruptedChatRetrySuffix = "#vitehub-retry"
+const interruptedChatRetryNote = "[Retry after interruption] A server restart interrupted the previous attempt at this request. Before creating branches, commits, pull requests, comments, or messages, check whether the previous attempt already did it and reuse its results."
+
+function hostRestartedError(retry: "pending" | "exhausted"): ViteHubError<"HOST_RESTARTED", { retry: "pending" | "exhausted" }> {
+  return new ViteHubError("HOST_RESTARTED", retry === "exhausted"
+    ? "The host restarted twice before this Agent Invocation finished."
+    : "The host restarted before this Agent Invocation finished.", { details: { retry } })
+}
+
+function isHostRestartedError(value: unknown): boolean {
+  return getViteHubErrorShape(value)?.code === "HOST_RESTARTED"
+}
+
+function interruptedChatIndexKey(keyPrefix: string): string {
+  return `${keyPrefix}vitehub:interrupted-chat`
+}
+
+async function updateInterruptedChatIndex(
+  state: StateAdapter,
+  keyPrefix: string,
+  update: (records: Record<string, InterruptedChatRecord>) => void | Promise<void>,
+): Promise<void> {
+  const atomic = requireAtomicAgentStateLock(state)
+  state = atomic.forCacheLocks?.() ?? atomic
+  const mutationState = requireAtomicAgentStateLock(state)
+  const key = interruptedChatIndexKey(keyPrefix)
+  let lock: Awaited<ReturnType<StateAdapter["acquireLock"]>> | undefined
+  for (let attempt = 0; attempt < 50 && !lock; attempt++) {
+    lock = await state.acquireLock(`${key}:lock`, 10_000).catch(() => null)
+    if (!lock) await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  if (!lock) throw new Error("Could not acquire the interrupted chat index lock.")
+  try {
+    const current = await state.get(key)
+    // SAFETY: This private index is written only with InterruptedChatRecord values below.
+    const records = isRecord(current) ? { ...current } as Record<string, InterruptedChatRecord> : {}
+    await update(records)
+    const committed = await mutationState.mutateWithLock(lock, [Object.keys(records).length
+      ? { type: "set", key, value: records }
+      : { type: "delete", key }])
+    if (!committed) throw new Error("Lost the interrupted chat index lock before committing.")
+  }
+  finally {
+    await state.releaseLock(lock).catch(() => undefined)
+  }
+}
+
+function interruptedChatRetryAttempt(messageId: unknown): number {
+  return isRuntimeString(messageId) ? messageId.split(interruptedChatRetrySuffix).length - 1 : 0
+}
+
+function registerInlineChatInvocation(options: {
+  abort: AbortController
+  agentName: string
+  keyPrefix: string
+  message: ChatSdkMessage
+  registration: AgentWebhookRegistrationDefinition
+  runId: string | undefined
+  state: StateAdapter
+}): InlineChatInvocation {
+  const { abort, agentName, keyPrefix, message, registration, runId, state } = options
+  let resolveSettled!: () => void
+  const logError = (error: unknown) => console.error("[vitehub] Inline chat restart record could not be updated.", error)
+  const serialize = Reflect.get(message, "toJSON")
+  const entry: InlineChatInvocation = {
+    interrupted: false,
+    persisted: Promise.resolve(),
+    settled: new Promise<void>((resolve) => { resolveSettled = resolve }),
+    interrupt() {
+      if (entry.interrupted) return
+      entry.interrupted = true
+      abort.abort(hostRestartedError("pending"))
+    },
+    setPlaceholder(placeholder) {
+      const placeholderId = isRecord(placeholder) ? placeholder.id : undefined
+      if (!runId || !isRuntimeString(placeholderId)) return
+      entry.persisted = entry.persisted
+        .then(() => updateInterruptedChatIndex(state, keyPrefix, (records) => {
+          if (records[runId]) records[runId] = { ...records[runId], placeholderId }
+        }))
+        .catch(logError)
+    },
+    async forget() {
+      if (!runId) return
+      await entry.persisted
+      await updateInterruptedChatIndex(state, keyPrefix, (records) => { delete records[runId] }).catch(logError)
+    },
+    finish() {
+      void entry.persisted.finally(() => {
+        inlineChatInvocations.delete(entry)
+        resolveSettled()
+      })
+    },
+  }
+  if (runId && isRuntimeFunction(serialize)) {
+    entry.persisted = updateInterruptedChatIndex(state, keyPrefix, (records) => {
+      // Once the retry is persisted, it owns recovery even if this process restarts again.
+      if (interruptedChatRetryAttempt(message.id) > 0) {
+        for (const [previousRunId, previous] of Object.entries(records)) {
+          if (previous.agentName === agentName && previous.channelId === registration.channelId && previous.threadId === message.threadId && `${previous.message.id}${interruptedChatRetrySuffix}` === message.id) delete records[previousRunId]
+        }
+      }
+      records[runId] = {
+        agentName,
+        channelId: registration.channelId,
+        message: serialize.call(message),
+        runId,
+        startedAt: new Date().toISOString(),
+        threadId: message.threadId,
+      }
+    }).catch(logError)
+  }
+  inlineChatInvocations.add(entry)
+  return entry
+}
+
+/**
+ * Wait for inline chat invocations to finish, then interrupt the rest.
+ * Interrupted invocations post the HOST_RESTARTED fallback and keep their
+ * restart record, so the next process retries them once.
+ */
+export async function drainInlineChatInvocations(options: DrainInlineChatInvocationsOptions = {}): Promise<DrainInlineChatInvocationsResult> {
+  const wait = async (entries: InlineChatInvocation[], ms: number) => {
+    if (!entries.length || !(ms > 0)) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      Promise.allSettled(entries.map(async entry => {
+        await entry.settled
+        await entry.persisted
+      })),
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, ms) }),
+    ])
+    clearTimeout(timer)
+  }
+  const active = inlineChatInvocations.size
+  await wait([...inlineChatInvocations], options.timeoutMs ?? 0)
+  const remaining = [...inlineChatInvocations]
+  for (const entry of remaining) entry.interrupt()
+  await wait(remaining, options.settleMs ?? 15_000)
+  return { active, interrupted: remaining.length, unsettled: inlineChatInvocations.size }
+}
+
+async function interruptedChatFallbackText(
+  options: AgentChatOptions | undefined,
+  thread: Thread,
+  message: ChatSdkMessage,
+  retry: "pending" | "exhausted",
+): Promise<string | undefined> {
+  return await resolveChatErrorFallbackText(options, chatErrorHookArgs(thread, message, undefined, undefined, hostRestartedError(retry), [], undefined, () => undefined))
+    .catch(() => undefined)
+}
+
+async function resumeInterruptedChatInvocation(options: {
+  adapter: Adapter
+  agent: AgentInput<ViteAgentRouteRuntimeContext>
+  agentName: string
+  chat: Chat
+  chatOptions: AgentChatOptions | undefined
+  record: InterruptedChatRecord
+  waitUntil: ViteAgentRouteRuntimeContext["waitUntil"]
+}): Promise<boolean> {
+  const { adapter, agent, agentName, chat, chatOptions, record, waitUntil } = options
+  if (!isRecord(record) || !isRuntimeString(record.threadId) || !isRecord(record.message) || !isRuntimeString(record.message.id)) return false
+  // SAFETY: Agent Definitions expose the invocation journal; only its optional summary reader is used.
+  const invocations = isRecord(agent) && isRecord(agent.invocations) ? agent.invocations as { getSummary?: (id: string) => unknown } : undefined
+  const summary = await Promise.resolve()
+    .then(async () => await invocations?.getSummary?.(await agentInvocationId(record.runId, agentName)))
+    .catch(() => undefined)
+  // The previous process finished the work after all.
+  if (isRecord(summary) && summary.status === "completed") return true
+  const message = Message.fromJSON(record.message)
+  const thread = chat.thread(record.threadId)
+  const exhausted = Boolean(record.recoveryToken) || interruptedChatRetryAttempt(record.message.id) >= 1
+  const notice = await interruptedChatFallbackText(chatOptions, thread, message, exhausted ? "exhausted" : "pending")
+  if (notice) {
+    const edited = isRuntimeString(record.placeholderId)
+      ? await Promise.resolve(adapter.editMessage(record.threadId, record.placeholderId, notice)).then(() => true, () => false)
+      : false
+    if (!edited) await thread.post(notice)
+  }
+  if (exhausted) return true
+  const retry = Message.fromJSON({
+    ...record.message,
+    id: `${record.message.id}${interruptedChatRetrySuffix}`,
+    text: `${interruptedChatRetryNote}\n\n${record.message.text ?? ""}`,
+  })
+  // A new message id gives the retry a new run id; deduplicate: false keeps Chat from dropping it.
+  try {
+    await chat.processMessage(adapter, record.threadId, retry, { deduplicate: false, waitUntil })
+    return true
+  }
+  catch (error) {
+    console.error("[vitehub] Interrupted chat invocation retry failed.", error)
+    return false
+  }
+}
+
+async function resumeInterruptedChatInvocations(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  context: ViteAgentRouteRuntimeContext,
+  handlerOptions: AgentChannelWebhookRouteOptions,
+  recoveryBefore: number,
+): Promise<void> {
+  if (!isRecord(agent) || await hasActiveWorkflowRuntime(agent, context)) return
+  const agentName = firstString(agent.name, context.agentIdentity?.name)
+  if (!agentName) return
+  const baseChatOptions = getAgentChatOptions(agent)
+  let adapters: Record<string, Adapter> | undefined
+  for (const { registration } of await agentWebhookRegistrations(agent, context)) {
+    adapters ??= await resolveChatAdapters(baseChatOptions, context)
+    const adapterName = resolveChatAdapterName(adapters, registration)
+    const adapter = adapterName ? adapters[adapterName] : undefined
+    if (!adapterName || !adapter) continue
+    const chatOptions = getChannelChatOptions(agent, registration.channelId, baseChatOptions)
+    const state = await resolveChatState(chatOptions, context, registration, handlerOptions)
+    await state.state.connect()
+    const records: InterruptedChatRecord[] = []
+    const current = await state.state.get<Record<string, InterruptedChatRecord>>(interruptedChatIndexKey(state.titleKeyPrefix))
+    if (isRecord(current)) {
+      for (const record of Object.values(current)) {
+        if (!isRecord(record) || record.agentName !== agentName || record.channelId !== registration.channelId) continue
+        if (!isRuntimeString(record.startedAt) || !(Date.parse(record.startedAt) < recoveryBefore)) continue
+        records.push(record)
+      }
+    }
+    if (!records.length) continue
+    const chat = await createChannelChat(agent, context, registration, adapterName, adapter, chatOptions, handlerOptions, undefined, state)
+    await chat.initialize()
+    await Promise.all(records.map(async (record) => {
+      // Persist ownership before any Chat side effects. Unlike a renewable lease,
+      // this reservation cannot expire and permit a second dispatch. A startup
+      // that finds a reserved attempt can only report retry exhaustion.
+      const recoveryToken = randomToken()
+      let claimed = false
+      await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
+        const existing = current[record.runId]
+        // A reservation is a durable one-shot claim. A later startup must not
+        // replace it while the original owner is still dispatching the retry.
+        if (!existing || existing.recoveryToken || existing.startedAt !== record.startedAt) return
+        current[record.runId] = { ...existing, recoveryToken, startedAt: new Date().toISOString() }
+        claimed = true
+      })
+      if (!claimed) return
+      const accepted = await resumeInterruptedChatInvocation({ adapter, agent, agentName, chat, chatOptions, record, waitUntil: context.waitUntil })
+        .catch(error => console.error("[vitehub] Interrupted chat invocation could not be resumed.", error))
+      await updateInterruptedChatIndex(state.state, state.titleKeyPrefix, (current) => {
+        // The retry's admission or another startup may already own this record.
+        // Check its version inside the same fenced transaction as the mutation.
+        if (current[record.runId]?.recoveryToken !== recoveryToken) return
+        if (accepted) delete current[record.runId]
+        else current[record.runId] = record
+      })
+    }))
+  }
+}
+
 async function handleChatSdkMessage(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   context: ViteAgentRouteRuntimeContext,
@@ -5233,6 +5645,7 @@ async function handleChatSdkMessage(
   thread = observeChatThread(thread, delivery)
   let input: AgentChatMessageTriggerInput | undefined
   let run: AgentRunMetadata | undefined
+  let invocationReference: Promise<AgentInvocationReference | undefined> | undefined
   let typing: ChatTypingRefresh | undefined
   let progress: ReturnType<typeof createManualDeliveryProgressUpdater> | undefined
   const manualDeliveryState: ManualChatDeliveryState = {}
@@ -5245,6 +5658,7 @@ async function handleChatSdkMessage(
   let chatFinish: AgentChatQueuedFinishExtension | undefined
   let inlineTurn: InlineChatTurn | undefined
   let inlineOwnershipAbort: AbortController | undefined
+  let inlineRestartEntry: InlineChatInvocation | undefined
   const inlineScope = options?.concurrency === "steer" ? `${state.keyPrefix}inline-steer:${durableSteerScope ?? thread.id}` : undefined
   let inlineKey: string | undefined
   try {
@@ -5430,6 +5844,8 @@ async function handleChatSdkMessage(
     typing = streamsPhasedReplies || bufferedDelivery ? startChatTypingRefresh(thread, context) : undefined
     assertChatDeliveryOptions(options || {})
     run = invocation.run
+    // Hash the Invocation ID now, so an error reply does not wait for it.
+    invocationReference = runInvocationReference(routeAgentInvocationName(agent, context.agentIdentity), run)
     if (inlineTurn) inlineTurn.runId = run?.runId
     await recordChannelDeliveryEvidence(delivery, { type: "accepted", runId: run?.runId })
     await recordChannelDeliveryEvidence(delivery, {
@@ -6023,6 +6439,15 @@ async function handleChatSdkMessage(
       maximumInvocationDeadline === undefined ? undefined : Math.max(0, maximumInvocationDeadline - inlineStartedAt),
     )
     invocationDeadlineAbort ??= new AbortController()
+    inlineRestartEntry = registerInlineChatInvocation({
+      abort: invocationDeadlineAbort,
+      agentName: firstString(isRecord(agent) ? agent.name : undefined, context.agentIdentity?.name) || "agent",
+      keyPrefix: state.keyPrefix,
+      message,
+      registration,
+      runId: run?.runId,
+      state: state.state,
+    })
     const inlineRunContext = run?.runId ? withAgentInvocationResponseOwner(runContext, run.runId) : runContext
     const thinkingFallback = invocation.metadata?.thinkingFallback
     if (bufferedDelivery && isRuntimeString(thinkingFallback)) {
@@ -6038,6 +6463,7 @@ async function handleChatSdkMessage(
         maximumInvocationDeadline === undefined ? undefined : Math.max(0, maximumInvocationDeadline - Date.now()),
         invocationDeadlineAbort,
       )
+      inlineRestartEntry.setPlaceholder(manualDeliveryState.placeholder)
     }
     chatFinish = createChatFinishExtension(input, registration)
     progress = bufferedDelivery
@@ -6219,9 +6645,16 @@ async function handleChatSdkMessage(
       })
     typing?.stop()
     await progress?.finish()
-    await postChatErrorFallback(error, thread, message, options, input, run, toolResults, manualDeliveryState, maximumInvocationDeadline)
+    await postChatErrorFallback(inlineRestartEntry?.interrupted ? hostRestartedError("pending") : error, thread, message, options, input, run, toolResults, manualDeliveryState, maximumInvocationDeadline, await invocationReference)
     throw error
   } finally {
+    try {
+      // An interrupted invocation keeps its restart record for the next process.
+      if (inlineRestartEntry && !inlineRestartEntry.interrupted) await inlineRestartEntry.forget()
+    }
+    finally {
+      inlineRestartEntry?.finish()
+    }
     if (inlineTurn) {
       if (inlineKey && inlineChatTurns.get(inlineKey) === inlineTurn) inlineChatTurns.delete(inlineKey)
       // Late acceptance settles in its own webhook without retaining the owner lock.
@@ -7291,14 +7724,9 @@ export function createChannelChatRouteHandler(
         : undefined
       if (approvalCustody) {
         const authorized = await approvalCustody.authorize(triggerInput.messages)
-        triggerInput = {
-          ...triggerInput,
-          context: {
-            ...triggerInput.context,
-            ...(authorized.approvedTools.length ? { "vitehub.eve.approvedTools": authorized.approvedTools } : {}),
-          },
-          messages: authorized.messages,
-        }
+        // The grant rides on this request's runtime context, not on the Invocation context that hooks can write.
+        context = withAgentChatApprovalGrant(context, authorized.grant)
+        triggerInput = { ...triggerInput, messages: authorized.messages }
       }
       await recordChannelDeliveryEvidence(delivery, {
         type: "accepted",
@@ -7988,6 +8416,8 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
           ...[...trackedStates].filter(hasAgentWebhookQueue).map(state => ({ owns: (scope: string) => scope.startsWith(agentScopePrefix), state })),
           ...registrations.map(({ scope, state }) => ({ owns: (candidate: string) => candidate === scope, state })),
         ]).catch(error => console.error("[vitehub] Interrupted Agent invocation recovery failed.", error))
+        resumeInterruptedChatInvocations(agent, context, handlerOptions, recoveryBefore)
+          .catch(error => console.error("[vitehub] Interrupted chat invocation resume failed.", error))
         recoveryBefore = undefined
       }
       for (const state of trackedStates) registrar.track(state, handlerOptions, agentScopePrefix)

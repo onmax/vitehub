@@ -34,6 +34,7 @@ interface SourceSyncPlan {
   paths: WorkspaceSourceSyncPathResult[]
   removals: WorkspaceSourceSyncPathResult[]
   source: ResolvedWorkspaceSource
+  definitionName: string
   stateChanged: boolean
 }
 
@@ -130,7 +131,7 @@ async function planSourceSync(
 ): Promise<SourceSyncPlan> {
   const ctx = createSourceContext(definition, source)
   const [previousState, configHash, items] = await Promise.all([
-    store.getMeta?.(sourceSyncMetaKey(source.key)).then(readWorkspaceSourceSyncState),
+    store.getMeta?.(sourceSyncMetaKey(source.key, definition.name)).then(readWorkspaceSourceSyncState),
     sourceConfigHash(source),
     getSourceItems(source, ctx),
   ])
@@ -202,6 +203,7 @@ async function planSourceSync(
     paths,
     removals,
     source,
+    definitionName: definition.name,
     stateChanged: !workspaceSourceSyncStateEquals(previousState, nextState),
   }
 }
@@ -217,13 +219,13 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
   }
   await pruneEmptySourceDirectories(sourceStore, plan.source, plan.removals)
   if (plan.stateChanged) {
-    const current = await store.getMeta?.(sourceSyncMetaKey(plan.source.key)).then(readWorkspaceSourceSyncState)
+    const current = await store.getMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName)).then(readWorkspaceSourceSyncState)
     const paths = { ...current?.paths }
     for (const [path, metadata] of Object.entries(paths)) {
       if ((metadata.mountPath ?? plan.source.mountPath) === plan.source.mountPath && !plan.nextState.paths[path]) delete paths[path]
     }
     for (const [path, metadata] of Object.entries(plan.nextState.paths)) paths[path] = metadata
-    await store.setMeta?.(sourceSyncMetaKey(plan.source.key), { ...plan.nextState, paths })
+    await store.setMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName), { ...plan.nextState, paths })
   }
 }
 

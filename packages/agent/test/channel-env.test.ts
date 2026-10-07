@@ -5,7 +5,7 @@ import { join } from "node:path"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { builtInChannelEnv } from "../src/channel-env.ts"
+import { builtInChannelEnv, channelEnvValue } from "../src/channel-env.ts"
 import { discoverAgentChannelEnv, discoverBuiltInChannelUses } from "../src/channel-env-discovery.ts"
 import { hasRuntimeType } from "../src/internal/runtime-type.ts"
 import { ViteHubError } from "@vite-hub/runtime"
@@ -1100,6 +1100,14 @@ describe("built-in Channel Env at runtime", { timeout: 30_000 }, () => {
     vi.doUnmock("@chat-adapter/telegram")
     vi.doUnmock("@chat-adapter/discord")
     vi.resetModules()
+  })
+
+  it("reads the canonical VITEHUB_ name before host names without Server Env", async () => {
+    const context = { cloudflare: { env: { TELEGRAM_BOT_TOKEN: "vendor-token", VITEHUB_TELEGRAM_BOT_TOKEN: "canonical-token", VITEHUB_GITHUB_TOKEN: "", GH_TOKEN: "gh-token" } } }
+    // SAFETY: channelEnvValue reads only `cloudflare.env` from the callback context.
+    expect(await channelEnvValue("telegram", "botToken", context as never)).toBe("canonical-token")
+    // SAFETY: channelEnvValue reads only `cloudflare.env` from the callback context.
+    expect(await channelEnvValue("github", "token", context as never)).toBe("gh-token")
   })
 
   it.each([

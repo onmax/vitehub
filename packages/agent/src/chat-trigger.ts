@@ -132,6 +132,18 @@ export async function resolveChatErrorFallbackText<TRuntimeConfig extends AgentR
   callbackDelivered?: () => boolean,
   resolveFallback?: (fallback: Promise<unknown>) => Promise<unknown>,
 ): Promise<string | undefined> {
+  const text = await resolveChatErrorFallbackBody(options, args, callbackDelivered, resolveFallback)
+  // `errorConsoleLink` applies to the default text and to custom `errorFallbackText` results.
+  const consoleUrl = options?.errorConsoleLink ? args.invocation?.consoleUrl : undefined
+  return text && consoleUrl && !text.includes(consoleUrl) ? `${text}\n\nDetails: ${consoleUrl}` : text
+}
+
+async function resolveChatErrorFallbackBody<TRuntimeConfig extends AgentRuntimeConfig>(
+  options: AgentChatOptions<TRuntimeConfig> | undefined,
+  args: AgentChatErrorHookArgs<TRuntimeConfig>,
+  callbackDelivered?: () => boolean,
+  resolveFallback?: (fallback: Promise<unknown>) => Promise<unknown>,
+): Promise<string | undefined> {
   const fallback = options?.errorFallbackText
   if (fallback === null) return
   const defaultText = defaultChatErrorFallback(args)

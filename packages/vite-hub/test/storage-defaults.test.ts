@@ -9,6 +9,7 @@ import { consoleD1Binding, resolveConsoleJournal, withDataDir } from "../src/sto
 import { vitehub } from "../src/index.ts"
 
 import type { ViteHubOptions } from "../src/index.ts"
+import { hostManagedAuthorize } from "./support/console-authorize.ts"
 
 async function generatedConsolePlugin(options: ViteHubOptions, command: "build" | "serve", files: Record<string, string> = {}): Promise<{ info: string[], plugin: string }> {
   const root = await mkdtemp(join(tmpdir(), "vitehub-storage-journal-"))
@@ -87,7 +88,7 @@ describe("Node storage defaults", () => {
       preset: "node" as const,
       dataDir: "/var/lib/app",
       agent: false as const,
-      console: { exposure: "host-managed" as const, databaseUrl: "libsql://journal.example.com" },
+      console: { exposure: "host-managed" as const, authorize: hostManagedAuthorize, databaseUrl: "libsql://journal.example.com" },
       kv: { driver: "upstash" as const, url: "https://kv.example.com", token: "fixture" },
       blob: { driver: "fs" as const, base: "/existing/uploads" },
       workspace: { root: "/existing/workspaces" },
@@ -120,7 +121,7 @@ describe("Node storage defaults", () => {
 })
 
 describe("Console journal host defaults", () => {
-  const cloudflare = { preset: "cloudflare", agent: true, console: { exposure: "host-managed" }, database: { driver: "d1", binding: "DB" } } satisfies ViteHubOptions
+  const cloudflare = { preset: "cloudflare", agent: true, console: { exposure: "host-managed", authorize: hostManagedAuthorize }, database: { driver: "d1", binding: "DB" } } satisfies ViteHubOptions
 
   it("does not select an unprovisioned explicit D1 binding", async () => {
     const { info, plugin } = await generatedConsolePlugin(cloudflare, "build")
@@ -166,7 +167,7 @@ describe("Console journal host defaults", () => {
   it("keeps libSQL on Node and when the Console database URL is explicit", async () => {
     const node = await generatedConsolePlugin({ ...cloudflare, preset: "node" }, "build")
     expect(node.plugin).not.toContain("cloudflare:workers")
-    const explicit = await generatedConsolePlugin({ ...cloudflare, console: { exposure: "host-managed", databaseUrl: "libsql://journal.example.com" } }, "build")
+    const explicit = await generatedConsolePlugin({ ...cloudflare, console: { exposure: "host-managed", authorize: hostManagedAuthorize, databaseUrl: "libsql://journal.example.com" } }, "build")
     expect(explicit.plugin).toContain(`databaseUrl: "libsql://journal.example.com"`)
     expect(explicit.plugin).not.toContain("cloudflare:workers")
   })

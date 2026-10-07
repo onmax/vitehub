@@ -26,7 +26,7 @@ const invocation = {
 
 // One key from each internal family, and spellings that some Stores map to the same file path.
 const internalKeys = [
-  sourceSyncMetaKey("docs"),
+  sourceSyncMetaKey("docs", "support"),
   "source:docs:snapshot",
   sourceSnapshotMetaKey("support", "docs"),
   `${sourceSnapshotMetaKey("support", "docs")}:recovery`,
@@ -80,7 +80,7 @@ describe("internal metadata keys", () => {
   it("rejects keys that are not strings", async () => {
     const store = createMemoryWorkspaceStore()
     const workspace = createWorkspace({ name: "support", store })
-    const key = sourceSyncMetaKey("docs")
+    const key = sourceSyncMetaKey("docs", "support")
     // SAFETY: These values simulate JavaScript callers that bypass the TypeScript contract.
     const forged = [
       { startsWith: () => false, toLowerCase: () => "app", toString: () => key },
@@ -99,8 +99,8 @@ describe("internal metadata keys", () => {
     registerWorkspace("support", defineWorkspace({ store }))
     const writable = useWorkspace("support", { mode: "write" })
 
-    await expect(writable.setMeta!(sourceSyncMetaKey("docs"), { forged: true })).rejects.toThrow("reserved for Workspace internals")
-    await expect(store.getMeta!(sourceSyncMetaKey("docs"))).resolves.toBeUndefined()
+    await expect(writable.setMeta!(sourceSyncMetaKey("docs", "support"), { forged: true })).rejects.toThrow("reserved for Workspace internals")
+    await expect(store.getMeta!(sourceSyncMetaKey("docs", "support"))).resolves.toBeUndefined()
   })
 
   it("does not expose an internal metadata setter through the facade resolver", async () => {
@@ -117,6 +117,17 @@ describe("internal metadata keys", () => {
     expect(metadata?.rm).toBeUndefined()
   })
 
+  it("does not expose raw mutations through a resolved facade", async () => {
+    registerWorkspace("support", defineWorkspace({ store: createMemoryWorkspaceStore() }))
+    const base = useWorkspace("support", { mode: "write" })
+    const resolved = await createWorkspaceSourceResolutionFacade(base, { name: "support" }, { invocation, overlay: true })
+    const resolver = Reflect.get(resolved.workspace, Symbol.for("vitehub.workspace.metadataTarget"))
+    const metadata = await Reflect.apply(resolver, resolved.workspace, []) as object
+    for (const method of ["setMeta", "writeFile", "mkdir", "rm"]) {
+      expect(Reflect.get(metadata, method)).toBeUndefined()
+    }
+  })
+
   it("does not let a caller forge sync state that removes a user file", async () => {
     const store = createMemoryWorkspaceStore()
     registerWorkspace("support", defineWorkspace({ store, sources: { docs: docsSource() } }))
@@ -125,7 +136,7 @@ describe("internal metadata keys", () => {
     // Simulates a file that a user put in the mount before Source Sync was enabled.
     await store.writeFile("docs/user.md", { path: "docs/user.md", content: "user" })
 
-    await expect(writable.setMeta!(sourceSyncMetaKey("docs"), {
+    await expect(writable.setMeta!(sourceSyncMetaKey("docs", "support"), {
       configHash: "forged",
       mountPath: "docs",
       paths: { "docs/user.md": { digest: await sha256("user"), sourcePath: "user.md" } },
@@ -159,10 +170,10 @@ describe("internal metadata keys", () => {
     const resolve = async () => (await createWorkspaceSourceResolutionFacade(base, definition, { invocation, overlay: true })).workspace as WritableWorkspaceFacade
 
     const first = await resolve()
-    await expect(first.setMeta!(sourceSyncMetaKey("docs"), { forged: true })).rejects.toThrow("reserved for Workspace internals")
+    await expect(first.setMeta!(sourceSyncMetaKey("docs", "support"), { forged: true })).rejects.toThrow("reserved for Workspace internals")
     await expect(first.sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
     // Source Sync writes its state through the owner path.
-    await expect(store.getMeta!(sourceSyncMetaKey("docs"))).resolves.toMatchObject({ source: "docs" })
+    await expect(store.getMeta!(sourceSyncMetaKey("docs", "support"))).resolves.toMatchObject({ source: "docs" })
 
     keys = ["guide.md"]
     await expect((await resolve()).sync({ sources: ["docs"] })).resolves.toMatchObject({
@@ -177,7 +188,7 @@ describe("internal metadata keys", () => {
     const base = useWorkspace("support", { mode: "write" })
     // A wrapper supplied by an integration does not have the private target
     // registration created by useWorkspace.
-    const wrapped = { ...base } as WritableWorkspaceFacade
+    const wrapped = Object.fromEntries(Object.entries(base)) as unknown as WritableWorkspaceFacade
     const definition: WorkspaceDefinition = {
       name: "support",
       sources: { docs: docsSource() },
@@ -185,6 +196,6 @@ describe("internal metadata keys", () => {
 
     const resolved = await createWorkspaceSourceResolutionFacade(wrapped, definition, { invocation, overlay: true })
     await expect((resolved.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
-    await expect(store.getMeta!(sourceSyncMetaKey("docs"))).resolves.toMatchObject({ source: "docs" })
+    await expect(store.getMeta!(sourceSyncMetaKey("docs", "support"))).resolves.toMatchObject({ source: "docs" })
   })
 })

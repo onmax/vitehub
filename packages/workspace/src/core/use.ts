@@ -653,6 +653,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
       sync: async options => await workspace.sync(options),
       tools,
     } as WritableWorkspaceFacade<Name> & WorkspaceStoreTargetCarrier
+    forwardWorkspaceMetadataTarget(workspace, facade)
     setWorkspaceRawWriteTarget(facade, facade.fs)
     return facade
   }

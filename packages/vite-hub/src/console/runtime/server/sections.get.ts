@@ -1,3 +1,4 @@
+import { withConsoleAccess, type ConsoleAccessRoute } from "./access.ts"
 import { assertConsoleRequest } from "./request.ts"
 import { getConsoleContributedSections } from "./definitions.ts"
 import { getConsoleAuth, getConsoleProjectName, getConsoleSections } from "./sections.ts"
@@ -6,7 +7,7 @@ import type { ConsoleContributedSection } from "../definitions.ts"
 import type { ConsoleRequestEvent } from "./request.ts"
 import type { ConsoleAuthMode } from "../../internal.ts"
 
-export default function consoleSectionsHandler(event: ConsoleRequestEvent): {
+function consoleSectionsHandler(event: ConsoleRequestEvent): {
   auth?: true
   contributions?: readonly ConsoleContributedSection[]
   projectName?: string
@@ -22,3 +23,6 @@ export default function consoleSectionsHandler(event: ConsoleRequestEvent): {
   if (projectName) result.projectName = projectName
   return result
 }
+
+const guardedHandler: ConsoleAccessRoute<typeof consoleSectionsHandler> = withConsoleAccess(consoleSectionsHandler)
+export default guardedHandler

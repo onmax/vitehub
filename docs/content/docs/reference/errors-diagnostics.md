@@ -127,6 +127,7 @@ private response data.
 | `PROVIDER_RATE_LIMITED` | The provider returned a temporary rate limit. |
 | `PROVIDER_UNAVAILABLE` | The provider returned a server or availability failure. |
 | `APPROVAL_REQUIRED` | A Capability needs approval before it can continue. `requestId` identifies the approval request when available. |
+| `HOST_RESTARTED` | The host restarted while an inline Chat invocation ran. `details.retry` is `pending` when ViteHub retries the message after the restart, or `exhausted` after a second interruption. |
 | `AUTHENTICATION_REQUIRED`, `RATE_LIMIT_*`, `LLM_GATE_REJECTED`, `CAPABILITY_*`, `TRANSCRIPTION_*` | ViteHub recognized a public application or Capability failure. |
 | `INTERNAL` | The failure has no approved public mapping. The message stays generic. |
 

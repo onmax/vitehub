@@ -183,7 +183,11 @@
       "types": "./dist/vue.d.ts",
       "import": "./dist/vue.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./env-identity": {
+      "types": "./dist/env-identity.d.ts",
+      "import": "./dist/env-identity.js"
+    }
   },
   "scripts": {
     "build": "vp pack",
@@ -203,6 +207,7 @@
     "@vercel/connect": "2.4.0",
     "@vercel/nft": "catalog:vercel",
     "@vite-hub/box": "workspace:*",
+    "@vite-hub/env": "workspace:*",
     "@vite-hub/markdown-template": "workspace:*",
     "@vite-hub/rate-limit": "workspace:*",
     "@vite-hub/runtime": "workspace:*",
@@ -227,6 +232,7 @@
     "@types/node": "catalog:tooling",
     "@types/proper-lockfile": "catalog:",
     "@vercel/functions": "catalog:vercel",
+    "@vite-hub/connections": "workspace:*",
     "@vite-hub/internal": "workspace:*",
     "@vite-hub/schedule": "workspace:*",
     "@vite-hub/workflow": "workspace:*",

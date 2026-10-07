@@ -44,6 +44,7 @@ import * as frameworkRuntimeNode from "vite-hub/runtime/node";
 import { setActiveCloudflareEnv as frameworkDatabaseStateSetter } from "vite-hub/_internal/database/runtime/state";
 import * as ownerRuntimeNode from "@vite-hub/runtime/node";
 import { distributionBinEntries, distributionEntriesFromManifest } from "../vite.config.ts";
+import { hostManagedAuthorize } from "./support/console-authorize.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -87,6 +88,7 @@ const consolidatedOwnerExports = new Set(["@vite-hub/blob/ensure", "@vite-hub/wo
 const lowLevelOwnerExports = new Set([
   "@vite-hub/agent/ai-sdk",
   "@vite-hub/agent/cloudflare/state",
+  "@vite-hub/agent/env-identity",
   "@vite-hub/agent/eve",
   "@vite-hub/agent/mcp/stdio",
   "@vite-hub/agent/messages",
@@ -570,8 +572,10 @@ describe("framework package contract", () => {
     expect(consolePage).toContain("list.loadMoreError.value");
     expect(consolePage).toContain("Retry loading older sessions");
     expect(consolePage).toContain('@click="list.loadMore"');
-    expect(consolePage).toContain("Switch Agent");
-    expect(consolePage).toContain("agentMenuItems");
+    expect(consolePage).toContain('import {\n  readConsoleAgentListOpen,');
+    expect(consolePage).toContain('aria-controls="vitehub-console-agent-list"');
+    expect(consolePage).toContain('group-by="recency"');
+    expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-agent-list.ts`)).toBe(true);
     expect(consolePage).toContain("invocation.agentName !== selectedAgentName.value");
     expect(consolePage).toContain("invocation.agentName === agentName");
     expect(consolePage).toContain(
@@ -668,8 +672,10 @@ describe("framework package contract", () => {
     expect(consoleSearch).toContain(
       'resolveConsoleRouteName(route.name, "vitehub-console-invocation")',
     );
-    expect(consoleSearch).toContain('label: "All primitives"');
-    expect(consoleSearch).toContain('label: "Pages"');
+    expect(consoleSearch).toContain('[{ id: "actions", items: props.actions, label: "Actions" }]');
+    expect(consoleSearch).toContain('label: "Overview"');
+    expect(consoleSearch).toContain('label: "Go to"');
+    expect(consoleSearch).toContain("kbds: [...shortcut]");
     expect(consoleSearch).toContain(
       'label: debouncedSearchTerm.value ? "Sessions" : "Recent sessions"',
     );
@@ -690,24 +696,20 @@ describe("framework package contract", () => {
     expect(consoleSearch).toContain("if (!open.value) return");
     expect(consoleSearch).toContain("if (open.value) debouncedSearchTerm.value = value.trim()");
     expect(consoleSearch).toContain("debouncedSearchTerm.value = nextSearchTerm");
-    const consoleBrand = readFileSync(
-      `${packageRoot}/dist/console/runtime/components/console-brand.vue`,
-      "utf8",
-    );
-    expect(consoleBrand).toContain("<RouterLink");
-    expect(consoleBrand).toContain("resolveConsoleRouteName(route.name, 'vitehub-console')");
-    expect(consoleBrand).toContain("subscribeConsoleNavigation(props.sectionsBase");
     const consoleHome = readFileSync(
       `${packageRoot}/dist/console/runtime/components/console-home.vue`,
       "utf8",
     );
     expect(consoleHome).toContain("loadConsoleNavigation(props.sectionsBase)");
-    const consolePrimitiveSwitcher = readFileSync(
-      `${packageRoot}/dist/console/runtime/components/console-primitive-switcher.vue`,
+    const consoleRail = readFileSync(
+      `${packageRoot}/dist/console/runtime/components/console-rail.vue`,
       "utf8",
     );
-    expect(consolePrimitiveSwitcher).toContain("navigationFailed.value = true");
-    expect(consolePrimitiveSwitcher).toContain('aria-label="Retry loading primitives"');
+    expect(consoleRail).toContain("navigationFailed.value = true");
+    expect(consoleRail).toContain('aria-label="Retry loading primitives"');
+    expect(consoleRail).toContain("open('vitehub-console')");
+    expect(consoleRail).toContain("subscribeConsoleNavigation(props.sectionsBase");
+    expect(consoleRail).toContain('import { defineShortcuts } from "@nuxt/ui/composables";');
     expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-usage.vue`)).toBe(
       true,
     );
@@ -768,7 +770,7 @@ describe("framework package contract", () => {
       const plugin = framework
         .vitehub({
           agent: true,
-          console: { exposure: "host-managed" },
+          console: { exposure: "host-managed", authorize: hostManagedAuthorize },
           kv: true,
           preset: "node",
           queue: true,

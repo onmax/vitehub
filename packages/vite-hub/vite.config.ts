@@ -73,15 +73,15 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
-        from: "src/console/runtime/components/console-brand.vue",
-        to: "dist/console/runtime/components",
-      },
-      {
         from: "src/console/runtime/components/console-app.vue",
         to: "dist/console/runtime/components",
       },
       {
         from: "src/console/runtime/components/console-new-chat.ts",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-agent-list.ts",
         to: "dist/console/runtime/components",
       },
       {
@@ -137,15 +137,11 @@ export default defineConfig({
         to: "dist/console/runtime/components",
       },
       {
-        from: "src/console/runtime/components/console-primitive-switcher.vue",
+        from: "src/console/runtime/components/console-rail.vue",
         to: "dist/console/runtime/components",
       },
       {
         from: "src/console/runtime/components/console-search.vue",
-        to: "dist/console/runtime/components",
-      },
-      {
-        from: "src/console/runtime/components/console-section-nav.vue",
         to: "dist/console/runtime/components",
       },
       {
@@ -190,6 +186,22 @@ export default defineConfig({
       },
       {
         from: "src/console/runtime/components/console-usage.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-chart.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-model-detail.vue",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-model.ts",
+        to: "dist/console/runtime/components",
+      },
+      {
+        from: "src/console/runtime/components/console-usage-share-bar.vue",
         to: "dist/console/runtime/components",
       },
       { from: "src/console/runtime/pages/agents.vue", to: "dist/console/runtime/pages" },
