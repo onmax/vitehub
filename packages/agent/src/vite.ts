@@ -1618,11 +1618,12 @@ async function resolveEveExtensionPackage(
         const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"))
         const formatVersion = isRecord(manifest) ? manifest.formatVersion : undefined
         const requires = isRecord(manifest) && isRecord(manifest.requires) ? manifest.requires : undefined
-        const contracts = hasRuntimeType(formatVersion, "number")
-          ? supportedEveExtensionContracts[formatVersion]
-          : undefined
-        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !contracts || !requires
-          || !Number.isInteger(formatVersion) || formatVersion < 1) {
+        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !requires
+          || !hasRuntimeType(formatVersion, "number") || !Number.isInteger(formatVersion) || formatVersion < 1) {
+          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
+        }
+        const contracts = supportedEveExtensionContracts[formatVersion]
+        if (!contracts) {
           throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
         for (const [contract, version] of Object.entries(requires)) {
