@@ -46,7 +46,7 @@ describe("multi-file tutorial examples", () => {
       "server/sandboxes/image-optimizer/package.json",
       "server/sandboxes/image-optimizer/index.ts",
       "server/api/image-optimizer.post.ts",
-      "response/image-optimizer.json",
+      "output/image-optimizer.json",
     ]))
     expect(source).toContain("a separate package project, not another server route")
     expect(source).toContain("This JSON is the response body, not a file")
