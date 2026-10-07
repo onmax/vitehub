@@ -24,7 +24,18 @@ type CDPMessage =
   | { kind: "response", error?: { message: string }, id: number, result?: unknown, sessionId?: string }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- CDP JSON is unknown until its object envelope is validated.
   return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function isString(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- CDP JSON fields are unknown until their protocol type is validated.
+  return typeof value === "string"
+}
+
+function isSafeInteger(value: unknown): value is number {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- CDP response ids are unknown JSON values until their numeric type is validated.
+  return typeof value === "number" && Number.isSafeInteger(value)
 }
 
 function parseMessage(data: unknown): CDPMessage {
@@ -32,37 +43,46 @@ function parseMessage(data: unknown): CDPMessage {
   if (!isRecord(parsed)) throw new TypeError("CDP message must be an object")
 
   if (Object.hasOwn(parsed, "id")) {
-    if (typeof parsed.id !== "number" || !Number.isSafeInteger(parsed.id) || Object.hasOwn(parsed, "method")) {
+    if (!isSafeInteger(parsed.id) || Object.hasOwn(parsed, "method")) {
       throw new TypeError("CDP response id must be a safe integer")
     }
     const hasError = Object.hasOwn(parsed, "error")
     const hasResult = Object.hasOwn(parsed, "result")
     if (hasError === hasResult) throw new TypeError("CDP response must include exactly one result or error")
-    if (hasError && (!isRecord(parsed.error) || typeof parsed.error.message !== "string")) {
-      throw new TypeError("CDP response error must include a message")
+    let error: { message: string } | undefined
+    if (hasError) {
+      const candidate = parsed.error
+      if (!isRecord(candidate) || !isString(candidate.message)) {
+        throw new TypeError("CDP response error must include a message")
+      }
+      error = { message: candidate.message }
     }
-    if (parsed.sessionId !== undefined && typeof parsed.sessionId !== "string") {
+    const sessionId = parsed.sessionId
+    if (sessionId !== undefined && !isString(sessionId)) {
       throw new TypeError("CDP response sessionId must be a string")
     }
-    return {
-      error: hasError ? parsed.error as { message: string } : undefined,
+    const response: Extract<CDPMessage, { kind: "response" }> = {
+      error,
       id: parsed.id,
       kind: "response",
       result: hasResult ? parsed.result : undefined,
-      ...(parsed.sessionId === undefined ? {} : { sessionId: parsed.sessionId }),
     }
+    if (sessionId !== undefined) response.sessionId = sessionId
+    return response
   }
 
-  if (typeof parsed.method !== "string" || !parsed.method) throw new TypeError("CDP event method must be a non-empty string")
-  if (parsed.sessionId !== undefined && typeof parsed.sessionId !== "string") {
+  if (!isString(parsed.method) || !parsed.method) throw new TypeError("CDP event method must be a non-empty string")
+  const sessionId = parsed.sessionId
+  if (sessionId !== undefined && !isString(sessionId)) {
     throw new TypeError("CDP event sessionId must be a string")
   }
-  return {
+  const event: Extract<CDPMessage, { kind: "event" }> = {
     kind: "event",
     method: parsed.method,
     params: parsed.params,
-    ...(parsed.sessionId === undefined ? {} : { sessionId: parsed.sessionId }),
   }
+  if (sessionId !== undefined) event.sessionId = sessionId
+  return event
 }
 
 async function cloudflareSocket(
@@ -124,7 +144,7 @@ export function cdp(options: CDPControllerOptions = {}): BrowserController<CDPCl
       socket.addEventListener("message", (event) => {
         let message: CDPMessage
         try {
-          message = parseMessage((event as MessageEvent).data)
+          message = parseMessage("data" in event ? event.data : undefined)
         }
         catch (cause) {
           rejectPending(browserProviderError("cdp", "parse a protocol message", { cause }))
