@@ -70,6 +70,7 @@ describe("Cloudflare R2 multipart uploads", () => {
   })
 
   it.each([
+    { cursor: undefined },
     { cursor: undefined, truncated: true },
     { cursor: "next", truncated: false },
   ])("rejects an invalid list pagination page %#", async (page) => {
