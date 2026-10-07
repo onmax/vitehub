@@ -269,7 +269,7 @@
     "vite": "catalog:vite-compat",
     "vitest": "catalog:tooling",
     "vue": "catalog:ui",
-    "eve": "0.72.1",
+    "eve": "0.46.1 || 0.72.1",
     "evlog": "^2.29.0",
     "posthog-node": "^5.55.0"
   },
