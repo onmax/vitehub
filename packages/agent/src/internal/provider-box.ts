@@ -209,8 +209,9 @@ async function handleRelayConnection(
   const boxWorkingDirectory = mirrorsLocalRoot && options.localCwd !== undefined
     ? mapPath(options.localCwd)
     : boxCwd
+  const textPathDelimiter = `[/\\\\"'\\s,:;\\[\\]{}()?=#&|<>@${String.fromCharCode(96)}]`
   const mapTextPattern = mappingRoot
-    ? new RegExp(`(^|[/\\\\"'\\s,:;\\[\\]{}()?=#&|<>])${escapeRegExp(mappingRoot)}(?=$|[/\\\\"'\\s,:;\\[\\]{}()?=#&|<>])`, "g")
+    ? new RegExp(`(^|${textPathDelimiter})${escapeRegExp(mappingRoot)}(?=$|${textPathDelimiter})`, "g")
     : undefined
   const mapText = (value: string) => mapTextPattern
     ? value.replace(mapTextPattern, (_match, prefix: string) => `${prefix}${boxCwd}`)
