@@ -115,6 +115,16 @@ describe("native auto-merge", () => {
     await f.operations.comment("Please email ops@example.com and ask @stefina to confirm.")
     await expect(f.operations.comment("Please ask @other-user to confirm.")).rejects.toThrow(/outside.*allowlist/)
     await expect(f.operations.comment("Please ask @stefina and @other-user to confirm.")).rejects.toThrow(/outside.*allowlist/)
+    await expect(f.operations.comment("Please ask @acme/ops to confirm.")).rejects.toThrow(/outside.*allowlist/)
+  })
+
+  it("accepts managed-user logins in the mention allowlist", async () => {
+    const f = fixture({ mentionAllowlist: ["mona-cat_octo"] })
+    await f.operations.mention("mona-cat_octo", "Please restore the service.")
+    expect(f.command).toHaveBeenCalledWith(
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@mona-cat_octo Please restore the service."],
+      expect.anything(),
+    )
   })
 
   it("is disabled without touching credentials, reads or writes", async () => {

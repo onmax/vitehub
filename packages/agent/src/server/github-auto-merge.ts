@@ -119,8 +119,8 @@ function nonempty(value: string, name: string): string {
   return value
 }
 
-const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
-const githubMentionPattern = /(^|[\s([{])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?=$|[\s.,!?;:)\]}])/g
+const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/
+const githubMentionPattern = /(^|[\s([{])@([A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})(?:\/[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38}))?)(?=$|[\s.,!?;:)\]}])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
   const normalized = new Set<string>()
