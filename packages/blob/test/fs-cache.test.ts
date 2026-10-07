@@ -22,6 +22,25 @@ afterEach(async () => {
 })
 
 describe("filesystem content hash snapshots", () => {
+  it("keeps hash backfill separate from a concurrent put's content metadata", async () => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-cache-"))
+    directories.push(base)
+    const driver = createDriver({ base, driver: "fs" })
+    await driver.put("photo", "first", { contentType: "text/plain", customMetadata: { version: "first" } })
+    await fs.rm(join(base, ".vitehub/blob-hashes", `${Buffer.from("photo").toString("base64url")}.json`))
+    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
+      await driver.put("photo", "later", { contentType: "text/html", customMetadata: { version: "later" } })
+      await fs.writeFile(...args)
+    })
+
+    await driver.head("photo")
+    expect(await driver.head("photo")).toMatchObject({
+      contentType: "text/html",
+      customMetadata: { version: "later" },
+      httpEtag: `"${createHash("sha256").update("later").digest("hex")}"`,
+    })
+  })
+
   it("hashes the stored bytes when another writer replaces a put before its metadata", async () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-cache-"))
     directories.push(base)

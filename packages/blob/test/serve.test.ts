@@ -94,17 +94,20 @@ describe("Blob response transforms", () => {
     const file = join(directory, path)
     await driver.put(path, "legacy")
     const metadataFile = join(directory, ".vitehub/blob-meta", `${Buffer.from(path).toString("base64url")}.json`)
+    const hashFile = join(directory, ".vitehub/blob-hashes", `${Buffer.from(path).toString("base64url")}.json`)
+    await rm(hashFile)
     await writeFile(metadataFile, JSON.stringify({ contentType: "text/plain" }))
     const meta = await driver.head(path)
-    const backfilled = JSON.parse(await readFile(metadataFile, "utf8"))
+    const backfilled = JSON.parse(await readFile(hashFile, "utf8"))
     expect(backfilled.contentHash).toBe(meta!.httpEtag!.slice(1, -1))
     expect(backfilled.fileVersion).toBeTypeOf("string")
-    const before = await stat(metadataFile)
+    const before = await stat(hashFile)
     expect((await driver.head(path))!.httpEtag).toBe(meta!.httpEtag)
-    expect((await stat(metadataFile)).mtimeMs).toBe(before.mtimeMs)
+    expect((await stat(hashFile)).mtimeMs).toBe(before.mtimeMs)
+    expect(JSON.parse(await readFile(metadataFile, "utf8"))).toEqual({ contentType: "text/plain" })
     await writeFile(file, "updated")
     expect((await driver.head(path))!.httpEtag).not.toBe(meta!.httpEtag)
-    expect(JSON.parse(await readFile(metadataFile, "utf8")).contentHash).not.toBe(backfilled.contentHash)
+    expect(JSON.parse(await readFile(hashFile, "utf8")).contentHash).not.toBe(backfilled.contentHash)
   })
 
   it("invalidates the derivative when source bytes or the transform key change", async () => {
@@ -192,6 +195,40 @@ describe("Blob response transforms", () => {
     const [, body] = await storage.serve(second, "private/original", options)
     expect(second.res.status).not.toBe(304)
     expect(await new Response(body).text()).toBe("updated")
+  })
+
+  it("uses stable ETags when a provider synthesizes upload timestamps", async () => {
+    const head = driver.head.bind(driver)
+    let time = 0
+    vi.spyOn(driver, "head").mockImplementation(async (path) => {
+      const meta = await head(path)
+      return meta ? { ...meta, uploadedAt: new Date(time++) } : null
+    })
+    for (let count = 0; count < 2; count++) {
+      const [, body] = await storage.serve(event(), "private/original", options)
+      expect(await new Response(body).text()).toBe("public")
+    }
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it("retries a replaced source so the response body and ETag describe the same version", async () => {
+    const get = driver.get.bind(driver)
+    let replace = true
+    vi.spyOn(driver, "get").mockImplementation(async (path) => {
+      if (path === "private/original" && replace) {
+        replace = false
+        await storage.put(path, "updated:private")
+      }
+      return get(path)
+    })
+    const first = event()
+    const [, body] = await storage.serve(first, "private/original", options)
+    expect(await new Response(body).text()).toBe("updated")
+    const second = event()
+    const [, cached] = await storage.serve(second, "private/original", options)
+    expect(await new Response(cached).text()).toBe("updated")
+    expect(first.res.headers.get("etag")).toBe(second.res.headers.get("etag"))
+    expect(run).toHaveBeenCalledTimes(1)
   })
 
   it("does not recreate a derivative after the source is deleted during transformation", async () => {

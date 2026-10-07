@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
-import { object, optional, parse, record, string } from "valibot"
+import { object, optional, parse, record, safeParse, string } from "valibot"
 
 import type { BlobDriverAdapter, BlobDriverMultipartUpload, BlobListOptions, BlobListResult, BlobMultipartOptions, BlobObject, BlobPutBody, BlobPutOptions, ResolvedFsBlobStoreConfig } from "../types.ts"
 import { blobErrorDiagnostics } from "../error-diagnostics.ts"
@@ -27,18 +27,16 @@ function partEtag(bytes: Uint8Array) {
 }
 
 interface FsBlobMetadata {
-  contentHash?: string
-  fileVersion?: string
   contentType?: string
   customMetadata?: Record<string, string>
 }
 
 const fsBlobMetadataSchema = object({
-  contentHash: optional(string()),
-  fileVersion: optional(string()),
   contentType: optional(string()),
   customMetadata: optional(record(string(), string())),
 })
+
+const fsBlobHashSchema = object({ contentHash: string(), fileVersion: string() })
 
 interface FsBlobEntry {
   contentHash: string
@@ -112,9 +110,9 @@ async function assertNoSymlinkPath(root: string, path: string) {
   }
 }
 
-function resolveMetaPath(root: string, pathname: string) {
+function resolveMetaPath(root: string, pathname: string, directory = "blob-meta") {
   const normalized = relative(root, resolveBlobPath(root, pathname)).split(sep).join("/")
-  return resolve(root, ".vitehub", "blob-meta", `${encodeMetaKey(normalized)}.json`)
+  return resolve(root, ".vitehub", directory, `${encodeMetaKey(normalized)}.json`)
 }
 
 function isNotFound(error: unknown): boolean {
@@ -150,9 +148,32 @@ async function writeMetadata(root: string, pathname: string, meta: FsBlobMetadat
 }
 
 async function removeMetadata(root: string, pathname: string) {
-  const path = resolveMetaPath(root, pathname)
+  for (const directory of ["blob-meta", "blob-hashes"]) {
+    const path = resolveMetaPath(root, pathname, directory)
+    await assertNoSymlinkPath(root, path)
+    await rm(path, { force: true })
+  }
+}
+
+async function readHash(root: string, pathname: string) {
+  const path = resolveMetaPath(root, pathname, "blob-hashes")
   await assertNoSymlinkPath(root, path)
-  await rm(path, { force: true })
+  try {
+    const value: unknown = JSON.parse(await readFile(path, "utf8"))
+    const result = safeParse(fsBlobHashSchema, value)
+    return result.success ? result.output : undefined
+  }
+  catch (error) {
+    if (isNotFound(error) || error instanceof SyntaxError) return
+    throw error
+  }
+}
+
+async function writeHash(root: string, pathname: string, hash: { contentHash: string, fileVersion: string }) {
+  const path = resolveMetaPath(root, pathname, "blob-hashes")
+  await assertNoSymlinkPath(root, path)
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, JSON.stringify(hash), "utf8")
 }
 
 function toBlobObject(entry: FsBlobEntry): BlobObject {
@@ -176,12 +197,13 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
       if (!stats.isFile()) return null
       const meta = await readMetadata(root, pathname)
       const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
-      let contentHash = meta.fileVersion === fileVersion ? meta.contentHash : undefined
+      const cached = await readHash(root, pathname)
+      let contentHash = cached?.fileVersion === fileVersion ? cached.contentHash : undefined
       if (!contentHash) {
         contentHash = createHash("sha256").update(await readFile(path)).digest("hex")
         const after = await stat(path, { bigint: true })
         if (fileVersion !== `${after.dev}:${after.ino}:${after.size}:${after.mtimeNs}:${after.ctimeNs}`) continue
-        await writeMetadata(root, pathname, { ...meta, contentHash, fileVersion }).catch((error) => {
+        await writeHash(root, pathname, { contentHash, fileVersion }).catch((error) => {
           console.error("[vitehub/blob] Filesystem hash cache write failed", error)
         })
       }

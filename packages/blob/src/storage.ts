@@ -59,6 +59,11 @@ async function hashCacheKey(value: unknown): Promise<string> {
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
 }
 
+async function hashBlob(body: Blob): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", await body.arrayBuffer())
+  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
+}
+
 async function derivedCachePrefix(pathname: string): Promise<string> {
   return `_vitehub/derived/${await hashCacheKey(pathname)}/`
 }
@@ -132,7 +137,7 @@ function normalizeBlobPath(pathname: string, options: BlobPutOptions) {
 }
 
 export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string = driver.name): BlobStorage {
-  const pendingTransforms = new Map<string, Promise<Blob | undefined>>()
+  const pendingTransforms = new Map<string, Promise<Blob | undefined | false>>()
   async function clearDerived(pathname: string) {
     try {
       const prefix = await derivedCachePrefix(pathname)
@@ -219,81 +224,95 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
     },
     async serve(event, pathname: string, options = {}) {
       const normalizedPath = normalizePathname(pathname)
-      const [error, payload] = await blobResult("serve", store, async () => {
-        const meta = await driver.head(normalizedPath)
-        if (!meta) {
-          await clearDerived(normalizedPath)
-          return
-        }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const [error, payload] = await blobResult("serve", store, async () => {
+          const meta = await driver.head(normalizedPath)
+          if (!meta) {
+            await clearDerived(normalizedPath)
+            return
+          }
 
-        let etag = meta.httpEtag
-        let cachePath: string | undefined
-        let originalBody: Blob | null | undefined
-        if (options.transform) {
+          let etag = meta.httpEtag
           let sourceVersion = meta.httpEtag
-          if (!sourceVersion) {
-            originalBody = await driver.get(normalizedPath)
-            if (!originalBody) return
-            const hash = await crypto.subtle.digest("SHA-256", await originalBody.arrayBuffer())
-            sourceVersion = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("")
+          let cachePath: string | undefined
+          let originalBody: Blob | null | undefined
+          if (options.transform) {
+            if (!sourceVersion) {
+              originalBody = await driver.get(normalizedPath)
+              if (!originalBody) return
+              sourceVersion = await hashBlob(originalBody)
+            }
+            const fingerprint = await hashCacheKey([
+              normalizedPath, sourceVersion, meta.contentType, options.transform.key,
+            ])
+            etag = `"${fingerprint}"`
+            cachePath = `${await derivedCachePrefix(normalizedPath)}${await hashCacheKey(options.transform.key)}`
           }
-          const fingerprint = await hashCacheKey([
-            normalizedPath, sourceVersion, meta.contentType, options.transform.key,
-          ])
-          etag = `"${fingerprint}"`
-          cachePath = `${await derivedCachePrefix(normalizedPath)}${await hashCacheKey(options.transform.key)}`
-        }
 
-        event.res.headers.set("X-Content-Type-Options", "nosniff")
-        const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"
-        event.res.headers.set("Cache-Control", cacheControl)
-        if (etag) event.res.headers.set("ETag", etag)
-        if (["GET", "HEAD"].includes(event.req.method) && handleCacheHeaders(event, {
-          etag,
-          cacheControls: [cacheControl],
-        })) return null
+          event.res.headers.set("X-Content-Type-Options", "nosniff")
+          const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"
+          event.res.headers.set("Cache-Control", cacheControl)
+          if (etag) event.res.headers.set("ETag", etag)
+          if (["GET", "HEAD"].includes(event.req.method) && handleCacheHeaders(event, {
+            etag,
+            cacheControls: [cacheControl],
+          })) return null
 
-        let body = cachePath
-          ? await readDerived(await driver.get(cachePath), etag!)
-          : await driver.get(normalizedPath)
-        const transform = options.transform
-        if (!body && cachePath && transform) {
-          const key = cachePath
-          const pendingKey = `${key}:${etag}`
-          let pending = pendingTransforms.get(pendingKey)
-          if (!pending) {
-            pending = (async () => {
-              const original = originalBody ?? await driver.get(normalizedPath)
-              if (!original) return
-              const derived = await transform.run(original)
-              const current = await driver.head(normalizedPath)
-              if (current?.httpEtag === meta.httpEtag && current?.uploadedAt.getTime() === meta.uploadedAt.getTime()) {
-                // Keep the version and body in one object. Some drivers reject custom metadata.
-                await driver.put(key, new Blob([
-                  JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
-                ]), {
-                  contentType: "application/octet-stream",
-                }).catch((error) => {
-                  console.error("[vitehub/blob] Transform cache write failed", error)
-                })
-              }
-              return derived
-            })().finally(() => pendingTransforms.delete(pendingKey))
-            pendingTransforms.set(pendingKey, pending)
+          let body = cachePath
+            ? await readDerived(await driver.get(cachePath), etag!)
+            : await driver.get(normalizedPath)
+          const transform = options.transform
+          if (!body && cachePath && transform) {
+            const key = cachePath
+            const pendingKey = `${key}:${etag}`
+            let pending = pendingTransforms.get(pendingKey)
+            if (!pending) {
+              pending = (async () => {
+                const original = originalBody ?? await driver.get(normalizedPath)
+                if (!original) return
+                const snapshot = await driver.head(normalizedPath)
+                if (!snapshot) return
+                if (snapshot.httpEtag !== meta.httpEtag || snapshot.contentType !== meta.contentType) return false as const
+                const derived = await transform.run(original)
+                const current = await driver.head(normalizedPath)
+                const currentBody = current && !meta.httpEtag ? await driver.get(normalizedPath) : null
+                const sameVersion = meta.httpEtag
+                  ? current?.httpEtag === meta.httpEtag
+                  : currentBody && await hashBlob(currentBody) === sourceVersion
+                if (current && current.contentType === meta.contentType && sameVersion) {
+                  // Keep the version and body in one object. Some drivers reject custom metadata.
+                  await driver.put(key, new Blob([
+                    JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
+                  ]), {
+                    contentType: "application/octet-stream",
+                  }).catch((error) => {
+                    console.error("[vitehub/blob] Transform cache write failed", error)
+                  })
+                }
+                return derived
+              })().finally(() => pendingTransforms.delete(pendingKey))
+              pendingTransforms.set(pendingKey, pending)
+            }
+            const transformed = await pending
+            if (transformed === false) return false
+            body = transformed ?? null
           }
-          body = await pending ?? null
-        }
-        if (!body) return
-        event.res.headers.set("Content-Length", String(body.size))
-        event.res.headers.set("Content-Type", transform
-          ? body.type || "application/octet-stream"
-          : meta.contentType || body.type || guessContentType(normalizedPath))
-        return body.stream()
+          if (!body) return
+          event.res.headers.set("Content-Length", String(body.size))
+          event.res.headers.set("Content-Type", transform
+            ? body.type || "application/octet-stream"
+            : meta.contentType || body.type || guessContentType(normalizedPath))
+          return body.stream()
+        })
+        if (error) return [error, undefined]
+        if (payload === false) continue
+        return payload === undefined
+          ? [blobError("BLOB_NOT_FOUND", "serve", store), undefined]
+          : [null, payload]
+      }
+      return blobResult("serve", store, async () => {
+        throw new Error("Blob changed repeatedly while preparing its response.")
       })
-      if (error) return [error, undefined]
-      return payload === undefined
-        ? [blobError("BLOB_NOT_FOUND", "serve", store), undefined]
-        : [null, payload]
     },
     store() {
       throw blobErrorDiagnostics.BLOB_R0026({ message: "Named Blob stores are only available from the @vite-hub/blob runtime export." })
