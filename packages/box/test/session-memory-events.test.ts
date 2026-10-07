@@ -39,6 +39,23 @@ beforeEach(() => {
 const open = () => createSessionMemory({ cgroupParent: "/delegated", memoryMaxBytes: 1024 });
 
 describe("session memory events", () => {
+  it("allows later close listeners to complete when environment-file removal fails", async () => {
+    const { ChildProcess } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    const child = new ChildProcess();
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const group = await open();
+    try {
+      const launched = group.spawn("true", { env: { TOKEN: "secret" } });
+      const onClose = vi.fn();
+      launched.once("close", onClose);
+      vi.mocked(rmSync).mockImplementationOnce(() => { throw new Error("cleanup denied"); });
+      expect(() => child.emit("close", 0, null)).not.toThrow();
+      expect(onClose).toHaveBeenCalledWith(0, null);
+      expect(rmSync).toHaveBeenCalledWith(vi.mocked(writeFileSync).mock.calls[0]![0], { force: true });
+    } finally {
+      await group.close();
+    }
+  });
   it.each(["write", "chmod", "spawn"])("preserves the %s failure when environment-file removal also fails", async (stage) => {
     const group = await open();
     const originalError = new Error(`${stage} failed`);

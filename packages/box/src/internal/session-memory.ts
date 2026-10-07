@@ -147,7 +147,13 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
         "-c",
         command,
       ], { ...options, env: {} });
-        child?.once("close", () => rmSync(environmentFile, { force: true }));
+        child?.once("close", () => {
+          try {
+            rmSync(environmentFile, { force: true });
+          } catch {
+            // Cleanup must not interrupt command completion or process tracking.
+          }
+        });
         return child;
       } catch (error) {
         try {
