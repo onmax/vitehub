@@ -18,12 +18,15 @@ interface CloudflareKVListPage {
 }
 
 function isCloudflareKVListPage(value: unknown): value is CloudflareKVListPage {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Cloudflare bindings return unknown JavaScript values at this provider boundary.
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   // SAFETY: The guard reads only unknown properties and validates every field before returning true.
   const page = value as { cursor?: unknown; keys?: unknown; list_complete?: unknown }
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The provider page must expose a boolean completion marker before use.
   if (typeof page.list_complete !== "boolean" || !Array.isArray(page.keys)) return false
   if (!page.keys.every(key => {
     if (!key || typeof key !== "object" || Array.isArray(key)) return false
+    // SAFETY: The key is known to be a non-array object from the guard above; only its unknown name field is read.
     return typeof (key as { name?: unknown }).name === "string"
   })) return false
   return page.list_complete || (typeof page.cursor === "string" && page.cursor.length > 0)
