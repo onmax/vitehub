@@ -257,6 +257,31 @@ describe("pull request checkout", () => {
     if (forked) expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
   })
 
+  it("reuses a GitHub host checkout with pushes disabled without enabling them", async () => {
+    const fixture = await githubFixture()
+    const env = cleanEnv(fixture.env)
+    const checkout = join(fixture.workspace, "vitehub")
+    await git(fixture.workspace, ["clone", "-q", "--no-checkout", "https://github.com/vite-hub/vitehub.git", "vitehub"], env)
+    await git(checkout, ["fetch", "-q", "origin", "refs/heads/feature"], env)
+    await git(checkout, ["checkout", "-q", "-B", "feature", "FETCH_HEAD"])
+    const disabled = "disabled://pull-request-head-repository-unavailable"
+    await git(checkout, ["remote", "set-url", "--push", "origin", disabled])
+
+    await expect(preparePullRequestCheckout(fixture.session, {
+      headBranch: "feature",
+      headRef: "refs/pull/42/head",
+      headSha: fixture.headSha,
+      mount: "vitehub",
+      repository: "vite-hub/vitehub",
+    }, { env: fixture.env })).resolves.toBe(false)
+    expect(await git(checkout, ["remote", "get-url", "--push", "origin"])).toBe(disabled)
+    await writeFile(join(checkout, "CHANGE.md"), "read-only host checkout\n")
+    await git(checkout, ["add", "CHANGE.md"])
+    await git(checkout, ["-c", "user.name=Agent", "-c", "user.email=agent@example.com", "commit", "-qm", "local change"])
+    await expect(git(checkout, ["push", "-q", "origin", "HEAD:refs/heads/feature"], env)).rejects.toThrow()
+    expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
+  })
+
   it.each([
     ["remote.origin.pushurl", "https://github.com/other/repository.git", "wrong push destination"],
     ["remote.origin.push", "HEAD:refs/heads/other", "wrong push refspec"],

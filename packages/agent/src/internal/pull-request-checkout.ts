@@ -218,10 +218,16 @@ export async function preparePullRequestCheckout(
       }
       const pushUrls = await session.exec("git", ["remote", "get-url", "--push", "--all", pushRemote], execOptions)
       const expectedPushUrl = normalizeGitRemote(`https://github.com/${plan.headRepository || plan.repository}.git`)
+      const destinations = pushUrls.stdout.trim().split(/\r?\n/)
+      // The GitHub host disables pushes when the head repository is unavailable.
+      // Reuse that checkout without changing its non-pushable destination.
+      const pushDisabled = !plan.headRepository && pushRemote === "origin" && destinations.length === 1
+        && destinations[0] === "disabled://pull-request-head-repository-unavailable"
       if (pushUrls.exitCode !== 0 || !pushUrls.stdout.trim()
-        || pushUrls.stdout.trim().split(/\r?\n/).some(url => normalizeGitRemote(url) !== expectedPushUrl)) {
+        || (!pushDisabled && destinations.some(url => normalizeGitRemote(url) !== expectedPushUrl))) {
         throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong push destination." })
       }
+      if (pushDisabled) return false
       const push = await session.exec("git", ["config", "--get-all", `remote.${pushRemote}.push`], execOptions)
       const mirror = await session.exec("git", ["config", "--bool", "--get", `remote.${pushRemote}.mirror`], execOptions)
       if (mirror.exitCode === 0 && mirror.stdout.trim() === "true") {
