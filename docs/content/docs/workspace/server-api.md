@@ -67,7 +67,7 @@ Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRe
 | `history.rebase(options?)` | `takeRemote?: string[]` | Reloads a remote Store while preserving staged paths. A listed path takes its remote version only when both sides changed; any other overlapping change remains a conflict. Each listed path must be writable, so a Source-backed path fails. |
 | `diff(options?)` | `from?: WorkspaceSnapshot` | Compares the current tree with the supplied snapshot or the Store baseline. |
 | `materializeSources(options?)` | `abortSignal?`, `details?: 'paths'`, `onProgress?`, `sources?`, `path?` | Materializes every Source or a selected Source/path subset, with cancellation and progress reporting. |
-| `getMeta(key)` / `setMeta(key, value)` | Store-defined | Reads or writes optional Workspace Store metadata when the configured Store implements it. Keys that start with `source:`, `workspace:`, or `workspace-file-` are reserved for Workspace internals, and `setMeta` rejects them. |
+| `getMeta(key)` / `setMeta(key, value)` | Store-defined | Reads or writes optional Workspace Store metadata when the configured Store implements it. Keys that start with `source:`, `workspace:`, `workspace-file-`, or `loader:` are reserved for Workspace internals, and `setMeta` rejects them. |
 
 Startup and build Source cleanup track ownership by Workspace name. When definitions share a Store, removing or refreshing one definition preserves files last materialized by another definition. Shared paths still contain the most recent write.
 

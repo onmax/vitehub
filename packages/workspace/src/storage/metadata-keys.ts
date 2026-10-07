@@ -6,8 +6,9 @@ import { hasRuntimeType } from "../internal/runtime-type.ts"
 // - `source:`: Source Sync state and legacy Source snapshots.
 // - `workspace:`: Source snapshots, startup indexes, and build indexes.
 // - `workspace-file-`: file owner records and file checkpoints.
+// - `loader:`: loader cache records, such as file digests.
 // Cleanup reads them to decide which files to remove, so public callers must not write them.
-const internalMetaKeyPrefixes = ["source:", "workspace:", "workspace-file-"]
+const internalMetaKeyPrefixes = ["source:", "workspace:", "workspace-file-", "loader:"]
 
 export function isInternalWorkspaceMetaKey(key: string): boolean {
   // Some Stores map a key to a file path, so also compare the path form, case-insensitively.

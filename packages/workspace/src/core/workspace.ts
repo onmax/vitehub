@@ -49,7 +49,8 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
     },
     async setMeta(key, value, capability?: typeof workspaceInternalMetadataCapability) {
       // Internal writers use the Store. Public callers cannot forge their records.
-      await store.setMeta?.(capability === workspaceInternalMetadataCapability ? key : assertPublicWorkspaceMetaKey(key), value)
+      const metadataKey = capability === workspaceInternalMetadataCapability ? key : assertPublicWorkspaceMetaKey(key)
+      await store.setMeta?.(metadataKey, value)
     },
     async readFile(path, options) {
       return await files.readFile(path, options)

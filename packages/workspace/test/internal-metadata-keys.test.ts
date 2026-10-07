@@ -38,6 +38,7 @@ const internalKeys = [
   "workspace:build-directory-users",
   "workspace-file-owner:notes%2Fprivate.md",
   "workspace-file-checkpoint:notes%2Fprivate.md",
+  "loader:files:docs:guide.md:digest",
   "Source:docs:sync",
   "WORKSPACE-FILE-OWNER:notes%2Fprivate.md",
   "/source:docs:sync",
@@ -75,6 +76,15 @@ describe("internal metadata keys", () => {
     }
     await workspace.setMeta!("app:state", { ok: true })
     await expect(workspace.getMeta!("app:state")).resolves.toEqual({ ok: true })
+  })
+
+  it("rejects internal keys even when the Store has no metadata writer", async () => {
+    const store = createMemoryWorkspaceStore()
+    store.setMeta = undefined
+    const workspace = createWorkspace({ name: "support", store })
+
+    await expect(workspace.setMeta!(sourceSyncMetaKey("docs", "support"), { forged: true }))
+      .rejects.toThrow("reserved for Workspace internals")
   })
 
   it("rejects keys that are not strings", async () => {
