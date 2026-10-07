@@ -1452,9 +1452,10 @@ describe("Eve extension capabilities", () => {
   })
 
   it("maps Eve session.started tools to each Agent Invocation", async () => {
-    const started = vi.fn((_event: unknown, context: { session: { id: string } }) => ({
+    const started = vi.fn((event: { data: Record<string, unknown> }, context: { session: { id: string } }) => ({
       run: {
         description: context.session.id,
+        metadata: { eventData: event.data },
         execute: async (_input: unknown, toolContext: { session: { turn: { id: string } } }) => toolContext.session.turn.id,
       },
     }))
@@ -1480,13 +1481,15 @@ describe("Eve extension capabilities", () => {
     expect(started).toHaveBeenCalledTimes(2)
     expect(firstTools.test__run!.description).toBe("session-1")
     expect(secondTools.test__run!.description).toBe("session-1")
+    expect(firstTools.test__run!.metadata).toEqual({ eventData: {} })
+    expect(secondTools.test__run!.metadata).toEqual({ eventData: {} })
     await expect(secondTools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("run-2")
   })
 
   it("maps Eve step.started tools to each Agent Invocation", async () => {
-    const started = vi.fn((event: { type: string }, context: { session: { id: string } }) => ({
+    const started = vi.fn((event: { data: { sequence: number, stepIndex: number, turnId: string }, type: string }, context: { session: { id: string, turn: { id: string, sequence: number } } }) => ({
       run: {
-        description: `${event.type}:${context.session.id}`,
+        description: `${event.type}:${context.session.id}:${event.data.stepIndex}`,
         execute: async () => context.session.id,
       },
     }))
@@ -1507,15 +1510,18 @@ describe("Eve extension capabilities", () => {
     const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
 
     expect(started).toHaveBeenCalledOnce()
-    expect(tools.test__run!.description).toBe("step.started:session-1")
+    const [event, resolvedContext] = started.mock.calls[0]!
+    expect(event.data).toEqual({ sequence: resolvedContext.session.turn.sequence, stepIndex: 0, turnId: resolvedContext.session.turn.id })
+    expect(event.data).not.toHaveProperty("modelId")
+    expect(tools.test__run!.description).toBe("step.started:session-1:0")
     await expect(tools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("session-1")
   })
 
   it("maps Eve turn.started tools and the current tool context", async () => {
     const abortSignal = new AbortController().signal
-    const started = vi.fn((event: { type: string }, context: { messages: readonly ModelMessage[], session: { id: string, turn: { id: string, sequence: number } } }) => ({
+    const started = vi.fn((event: { data: { sequence: number, turnId: string }, type: string }, context: { messages: readonly ModelMessage[], session: { id: string, turn: { id: string, sequence: number } } }) => ({
       turn: {
-        description: `${event.type}:${context.session.id}:${context.session.turn.sequence}`,
+        description: `${event.type}:${context.session.id}:${event.data.sequence}`,
         inputSchema: { type: "object" },
         outputSchema: { type: "object" },
         execute: async (_input: unknown, toolContext: { abortSignal: AbortSignal, messages: readonly ModelMessage[], session: { id: string, turn: { id: string } } }) => ({
@@ -1556,11 +1562,13 @@ describe("Eve extension capabilities", () => {
       toModelOutput: (options: { output: unknown }) => Promise<unknown>
     }
 
-    expect(started).toHaveBeenCalledWith({ type: "turn.started" }, expect.objectContaining({
+    expect(started).toHaveBeenCalledWith({ data: { sequence: 0, turnId: "turn-2" }, type: "turn.started" }, expect.objectContaining({
       abortSignal,
       model: null,
       session: expect.objectContaining({ id: "session-1" }),
     }))
+    const [event, resolvedContext] = started.mock.calls[0]!
+    expect(event.data).toEqual({ sequence: resolvedContext.session.turn.sequence, turnId: resolvedContext.session.turn.id })
     expect(tool.description).toBe("turn.started:session-1:0")
     expect(tool.outputSchema).toEqual({ type: "object" })
     await expect(tool.execute({}, { messages: [{ role: "user", content: "Hello" }], toolCallId: "call-1" })).resolves.toEqual({

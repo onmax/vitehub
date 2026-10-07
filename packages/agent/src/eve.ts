@@ -124,6 +124,13 @@ function eveSession(context: AgentCapabilityContext): EveToolContext["session"] 
   }
 }
 
+function eveLifecycleEvent(type: string, turn: EveToolContext["session"]["turn"]) {
+  const data = type === "session.started"
+    ? {}
+    : { sequence: turn.sequence, turnId: turn.id, ...(type === "step.started" ? { stepIndex: 0 } : {}) }
+  return { data, type }
+}
+
 function unsupportedEveRuntimeFeature(name: string): never {
   throw agentDiagnostics.AGENT_R0415({ message: `[vitehub] Eve extension tools using ${name} are not supported.` })
 }
@@ -249,7 +256,8 @@ async function resolveEveTools(
       }
       const [event, handler] = events[0] ?? []
       if (!event || !handler) continue
-      const resolved = await handler({ type: event }, {
+      const session = eveSession(context)
+      const resolved = await handler(eveLifecycleEvent(event, session.turn), {
         abortSignal: context.abortSignal ?? context.invocation?.input.get().abortSignal,
         channel: {
           kind: context.run?.origin,
@@ -257,7 +265,7 @@ async function resolveEveTools(
         },
         messages: toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
         model: null,
-        session: eveSession(context),
+        session,
       })
       if (resolved === null || resolved === undefined) continue
       if (isEveTool(resolved)) {
