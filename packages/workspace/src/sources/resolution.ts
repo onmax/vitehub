@@ -97,6 +97,7 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
 
 function stableWorkspaceSourceValue(value: unknown): string {
   if (value === undefined) return "undefined"
+  if (value instanceof Date) return JSON.stringify(value.toJSON())
   if (value === null || !hasRuntimeType(value, "object")) return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map(stableWorkspaceSourceValue).join(",")}]`
   // SAFETY: The value is a non-null object; own keys are read only for canonical binding comparison.

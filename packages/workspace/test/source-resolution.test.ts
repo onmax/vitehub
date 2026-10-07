@@ -1438,6 +1438,37 @@ describe("Workspace Source Resolution", () => {
     await expect(base.readFile("docs/guide.md")).resolves.toBe("resolved")
   })
 
+  it("keeps the guard when resolved Source fingerprints contain distinct Dates", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    let resolution = 0
+    const definition = {
+      name: "support",
+      sources: {
+        docs: custom({
+          async resolve() {
+            return custom({
+              fingerprint: { generatedAt: new Date(resolution++) },
+              mount: "docs",
+              sync: { stale: "remove" },
+              async getKeys() { return ["guide.md"] },
+              async getItem(key) { return { key, path: key, content: "resolved" } },
+            })
+          },
+          async getKeys() { return [] },
+          async getItem(key) { return { key, content: "" } },
+        }),
+      },
+    }
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, { invocation, overlay: true })
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, definition, { invocation, overlay: true })
+
+    await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({
+      status: "error",
+      sources: [expect.objectContaining({ error: expect.stringContaining("read-only") })],
+    })
+    await expect(base.exists("docs/guide.md")).resolves.toBe(false)
+  })
+
   it("rejects overlay rebases that take remote content under a Source mount", async () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     const rebase = vi.fn(async (_options?: { takeRemote?: string[] }) => {})

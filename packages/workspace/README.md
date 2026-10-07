@@ -376,7 +376,7 @@ Source Sync and runtime Source materialization change files only inside the moun
 
 `history.rebase({ takeRemote })` replaces local content at each listed path, so each path must be writable. A Source-backed path fails with a read-only error before the Store rebases.
 
-Workspace internals keep Source Sync state, Source snapshots, startup and build indexes, and file owner records in Store metadata. Cleanup uses these records to decide which files to remove. Metadata keys that start with `source:`, `workspace:`, or `workspace-file-` are reserved for this, and public `setMeta` rejects them. Use your own prefix for application metadata.
+Workspace internals keep Source Sync state, Source snapshots, startup and build indexes, and file owner records in Store metadata. Cleanup uses these records to decide which files to remove. Metadata keys that start with `source:`, `workspace:`, `workspace-file-`, or `loader:` are reserved for this, and public `setMeta` rejects them. Use your own prefix for application metadata.
 
 `metadata.source` is reserved for internal Source materialization. Public Workspace writes and write validators cannot assign this ownership marker. Write validators and `write:before` hooks can change the write path. ViteHub checks the final path again, so a changed path cannot write into a Source mount or a Source-backed file. Explicit loaders write through `ctx.store`; when multiple build Sources share a mount, these writes must preserve the input item's `metadata.source` or set it to the owning Source key for derived output within that Source's mount. Ambiguous writes fail before storing the file.
 
