@@ -1872,7 +1872,7 @@ function renderGithubActivity(
   }
   if (activity.error) sections.push(`Agent stopped: ${githubActivityText(activity.error, 1_000)}`)
   const answers = [current, ...state.history]
-    .filter((entry): entry is GitHubActivityHistoryEntry => !!entry && entry.links.length > 0)
+    .filter((entry): entry is GitHubActivityHistoryEntry => !!entry)
     .flatMap(entry => {
       const answer = githubActivityAnswer(entry)
       return answer ? [`${githubActivitySessionMarkdown(entry)}\n\n${answer}`] : []

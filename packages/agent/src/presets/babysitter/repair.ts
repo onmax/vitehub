@@ -14,7 +14,8 @@ function stringField(input: unknown, key: string, allowEmpty = false): string {
   return value;
 }
 
-export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean) {
+export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, mentionAllowlist: readonly string[] = []) {
+  const allowedMentions = [...new Set(mentionAllowlist.map(login => login.trim().toLowerCase()).filter(Boolean))]
   return defineCapability({
     id: "babysitter.github",
     tools: {
@@ -85,20 +86,17 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           return { commented: true };
         },
       },
-      mentionOnPullRequest: {
-        name: "mentionOnPullRequest",
-        description: "Mention one configured human on this PR about a verified blocker that needs their action. This sends a notification; use it sparingly.",
-        inputSchema: {
-          type: "object",
-          properties: { login: { type: "string" }, body: { type: "string" } },
-          required: ["login", "body"],
-          additionalProperties: false,
+      ...(allowedMentions.length ? {
+        mentionOnPullRequest: {
+          name: "mentionOnPullRequest",
+          description: `Mention one configured human (${allowedMentions.map(login => `@${login}`).join(", ")}) about a verified blocker.`,
+          inputSchema: { type: "object", properties: { login: { type: "string", enum: allowedMentions }, body: { type: "string" } }, required: ["login", "body"], additionalProperties: false },
+          execute: async (input: unknown) => {
+            await operations.mention(stringField(input, "login"), stringField(input, "body"));
+            return { mentioned: true };
+          },
         },
-        execute: async (input: unknown) => {
-          await operations.mention(stringField(input, "login"), stringField(input, "body"));
-          return { mentioned: true };
-        },
-      },
+      } : {}),
       resolveReviewThread: {
         name: "resolveReviewThread",
         description: "Resolve an addressed review thread belonging to this PR.",

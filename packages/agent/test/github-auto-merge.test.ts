@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest"
 import { createGitHubPullRequestOperations, type GitHubPullRequestOperationsOptions } from "../src/server/github-auto-merge.ts"
 
+import { repairCapability } from "../src/presets/babysitter/repair.ts"
+
 const head = "a".repeat(40)
 const page = () => ({ hasNextPage: false, endCursor: null as string | null })
 function fixture(options: Partial<GitHubPullRequestOperationsOptions> = {}) {
@@ -68,6 +70,21 @@ function fixture(options: Partial<GitHubPullRequestOperationsOptions> = {}) {
 }
 
 describe("native auto-merge", () => {
+  it("exposes accepted mention logins and omits unconfigured mentions", async () => {
+    const f = fixture({ mentionAllowlist: [" stefina ", "MAXI"] })
+    const capability = repairCapability(f.operations, false, [" stefina ", "MAXI"])
+    const mention = capability.tools.mentionOnPullRequest
+    expect(mention?.inputSchema.properties.login).toEqual({ type: "string", enum: ["stefina", "maxi"] })
+    if (!mention) throw new Error("Missing configured mention tool.")
+    await mention.execute({ login: "stefina", body: "Please restore the service." })
+    expect(f.command).toHaveBeenCalledWith(
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@stefina Please restore the service."],
+      expect.anything(),
+    )
+    expect(repairCapability(f.operations, false).tools).not.toHaveProperty("mentionOnPullRequest")
+    expect(repairCapability(f.operations, false, [" "]).tools).not.toHaveProperty("mentionOnPullRequest")
+  })
+
   it("marks both comments and mentions as host-authored repair activity", async () => {
     const commentPrefix = "<!-- vitehub-babysitter-repair:repair -->\n"
     const f = fixture({ mentionAllowlist: ["stefina"], commentPrefix })
