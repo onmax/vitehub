@@ -308,11 +308,14 @@ export function defineMcpToolCapability<
       const configuredServerNames = new Set(options.servers.map(server => server.name))
       for (const [serverName, overrides] of Object.entries(options.toolOverrides ?? {})) {
         if (!configuredServerNames.has(serverName)) {
-          throw agentDiagnostics.AGENT_R0118({ message: `mcp({ toolOverrides }) references unknown server "${serverName}".` })
+          throw agentDiagnostics.AGENT_R0981({ message: `mcp({ toolOverrides }) references unknown server "${serverName}".` })
         }
         for (const override of Object.values(overrides)) {
           if (override.inputSchema && hasAgentToolStandardSchema(override.inputSchema)) {
             throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool overrides require JSON Schema without transforms.")
+          }
+          if (override.inputSchema !== undefined && (!isRuntimeRecord(override.inputSchema) || override.inputSchema.type !== "object")) {
+            throw new ViteHubError("MCP_TOOL_OVERRIDE_INVALID", "[vitehub] MCP tool input overrides require object JSON Schema.")
           }
         }
       }
@@ -322,7 +325,7 @@ export function defineMcpToolCapability<
         const serverOverrides = options.toolOverrides?.[server.name]
         for (const toolName of Object.keys(serverOverrides ?? {})) {
           if (!Object.hasOwn(serverTools || {}, toolName)) {
-            throw agentDiagnostics.AGENT_R0119({ message: `mcp({ toolOverrides }) references unknown tool "${toolName}" on discovered MCP server "${server.name}".` })
+            throw agentDiagnostics.AGENT_R0982({ message: `mcp({ toolOverrides }) references unknown tool "${toolName}" on discovered MCP server "${server.name}".` })
           }
         }
       }

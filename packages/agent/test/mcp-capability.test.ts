@@ -220,6 +220,15 @@ describe("mcp capability", () => {
     await resolved.close()
   })
 
+  it.each(["string", "array"])("rejects %s input override roots", async (type) => {
+    const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
+    const { mcp } = await import("../src/capabilities.ts")
+    await expect(resolveAgentCapabilities({ capabilities: [mcp({
+      servers: { docs: createClient({ read: { execute: vi.fn() } }) },
+      toolOverrides: { docs: { read: { inputSchema: { type } as McpToolInputSchema } } },
+    })] }, runtime(), {})).rejects.toThrow(/object JSON Schema/)
+  })
+
   it("rejects transform-capable override schemas at runtime", async () => {
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { mcp } = await import("../src/capabilities.ts")
@@ -241,8 +250,10 @@ describe("mcp capability", () => {
       servers: { docs: client },
       toolOverrides: { [kind === "server" ? "typo" : "docs"]: { typo: { description: "Pinned" } } },
     })] }, runtime(), {})
+    const { isAgentTypeDiagnostic } = await import("../src/agent-diagnostics.ts")
+    await expect(resolved.catch(isAgentTypeDiagnostic)).resolves.toBe(true)
     await expect(resolved).rejects.toMatchObject({
-      code: kind === "server" ? "AGENT_R0118" : "AGENT_R0119",
+      code: kind === "server" ? "AGENT_R0981" : "AGENT_R0982",
     })
   })
 
