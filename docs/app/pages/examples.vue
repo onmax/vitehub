@@ -68,7 +68,7 @@ useSeoMeta({
           <p v-if="example.status === 'pending'" class="text-sm leading-6 text-muted">
             {{ example.publicationNote }}
           </p>
-          <div v-if="example.status === 'published'" class="flex gap-3">
+          <div v-if="example.status === 'published'" class="flex flex-col gap-3 lg:flex-row">
             <UButton
               :to="example.action.to"
               target="_blank"
