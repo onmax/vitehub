@@ -475,9 +475,10 @@ async function createTrustedHostSession(options: {
     root: options.root,
     async destroy() {
       destroyPromise ??= (async () => {
+        await this.stop();
+        // Keep the state lease while cgroup descendants may still access it.
+        await memory?.close();
         try {
-          await this.stop();
-          await memory?.close();
           await rm(options.root, { force: true, recursive: true });
         } finally {
           await options.release();

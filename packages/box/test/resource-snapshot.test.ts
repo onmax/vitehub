@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resolveBox } from "../src/index.ts";
 import { createSessionMemory } from "../src/internal/session-memory.ts";
@@ -30,6 +33,28 @@ describe("trusted-host resource snapshots", () => {
       } finally {
         await session.close();
       }
+    }
+  });
+
+  it("retains the state lease after failed cgroup cleanup until close succeeds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "box-cleanup-lease-"));
+    const close = vi.fn().mockRejectedValueOnce(new Error("cgroup remains populated")).mockResolvedValue(undefined);
+    vi.mocked(createSessionMemory).mockResolvedValueOnce({ assertHealthy: async () => {}, close, kill: async () => {}, spawn: vi.fn() });
+    const box = await resolveBox({
+      home: { state: { ".state": { key: "cleanup-lease" } } },
+      runtime: createTrustedHostRuntime({ stateRoot: root, resources: { cgroupParent: "/delegated", memoryMaxBytes: 1024 } }),
+    }, {});
+    const first = await box.open();
+    try {
+      await expect(first.close()).rejects.toThrow("cgroup remains populated");
+      await expect(box.open({ signal: AbortSignal.timeout(100) })).rejects.toThrow();
+      await first.close();
+      const second = await box.open({ signal: AbortSignal.timeout(1000) });
+      await second.close();
+      expect(close).toHaveBeenCalledTimes(2);
+    } finally {
+      await first.close();
+      await rm(root, { recursive: true, force: true });
     }
   });
 

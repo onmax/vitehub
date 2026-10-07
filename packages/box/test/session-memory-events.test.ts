@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { access, mkdir, readFile, readdir, rmdir, statfs, writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionMemory } from "../src/internal/session-memory.ts";
 
@@ -8,6 +9,7 @@ vi.mock("node:fs/promises", () => ({
   rmdir: vi.fn(), statfs: vi.fn(), writeFile: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn() }));
 
 let events: string;
 let localEvents: string;
@@ -73,6 +75,39 @@ describe("session memory events", () => {
     expect(paths).toHaveLength(2);
     expect(paths[0]).toBe(paths[1] + "/child");
     expect(writeFile).toHaveBeenCalledWith(paths[1] + "/cgroup.kill", "1");
+  });
+  it("bounds populated-group teardown and permits cleanup retry", async () => {
+    const group = await open();
+    const read = vi.mocked(readFile).getMockImplementation()!;
+    let populated = true;
+    vi.mocked(readFile).mockImplementation(async (path, ...args) =>
+      String(path).endsWith("cgroup.events") ? `populated ${Number(populated)}\n` : read(path, ...args));
+    const clock = vi.spyOn(performance, "now");
+    let elapsed = 0;
+    clock.mockImplementation(() => elapsed);
+    vi.mocked(delay).mockImplementation(async () => { elapsed += 1000; if (elapsed > 10_000) throw new Error("unbounded polling"); });
+    try {
+      await expect(group.close()).rejects.toThrow(/Timed out.*cgroup.*populated/);
+      expect(rmdir).not.toHaveBeenCalled();
+      expect(readdir).not.toHaveBeenCalled();
+      populated = false;
+      await group.close();
+      expect(rmdir).toHaveBeenCalledTimes(1);
+      await group.close();
+      expect(rmdir).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+  it("waits for delayed descendants before removing groups", async () => {
+    const group = await open();
+    const read = vi.mocked(readFile).getMockImplementation()!;
+    let polls = 0;
+    vi.mocked(readFile).mockImplementation(async (path, ...args) =>
+      String(path).endsWith("cgroup.events") ? `populated ${++polls < 50 ? 1 : 0}\n` : read(path, ...args));
+    await group.close();
+    expect(polls).toBe(50);
+    expect(rmdir).toHaveBeenCalledTimes(1);
   });
   it("starts the launcher with no caller environment and restores it after joining", async () => {
     const group = await open();

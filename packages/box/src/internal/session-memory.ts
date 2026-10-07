@@ -133,10 +133,14 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
 }
 
 async function waitForCgroupEmpty(path: string): Promise<void> {
+  const deadline = performance.now() + 10_000;
   while (true) {
     const events = await readFile(join(path, "cgroup.events"), "utf8");
     const populated = /^populated (\d+)/m.exec(events)?.[1];
     if (populated === undefined || populated === "0") return;
+    if (performance.now() >= deadline) {
+      throw diagnostics.BOX_R0157({ message: `Timed out waiting for Box cgroup ${path} to become empty; it remains populated. Retry session close after its descendants exit.` });
+    }
     await delay(25);
   }
 }
