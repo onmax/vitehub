@@ -210,7 +210,7 @@ async function handleRelayConnection(
     ? mapPath(options.localCwd)
     : boxCwd
   const mapTextPattern = mappingRoot
-    ? new RegExp(`(^|[^A-Za-z0-9._-])${escapeRegExp(mappingRoot)}(?=$|[/\\\\]|[^A-Za-z0-9._-])`, "g")
+    ? new RegExp(`(^|[^A-Za-z0-9._-])${escapeRegExp(mappingRoot)}(?=$|[/\\\\"'\\s,:;\\[\\]{}()?=#&|<>])`, "g")
     : undefined
   const mapText = (value: string) => mapTextPattern
     ? value.replace(mapTextPattern, (_match, prefix: string) => `${prefix}${boxCwd}`)
