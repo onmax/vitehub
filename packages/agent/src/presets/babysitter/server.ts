@@ -942,7 +942,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   ...baseWorkspace,
                   commit: false,
                   mode: "write" as const,
-                  store: { provider: "local" as const, root: checkout },
+                  // Each repair owns this disposable checkout in the worker
+                  // process. Avoid filesystem reader/gate locks, which can
+                  // outlive a failed worker and block later passes.
+                  store: { provider: "local" as const, root: checkout, locks: "process" as const },
                 },
               });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
