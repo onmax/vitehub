@@ -272,7 +272,6 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
                 await driver.put(key, new Blob([
                   JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
                 ]), {
-                  access: "private",
                   contentType: "application/octet-stream",
                 }).catch((error) => {
                   console.error("[vitehub/blob] Transform cache write failed", error)

@@ -76,6 +76,19 @@ describe("Blob response transforms", () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
+  it("preserves the configured store access for cached derivatives", async () => {
+    const put = driver.put.bind(driver)
+    vi.spyOn(driver, "put").mockImplementation(async (path, body, settings) => {
+      if (settings?.access) throw new Error("object access differs from store access")
+      return put(path, body, settings)
+    })
+    for (let count = 0; count < 2; count++) {
+      const [, body] = await storage.serve(event(), "private/original", options)
+      expect(await new Response(body).text()).toBe("public")
+    }
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it("backfills filesystem hashes and reuses the persisted file version", async () => {
     const path = "legacy/photo"
     const file = join(directory, path)
