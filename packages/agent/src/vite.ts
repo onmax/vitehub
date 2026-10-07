@@ -383,7 +383,8 @@ function transformGeneratedAgentWorkflowRegistry(
         ]
       : []
   if (!capabilityLoaders.imports.length && !stateImports.length) return code
-  return [...capabilityLoaders.imports, ...stateImports, "", ...capabilityLoaders.setup, ...stateSetup, code].join("\n")
+  const preamble = [...capabilityLoaders.imports, ...stateImports, "", ...capabilityLoaders.setup, ...stateSetup, ""].join("\n")
+  return code.startsWith(preamble) ? code : preamble + code
 }
 
 function isGeneratedAgentWorkflowRegistryId(id: string): boolean {

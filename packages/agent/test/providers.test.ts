@@ -819,6 +819,9 @@ describe("agent Vite plugin", () => {
       expect(providerRegistry).toBe(registry)
       expect(windowsProviderRegistry).toBe(registry)
       expect(nitroRegistry).toBe(registry)
+      if (!registry || !providerRegistry) throw new Error("Expected generated workflow registries")
+      expect(await transform(providerRegistry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(registry)
+      expect(plugin.vitehub?.agent?.transformWorkflowRegistry(registry, join(root, ".vitehub", "workflow", "registry.mjs"))).toBe(registry)
     } finally {
       await rm(root, { force: true, recursive: true })
     }
@@ -854,6 +857,8 @@ describe("agent Vite plugin", () => {
       expect(registry).toContain('import { setAgentChannelDeliveryWorkflowStateResolver } from "@vite-hub/agent/server/internal"')
       expect(registry).toContain('const viteHubChatStateOptions = {"url":"libsql://state.example.test"}')
       expect(registry).toContain("setAgentChannelDeliveryWorkflowStateResolver(() => ({ state: viteHubChatStateResolver }))")
+      if (!registry) throw new Error("Expected a libSQL workflow registry")
+      expect(await transform(registry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(registry)
 
       const cloudflarePlugin = hubAgent()
       const cloudflareConfigResolvedHook: unknown = cloudflarePlugin.configResolved
@@ -874,6 +879,8 @@ describe("agent Vite plugin", () => {
       expect(cloudflareRegistry).toContain('import { createCloudflareAgentState, getActiveCloudflareEnv } from "@vite-hub/agent/cloudflare"')
       expect(cloudflareRegistry).toContain("(context.cloudflare?.env || getActiveCloudflareEnv())?.CHAT_STATE")
       expect(cloudflareRegistry).toContain("setAgentChannelDeliveryWorkflowStateResolver(context =>")
+      if (!cloudflareRegistry) throw new Error("Expected a Cloudflare workflow registry")
+      expect(await cloudflareTransform(cloudflareRegistry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(cloudflareRegistry)
 
       await cloudflareConfigResolved({
         command: "build",
