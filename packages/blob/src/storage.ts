@@ -250,6 +250,8 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
           }
 
           const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"
+          const headers = new Headers({ "Cache-Control": cacheControl })
+          if (etag) headers.set("ETag", etag)
           if (["GET", "HEAD"].includes(event.req.method)) {
             const previous = ["etag", "cache-control"].map(name => [name, event.res.headers.get(name)] as const)
             if (handleCacheHeaders(event, { etag, cacheControls: [cacheControl] })) {
@@ -263,8 +265,9 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             }
           }
 
+          const cached = cachePath ? await driver.get(cachePath) : null
           let body = cachePath
-            ? await readDerived(await driver.get(cachePath), etag!)
+            ? await readDerived(cached, etag!)
             : await driver.get(normalizedPath)
           const transform = options.transform
           if (body && !transform) {
@@ -291,6 +294,8 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
                   : currentBody && await hashBlob(currentBody) === sourceVersion
                 if (current && current.contentType === meta.contentType && sameVersion) {
                   try {
+                    // Replace stale entries even when a provider forbids overwriting objects.
+                    if (cached) await driver.delete([key])
                     // Keep the version and body in one object. Some drivers reject custom metadata.
                     await driver.put(key, new Blob([
                       JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
@@ -312,14 +317,14 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             body = transformed ?? null
           }
           if (!body) return
-          event.res.headers.set("X-Content-Type-Options", "nosniff")
-          event.res.headers.set("Cache-Control", cacheControl)
-          if (etag) event.res.headers.set("ETag", etag)
-          event.res.headers.set("Content-Length", String(body.size))
-          event.res.headers.set("Content-Type", transform
+          const stream = body.stream()
+          headers.set("X-Content-Type-Options", "nosniff")
+          headers.set("Content-Length", String(body.size))
+          headers.set("Content-Type", transform
             ? body.type || "application/octet-stream"
             : meta.contentType || body.type || guessContentType(normalizedPath))
-          return body.stream()
+          for (const [name, value] of headers) event.res.headers.set(name, value)
+          return stream
         })
         if (error) return [error, undefined]
         if (payload === false) continue

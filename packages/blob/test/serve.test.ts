@@ -106,6 +106,24 @@ describe("Blob response transforms", () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
+  it("replaces stale cache entries when a provider forbids overwriting objects", async () => {
+    const put = driver.put.bind(driver)
+    vi.spyOn(driver, "put").mockImplementation(async (path, body, settings) => {
+      if (path.startsWith("_vitehub/derived/") && await driver.head(path)) throw new Error("overwrite forbidden")
+      return put(path, body, settings)
+    })
+    await storage.serve(event(), "private/original", options)
+    await driver.delete("private/original")
+    await storage.put("private/original", "updated:private")
+    for (let count = 0; count < 2; count++) {
+      const [, body] = await storage.serve(event(), "private/original", options)
+      expect(await new Response(body).text()).toBe("updated")
+    }
+    expect(run).toHaveBeenCalledTimes(2)
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    expect(cache?.blobs).toHaveLength(1)
+  })
+
   it("backfills filesystem hashes and reuses the persisted file version", async () => {
     const path = "legacy/photo"
     const file = join(directory, path)
@@ -337,6 +355,19 @@ describe("Blob response transforms", () => {
     const [error] = await storage.serve(request, "private/original", options)
     expect(error?.code).toBe("BLOB_OPERATION_FAILED")
     expect(request.res.headers.get("cache-control")).toBe("private, no-store")
+    expect(request.res.headers.get("etag")).toBeNull()
+  })
+
+  it("validates content headers before committing the public cache policy", async () => {
+    const head = driver.head.bind(driver)
+    vi.spyOn(driver, "head").mockImplementation(async path => {
+      const meta = await head(path)
+      return meta ? { ...meta, contentType: "text/plain\ninvalid" } : null
+    })
+    const request = event()
+    const [error] = await storage.serve(request, "private/original", { cacheControl: "public, max-age=300" })
+    expect(error?.code).toBe("BLOB_OPERATION_FAILED")
+    expect(request.res.headers.get("cache-control")).toBeNull()
     expect(request.res.headers.get("etag")).toBeNull()
   })
 
