@@ -393,6 +393,24 @@ describe("resolveDBViteConfig", () => {
     }
   })
 
+  it("applies Nuxt D1 options to definitions without Cloudflare settings", async () => {
+    const rootDir = await createTempProject()
+    await writeDefinition(rootDir, "server/databases/config.ts")
+
+    const resolved = resolveDBViteConfig({
+      driver: "d1",
+      databaseId: "remote-id",
+      databaseName: "remote-name",
+      cloudflare: { http: true },
+    }, rootDir)
+
+    expect(resolved?.databases.default.cloudflare).toMatchObject({
+      databaseId: "remote-id",
+      databaseName: "remote-name",
+      http: true,
+    })
+  })
+
   it("preserves explicit D1 HTTP proxy declarations without resolving their secrets", async () => {
     const rootDir = await createTempProject()
     const originalToken = process.env.D1_HTTP_TOKEN

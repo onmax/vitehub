@@ -283,6 +283,7 @@ function resolveDatabaseViteOptions(options: ResolvedDatabaseNuxtIntegrationOpti
     viteOptions.binding = options.binding
     viteOptions.databaseId = options.databaseId
     viteOptions.databaseName = options.databaseName
+    viteOptions.cloudflare = options.cloudflare
     viteOptions.local = options.local
     viteOptions.migrationsTable = options.migrationsTable
     viteOptions.previewDatabaseId = options.previewDatabaseId

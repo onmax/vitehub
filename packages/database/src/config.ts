@@ -349,8 +349,17 @@ export function resolveDBViteConfig(
     const generatedSchemaFile = createGeneratedSchemaFile(rootDir, definition.name)
     generatedDrizzleConfigFilesByDatabase[definition.name] = createGeneratedDrizzleConfigFile(rootDir, definition.name)
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
+    const optionCloudflare = options?.driver === "d1"
+      ? {
+          ...(typeof options.binding !== "undefined" ? { binding: options.binding } : {}),
+          ...(typeof options.databaseId !== "undefined" ? { databaseId: options.databaseId } : {}),
+          ...(typeof options.databaseName !== "undefined" ? { databaseName: options.databaseName } : {}),
+          ...(typeof options.cloudflare?.http !== "undefined" ? { http: options.cloudflare.http } : {}),
+        }
+      : undefined
+    const cloudflare = optionCloudflare ? { ...definitionCloudflare.value, ...optionCloudflare } : definitionCloudflare.value
     databases[definition.name] = {
-      cloudflare: normalizeCloudflareConfig(definitionCloudflare.value, definition.name, migrationsDir),
+      cloudflare: normalizeCloudflareConfig(cloudflare, definition.name, migrationsDir),
       connection: resolveDefinitionConnection(definition.handler, definition.name, options?.connection),
       dialect: "sqlite",
       drizzle: {},
