@@ -17,6 +17,8 @@ describe("internal package exports", () => {
 
       const source = join(packageRoot, "src", target.slice("./dist/".length, -3) + ".ts")
       expect(existsSync(source), `${subpath} should point at a source module: ${source}`).toBe(true)
+      const built = join(packageRoot, target)
+      expect(existsSync(built), `${subpath} should point at a built module: ${built}`).toBe(true)
     }
   })
 })
