@@ -77,6 +77,26 @@ describe("agent public types", () => {
     })
   })
 
+  it("accepts application-owned MCP tool contract overrides", () => {
+    mcp({
+      servers: {
+        support: remoteMcpServer({ url: "https://example.com/mcp" }),
+      },
+      toolOverrides: {
+        support: {
+          threads_get: {
+            inputSchema: {
+              additionalProperties: false,
+              properties: { id: { type: "string" } },
+              required: ["id"],
+              type: "object",
+            },
+          },
+        },
+      },
+    })
+  })
+
   it("types Connection-backed capabilities", () => {
     gmail()
     gmail({ connection: "google", operations: ["search", "read", "draft"] })

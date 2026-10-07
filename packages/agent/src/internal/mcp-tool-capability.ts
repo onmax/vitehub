@@ -15,7 +15,7 @@ import type {
   AgentToolSet,
   MaybePromise,
 } from "../types.ts"
-import type { McpClient, McpClientConfig, McpToolFingerprints } from "../mcp/types.ts"
+import type { McpClient, McpClientConfig, McpToolFingerprints, McpToolOverride, McpToolOverrides } from "../mcp/types.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -58,6 +58,7 @@ export interface McpToolCapabilityOptions<
   unavailableNotice?: boolean | ((servers: string[]) => string)
   requires?: AgentCapabilityRequirement[]
   servers: McpToolServerDefinition<TRuntimeConfig, Name>[]
+  toolOverrides?: McpToolOverrides
   toolName: (serverName: string, toolName: string) => string
 }
 
@@ -334,8 +335,13 @@ export function defineMcpToolCapability<
           if (tools[name]) {
             throw agentDiagnostics.AGENT_R0563({ message: `[vitehub] Duplicate MCP tool name "${name}" after normalization.` })
           }
+          const serverOverrides = options.toolOverrides?.[server.name]
+          const override = serverOverrides && Object.hasOwn(serverOverrides, toolName)
+            ? serverOverrides[toolName]
+            : undefined
           tools[name] = {
             ...definition,
+            ...(override ? mcpToolOverride(override) : {}),
             metadata: {
               ...definition.metadata,
               ...(binding ? { connection: { name: binding.name, operation: "fetch" } } : {}),
@@ -362,4 +368,13 @@ export function defineMcpToolCapability<
       if (errors.length > 1) throw new AggregateError(errors, "[vitehub] Multiple MCP clients failed to close.")
     },
   })
+}
+
+function mcpToolOverride(override: McpToolOverride): Pick<AgentToolDefinition, "description" | "inputSchema" | "outputSchema" | "title"> {
+  return {
+    ...(override.description === undefined ? {} : { description: override.description }),
+    ...(override.inputSchema === undefined ? {} : { inputSchema: override.inputSchema }),
+    ...(override.outputSchema === undefined ? {} : { outputSchema: override.outputSchema }),
+    ...(override.title === undefined ? {} : { title: override.title }),
+  }
 }
