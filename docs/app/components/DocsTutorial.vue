@@ -36,7 +36,7 @@ const pageHeaderUi = {
 };
 
 const codeTreeUi = {
-  root: "my-0 h-full min-h-0 w-full rounded-none border-0 lg:!grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]",
+  root: "my-0 h-full min-h-0 w-full rounded-none border-0 lg:!h-full lg:!grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]",
   list: "h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain border-default p-1 pr-2",
   listWithChildren: "ms-3 border-s border-default",
   itemWithChildren: "ps-1 -ms-px",

@@ -7,14 +7,17 @@ navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Sandbox runs a named package project outside your app process. The project can carry its own dependencies and the Vite configuration chooses Cloudflare or Vercel Sandbox. Your route only sees a native `Response`.
+Sandbox runs a named package project outside your app process. The project can
+carry its own dependencies and the Vite configuration chooses Cloudflare or
+Vercel Sandbox. Your route only sees a native `Response`. The nested manifest
+and entrypoint below are a separate package project, not another server route.
 
 ::tutorial-step{title="Install and choose a provider"}
 ## Install and choose a provider
 
 This tutorial uses Vercel Sandbox:
 
-```bash [Terminal]
+```bash [commands/install.sh]
 pnpm add @vite-hub/sandbox @vercel/sandbox h3
 pnpm add -D @vite-hub/cli vite
 ```
@@ -35,12 +38,17 @@ For Cloudflare, install `@cloudflare/sandbox` and change `provider` to `cloudfla
 ::tutorial-step{title="Create the package project"}
 ## Create the package project
 
-Create the package manifest and entrypoint under `server/sandboxes/image-optimizer`:
+Create the package manifest and entrypoint under
+`server/sandboxes/image-optimizer`. The folder name becomes the Sandbox
+Definition name, while the manifest describes the package that runs in the
+isolated environment.
 
 ```json [server/sandboxes/image-optimizer/package.json]
 {
+  "name": "image-optimizer",
   "private": true,
   "type": "module",
+  "exports": "./index.ts",
   "vitehub": {
     "sandbox": { "timeout": 30000 }
   }
@@ -58,7 +66,9 @@ export default async function optimize({ width, height }: ImageInput) {
 }
 ```
 
-The folder name is the Definition name. The entrypoint is ordinary ESM code and does not import the Sandbox package.
+The entrypoint is ordinary ESM code and does not import the Sandbox package.
+If the package needs a native dependency, add it to this nested `package.json`;
+it is installed and bundled inside the Sandbox project.
 
 ::
 
@@ -82,18 +92,21 @@ export default defineEventHandler(async (event) => {
 
 You should see:
 
-```json [Response]
+```json [response/image-optimizer.json]
 { "pixels": 786432, "format": "webp" }
 ```
 
-Check `response.ok` before reading the body. A timeout is a non-2xx response with a `SANDBOX_TIMEOUT` error. The provider decides the execution boundary and its available network, filesystem, and process access.
+This JSON is the response body, not a file that the Sandbox writes. Check
+`response.ok` before reading the body. A timeout is a non-2xx response with a
+`SANDBOX_TIMEOUT` error. The provider decides the execution boundary and its
+available network, filesystem, and process access.
 
 ::
 
 ::tutorial-step{title="Inspect and continue"}
 ## Inspect and continue
 
-```bash [Terminal]
+```bash [commands/inspect.sh]
 pnpm vite build
 pnpm vitehub inspect definitions --kind sandbox
 ```
