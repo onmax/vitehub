@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { accessSync, chmodSync, constants, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, constants, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, rmdir, statfs, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { defineDiagnostics } from "nostics";
 
@@ -48,20 +48,6 @@ export interface SessionMemory {
   spawn(command: string, options: SpawnOptionsWithoutStdio): ChildProcessWithoutNullStreams;
   kill(): Promise<void>;
   close(): Promise<void>;
-}
-
-function resolveEnvExecutableSync(pathValue: string | undefined, fallbackPath = process.env.PATH): string {
-  for (const directory of [...(pathValue ?? "").split(":"), ...(fallbackPath ?? "").split(":")]) {
-    if (!directory) continue;
-    const candidate = resolve(directory, "env");
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Continue through PATH entries until the host's executable is found.
-    }
-  }
-  throw diagnostics.BOX_R0157({ message: "Box resource-limited sessions require an executable env utility on the session PATH." });
 }
 
 export async function createSessionMemory(resources: TrustedHostResources): Promise<SessionMemory> {
@@ -141,19 +127,18 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       // Join the cgroup before starting the command. Startup hooks are restored only
       // after that move, so caller-controlled loaders cannot fork outside the limit.
       const environment = Object.entries(options.env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
-      const envExecutable = resolveEnvExecutableSync(options.env?.PATH ?? process.env.PATH);
       const environmentFile = join(tmpdir(), `vitehub-box-env-${randomUUID()}`);
       const assignments = environment
         .filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
         .map(([name, value]) => `export ${name}='${value.replaceAll("'", `'"'"'`)}'`)
         .join("\n");
-      writeFileSync(environmentFile, `${assignments}\n`, { mode: 0o600 });
-      chmodSync(environmentFile, 0o600);
       try {
+        writeFileSync(environmentFile, `${assignments}\n`, { mode: 0o600 });
+        chmodSync(environmentFile, 0o600);
         const child = spawn("/bin/sh", [
         "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; oom=; while IFS=" " read -r key value _; do if test "$key" = oom; then oom=$value; fi; done < "$3" || exit 125; test "$oom" = 0 || exit 125; . "$4"; shift 4; exec "$0" -i -- "$@"',
-        envExecutable,
+        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; oom=; while IFS=" " read -r key value _; do if test "$key" = oom; then oom=$value; fi; done < "$3" || exit 125; test "$oom" = 0 || exit 125; . "$4"; shift 4; exec "$@"',
+        "/bin/sh",
         path,
         healthMarker,
         join(path, "memory.events.local"),

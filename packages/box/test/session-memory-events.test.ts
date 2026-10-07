@@ -114,8 +114,8 @@ describe("session memory events", () => {
     const group = await open();
     group.spawn("echo hello", { env: { LD_PRELOAD: "/hook.so", ENV: "/hook.sh", PATH: "/untrusted" } });
     expect(spawn).toHaveBeenCalledWith("/bin/sh", [
-      "-c", expect.stringContaining('shift 4; exec "$0" -i -- "$@"'),
-      expect.stringMatching(/\/env$/), expect.stringMatching(/^\/delegated\/vitehub-box-/),
+      "-c", expect.stringContaining('shift 4; exec "$@"'),
+      "/bin/sh", expect.stringMatching(/^\/delegated\/vitehub-box-/),
       expect.stringMatching(/vitehub-box-oom-/),
       expect.stringMatching(/^\/delegated\/vitehub-box-.*\/memory\.events\.local$/),
       expect.stringMatching(/vitehub-box-env-/), "/bin/sh", "-c", "echo hello",
