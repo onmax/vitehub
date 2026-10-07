@@ -2993,7 +2993,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = unknown,
+    TData = AgentChannelDataOf<TChannels>,
     TIntercept = never,
     TDataInput = TData,
     const TOptions extends Omit<WorkspaceAgentOptions<
@@ -3032,7 +3032,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = unknown,
+    TData = AgentChannelDataOf<TChannels>,
     TIntercept = never,
     TDataInput = TData,
     const TOptions extends Omit<WorkspaceAgentOptions<
