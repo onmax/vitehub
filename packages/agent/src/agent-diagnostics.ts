@@ -7,6 +7,9 @@ const providerErrorEnvelopeSchema = v.object({
 })
 
 const agentTypeDiagnosticCodes = new Set([
+  "AGENT_R0942",
+  "AGENT_R0943",
+  "AGENT_R0945",
   "AGENT_R0923",
   "AGENT_R0922",
   "AGENT_R0921",
@@ -473,6 +476,16 @@ const dynamicError = {
 export const agentDiagnostics = defineDiagnostics({
   docsBase: () => "https://vitehub.dev/docs/reference/errors-diagnostics#agent-public-errors",
   codes: {
+    AGENT_C0011: {
+      why: "[vitehub] codeHost() requires valid host, repositories, output limit and operations for its mode.",
+      fix: "Use mode write for write operations and policy. Use repository names or owner/* patterns.",
+    },
+    AGENT_R0941: dynamicError,
+    AGENT_R0942: dynamicError,
+    AGENT_R0943: dynamicError,
+    AGENT_R0944: dynamicError,
+    AGENT_R0945: dynamicError,
+
     AGENT_R0907: dynamicError,
     AGENT_R0908: dynamicError,
     AGENT_R0909: dynamicError,

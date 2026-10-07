@@ -690,6 +690,10 @@ hubAgent({
 
 Aliases use the native webhook handler, retaining the request body and signature headers. The target Channel must be configured on that Agent. Static route collisions fail at build time. Deno and standalone Netlify output do not currently support aliases.
 
+## Code Host capability
+
+`codeHost()` from `@vite-hub/agent/capabilities` gives an Agent repository tools for GitHub, GitLab and Forgejo. Read mode is the default. Write mode adds comments, labels, reviews and checks. Credentials come from Server Env. Repository access is bounded by `repositories` or the triggering pull request context. See [Code Host](../../docs/content/docs/agents/capabilities/code-host.md) for tools, approval and limits.
+
 ## Capability inspection
 
 Capability definitions can declare `inspection: { label, view? }`. Lifecycle hooks publish serializable state with `await context.inspection.set(state)`. The state replaces the previous snapshot for that Capability and Invocation. Views use the typed, read-only JSON Render catalog in `AgentCapabilityInspectionView`; runtime code has no Vue dependency.
