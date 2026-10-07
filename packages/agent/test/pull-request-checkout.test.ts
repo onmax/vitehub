@@ -220,7 +220,17 @@ describe("pull request checkout", () => {
     expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
   })
 
-  it.each([false, true])("reuses the GitHub host checkout and pushes only to the PR head with fork %s", async (forked) => {
+  it.each([false, true].flatMap(forked => [
+    "HEAD:refs/heads/feature",
+    "refs/heads/feature:refs/heads/feature",
+    "feature",
+    "refs/heads/feature",
+    "HEAD",
+    "feature:feature",
+    "feature:refs/heads/feature",
+    "refs/heads/feature:feature",
+    "HEAD:feature",
+  ].map(refspec => [forked, refspec] as const)))("reuses the GitHub host checkout with fork %s and refspec %s", async (forked, refspec) => {
     const fixture = await githubFixture()
     const headRepository = forked ? "contributor/vitehub" : "vite-hub/vitehub"
     const headBare = forked ? join(fixture.workspace, "..", "remotes", "contributor", "vitehub.git") : fixture.bare
@@ -236,7 +246,7 @@ describe("pull request checkout", () => {
     await git(checkout, ["fetch", "-q", "--no-tags", `https://github.com/${headRepository}.git`, "refs/heads/feature"], env)
     await git(checkout, ["checkout", "-q", "-B", "feature", "FETCH_HEAD"])
     await git(checkout, ["remote", "set-url", "--push", "origin", `https://github.com/${headRepository}.git`])
-    await git(checkout, ["config", "remote.origin.push", "HEAD:refs/heads/feature"])
+    await git(checkout, ["config", "remote.origin.push", refspec])
     expect(await git(checkout, ["config", "branch.feature.remote"]).catch(() => "")).toBe("")
     expect(await git(checkout, ["remote"])).toBe("origin")
 
@@ -285,6 +295,8 @@ describe("pull request checkout", () => {
   it.each([
     ["remote.origin.pushurl", "https://github.com/other/repository.git", "wrong push destination"],
     ["remote.origin.push", "HEAD:refs/heads/other", "wrong push refspec"],
+    ["remote.origin.push", "feature:other", "wrong push refspec"],
+    ["remote.origin.push", "+feature", "wrong push refspec"],
     ["remote.origin.mirror", "true", "wrong push refspec"],
     ["push.default", "matching", "wrong default push configuration"],
     ["branch.feature.pushRemote", "other", "wrong push remote"],

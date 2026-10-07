@@ -234,9 +234,9 @@ export async function preparePullRequestCheckout(
         throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong push refspec." })
       }
       if (push.exitCode === 0) {
-        // The GitHub host uses origin's explicit HEAD refspec without upstream metadata.
+        // The GitHub host uses an explicit refspec without upstream metadata.
         const refspecs = push.stdout.trim().split(/\r?\n/)
-        if (refspecs.length !== 1 || ![`HEAD:${expectedBranch}`, `${expectedBranch}:${expectedBranch}`].includes(refspecs[0]!)) {
+        if (refspecs.length !== 1 || !isExpectedPushRefspec(refspecs[0]!, expectedBranch)) {
           throw agentDiagnostics.AGENT_R0070({ message: "[vitehub] existing pull request checkout has the wrong push refspec." })
         }
       }
@@ -295,4 +295,13 @@ export async function preparePullRequestCheckout(
 
 function normalizeGitRemote(value: string): string {
   return value.trim().replace(/\.git$/, "").replace(/^git@github\.com:/, "https://github.com/").replace(/^https?:\/\/github\.com\//, "https://github.com/").toLowerCase()
+}
+
+function isExpectedPushRefspec(refspec: string, expectedBranch: string): boolean {
+  const [source, destination, ...extra] = refspec.split(":")
+  if (!source || source.startsWith("+") || extra.length) return false
+  const sourceRef = source === "HEAD" ? expectedBranch : remoteRef(source)
+  // A source-only push updates that source's ref on the remote.
+  const destinationRef = destination === undefined ? sourceRef : remoteRef(destination)
+  return sourceRef === expectedBranch && destinationRef === expectedBranch
 }
