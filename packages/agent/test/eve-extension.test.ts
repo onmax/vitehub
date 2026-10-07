@@ -1261,7 +1261,7 @@ describe("Eve extension capabilities", () => {
       async () => ({
         count: {
           value: 1n,
-          execute() { return this.value },
+          execute(this: { value: bigint }) { return this.value },
           toModelOutput: (output: unknown) => ({ value: String(output) }),
         },
       }),

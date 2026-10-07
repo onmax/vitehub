@@ -148,26 +148,21 @@ function toViteHubTool(
     ...(toModelOutput
       ? { toModelOutput: async ({ output }: { output: unknown }) => await toModelOutput(output) }
       : { toModelOutput: undefined }),
-    ...(execute
-      ? {
-        async execute(input: unknown, options: ToolExecutionOptions = {}) {
-          const callId = options.toolCallId ?? `${name}-${Date.now()}`
-          // SAFETY: This adapter supplies Eve's documented execution context while unsupported members throw explicitly.
-          const toolContext: EveToolContext = {
-            abortSignal: options.abortSignal ?? fallbackAbortSignal,
-            callId,
-            getSandbox: async () => unsupportedEveRuntimeFeature("ctx.getSandbox()"),
-            getSkill: () => unsupportedEveRuntimeFeature("ctx.getSkill()"),
-            getToken: async () => unsupportedEveRuntimeFeature("ctx.getToken()"),
-            requireAuth: () => unsupportedEveRuntimeFeature("ctx.requireAuth()"),
-            messages: options.messages ?? toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
-            session,
-            toolName: name,
-          }
-          return await execute.call(tool, input, toolContext)
-        },
+    async execute(input: unknown, options: ToolExecutionOptions = {}) {
+      const callId = options.toolCallId ?? `${name}-${Date.now()}`
+      const toolContext: EveToolContext = {
+        abortSignal: options.abortSignal ?? fallbackAbortSignal,
+        callId,
+        getSandbox: async () => unsupportedEveRuntimeFeature("ctx.getSandbox()"),
+        getSkill: () => unsupportedEveRuntimeFeature("ctx.getSkill()"),
+        getToken: async () => unsupportedEveRuntimeFeature("ctx.getToken()"),
+        requireAuth: () => unsupportedEveRuntimeFeature("ctx.requireAuth()"),
+        messages: options.messages ?? toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
+        session,
+        toolName: name,
       }
-      : {}),
+      return await execute.call(tool, input, toolContext)
+    },
     ...(approvalRequest
       ? {
           async needsApproval(input: unknown, options: ToolExecutionOptions = {}) {
