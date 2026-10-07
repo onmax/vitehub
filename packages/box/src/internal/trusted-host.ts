@@ -630,10 +630,17 @@ async function createTrustedHostSession(options: {
       for (const pid of processGroups) signalProcessGroup(pid, "SIGTERM");
       if (process.platform === "win32")
         for (const child of active) signalProcessTree(child, "SIGTERM");
-      await Promise.race([
-        Promise.all(active.map(waitForExit)),
-        new Promise((resolvePromise) => setTimeout(resolvePromise, 250)),
-      ]);
+      let graceTimeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.all(active.map(waitForExit)),
+          new Promise<void>((resolvePromise) => {
+            graceTimeout = setTimeout(resolvePromise, 250);
+          }),
+        ]);
+      } finally {
+        if (graceTimeout) clearTimeout(graceTimeout);
+      }
       for (const pid of processGroups) signalProcessGroup(pid, "SIGKILL");
       if (process.platform === "win32")
         for (const child of active) signalProcessTree(child, "SIGKILL");
