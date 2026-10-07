@@ -22,7 +22,7 @@ choosing a hosted database.
 ## Install
 
 ```bash [commands/install]
-pnpm add @vite-hub/database drizzle-orm
+pnpm add @vite-hub/database drizzle-orm nitro
 pnpm add -D @vite-hub/cli drizzle-kit vite
 ```
 
@@ -34,9 +34,10 @@ pnpm add -D @vite-hub/cli drizzle-kit vite
 ```ts [vite.config.ts]
 import { hubDb } from '@vite-hub/database/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubDb()],
+  plugins: [hubDb(), nitro() as never],
 })
 ```
 

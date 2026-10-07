@@ -24,7 +24,7 @@ Cloudflare Artifacts, Vercel Blob, and GitHub stores.
 ## Install
 
 ```bash [commands/install]
-pnpm add @vite-hub/workspace h3
+pnpm add @vite-hub/workspace nitro h3
 pnpm add -D vite
 ```
 
@@ -36,9 +36,10 @@ pnpm add -D vite
 ```ts [vite.config.ts]
 import { hubWorkspace } from '@vite-hub/workspace/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubWorkspace()],
+  plugins: [hubWorkspace(), nitro() as never],
 })
 ```
 

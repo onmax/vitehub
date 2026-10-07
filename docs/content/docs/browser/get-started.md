@@ -21,7 +21,7 @@ Node process, use the local provider in [Hosts](/docs/browser/hosts).
 ## Install
 
 ```bash [commands/install]
-pnpm add vite-hub h3
+pnpm add vite-hub nitro h3
 pnpm add -D vite
 ```
 
@@ -33,13 +33,14 @@ pnpm add -D vite
 Enable Browser on the Cloudflare deployment preset.
 
 ```ts [vite.config.ts]
+import { nitro } from 'nitro/vite'
 import { vitehub } from 'vite-hub'
 
 export default {
-  plugins: vitehub({
+  plugins: [vitehub({
     preset: 'cloudflare',
     browser: true,
-  }),
+  }), nitro() as never],
 }
 ```
 

@@ -22,7 +22,7 @@ running more than one process.
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add @vite-hub/kv h3
+pnpm add @vite-hub/kv nitro h3
 pnpm add -D vite
 ```
 
@@ -31,9 +31,10 @@ Register KV in `vite.config.ts`:
 ```ts [vite.config.ts]
 import { hubKv } from '@vite-hub/kv/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubKv()],
+  plugins: [hubKv(), nitro() as never],
 })
 ```
 

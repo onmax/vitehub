@@ -22,7 +22,7 @@ you deploy multiple instances.
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add vite-hub
+pnpm add vite-hub nitro h3
 ```
 
 Register the integration. The `node` preset uses process-local memory, also during local Vite development. The `cloudflare` preset uses Cloudflare Rate Limiting. The `vercel`, `netlify`, and `deno` presets reject `rateLimit`.
@@ -30,9 +30,10 @@ Register the integration. The `node` preset uses process-local memory, also duri
 ```ts [vite.config.ts]
 import { vitehub } from 'vite-hub'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node', rateLimit: true })],
+  plugins: [vitehub({ preset: 'node', rateLimit: true }), nitro() as never],
 })
 ```
 

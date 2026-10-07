@@ -23,7 +23,7 @@ database before deploying more than one process.
 `comark-content` is an optional peer dependency of `vite-hub`. Install it with the framework package.
 
 ```bash [commands/install]
-pnpm add vite-hub comark-content h3
+pnpm add vite-hub comark-content nitro h3
 pnpm add -D vite
 ```
 
@@ -36,10 +36,11 @@ Content needs no extra configuration key. The `vitehub()` Vite plugin and the Nu
 
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 import { vitehub } from 'vite-hub'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node' })],
+  plugins: [vitehub({ preset: 'node' }), nitro() as never],
 })
 ```
 

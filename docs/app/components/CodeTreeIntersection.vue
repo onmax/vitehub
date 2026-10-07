@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, markRaw, onMounted, ref, shallowRef, useTemplateRef } from "vue";
+import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef } from "vue";
 import type { Ref, VNode } from "vue";
-import { useIntersectionObserver } from "@vueuse/core";
 
 const props = defineProps<{
   /** Add the child block(s) to the tree on mount instead of waiting for intersection. */
@@ -52,6 +51,8 @@ function collectCodeBlocks(slot: VNode): CodeTreeItem[] {
 
 const children = computed(() => (slots.default?.() || []).flatMap((node) => collectCodeBlocks(node)));
 const records = shallowRef<CodeTreeItem[]>([]);
+const markerElements: HTMLElement[] = [];
+let observer: IntersectionObserver | undefined;
 
 function resolveRecords() {
   if (records.value.length === children.value.length) return records.value;
@@ -74,35 +75,74 @@ function resolveRecords() {
   return records.value;
 }
 
-function register() {
-  const records = resolveRecords();
-
-  for (const child of records) {
-    if (!tree.value[child.label]) {
-      tree.value[child.label] = markRaw(child.component);
-    }
-  }
-
-  // A step can introduce several files. Show the first file in document order
-  // so the code pane follows the prose instead of jumping to the last fence.
-  // Set it on every intersection, including when scrolling upward through a
-  // step whose files are already registered.
-  if (records[0]) activePath.value = records[0].label;
+function activate(index: number) {
+  const child = resolveRecords()[index];
+  if (!child) return;
+  if (!tree.value[child.label]) tree.value[child.label] = markRaw(child.component);
+  activePath.value = child.label;
 }
 
-onMounted(() => {
-  if (props.default) return register();
-  const rect = target.value?.getBoundingClientRect();
-  if (rect && rect.top < window.innerHeight * 0.5) register();
+function registerAll() {
+  for (const [index] of resolveRecords().entries()) activate(index);
+  const first = resolveRecords()[0];
+  if (first) activePath.value = first.label;
+}
+
+function addMarkers() {
+  const section = target.value?.parentElement;
+  const records = resolveRecords();
+  if (!section || !records.length) return false;
+
+  const blocks = section.querySelectorAll<HTMLElement>(".code-block-wrapper").length > 0
+    ? section.querySelectorAll<HTMLElement>(".code-block-wrapper")
+    : section.querySelectorAll<HTMLElement>("pre:has(code)");
+  if (!blocks.length) return false;
+
+  for (const [index, block] of [...blocks].entries()) {
+    const child = records[index];
+    if (!child) break;
+
+    const marker = document.createElement("span");
+    marker.className = "vh-tutorial-code-marker";
+    marker.dataset.vhTutorialCodeIndex = String(index);
+    marker.setAttribute("aria-hidden", "true");
+    block.before(marker);
+    markerElements.push(marker);
+    observer?.observe(marker);
+
+    const rect = marker.getBoundingClientRect();
+    if (rect.top < window.innerHeight * 0.5 && rect.bottom > 0) activate(index);
+  }
+
+  return markerElements.length > 0;
+}
+
+onMounted(async () => {
+  await nextTick();
+  observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      if (entry.target === target.value) {
+        if (markerElements.length === 0) activate(0);
+        continue;
+      }
+
+      const index = Number((entry.target as HTMLElement).dataset.vhTutorialCodeIndex);
+      if (Number.isInteger(index)) activate(index);
+    }
+  }, { rootMargin: "0px 0px -60% 0px" });
+
+  if (target.value) observer.observe(target.value);
+  if (props.default) registerAll();
+  else if (!addMarkers()) registerAll();
 });
 
-useIntersectionObserver(
-  target,
-  ([entry]) => {
-    if (entry?.isIntersecting) register();
-  },
-  { rootMargin: "0px 0px -60% 0px" },
-);
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  for (const marker of markerElements) marker.remove();
+  markerElements.length = 0;
+  observer = undefined;
+});
 </script>
 
 <template>
@@ -112,3 +152,13 @@ useIntersectionObserver(
     </div>
   </div>
 </template>
+
+<style scoped>
+.vh-tutorial-code-marker {
+  display: block;
+  height: 1px;
+  margin: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+</style>

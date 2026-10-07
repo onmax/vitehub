@@ -20,7 +20,7 @@ provider for production.
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add @vite-hub/blob h3
+pnpm add @vite-hub/blob nitro h3
 pnpm add -D @vite-hub/cli vite
 ```
 
@@ -29,13 +29,14 @@ Register Blob and select the local store:
 ```ts [vite.config.ts]
 import { hubBlob } from '@vite-hub/blob/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
   blob: {
     driver: 'fs',
     base: '.vitehub/data/blob',
   },
-  plugins: [hubBlob()],
+  plugins: [hubBlob(), nitro() as never],
 })
 ```
 

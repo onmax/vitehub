@@ -23,17 +23,18 @@ You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app.
 Install the ViteHub distribution and the Channels integration:
 
 ```bash [commands/install]
-pnpm add vite-hub h3 vite
+pnpm add vite-hub nitro h3 vite
 ```
 
 Add the Channels integration to your Vite config. ViteHub then discovers files below `server/channels` and files that end in `.channel.ts`.
 
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 import { vitehub } from 'vite-hub'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node', channels: true })],
+  plugins: [vitehub({ preset: 'node', channels: true }), nitro() as never],
 })
 ```
 

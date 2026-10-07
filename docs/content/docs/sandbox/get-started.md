@@ -18,16 +18,17 @@ and entrypoint below are a separate package project, not another server route.
 This tutorial uses Vercel Sandbox:
 
 ```bash [commands/install]
-pnpm add @vite-hub/sandbox @vercel/sandbox h3
+pnpm add @vite-hub/sandbox @vercel/sandbox nitro h3
 pnpm add -D @vite-hub/cli vite
 ```
 
 ```ts [vite.config.ts]
 import { hubSandbox } from '@vite-hub/sandbox/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubSandbox({ provider: 'vercel' })],
+  plugins: [hubSandbox({ provider: 'vercel' }), nitro() as never],
 })
 ```
 

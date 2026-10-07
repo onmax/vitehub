@@ -2,7 +2,7 @@
 title: Run your first Box
 description: "Open a trusted-host Box, run one command, and inspect the result."
 layout: tutorial
-navigation.title: Tutorial
+navigation.title: Box tutorial
 navigation.order: 49
 navigation.group: Advanced execution
 icon: i-lucide-rocket
@@ -22,11 +22,21 @@ Sandbox when untrusted code needs provider-managed isolation.
 ## Install the Box package
 
 ```bash [commands/install]
-pnpm add @vite-hub/box
+pnpm add @vite-hub/box nitro h3
 ```
 
 The package includes the `resolveBox()` helper and the portable Box session
-contracts. It does not install a provider SDK for you.
+contracts. It does not install a provider SDK for you. Register Nitro so the
+`server/api` route is served by the same Vite development server:
+
+```ts [vite.config.ts]
+import { nitro } from 'nitro/vite'
+import { defineConfig } from 'vite'
+
+export default defineConfig({
+  plugins: [nitro() as never],
+})
+```
 ::
 
 ::tutorial-step{title="Open a session"}

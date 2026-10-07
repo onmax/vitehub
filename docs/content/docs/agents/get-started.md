@@ -21,7 +21,7 @@ example runs offline and needs no provider key.
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add vite-hub h3
+pnpm add vite-hub nitro h3
 pnpm add -D vite
 ```
 
@@ -29,10 +29,11 @@ Register the Agent integration in `vite.config.ts`:
 
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 import { vitehub } from 'vite-hub'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node', agent: true })],
+  plugins: [vitehub({ preset: 'node', agent: true }), nitro() as never],
 })
 ```
 

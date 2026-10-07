@@ -63,9 +63,15 @@ describe("docs product navigation", () => {
       expect(titles[0], sectionId).toBe("Overview");
       expect(templateTitles, sectionId).toContain("Tutorial");
       expect(templateTitles, sectionId).toContain("Server API");
-      // Template pages appear in template order. Product-specific pages such as Env Bridge come after them.
+      // Template pages appear in template order. Concepts pages may sit between
+      // template lanes without changing the order of the shared template pages.
       expect(templateTitles, sectionId).toEqual(template.filter(title => templateTitles.includes(title)));
-      expect(titles.slice(templateTitles.length).some(title => template.includes(title)), sectionId).toBe(false);
+      const laneLabels = getDocsSidebarGroups(section!).map(group => group.label).filter((label): label is string => label !== null);
+      const laneOrder = ["Tutorial", "Concepts", "Guides", "Reference", "Deploy", "Operate"];
+      const knownLaneIndexes = laneLabels
+        .map(label => laneOrder.indexOf(label))
+        .filter(index => index !== -1);
+      expect(knownLaneIndexes, sectionId).toEqual([...knownLaneIndexes].sort((left, right) => left - right));
 
       const capability = pages.find(page => page.id === "agent-capability");
       if (capability) {
@@ -109,7 +115,7 @@ describe("docs product navigation", () => {
   });
 
   it("publishes tutorials for public packages without product sections", () => {
-    expect(getDocsPageByPath("/docs/agents/box-tutorial")?.title).toBe("Tutorial");
+    expect(getDocsPageByPath("/docs/agents/box-tutorial")?.title).toBe("Box tutorial");
     expect(getDocsPageByPath("/docs/reference/markdown-template-tutorial")?.title).toBe("Tutorial");
     expect(getDocsPageByPath("/docs/ui/get-started")?.title).toBe("Tutorial");
   });
@@ -124,13 +130,7 @@ describe("docs product navigation", () => {
     }
 
     const kv = docsManifest.sections.find(candidate => candidate.id === "kv");
-    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([
-      null,
-      "Tutorial",
-      "Guides",
-      "Reference",
-      "Deploy",
-    ]);
+    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null, "Tutorial", "Guides", "Reference", "Deploy"]);
   });
 
   it("gives execution primitives a Concepts lane before configuration reference", () => {

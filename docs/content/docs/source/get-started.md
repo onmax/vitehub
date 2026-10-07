@@ -21,7 +21,7 @@ persist or mutate a file tree.
 ## Install
 
 ```bash [commands/install]
-pnpm add vite-hub h3
+pnpm add vite-hub nitro h3
 pnpm add -D vite
 ```
 
@@ -34,10 +34,11 @@ Direct Source reads need no configuration. The `vitehub()` Vite plugin and the N
 
 ```ts [vite.config.ts]
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 import { vitehub } from 'vite-hub'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node' })],
+  plugins: [vitehub({ preset: 'node' }), nitro() as never],
 })
 ```
 

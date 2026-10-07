@@ -23,7 +23,7 @@ deploying work that must survive a process restart.
 ## Install
 
 ```bash [commands/install]
-pnpm add @vite-hub/runtime @vite-hub/workflow h3
+pnpm add @vite-hub/runtime @vite-hub/workflow nitro h3
 pnpm add -D vite
 ```
 
@@ -35,9 +35,10 @@ pnpm add -D vite
 ```ts [vite.config.ts]
 import { hubWorkflow } from '@vite-hub/workflow/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubWorkflow()],
+  plugins: [hubWorkflow(), nitro() as never],
 })
 ```
 

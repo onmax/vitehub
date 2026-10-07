@@ -23,7 +23,7 @@ when you need provider-managed isolation.
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add @vite-hub/shell @vite-hub/workspace h3
+pnpm add @vite-hub/shell @vite-hub/workspace nitro h3
 pnpm add -D vite
 ```
 
@@ -32,9 +32,10 @@ Register Workspace discovery in `vite.config.ts`:
 ```ts [vite.config.ts]
 import { hubWorkspace } from '@vite-hub/workspace/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubWorkspace()],
+  plugins: [hubWorkspace(), nitro() as never],
 })
 ```
 

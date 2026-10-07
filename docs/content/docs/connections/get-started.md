@@ -24,7 +24,7 @@ Vite server app. The app must have a Database integration and a stable
 Install the ViteHub distribution:
 
 ```bash [commands/install]
-pnpm add vite-hub
+pnpm add vite-hub nitro
 ```
 
 Connections need [Database](/docs/database), Env declarations for the Google
@@ -34,9 +34,10 @@ client, and a 32-byte encryption key.
 import { vitehub } from 'vite-hub'
 import { env } from 'vite-hub/env'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [vitehub({ preset: 'node', console: true, database: true, connections: true })],
+  plugins: [vitehub({ preset: 'node', console: true, database: true, connections: true }), nitro() as never],
   env: {
     server: {
       google: {
