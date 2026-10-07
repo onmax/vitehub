@@ -1,4 +1,4 @@
-import { handleCacheHeaders, isCacheMatch } from "h3"
+import { handleCacheHeaders } from "h3"
 
 import { toArray } from "@vite-hub/internal/arrays"
 
@@ -250,10 +250,17 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
           }
 
           const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"
-          if (["GET", "HEAD"].includes(event.req.method) && isCacheMatch(event.req.headers, { etag })) {
-            event.res.headers.set("X-Content-Type-Options", "nosniff")
-            handleCacheHeaders(event, { etag, cacheControls: [cacheControl] })
-            return null
+          if (["GET", "HEAD"].includes(event.req.method)) {
+            const previous = ["etag", "cache-control"].map(name => [name, event.res.headers.get(name)] as const)
+            if (handleCacheHeaders(event, { etag, cacheControls: [cacheControl] })) {
+              event.res.headers.set("X-Content-Type-Options", "nosniff")
+              return null
+            }
+            // h3 writes success headers while checking validators. Restore them before fallible work.
+            for (const [name, value] of previous) {
+              if (value === null) event.res.headers.delete(name)
+              else event.res.headers.set(name, value)
+            }
           }
 
           let body = cachePath
