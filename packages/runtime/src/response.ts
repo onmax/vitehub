@@ -83,7 +83,30 @@ export function isSerializedResponse(value: unknown): value is SerializedRespons
   // records before deserialization would pass bytes to the native constructor.
   // atob ignores ASCII whitespace, so whitespace-only legacy data has no bytes.
   if ([204, 205, 304].includes(record.status) && (/[^\t\n\f\r ]/.test(body.data) || body.isNull === false)) return false
-  return record.headers.every((entry) => Array.isArray(entry) && entry.length === 2 && hasRuntimeType(entry[0], "string") && hasRuntimeType(entry[1], "string"))
+  const headers = record.headers as readonly unknown[]
+  if (!headers.every(isSerializedHeaderEntry)) return false
+  if (!isBase64(body.data)) return false
+  try {
+    // Keep validation aligned with the native constructor used by deserialization.
+    new Response(null, {
+      headers: headers.map(([name, headerValue]) => [name, headerValue] as [string, string]),
+      status: record.status,
+      statusText: record.statusText,
+    })
+  }
+  catch {
+    return false
+  }
+  return true
+}
+
+function isSerializedHeaderEntry(value: unknown): value is readonly [string, string] {
+  return Array.isArray(value) && value.length === 2 && hasRuntimeType(value[0], "string") && hasRuntimeType(value[1], "string")
+}
+
+function isBase64(value: string): boolean {
+  const compact = value.replace(/[\t\n\f\r ]/g, "")
+  return /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}(?:==)?|[A-Za-z0-9+/]{3}=?)?$/.test(compact)
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
