@@ -33,6 +33,9 @@ function provisionContext(fetchImpl: typeof globalThis.fetch): ProvisionContext 
   }
 }
 
+const sparseQueueList: unknown[] = []
+sparseQueueList.length = 1
+
 describe("queue provision step", () => {
   it("does not create a queue that already exists", async () => {
     const rootDir = await createTempDir()
@@ -75,7 +78,7 @@ describe("queue provision step", () => {
   it.each([
     [null],
     ["welcome"],
-    (() => { const queues: unknown[] = []; queues.length = 1; return queues })(),
+    [sparseQueueList],
   ])("rejects malformed Cloudflare queue entries: %s", async (result) => {
     const rootDir = await createTempDir()
     await writeFile(join(rootDir, "welcome.queue.ts"), "export default null\n", "utf8")
