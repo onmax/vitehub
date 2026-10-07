@@ -21,7 +21,7 @@ function isVNode(value: unknown): value is VNode {
 }
 
 const pageUi = {
-  root: "mx-auto grid w-full max-w-[112rem] grid-cols-1 gap-8 px-4 sm:px-6 lg:grid-cols-[minmax(0,48rem)_minmax(0,1fr)] lg:gap-8 lg:pl-8 lg:pr-0 xl:grid-cols-[minmax(0,54rem)_minmax(0,1fr)] xl:gap-10 xl:pl-12 xl:pr-0",
+  root: "grid w-full max-w-none grid-cols-1 gap-8 px-4 sm:px-6 lg:grid-cols-[minmax(0,48rem)_minmax(0,1fr)] lg:gap-8 lg:pl-8 lg:pr-0 xl:grid-cols-[minmax(0,54rem)_minmax(0,1fr)] xl:gap-10 xl:pl-12 xl:pr-0",
   center: "min-w-0 max-w-none mx-0 lg:col-span-1",
   right: "hidden lg:col-span-1 lg:order-none lg:block w-full min-w-0 self-stretch border-l border-default",
 };
