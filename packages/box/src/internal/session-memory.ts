@@ -106,11 +106,20 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
         .then(contents => contents.trim())
         .catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? "unavailable" : Promise.reject(error));
       healthError = diagnostics.BOX_R0158({ message: `Box memory limit exceeded: local allocation OOM recorded; limit=${resources.memoryMaxBytes} bytes, peak=${peak} bytes, local_oom=${localOom}, observed_oom_kill=${kills}. Kill count does not identify the OOM cause and may exclude descendants on memory_localevents mounts. Open a new session after reducing the workload or changing its budget.` });
+      const cleanupErrors: unknown[] = [];
       try {
         await writeFile(healthMarker, "1");
-      } finally {
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
         // Always terminate the group, even when the private fence cannot be written.
         await writeFile(join(path, "cgroup.kill"), "1");
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length) {
+        healthError.message += ` Cleanup details: ${cleanupErrors.map(error => error instanceof Error ? error.message : String(error)).join("; ")}.`;
       }
     }
   };
@@ -143,7 +152,7 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       try {
         const child = spawn("/bin/sh", [
         "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; grep -q "^oom 0$" "$3" || exit 125; . "$4"; shift 4; exec "$0" -i -- "$@"',
+        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; oom=; while IFS=" " read -r key value _; do if test "$key" = oom; then oom=$value; fi; done < "$3" || exit 125; test "$oom" = 0 || exit 125; . "$4"; shift 4; exec "$0" -i -- "$@"',
         envExecutable,
         path,
         healthMarker,
