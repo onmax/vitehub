@@ -68,17 +68,29 @@ useSeoMeta({
           <p v-if="example.status === 'pending'" class="text-sm leading-6 text-muted">
             {{ example.publicationNote }}
           </p>
-          <UButton
-            v-if="example.status === 'published'"
-            :to="example.action.to"
-            target="_blank"
-            :label="example.action.label"
-            :icon="example.kind === 'project' ? 'i-simple-icons-github' : 'i-lucide-copy'"
-            trailing-icon="i-lucide-arrow-up-right"
-            color="neutral"
-            variant="soft"
-            block
-          />
+          <div v-if="example.status === 'published'" class="flex gap-3">
+            <UButton
+              :to="example.action.to"
+              target="_blank"
+              :label="example.action.label"
+              :icon="example.kind === 'project' ? 'i-simple-icons-github' : 'i-lucide-copy'"
+              trailing-icon="i-lucide-arrow-up-right"
+              color="neutral"
+              variant="soft"
+              class="flex-1"
+            />
+            <UButton
+              v-if="example.website"
+              :to="example.website"
+              target="_blank"
+              label="Visit site"
+              icon="i-lucide-globe"
+              trailing-icon="i-lucide-arrow-up-right"
+              color="neutral"
+              variant="outline"
+              class="flex-1"
+            />
+          </div>
           <UButton
             v-else
             :label="example.action.label"
