@@ -37,13 +37,19 @@ export const AgentTrace = defineComponent({
                       props.run.status === "failed"
                         ? "error"
                         : props.run.status === "running"
-                          ? "warning"
-                          : "success",
-                    variant: "subtle",
+                          ? "info"
+                          : props.run.status === "cancelled"
+                            ? "neutral"
+                            : "success",
+                    size: "xs",
+                    variant: "outline",
                   },
-                  { default: () => props.run.status },
+                  { default: () => ({ cancelled: "Cancelled", completed: "Completed", failed: "Failed", running: "Working" })[props.run.status] },
                 ),
                 h("span", { class: "vh-trace__duration" }, formatDuration(props.run.durationMs)),
+                h("svg", { "aria-hidden": "true", class: "vh-trace__chevron", fill: "none", viewBox: "0 0 24 24" }, [
+                  h("path", { d: "m7 10 5 5 5-5", "stroke-linecap": "round", "stroke-linejoin": "round" }),
+                ]),
               ]),
             content: () =>
               h(
@@ -61,7 +67,7 @@ export const AgentTrace = defineComponent({
                     slots.step?.({ step }) ?? [
                       h("div", { class: "vh-trace__step-heading" }, [
                         h("span", step.name),
-                        h("span", formatDuration(step.durationMs)),
+                        h("span", { class: "vh-trace__duration" }, formatDuration(step.durationMs)),
                       ]),
                       step.attributes && Object.keys(step.attributes).length > 0
                         ? h(

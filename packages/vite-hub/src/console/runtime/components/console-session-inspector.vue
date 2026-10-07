@@ -596,7 +596,6 @@ function message(error: unknown) {
     <AgentInvocationInspector
       v-else-if="tab === 'details'"
       :invocation="invocation"
-      :show-capabilities="false"
       :show-error="false"
       :show-status="false"
       :show-timeline="false"

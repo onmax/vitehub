@@ -67,7 +67,7 @@ function isActive(path: string) {
 
     <NuxtLink to="/docs" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
       <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
-      <span class="min-w-0 truncate">All products</span>
+      <span class="min-w-0 truncate">Browse all docs</span>
     </NuxtLink>
   </nav>
 

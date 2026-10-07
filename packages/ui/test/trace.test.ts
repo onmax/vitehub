@@ -18,6 +18,22 @@ const BadgeStub = defineComponent({
 });
 
 describe("AgentTrace", () => {
+  it.each([
+    ["cancelled", "neutral", "Cancelled"],
+    ["completed", "success", "Completed"],
+    ["failed", "error", "Failed"],
+    ["running", "info", "Working"],
+  ] as const)("uses the shared status treatment for %s runs", (status, color, label) => {
+    const wrapper = mount(AgentTrace, {
+      global: { components: { UBadge: BadgeStub, UCollapsible: CollapsibleStub } },
+      props: { run: { events: [], id: "run", startTime: "2026-08-23T09:04:10Z", status, steps: [] } },
+    });
+    const badge = wrapper.get("span[color]");
+    expect(badge.attributes("color")).toBe(color);
+    expect(badge.text()).toBe(label);
+    expect(wrapper.get(".vh-trace__chevron").attributes("aria-hidden")).toBe("true");
+  });
+
   it("names each trace step and keeps the disclosure trigger native", () => {
     const wrapper = mount(AgentTrace, {
       global: { components: { UBadge: BadgeStub, UCollapsible: CollapsibleStub } },

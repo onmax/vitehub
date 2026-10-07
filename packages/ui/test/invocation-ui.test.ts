@@ -171,7 +171,7 @@ describe("Agent Invocation UI", () => {
   });
 
   it("groups recorded tools under their capability without inventing ownership", () => {
-    const wrapper = mount(AgentInvocationInspector, { props: { invocation: {
+    const wrapper = mount(AgentInvocationInspector, { props: { showCapabilities: true, invocation: {
       id: "tools", status: "completed", traceId: "trace", createdAt: "2026-09-05T10:00:00Z", updatedAt: "2026-09-05T10:00:00Z", observations: [],
       configuration: { capabilities: [{ id: "files" }], tools: [{ name: "read", capabilityId: "files", description: "Read exact bytes." }, { name: "native", description: "Provider tool." }] },
     } } });
@@ -4063,13 +4063,14 @@ describe("Agent Invocation UI", () => {
     const invocation: AgentInvocationView = {
       id: "summary", status: "completed", traceId: "trace", createdAt: "2026-09-05T00:00:00Z", updatedAt: "2026-09-05T00:00:00Z", observations: [],
       usage: { totalTokens: 1234, cost: { display: "$0.02", estimated: true } },
-      configuration: { capabilities: [{ id: "files" }] },
+      configuration: { capabilities: [{ id: "files" }], tools: [{ capabilityId: "files", name: "read_file" }] },
     };
-    const wrapper = mount(AgentInvocationInspector, { props: { invocation, showCapabilities: false } });
+    const wrapper = mount(AgentInvocationInspector, { props: { invocation } });
     expect(wrapper.get(".vh-invocation-inspector__metrics").text()).toContain("1,234");
     expect(wrapper.get(".vh-invocation-inspector__metrics").text()).toContain("$0.02 (estimated)");
     expect(wrapper.text()).not.toContain("Capabilities");
-    expect(mount(AgentInvocationInspector, { props: { invocation } }).text()).toContain("Capabilities");
+    expect(wrapper.get(".vh-agent-tool-list").text()).toContain("read_file");
+    expect(mount(AgentInvocationInspector, { props: { invocation, showCapabilities: true } }).text()).toContain("Capabilities");
   });
 
   it("forwards workspace artifact paths without navigating", async () => {
@@ -4186,6 +4187,29 @@ describe("Agent Invocation UI", () => {
     expect(messages.at(-1)!.attributes("data-role")).toBe("user");
   });
 
+  it("counts the rendered messages after the initial driver echo is removed", () => {
+    const timestamp = "2026-09-05T00:00:00Z";
+    const invocation: AgentInvocationView = {
+      id: "message-summary", traceId: "trace", createdAt: timestamp, updatedAt: timestamp,
+      status: "completed",
+      observations: [
+        { name: "agent.invocation.started", sequence: 1, timestamp, type: "run", attributes: {
+          "input.messages": [{ id: "prompt", role: "user", parts: [{ type: "text", text: "Run the tests." }] }],
+        } },
+        { name: "agent.input.message", sequence: 2, timestamp, type: "run", attributes: {
+          "message.role": "user", "message.content": "Run the tests.", "message.id": "driver-prompt",
+        } },
+        { name: "agent.message.recorded", sequence: 3, timestamp, type: "run", attributes: {
+          "message.role": "assistant", "message.content": "The tests pass.", "message.id": "answer",
+        } },
+      ],
+    };
+    const thread = mount(AgentInvocation, { props: { invocation } });
+    const inspector = mount(AgentInvocationInspector, { props: { invocation } });
+    expect(thread.findAll(".vh-invocation-message")).toHaveLength(2);
+    expect(inspector.get(".vh-invocation-inspector__metrics").text()).toContain("Messages2");
+  });
+
   it("renders structured workspace sources alongside historical source strings", () => {
     const invocation: AgentInvocationView = {
       id: "sources", traceId: "sources", createdAt: "2026-09-05T00:00:00Z", updatedAt: "2026-09-05T00:00:01Z",
@@ -4201,6 +4225,10 @@ describe("Agent Invocation UI", () => {
     expect(sources?.findAll(".vh-invocation-inspector__badge").map(badge => badge.text())).toEqual([
       "docs", "local", "github:legacy/repo",
     ]);
+    expect(sources?.findAll("a").map(link => link.attributes("href"))).toEqual([
+      "https://github.com/vite-hub/vitehub", "https://github.com/legacy/repo",
+    ]);
+    expect(sources?.findAll("a")[0]?.attributes("title")).toBe("docs: vite-hub/vitehub");
   });
 
   describe("conversation view", () => {

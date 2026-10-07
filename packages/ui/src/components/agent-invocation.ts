@@ -1098,10 +1098,10 @@ function statusIcon(status: AgentInvocationView["status"]) {
 function sourcePresentation(source: string | { id: string; repository?: string }) {
   const id = hasRuntimeType(source, "string") ? source : source.id;
   const repository = hasRuntimeType(source, "string")
-    ? /^gh:([\w.-]+\/[\w.-]+)(?:\/.*)?$/.exec(source)?.[1]
+    ? /^(?:gh|github):([\w.-]+\/[\w.-]+)(?:\/.*)?$/.exec(source)?.[1]
     : /^[\w.-]+\/[\w.-]+$/.test(source.repository ?? "") ? source.repository : undefined;
   return repository
-    ? { href: `https://github.com/${repository}`, icon: channelIcon("github"), label: id }
+    ? { href: `https://github.com/${repository}`, icon: channelIcon("github"), label: id, title: `${id}: ${repository}` }
     : { label: id };
 }
 
@@ -1112,7 +1112,7 @@ function inspectorSources(sources: NonNullable<AgentInvocationConfiguration["wor
       const presentation = sourcePresentation(source);
       const children = [presentation.icon, h("span", presentation.label)];
       return presentation.href
-        ? h("a", { class: "vh-invocation-inspector__badge", href: presentation.href, rel: "noreferrer", target: "_blank" }, children)
+        ? h("a", { class: "vh-invocation-inspector__badge", href: presentation.href, rel: "noreferrer", target: "_blank", title: presentation.title }, children)
         : h("span", { class: "vh-invocation-inspector__badge" }, children);
     })),
   ]);
@@ -1256,8 +1256,8 @@ function renderConfiguration(
           ),
         ])
       : null,
-    configuration.tools?.some(tool => !configuration.capabilities?.some(capability => capability.id === tool.capabilityId))
-      ? inspectorTools(configuration.tools.filter(tool => !configuration.capabilities?.some(capability => capability.id === tool.capabilityId)), invocationToolUsage(invocation), selectTool)
+    configuration.tools?.some(tool => !showCapabilities || !configuration.capabilities?.some(capability => capability.id === tool.capabilityId))
+      ? inspectorTools(configuration.tools.filter(tool => !showCapabilities || !configuration.capabilities?.some(capability => capability.id === tool.capabilityId)), invocationToolUsage(invocation), selectTool)
       : null,
     configuration.instructions?.length
       ? inspectorDisclosure(
@@ -1605,7 +1605,7 @@ export const AgentInvocationInspector = defineComponent({
   props: {
     invocation: { required: true, type: Object as PropType<AgentInvocationView> },
     showStatus: { default: true, type: Boolean },
-    showCapabilities: { default: true, type: Boolean },
+    showCapabilities: { default: false, type: Boolean },
     showTimeline: { default: true, type: Boolean },
     showError: { default: true, type: Boolean },
   },
@@ -1617,7 +1617,10 @@ export const AgentInvocationInspector = defineComponent({
     let copyTimer: ReturnType<typeof setTimeout> | undefined;
     const metrics = computed(() => ({
       changes: activities.value.filter((activity) => activity.kind === "change").length,
-      messages: activities.value.filter((activity) => activity.kind === "message").length + conversation.value.deliveredAnswerCount,
+      messages: conversation.value.kind === "activities"
+        ? conversation.value.activities.filter(activity => activity.kind === "message").length
+        : [...conversation.value.history, ...(conversation.value.prompt ? [conversation.value.prompt] : []), ...conversation.value.work, ...conversation.value.answers, ...conversation.value.followup]
+          .filter(activity => activity.kind === "message").length,
       steps: activities.value.filter((activity) =>
         activity.kind !== "message" && activity.name !== "vitehub.observation.truncated"
       ).length,

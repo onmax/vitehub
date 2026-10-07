@@ -7,25 +7,25 @@ navigation.group: Start
 icon: i-ph-squares-four-light
 ---
 
-`@vite-hub/ui` is the Vue and Nuxt component layer for ViteHub. It covers the surfaces a Console needs first: chat, sessions, Agent Invocations, traces, diffs, and file trees. The components render AI SDK contracts with sensible Nuxt UI defaults. They do not own transport, persistence, or authorization.
+`@vite-hub/ui` is the Vue and Nuxt component layer for the ViteHub Console. Start with a complete Console block, then replace one surface at a time as your product grows.
 
-The Console is the reference implementation. The examples on these pages use the same dense layout, spacing, and empty states. They run with synthetic data, make no network requests, and show the source directly below each preview.
+The package owns presentation, layout, and interaction defaults. Your app owns transport, persistence, and authorization. Every example uses synthetic data, makes no network requests, and shows the source below the live preview.
 
 ::u-page-grid{class="not-prose mt-8 sm:grid-cols-2 lg:grid-cols-3"}
   :::u-page-card
   ---
-  title: Install the package
-  description: Add the Nuxt module or Vite plugin, then load the shared styles.
-  icon: i-lucide-package
-  to: /docs/ui/installation
+  title: Build the Console first
+  description: Copy a complete chat, Invocation dashboard, or code review surface and connect your data.
+  icon: i-ph-layout-light
+  to: /docs/ui/blocks/chat-app
   ---
   :::
   :::u-page-card
   ---
-  title: Start with a Console block
-  description: Copy a complete chat app, Invocation dashboard, or code review view.
-  icon: i-ph-layout-light
-  to: /docs/ui/blocks/chat-app
+  title: Install the defaults
+  description: Add the Nuxt module or Vite plugin, then load the shared styles.
+  icon: i-lucide-package
+  to: /docs/ui/installation
   ---
   :::
   :::u-page-card
@@ -41,10 +41,10 @@ The Console is the reference implementation. The examples on these pages use the
 ## Components
 
 ::ui-component-gallery
+- **Console:** [Chat app](/docs/ui/blocks/chat-app), [Invocation dashboard](/docs/ui/blocks/invocation-dashboard), [Code review](/docs/ui/blocks/code-review)
 - **Chat:** [Chat](/docs/ui/chat), [Chat message](/docs/ui/chat-message), [Message parts](/docs/ui/message-parts), [Markdown](/docs/ui/markdown), [Chat prompt](/docs/ui/chat-prompt), [Session](/docs/ui/session)
 - **Agent work:** [Invocation list](/docs/ui/invocation-list), [Invocation](/docs/ui/invocation), [Invocation inspector](/docs/ui/invocation-inspector), [Timeline](/docs/ui/timeline), [Capability inspector](/docs/ui/capability-inspector), [Tool list](/docs/ui/tool-list), [Trace](/docs/ui/trace), [Diff](/docs/ui/diff), [Code view](/docs/ui/code-view), [File tree](/docs/ui/file-tree)
 - **Utilities:** [Attachments](/docs/ui/attachments), [Message scroller](/docs/ui/message-scroller)
-- **Blocks:** [Chat app](/docs/ui/blocks/chat-app), [Invocation dashboard](/docs/ui/blocks/invocation-dashboard), [Code review](/docs/ui/blocks/code-review)
 ::
 
 ## Defaults that travel

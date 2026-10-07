@@ -1,8 +1,8 @@
 ---
 title: Invocation Dashboard
 description: "A three-pane view with the session list, the selected Invocation thread, and its inspector."
-navigation.order: 51
-navigation.group: Blocks
+navigation.order: 11
+navigation.group: Console
 icon: i-ph-squares-four-light
 ---
 
