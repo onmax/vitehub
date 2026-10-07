@@ -112,9 +112,10 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       const environment = Object.entries(options.env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
       return spawn("/bin/sh", [
         "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$1/.vitehub-oom" || exit 125; shift; exec /usr/bin/env -i -- "$@"',
+        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; shift 2; exec /usr/bin/env -i -- "$@"',
         "vitehub-box",
         path,
+        healthMarker,
         ...environment.map(([name, value]) => `${name}=${value}`),
         "/bin/sh",
         "-c",

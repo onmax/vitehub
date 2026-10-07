@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readFile, readdir, rmdir, statfs, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, rmdir, statfs, writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionMemory } from "../src/internal/session-memory.ts";
 
 vi.mock("node:fs/promises", () => ({
   access: vi.fn(), mkdir: vi.fn(), readFile: vi.fn(), readdir: vi.fn(),
-  rmdir: vi.fn(), statfs: vi.fn(), writeFile: vi.fn(),
+  rmdir: vi.fn(), rm: vi.fn(), statfs: vi.fn(), writeFile: vi.fn(),
 }));
 vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
 vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn() }));
@@ -20,6 +20,7 @@ beforeEach(() => {
   localEvents = "oom 1\n";
   peakError = undefined;
   vi.mocked(statfs).mockResolvedValue({ type: 0x63677270 } as Awaited<ReturnType<typeof statfs>>);
+  vi.mocked(rm).mockResolvedValue(undefined);
   vi.mocked(readFile).mockImplementation(async (path) => {
     if (String(path).endsWith("cgroup.controllers")) return "memory";
     if (String(path).endsWith("memory.events.local")) return localEvents;
@@ -113,8 +114,9 @@ describe("session memory events", () => {
     const group = await open();
     group.spawn("echo hello", { env: { LD_PRELOAD: "/hook.so", ENV: "/hook.sh", PATH: "/untrusted" } });
     expect(spawn).toHaveBeenCalledWith("/bin/sh", [
-      "-c", expect.stringContaining('shift; exec /usr/bin/env -i -- "$@"'),
+      "-c", expect.stringContaining('shift 2; exec /usr/bin/env -i -- "$@"'),
       "vitehub-box", expect.stringMatching(/^\/delegated\/vitehub-box-/),
+      expect.stringMatching(/vitehub-box-oom-/),
       "LD_PRELOAD=/hook.so", "ENV=/hook.sh", "PATH=/untrusted", "/bin/sh", "-c", "echo hello",
     ], { env: {} });
     expect(access).toHaveBeenCalled();
