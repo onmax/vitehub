@@ -11,7 +11,13 @@ interface CloudflareQueue {
 }
 
 function parseQueues(value: unknown): CloudflareQueue[] {
-  if (!Array.isArray(value)) throw queueErrorDiagnostics.QUEUE_R0011({ message: "Cloudflare provisioning returned an invalid queue list." })
+  if (!Array.isArray(value)
+    || Array.from(value).some((queue, index) => !(index in value)
+      || queue === null
+      || typeof queue !== "object"
+      || Array.isArray(queue))) {
+    throw queueErrorDiagnostics.QUEUE_R0011({ message: "Cloudflare provisioning returned an invalid queue list." })
+  }
   // SAFETY: Queue fields are optional and consumers narrow queue_name before use.
   return value as CloudflareQueue[]
 }

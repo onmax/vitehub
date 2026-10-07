@@ -72,6 +72,19 @@ describe("queue provision step", () => {
     expect(posted).toEqual([{ queue_name: expectedName }])
   })
 
+  it.each([
+    [null],
+    ["welcome"],
+    (() => { const queues: unknown[] = []; queues.length = 1; return queues })(),
+  ])("rejects malformed Cloudflare queue entries: %s", async (result) => {
+    const rootDir = await createTempDir()
+    await writeFile(join(rootDir, "welcome.queue.ts"), "export default null\n", "utf8")
+    const fetchImpl = vi.fn(async () => jsonResponse({ success: true, result })) as unknown as typeof globalThis.fetch
+
+    await expect(createQueueProvisionStep(() => rootDir).plan(provisionContext(fetchImpl)))
+      .rejects.toMatchObject({ code: "QUEUE_R0011" })
+  })
+
   it("provisions the same prefixed physical queue name used by deployment output", async () => {
     const rootDir = await createTempDir()
     await writeFile(join(rootDir, "welcome.queue.ts"), "export default null\n", "utf8")
