@@ -173,7 +173,6 @@ describe("mcp capability", () => {
   })
 
   it("applies application-owned tool contract overrides after MCP discovery", async () => {
-    const { jsonSchema } = await import("ai")
     const { resolveAgentCapabilities } = await import("../src/capability-runtime.ts")
     const { mcp } = await import("../src/capabilities.ts")
     const execute = vi.fn(async () => "ok")
@@ -181,19 +180,19 @@ describe("mcp capability", () => {
       threads_get: {
         description: "Read a thread.",
         execute,
-        inputSchema: jsonSchema({
+        inputSchema: {
           additionalProperties: false,
           properties: {},
           type: "object",
-        }),
+        },
       },
     })
-    const inputSchema = jsonSchema({
+    const inputSchema = {
       additionalProperties: false,
       properties: { id: { type: "string" } },
       required: ["id"],
       type: "object",
-    })
+    } as const
 
     const resolved = await resolveAgentCapabilities({
       capabilities: [mcp({
