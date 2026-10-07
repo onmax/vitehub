@@ -7,10 +7,13 @@ import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { parseAst } from "vite"
 import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
+import { defineDurableSchema } from "eve/tools"
+import { z } from "zod"
 
 import { toAiSdkModelMessages } from "../src/ai-sdk.ts"
 import { eveExtensionCapability } from "../src/eve.ts"
 import { createAgentChatApprovalCustody, withAgentChatApprovalGrant } from "../src/internal/chat-approvals.ts"
+import { agentToolJsonSchema } from "../src/tool-schema.ts"
 import { hubAgent, transformEveExtensionCapabilities } from "../src/vite.ts"
 
 import type { AgentCapabilityContext, AgentToolDefinition } from "../src/types.ts"
@@ -20,6 +23,7 @@ import type { StateAdapter } from "chat"
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { force: true, recursive: true })))
 })
 
@@ -1147,14 +1151,106 @@ describe("Eve extension capabilities", () => {
     expect(await (await writeTool(withAgentChatApprovalGrant(capabilityContext(), grant))).needsApproval({}, { messages: [], toolCallId: "call-5" })).toBe(true)
   })
 
-  it("preserves Eve tool output conversion for the model", async () => {
+  it("preserves GitHub durable schema validation, output schemas, and execution", async () => {
+    const fetch = vi.fn(async () => Response.json({
+      content: Buffer.from(" ViteHub ").toString("base64"),
+      encoding: "base64",
+      path: "README.md",
+      sha: "file-sha",
+      size: 9,
+      type: "file",
+    }))
+    vi.stubGlobal("fetch", fetch)
+    const capability = await eveExtensionCapability(
+      "@github-tools/eve-extension",
+      "github",
+      async () => await import("@github-tools/eve-extension") as unknown as Record<string, unknown>,
+      async () => await import("@github-tools/eve-extension/tools") as unknown as Record<string, unknown>,
+      {
+        include: ["getFileContent"],
+        overrides: {
+          getFileContent: {
+            outputSchema: z.object({ content: z.string().trim(), type: z.literal("file") }),
+          },
+        },
+        token: "test-token",
+      },
+    )
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext())
+    const read = tools.github__getFileContent as AgentToolDefinition & {
+      toModelOutput: (options: { output: unknown }) => Promise<unknown>
+    }
+    const inputSchema = read.inputSchema?.["~standard"]
+    const outputSchema = read.outputSchema?.["~standard"]
+    if (!inputSchema || !outputSchema) throw new Error("Expected live GitHub durable schemas")
+
+    expect(inputSchema.vendor).toBe("eve")
+    expect(outputSchema.vendor).toBe("eve")
+    expect(agentToolJsonSchema(read.inputSchema, "input")).toMatchObject({
+      properties: { owner: { type: "string" }, repo: { type: "string" }, path: { type: "string" } },
+      required: ["owner", "repo", "path"],
+      type: "object",
+    })
+    expect(agentToolJsonSchema(read.outputSchema, "output")).toMatchObject({
+      properties: { content: { type: "string" }, type: { const: "file" } },
+      required: ["content", "type"],
+      type: "object",
+    })
+    const input = { owner: "vite-hub", repo: "vitehub", path: "README.md" }
+    expect(await inputSchema.validate(input)).toEqual({ value: input })
+    expect((await inputSchema.validate({ ...input, path: 42 })).issues?.length).toBeGreaterThan(0)
+
+    const output = await read.execute?.(input, { toolCallId: "github-read-1" })
+    expect(output).toMatchObject({ content: " ViteHub ", path: "README.md", totalLines: 1, type: "file" })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith(
+      "https://api.github.com/repos/vite-hub/vitehub/contents/README.md",
+      expect.objectContaining({ method: "GET" }),
+    )
+    expect(await outputSchema.validate(output)).toEqual({ value: { content: "ViteHub", type: "file" } })
+    expect(await read.toModelOutput({ output })).toEqual({ type: "json", value: output })
+  })
+
+  it("preserves durable schema conversion errors", async () => {
+    const failure = new Error("Cannot emit the tool schema")
+    const schema = defineDurableSchema({
+      closure: {},
+      schema: () => ({
+        "~standard": {
+          version: 1 as const,
+          vendor: "test",
+          validate: (value: unknown) => ({ value }),
+          jsonSchema: {
+            input: () => { throw failure },
+            output: () => { throw failure },
+          },
+        },
+      }),
+    })
+    const capability = await eveExtensionCapability(
+      "schema-extension",
+      "schema",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({ inspect: { inputSchema: schema, outputSchema: schema, execute: () => "ok" } }),
+    )
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext())
+    const inspect = tools.schema__inspect!
+
+    expect(inspect.inputSchema).toBe(schema)
+    expect(inspect.outputSchema).toBe(schema)
+    expect(() => agentToolJsonSchema(inspect.inputSchema, "input")).toThrow(failure)
+    expect(() => agentToolJsonSchema(inspect.outputSchema, "output")).toThrow(failure)
+  })
+
+  it("preserves the Eve execute receiver and output conversion for the model", async () => {
     const capability = await eveExtensionCapability(
       "example-extension",
       "example",
       async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
       async () => ({
         count: {
-          execute: () => 1n,
+          value: 1n,
+          execute() { return this.value },
           toModelOutput: (output: unknown) => ({ value: String(output) }),
         },
       }),
@@ -1190,6 +1286,19 @@ describe("Eve extension capabilities", () => {
 
     await expect(write.needsApproval({}, { toolCallId: "call-approval" })).resolves.toBe(true)
     expect(request).toHaveBeenCalledOnce()
+  })
+
+  it("accepts an Eve tool without an approval policy", async () => {
+    const capability = await eveExtensionCapability(
+      "approval-extension",
+      "approval",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({ read: { approval: null, execute: () => "ok" } }),
+    )
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext())
+
+    await expect(tools.approval__read!.execute?.({})).resolves.toBe("ok")
+    expect(tools.approval__read).not.toHaveProperty("needsApproval")
   })
 
   it("rejects Eve approval response authorizers", async () => {
@@ -1338,7 +1447,11 @@ describe("Eve extension capabilities", () => {
       toModelOutput: (options: { output: unknown }) => Promise<unknown>
     }
 
-    expect(started).toHaveBeenCalledWith({ type: "turn.started" }, expect.objectContaining({ session: expect.objectContaining({ id: "session-1" }) }))
+    expect(started).toHaveBeenCalledWith({ type: "turn.started" }, expect.objectContaining({
+      abortSignal,
+      model: null,
+      session: expect.objectContaining({ id: "session-1" }),
+    }))
     expect(tool.description).toBe("turn.started:session-1:0")
     expect(tool.outputSchema).toEqual({ type: "object" })
     await expect(tool.execute({}, { messages: [{ role: "user", content: "Hello" }], toolCallId: "call-1" })).resolves.toEqual({

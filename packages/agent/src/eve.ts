@@ -33,7 +33,9 @@ interface EveApprovalConfiguration {
   response?: (context: unknown) => unknown | Promise<unknown>
 }
 
-interface EveToolDefinition extends AgentToolDefinition {
+interface EveToolDefinition extends Omit<AgentToolDefinition, "execute" | "name"> {
+  execute: (input: unknown, context: EveToolContext) => unknown | Promise<unknown> | AsyncIterable<unknown>
+  name?: string
   approvalKey?: (input: Readonly<Record<string, unknown>>) => string
   availableInSubagents?: boolean
   endsTurn?: boolean | ((output: unknown) => boolean | Promise<boolean>)
@@ -42,7 +44,7 @@ interface EveToolDefinition extends AgentToolDefinition {
     delta?: (input: unknown, partial: unknown) => string
     start: (input: unknown) => string
   }
-  approval?: EveApproval | EveApprovalConfiguration
+  approval?: EveApproval | EveApprovalConfiguration | null
   toModelOutput?: (output: unknown) => unknown | Promise<unknown>
 }
 
@@ -131,7 +133,7 @@ function toViteHubTool(
   const execute = tool.execute
   const toModelOutput = tool.toModelOutput
   const approval = tool.approval
-  if (typeof approval === "object" && approval.response) {
+  if (approval && typeof approval === "object" && approval.response) {
     unsupportedEveRuntimeFeature("approval.response")
   }
   const approvalRequest = typeof approval === "function" ? approval : approval?.request
@@ -158,7 +160,7 @@ function toViteHubTool(
             session,
             toolName: name,
           }
-          return await execute.call(tool, input, toolContext as never)
+          return await execute.call(tool, input, toolContext)
         },
       }
       : {}),
@@ -248,11 +250,13 @@ async function resolveEveTools(
       const [event, handler] = events[0] ?? []
       if (!event || !handler) continue
       const resolved = await handler({ type: event }, {
+        abortSignal: context.abortSignal ?? context.invocation?.input.get().abortSignal,
         channel: {
           kind: context.run?.origin,
           metadata: context.invoker.meta,
         },
         messages: toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
+        model: null,
         session: eveSession(context),
       })
       if (resolved === null || resolved === undefined) continue
