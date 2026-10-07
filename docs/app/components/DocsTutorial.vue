@@ -23,22 +23,26 @@ function isVNode(value: unknown): value is VNode {
 const pageUi = {
   root: "grid w-full max-w-none grid-cols-1 gap-8 px-0 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,42%)] lg:gap-8 xl:gap-10",
   center: "min-w-0 max-w-none mx-0 lg:col-span-1",
-  right: "hidden lg:col-span-1 lg:order-none lg:block w-full min-w-0 self-stretch border-l border-default",
+  // UPage gives the right slot the global TOC width by default. Tutorials use
+  // the wider code rail from the grid above, so explicitly let this slot fill
+  // its track instead of silently collapsing to --vh-toc-width.
+  right: "hidden lg:col-span-1 lg:order-none lg:block lg:!w-full lg:!max-w-none w-full min-w-0 self-stretch border-l border-default",
 };
 
 const pageHeaderUi = {
-  root: "px-0 pb-8",
+  root: "!px-0 pb-8 sm:!px-0 lg:!px-0 xl:!px-0",
   container: "max-w-[54rem]",
   description: "max-w-[42rem]",
 };
 
 const codeTreeUi = {
   root: "my-0 h-full min-h-0 w-full rounded-none border-0 lg:!grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]",
-  list: "h-full min-h-0 border-default p-1 pr-2",
+  list: "h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain border-default p-1 pr-2",
   listWithChildren: "ms-3 border-s border-default",
   itemWithChildren: "ps-1 -ms-px",
-  link: "px-1.5 py-1.5 gap-1.5",
-  content: "h-full min-w-0 lg:!col-span-1 lg:!col-start-2 lg:!row-start-1 [&>div]:m-0 [&>div]:h-full [&>div]:min-h-0 [&>div]:w-full [&>div]:!overflow-hidden [&>div>pre]:min-h-0 [&>div>pre]:w-full [&>div>pre]:max-w-none [&>div>pre]:flex-1 [&>div>pre]:overflow-auto [&>div>pre]:bg-muted/50 [&>div>pre]:border-default [&>div>pre]:rounded-none [&>div>pre]:px-3 [&>div>pre]:py-3",
+  link: "min-w-0 px-1.5 py-1.5 gap-1.5",
+  linkLabel: "min-w-0 truncate",
+  content: "h-full min-w-0 overflow-hidden lg:!col-span-1 lg:!col-start-2 lg:!row-start-1 [&>div]:m-0 [&>div]:h-full [&>div]:min-h-0 [&>div]:w-full [&>div]:!overflow-hidden [&>div>pre]:min-h-0 [&>div>pre]:w-full [&>div>pre]:max-w-none [&>div>pre]:flex-1 [&>div>pre]:overflow-auto [&>div>pre]:bg-muted/50 [&>div>pre]:border-default [&>div>pre]:rounded-none [&>div>pre]:px-3 [&>div>pre]:py-3",
 };
 </script>
 
@@ -50,7 +54,7 @@ const codeTreeUi = {
       </template>
     </UPageHeader>
 
-    <UPageBody prose class="docs-content docs-tutorial-content max-w-none pb-24">
+    <UPageBody prose class="docs-content docs-tutorial-content max-w-none !px-0 sm:!px-0 lg:!px-0 xl:!px-0 pb-24">
       <ContentRenderer :value="props.page" />
     </UPageBody>
 
