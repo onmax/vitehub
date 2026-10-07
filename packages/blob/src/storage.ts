@@ -285,14 +285,18 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
                   ? current?.httpEtag === meta.httpEtag
                   : currentBody && await hashBlob(currentBody) === sourceVersion
                 if (current && current.contentType === meta.contentType && sameVersion) {
-                  // Keep the version and body in one object. Some drivers reject custom metadata.
-                  await driver.put(key, new Blob([
-                    JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
-                  ]), {
-                    contentType: "application/octet-stream",
-                  }).catch((error) => {
+                  try {
+                    // Keep the version and body in one object. Some drivers reject custom metadata.
+                    await driver.put(key, new Blob([
+                      JSON.stringify({ fingerprint: etag, type: derived.type }), "\n", derived,
+                    ]), {
+                      contentType: "application/octet-stream",
+                    })
+                    if (!await driver.head(normalizedPath)) await driver.delete([key])
+                  }
+                  catch (error) {
                     console.error("[vitehub/blob] Transform cache write failed", error)
-                  })
+                  }
                 }
                 return derived
               })().finally(() => pendingTransforms.delete(pendingKey))

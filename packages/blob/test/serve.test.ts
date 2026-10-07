@@ -250,6 +250,25 @@ describe("Blob response transforms", () => {
     expect(cache?.blobs).toHaveLength(0)
   })
 
+  it("removes a derivative if deletion finishes while its cache write is in flight", async () => {
+    const put = driver.put.bind(driver)
+    let started!: () => void
+    let finish!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    vi.spyOn(driver, "put").mockImplementationOnce(async (...args) => {
+      started()
+      await new Promise<void>(resolve => { finish = resolve })
+      return put(...args)
+    })
+    const pending = storage.serve(event(), "private/original", options)
+    await ready
+    await storage.del("private/original")
+    finish()
+    await pending
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    expect(cache?.blobs).toHaveLength(0)
+  })
+
   it("shares an in-flight transformation between concurrent requests", async () => {
     const results = await Promise.all(Array.from({ length: 4 }, () => storage.serve(event(), "private/original", options)))
     for (const [error, body] of results) {
