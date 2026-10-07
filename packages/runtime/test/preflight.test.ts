@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 
-import { runRuntimePreflight, startRuntimePreflight } from "../src/index.ts"
+import { runRuntimePreflight, startRuntimePreflight, type RuntimePreflightCheckResult } from "../src/index.ts"
 
 describe("runtime preflight", () => {
   it("returns a compact manifest and structured diagnostics", async () => {
@@ -103,6 +103,24 @@ describe("runtime preflight", () => {
       checks: [{ id: "tool:malformed", kind: "tool", check: () => result as never }],
     })
     expect(manifest.capabilities["tool:malformed"]).toBe("unknown")
+  })
+
+  it("does not read accessors or properties beyond the detail cap", async () => {
+    const getter = vi.fn(() => { throw new Error("must not be read") })
+    const details = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`key${i}`, i]))
+    Object.defineProperty(details, "extra", { enumerable: true, get: getter })
+    Object.defineProperty(details, "infinity", { enumerable: true, value: Number.POSITIVE_INFINITY })
+    const manifest = await runRuntimePreflight({
+      checks: [{ id: "details", kind: "tool", check: () => ({ state: "available", details }) }],
+    })
+    expect(Object.keys(manifest.checks[0]!.details!)).toHaveLength(12)
+    expect(manifest.checks[0]!.details).not.toHaveProperty("infinity")
+    expect(getter).not.toHaveBeenCalled()
+    const accessorDetails = Object.defineProperty({}, "value", { enumerable: true, get: getter })
+    await runRuntimePreflight({
+      checks: [{ id: "accessor", kind: "tool", check: () => ({ state: "available", details: accessorDetails }) }],
+    })
+    expect(getter).not.toHaveBeenCalled()
   })
 
   it("validates check identity and bounded options", async () => {

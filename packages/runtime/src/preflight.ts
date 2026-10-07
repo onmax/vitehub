@@ -110,8 +110,8 @@ const maxDetailCount = 12
 
 function normalizeReason(value: unknown): string | undefined {
   if (!hasRuntimeType(value, "string")) return
-  const reason = value.trim()
-  return reason ? reason.slice(0, maxReasonLength) : undefined
+  const reason = value.slice(0, maxReasonLength).trim()
+  return reason || undefined
 }
 
 function normalizeDetails(value: unknown): RuntimePreflightDetails | undefined {
@@ -119,14 +119,16 @@ function normalizeDetails(value: unknown): RuntimePreflightDetails | undefined {
   const details: Record<string, RuntimePreflightValue> = {}
   let count = 0
   for (const key in value) {
-    if (count >= maxDetailCount) break
-    if (!Object.prototype.propertyIsEnumerable.call(value, key)) continue
+    if (count++ >= maxDetailCount) break
     if (!key || key.length > 64) continue
-    const child = Reflect.get(value, key)
-    if (child === null || hasRuntimeType(child, "string") || hasRuntimeType(child, "number") || hasRuntimeType(child, "boolean")) details[key] = hasRuntimeType(child, "string") ? child.slice(0, maxReasonLength) : child
-    count++
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !("value" in descriptor)) continue
+    const child: unknown = descriptor.value
+    if (child === null || hasRuntimeType(child, "string") || hasRuntimeType(child, "boolean") || (hasRuntimeType(child, "number") && Number.isFinite(child))) {
+      Object.defineProperty(details, key, { value: hasRuntimeType(child, "string") ? child.slice(0, maxReasonLength) : child, enumerable: true })
+    }
   }
-  return count ? details : undefined
+  return Object.keys(details).length ? details : undefined
 }
 
 function normalizeResult(value: unknown): RuntimePreflightCheckResult {
@@ -277,13 +279,12 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       diagnostics: summaries.flatMap(summary => summary.diagnostic ? [summary.diagnostic] : []),
     }
     if (options.onDiagnostic) {
-      for (const { issue } of results) {
-        if (!issue) continue
-        setTimeout(() => {
-          try { void Promise.resolve(options.onDiagnostic!(issue)).catch(() => undefined) }
-          catch { /* Reporter callbacks are best effort. */ }
-        }, 0)
-      }
+      const issues = results.flatMap(({ issue }) => issue ? [issue] : [])
+      setTimeout(() => {
+        for (const issue of issues) {
+          void Promise.resolve().then(() => options.onDiagnostic!(issue)).catch(() => undefined)
+        }
+      }, 0)
     }
     return manifest
   }).finally(() => {

@@ -97,8 +97,10 @@ const manifest = await preflight.manifest
 ```
 
 Keep `details` on a check result small and redacted. The framework limits each
-reason and details object, and caps the check count and asynchronous waiting
-time.
+reason and details object, caps the check count, and bounds asynchronous waiting
+time. Results must be plain data records without proxies or accessors; only the
+first 12 detail properties are inspected. More checks than `maxChecks` rejects
+the configuration before any run.
 
 Checks run on the host event loop. Use non-blocking asynchronous APIs for
 external processes, filesystem work, and network requests, and honor the
