@@ -128,31 +128,53 @@ it('keeps the diagnostic anchor before oversized trailing context', () => {
  assert.deepEqual(result.partialLines, [2])
 })
 
-it('reruns each failed Actions run once per PR head and then waits for evidence', async () => {
+const workflowRun = (patch = {}) => ({ head_sha: 'head', run_attempt: 1, status: 'completed', conclusion: 'failure', run_started_at: '2026-09-13T09:00:00Z', ...patch })
+
+it('waits for a completed rerun and fresh failed evidence without check run_attempt', async () => {
  const metadata = new Map<string, unknown>(); const commands: string[][] = []
- const claim = { snapshot: { repository, pr: { head: { sha: 'head' } }, checks: {
-   first: check({ id: 1, html_url: `https://github.com/${repository}/actions/runs/41/job/11` }),
-   duplicate: check({ id: 2, html_url: `https://github.com/${repository}/actions/runs/41/job/12` }),
- } } } as unknown as Claim
+ const { claim } = await fixture()
  const inbox = { meta: async (key: string) => metadata.get(key), setMeta: async (key: string, value: unknown) => { metadata.set(key, value) } }
- const command = async (args: string[]) => { commands.push(args); return { stdout: '', stderr: '' } }
- const first = await rerunFailedActions(inbox, claim, command, 1_000)
- assert.equal(first?.state, 'rerun'); assert.deepEqual(commands, [['api', '-X', 'POST', `repos/${repository}/actions/runs/41/rerun-failed-jobs`]])
- const second = await rerunFailedActions(inbox, claim, command, 1_001)
- assert.equal(second?.state, 'waiting'); assert.match((second as { reason: string }).reason, /already attempted/); assert.equal(commands.length, 1)
+ let workflow = workflowRun()
+ const command = async (args: string[]) => { commands.push(args); return { stdout: args.includes('POST') ? '' : JSON.stringify(workflow), stderr: '' } }
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'rerun')
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'waiting')
+ workflow = workflowRun({ run_attempt: 2, status: 'in_progress', conclusion: null, run_started_at: '2026-09-13T11:00:00Z' })
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'waiting')
+ workflow = { ...workflow, status: 'completed', conclusion: 'success' }
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'waiting')
+ workflow = { ...workflow, conclusion: 'failure' }
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'waiting')
+ claim.snapshot.checks = { fresh: check({ id: 12, completed_at: '2026-09-13T12:00:00Z' }) }
+ assert.equal(await rerunFailedActions(inbox, claim, command), undefined)
+ assert.equal(commands.filter(args => args.includes('POST')).length, 1)
 })
 
-it('lets a failed rerun reach repair after the workflow attempt changes', async () => {
- const metadata = new Map<string, unknown>(); const commands: string[][] = []
- const claim = { snapshot: { repository, pr: { head: { sha: 'head' } }, checks: {
-   first: check({ run_attempt: 1, html_url: `https://github.com/${repository}/actions/runs/43/job/11` }),
- } } } as unknown as Claim
+it('keeps independent reruns waiting and visits later runs beyond the batch limit', async () => {
+ const metadata = new Map<string, unknown>(); const posts: string[] = []
+ const { claim } = await fixture([1, 2, 3, 4].map(id => check({ id, html_url: `https://github.com/${repository}/actions/runs/${id}/job/${id}` })))
  const inbox = { meta: async (key: string) => metadata.get(key), setMeta: async (key: string, value: unknown) => { metadata.set(key, value) } }
- const command = async (args: string[]) => { commands.push(args); return { stdout: '', stderr: '' } }
- assert.equal((await rerunFailedActions(inbox, claim, command, 1_000))?.state, 'rerun')
- claim.snapshot.checks.first = check({ run_attempt: 2, html_url: `https://github.com/${repository}/actions/runs/43/job/11` })
- assert.equal(await rerunFailedActions(inbox, claim, command, 2_000), undefined)
- assert.equal(commands.length, 1)
+ let completed = false
+ const command = async (args: string[]) => {
+   if (args.includes('POST')) { posts.push(args[3]!); return { stdout: '', stderr: '' } }
+   const first = args[1]!.endsWith('/1')
+   return { stdout: JSON.stringify(workflowRun(completed && first ? { run_attempt: 2 } : {})), stderr: '' }
+ }
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'rerun')
+ assert.equal(posts.length, 3)
+ completed = true
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'rerun')
+ assert.equal(posts.length, 4)
+ assert.equal((await rerunFailedActions(inbox, claim, command))?.state, 'waiting')
+ assert.equal(posts.length, 4)
+})
+
+it('keeps successful rerun metadata when workflow reconciliation fails', async () => {
+ const { claim } = await fixture()
+ const metadata = new Map<string, unknown>(); const inbox = { meta: async (key: string) => metadata.get(key), setMeta: async (key: string, value: unknown) => { metadata.set(key, value) } }
+ await rerunFailedActions(inbox, claim, async () => ({ stdout: JSON.stringify(workflowRun()), stderr: '' }))
+ const saved = [...metadata.values()]
+ assert.equal((await rerunFailedActions(inbox, claim, async () => { throw new Error('HTTP 500') }))?.state, 'blocked')
+ assert.deepEqual([...metadata.values()], saved)
 })
 
 it('turns Actions rerun permission failures into a durable external blocker', async () => {

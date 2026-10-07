@@ -18,6 +18,7 @@ export type Snapshot = {
   wait?: PullRequestWait
   lease: string | null; leaseUntil: number; attempts: number
   progressBudget?: ProgressBudget
+  recoveryHead?: string
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
@@ -60,6 +61,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
     throw new TypeError('Invalid inbox snapshot')
   }
+  if (input.recoveryHead !== undefined) v.parse(v.string(), input.recoveryHead)
   if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
   if (input.wait !== undefined) parseWait(input.wait)
   if (input.progressBudget !== undefined) parseProgressBudget(input.progressBudget)
@@ -670,6 +672,7 @@ export class PullRequestInbox {
         s.wait = parseWait({ ...result.wait, headSha: s.pr.head.sha })
         s.revision = (s.revision ?? 0) + 1
       }
+      delete s.recoveryHead
       const head = s.pr?.head?.sha
       this.recordProgress(s, claim, result.progress)
       s.lease = null; s.leaseUntil = 0; s.lastResult = result.text
@@ -723,13 +726,14 @@ export class PullRequestInbox {
     })
   }
   /** Re-evaluate structured evidence outside an Agent invocation before calling this method. */
-  async wake(observed: Snapshot, evidenceKey: string): Promise<boolean> {
+  async wake(observed: Snapshot, evidenceKey: string, options: { recovery?: boolean } = {}): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, observed.repository, observed.number)
       if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
         || (s.revision ?? 0) !== (observed.revision ?? 0) || s.pr?.head?.sha !== observed.pr?.head?.sha) return false
       parseWait({ ...s.wait, evidenceKey })
       if (s.wait.evidenceKey === evidenceKey) return false
+      if (options.recovery) { s.recoveryHead = s.pr?.head?.sha; s.refresh = true }
       delete s.wait
       this.dirty(s, 'wait:evidence-changed')
       await this.put(tx, s)

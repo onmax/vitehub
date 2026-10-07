@@ -136,9 +136,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const schedulerError = (name: string, error: unknown, properties: Record<string, unknown> = {}) =>
     options.error?.(name, error, properties);
   const active = new Set<string>();
-  // Failed Actions waits are periodically woken without requiring a webhook.
-  const ciRecoveryLane = new Set<string>();
-  const laneKey = (snapshot: Pick<Snapshot, "repository" | "number">) => `${snapshot.repository}#${snapshot.number}`;
   const execFileAsync = promisify(execFile);
   async function readRest(path: string, projection = ".[]", signal?: AbortSignal) {
     const repository = path.split("/").slice(1, 3).join("/");
@@ -409,8 +406,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       const recoveryKey = `ci-recovery-next:${snapshot.repository}#${snapshot.number}:${head}`;
       if ((await pullRequestInbox.metaNumber(recoveryKey) ?? 0) > Date.now()) continue;
       await pullRequestInbox.setMeta(recoveryKey, Date.now() + 10 * 60_000);
-      if (await pullRequestInbox.wake(snapshot, `ci-recovery:${head}`)) {
-        ciRecoveryLane.add(laneKey(snapshot));
+      if (await pullRequestInbox.wake(snapshot, `ci-recovery:${head}`, { recovery: true })) {
         schedulerEvent("babysitter.ci.recovery.woken", { repository: snapshot.repository, pull_request: snapshot.number, head_sha: head });
       }
     }
@@ -559,14 +555,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.
     const remainingCapacity = Math.max(0, ownerLimit - active.size);
-    const lane = ciRecoveryLane.size && remainingCapacity > 0
-      ? await pullRequestInbox.claim(Math.min(5, remainingCapacity), { only: snapshot => ciRecoveryLane.has(laneKey(snapshot)), includeBlocked: true })
-      : [];
-    for (const claim of lane) ciRecoveryLane.delete(laneKey(claim.snapshot));
-    // Include progress-blocked rows here as well. The recovery admission is
-    // durable in the inbox; the in-memory lane is only a priority hint and
-    // must not strand work across a host restart.
-    const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size - lane.length), { includeBlocked: true })];
+    const lane = await pullRequestInbox.claim(Math.min(5, remainingCapacity), {
+      only: snapshot => Boolean(snapshot.recoveryHead && snapshot.recoveryHead === snapshot.pr?.head?.sha),
+      includeBlocked: true,
+    });
+    const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, remainingCapacity - lane.length))];
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {
