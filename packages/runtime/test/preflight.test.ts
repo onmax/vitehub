@@ -22,6 +22,7 @@ describe("runtime preflight", () => {
       name: "RUNTIME_PREFLIGHT_MISSING",
       data: { checkId: "file:AGENTS.md", kind: "file", required: false, state: "missing" },
     })
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(report).toHaveBeenCalledTimes(2)
     expect(report.mock.calls[0]![0].diagnostic.code).toBe("RUNTIME_PREFLIGHT_MISSING")
   })
@@ -38,20 +39,52 @@ describe("runtime preflight", () => {
 
     expect(manifest.checks[0]).toMatchObject({ state: "unknown", reason: "Runtime preflight check timed out." })
     expect(Date.now() - started).toBeLessThan(250)
+    expect(report).not.toHaveBeenCalled()
+    await new Promise(resolve => setTimeout(resolve, 5))
     expect(report).toHaveBeenCalledTimes(1)
     release?.()
   })
 
   it("cancels checks that do not observe the signal", async () => {
+    let started = false
     const handle = startRuntimePreflight({
       timeoutMs: 5_000,
-      checks: [{ id: "command:slow", kind: "command", check: () => new Promise(() => {}) }],
+      checks: [{ id: "command:slow", kind: "command", check: () => { started = true; return new Promise(() => {}) } }],
     })
     handle.cancel()
     await expect(handle.manifest).resolves.toMatchObject({
       capabilities: { "command:slow": "unknown" },
       checks: [{ reason: "Runtime preflight cancelled." }],
     })
+    expect(started).toBe(false)
+  })
+
+  it("bounds a blocking synchronous check and isolates reporter errors", async () => {
+    const report = vi.fn(() => { throw new Error("reporter failed") })
+    const manifest = await runRuntimePreflight({
+      timeoutMs: 1,
+      checks: [{
+        id: "command:blocking",
+        kind: "command",
+        check: () => {
+          const until = Date.now() + 15
+          while (Date.now() < until) {}
+          return true
+        },
+      }],
+      onDiagnostic: report,
+    })
+    expect(manifest.checks[0]).toMatchObject({ state: "unknown", reason: "The preflight check timed out." })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(report).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not treat callable result records as available", async () => {
+    const result = Object.assign(() => true, { state: "available" })
+    const manifest = await runRuntimePreflight({
+      checks: [{ id: "tool:malformed", kind: "tool", check: () => result as never }],
+    })
+    expect(manifest.capabilities["tool:malformed"]).toBe("unknown")
   })
 
   it("validates check identity and bounded options", async () => {
@@ -60,4 +93,3 @@ describe("runtime preflight", () => {
     await expect(runRuntimePreflight({ maxChecks: 129, checks: [] })).rejects.toThrow("maxChecks")
   })
 })
-

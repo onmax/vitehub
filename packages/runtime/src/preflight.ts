@@ -2,7 +2,7 @@ import { Diagnostic, type DiagnosticJSON } from "nostics"
 import { defineDiagnostics } from "nostics"
 
 import type { MaybePromise } from "./index.ts"
-import { hasRuntimeType, isRuntimeObject } from "./internal/runtime-type.ts"
+import { hasRuntimeType } from "./internal/runtime-type.ts"
 
 /** The small set of runtime facts that a preflight check can describe. */
 export type RuntimePreflightKind = "browser" | "command" | "file" | "mcp" | "tool" | (string & {})
@@ -109,7 +109,7 @@ function normalizeReason(value: unknown): string | undefined {
 }
 
 function normalizeDetails(value: unknown): RuntimePreflightDetails | undefined {
-  if (!isRuntimeObject(value) || Array.isArray(value)) return
+  if (value === null || !hasRuntimeType(value, "object") || Array.isArray(value)) return
   const details: Record<string, RuntimePreflightValue> = {}
   for (const [key, child] of Object.entries(value)) {
     if (Object.keys(details).length >= maxDetailCount) break
@@ -123,7 +123,7 @@ function normalizeResult(value: unknown): RuntimePreflightCheckResult {
   if (value === true) return { state: "available" }
   if (value === false) return { state: "missing" }
   if (value === "available" || value === "missing" || value === "unknown") return { state: value }
-  if (isRuntimeObject(value) && !Array.isArray(value)) {
+  if (value !== null && hasRuntimeType(value, "object") && !Array.isArray(value)) {
     // SAFETY: The object guard above establishes the record shape read below.
     const result = value as Partial<RuntimePreflightCheckResult>
     const state = result.state === "available" || result.state === "missing" || result.state === "unknown" ? result.state : "unknown"
@@ -150,7 +150,7 @@ function timeoutSignal(parent: AbortSignal, timeoutMs: number): { signal: AbortS
   return { signal: controller.signal, cancel }
 }
 
-async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal): Promise<RuntimePreflightCheckResult> {
+async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, timeoutMs: number): Promise<RuntimePreflightCheckResult> {
   let removeAbortListener: (() => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
     const rejectAbort = () => reject(signal.reason || new Error("Runtime preflight check was aborted."))
@@ -160,7 +160,15 @@ async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal): 
       removeAbortListener = () => signal.removeEventListener("abort", rejectAbort)
     }
   })
-  const operation = Promise.resolve().then(() => check.check({ signal }))
+  const operation = Promise.resolve().then(() => {
+    if (signal.aborted) throw signal.reason || new Error("Runtime preflight check was aborted.")
+    const started = Date.now()
+    const value = check.check({ signal })
+    // A synchronous callback blocks the event loop, so its timer cannot fire
+    // until the callback returns. Apply the same deadline after it returns.
+    if (Date.now() - started > timeoutMs) return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
+    return value
+  })
   // The abort race owns completion, but the check may still reject after it loses the race.
   void operation.catch(() => undefined)
   try {
@@ -178,7 +186,7 @@ function diagnosticFor(check: RuntimePreflightCheck, state: RuntimePreflightStat
 }
 
 function isRuntimePreflightCheck(value: unknown): value is RuntimePreflightCheck {
-  if (!isRuntimeObject(value)) return false
+  if (value === null || !hasRuntimeType(value, "object")) return false
   const id = Reflect.get(value, "id")
   const kind = Reflect.get(value, "kind")
   const check = Reflect.get(value, "check")
@@ -220,7 +228,7 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       const bounded = timeoutSignal(controller.signal, normalized.timeoutMs)
       let result: RuntimePreflightCheckResult
       try {
-        result = await resolveCheck(check, bounded.signal)
+        result = await resolveCheck(check, bounded.signal, normalized.timeoutMs)
         if (bounded.signal.aborted && !controller.signal.aborted) result = { state: "unknown", reason: "The preflight check timed out." }
       }
       catch (error) {
@@ -232,7 +240,12 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       finally { bounded.cancel() }
       const diagnostic = diagnosticFor(check, result.state)
       const issue = diagnostic ? { check, state: result.state, diagnostic } satisfies RuntimePreflightIssue : undefined
-      if (issue && options.onDiagnostic) void Promise.resolve(options.onDiagnostic(issue)).catch(() => undefined)
+      if (issue && options.onDiagnostic) {
+        setTimeout(() => {
+          try { void Promise.resolve(options.onDiagnostic!(issue)).catch(() => undefined) }
+          catch { /* Reporter callbacks are best effort. */ }
+        }, 0)
+      }
       const summary: RuntimePreflightCheckSummary = {
         id: check.id,
         kind: check.kind,
