@@ -503,7 +503,10 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
       continue
     }
     if (registration.signature === "github-sha256") {
-      const body = (await readRawBody()).buffer
+      // `readRawBody` always returns a fresh Uint8Array, but TypeScript's
+      // platform type also permits SharedArrayBuffer in `Uint8Array.buffer`.
+      // The Web Crypto API receives the detached ArrayBuffer created above.
+      const body = (await readRawBody()).buffer as ArrayBuffer
       const expected = `sha256=${await hmacSha256(secretToken, body)}`
       if (await constantTimeEqual(expected, headerValue)) {
         return { registration, verified: true }
