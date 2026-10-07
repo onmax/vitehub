@@ -544,6 +544,7 @@ describe("Agent Box provider execution", () => {
     const threadId = "box-independent-cwd"
     let sibling = ""
     let embedded = ""
+    let embeddedPrefix = ""
     let url = ""
     let command = ""
     let unicodeSibling = ""
@@ -553,27 +554,29 @@ describe("Agent Box provider execution", () => {
       expect(cwd).not.toBe(workspace)
       sibling = `${cwd}ist/config`
       embedded = `prefix${cwd}suffix`
+      embeddedPrefix = `prefixé${cwd}`
       url = `URL=file://${cwd}#section`
       command = `CMD=${cwd}&pwd`
       unicodeSibling = `${cwd}é/config`
       plusSibling = `${cwd}+archive/config`
       const options = createProviderRuntime.mock.lastCall?.[0]
-      const script = "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(1), input, readme: require('node:fs').readFileSync('README.md', 'utf8'), mapped: process.env.PROVIDER_PATH, sibling: process.env.PROVIDER_SIBLING, text: process.env.PROVIDER_TEXT, url: process.env.PROVIDER_URL, command: process.env.PROVIDER_COMMAND, unicodeSibling: process.env.PROVIDER_UNICODE_SIBLING, plusSibling: process.env.PROVIDER_PLUS_SIBLING })))"
+      const script = "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(1), input, readme: require('node:fs').readFileSync('README.md', 'utf8'), mapped: process.env.PROVIDER_PATH, sibling: process.env.PROVIDER_SIBLING, text: process.env.PROVIDER_TEXT, embeddedPrefix: process.env.PROVIDER_EMBEDDED_PREFIX, url: process.env.PROVIDER_URL, command: process.env.PROVIDER_COMMAND, unicodeSibling: process.env.PROVIDER_UNICODE_SIBLING, plusSibling: process.env.PROVIDER_PLUS_SIBLING })))"
       launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", script, join(cwd, "notes.txt"), sibling], {
         cwd,
-        env: { ...options?.environment, PROVIDER_PATH: join(cwd, "notes.txt"), PROVIDER_SIBLING: sibling, PROVIDER_TEXT: embedded, PROVIDER_URL: url, PROVIDER_COMMAND: command, PROVIDER_UNICODE_SIBLING: unicodeSibling, PROVIDER_PLUS_SIBLING: plusSibling },
-        stdin: `${cwd}/notes.txt\n${sibling}\n${unicodeSibling}\n${plusSibling}\n${url}\n${command}\n`,
+        env: { ...options?.environment, PROVIDER_PATH: join(cwd, "notes.txt"), PROVIDER_SIBLING: sibling, PROVIDER_TEXT: embedded, PROVIDER_EMBEDDED_PREFIX: embeddedPrefix, PROVIDER_URL: url, PROVIDER_COMMAND: command, PROVIDER_UNICODE_SIBLING: unicodeSibling, PROVIDER_PLUS_SIBLING: plusSibling },
+        stdin: `${cwd}/notes.txt\n${sibling}\n${unicodeSibling}\n${plusSibling}\n${embeddedPrefix}\n${url}\n${command}\n`,
       })
       expect(launched).toMatchObject({ code: 0 })
       const boxCwd = openedBoxSession.current!.cwd
       expect(JSON.parse(launched.stdout)).toMatchObject({
         argv: [`${boxCwd}/notes.txt`, sibling],
         cwd: await realpath(boxCwd),
-        input: `${boxCwd}/notes.txt\n${sibling}\n${unicodeSibling}\n${plusSibling}\nURL=file://${boxCwd}#section\nCMD=${boxCwd}&pwd\n`,
+        input: `${boxCwd}/notes.txt\n${sibling}\n${unicodeSibling}\n${plusSibling}\n${embeddedPrefix}\nURL=file://${boxCwd}#section\nCMD=${boxCwd}&pwd\n`,
         mapped: `${boxCwd}/notes.txt`,
         readme: "independent checkout\n",
         sibling,
         text: embedded,
+        embeddedPrefix,
         url: `URL=file://${boxCwd}#section`,
         command: `CMD=${boxCwd}&pwd`,
         unicodeSibling,
