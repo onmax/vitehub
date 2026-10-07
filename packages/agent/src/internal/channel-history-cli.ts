@@ -32,11 +32,12 @@ interface ParsedChannelHistoryArgs {
   query: Array<[string, string]>
   invocations: boolean
   webhook?: string
+  webhookPath?: string
 }
 
 function writeUsage(context: ChannelHistoryCliContext): void {
   context.stdout.write([
-    "Usage: vitehub channels history --stage <name> --url <https-origin> --output <directory> [--agent <name>] [--channel <id>] [--webhook <id>] [--thread <id>] [--query <key=value>]... [--invocations]",
+    "Usage: vitehub channels history --stage <name> --url <https-origin> --output <directory> [--agent <name>] [--channel <id>] [--webhook <id>] [--webhook-path <path>] [--thread <id>] [--query <key=value>]... [--invocations]",
     "",
     "Download one deployed Channel conversation and its attachments.",
     "Telegram direct messages infer the thread when exactly one user is allowed; other conversations require --thread.",
@@ -57,7 +58,7 @@ function parseArgs(args: string[]): ParsedChannelHistoryArgs {
       if (separator < 1) throw agentDiagnostics.AGENT_R0521({ message: "--query expects key=value." })
       parsed.query.push([value.slice(0, separator), value.slice(separator + 1)])
     }
-    else if (["--agent", "--channel", "--output", "--stage", "--thread", "--url", "--webhook"].includes(arg)) {
+    else if (["--agent", "--channel", "--output", "--stage", "--thread", "--url", "--webhook", "--webhook-path"].includes(arg)) {
       const value = args[++index]
       if (!value || value.startsWith("--")) throw agentDiagnostics.AGENT_R0521({ message: `${arg} requires a value.` })
       if (arg === "--agent") parsed.agent = value
@@ -66,6 +67,10 @@ function parseArgs(args: string[]): ParsedChannelHistoryArgs {
       else if (arg === "--stage") parsed.stage = value
       else if (arg === "--thread") parsed.threadId = value
       else if (arg === "--webhook") parsed.webhook = value
+      else if (arg === "--webhook-path") {
+        if (!value.startsWith("/") || value.startsWith("//")) throw agentDiagnostics.AGENT_R0521({ message: "--webhook-path expects an absolute deployment path." })
+        parsed.webhookPath = value
+      }
       else parsed.origin = value
     }
     else throw agentDiagnostics.AGENT_R0522({ message: `Unknown channels history option: ${arg}` })
@@ -191,7 +196,9 @@ export async function runAgentChannelHistoryCli(
     const target = targets[0]!
     const threadId = parsed.threadId || (!target.history ? target.defaultThreadId : undefined)
     if (!target.history && !threadId) throw agentDiagnostics.AGENT_R0531({ message: `Channel ${target.agent}/${target.channel} requires --thread <id>.` })
-    const url = deployedChannelWebhookUrl(target, normalizedOrigin(parsed.origin))
+    const url = deployedChannelWebhookUrl(parsed.webhookPath && target.registration
+      ? { ...target, registration: { ...target.registration, path: parsed.webhookPath, url: undefined } }
+      : target, normalizedOrigin(parsed.origin))
     if (!url) throw agentDiagnostics.AGENT_R0532({ message: `Channel ${target.agent}/${target.channel} has no deployed webhook route.` })
     const query: Record<string, string | string[]> = {}
     for (const [key, value] of parsed.query) {

@@ -262,17 +262,19 @@ describe("agent CLI", () => {
     }
   })
 
-  it("exports custom Channel history with query, thread, and paged items", async () => {
+  it.each([false, true])("exports custom Channel history with query, thread, and paged items, override=%s", async override => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-custom-channel-history-"))
     const bodies: Record<string, unknown>[] = []
     try {
       const exitCode = await runAgentChannelHistoryCli([
         "--stage", "production", "--url", "https://example.com", "--output", "export",
         "--query", "status=open", "--query", "status=urgent", "--thread", "thread-1", "--invocations",
+        ...(override ? ["--webhook-path", "/api/_vitehub/agents/support/webhooks/productlane"] : []),
       ], {
         cwd: rootDir, env: {}, rootDir, stderr: stream(), stdout: stream(),
       }, {
         fetch: async (_input, init) => {
+          expect(String(_input)).toBe(override ? "https://example.com/api/_vitehub/agents/support/webhooks/productlane" : "https://example.com/api/productlane/webhook")
           if (init?.method === "HEAD") return new Response(null, { headers: { "x-vitehub-channel-provider": "productlane" }, status: 204 })
           const body = JSON.parse(String(init?.body)) as Record<string, unknown>
           bodies.push(body)
@@ -280,7 +282,7 @@ describe("agent CLI", () => {
             ? { agent: "support", channel: "productlane", exportedAt: "2026-10-07T00:00:00.000Z", query: body.query, items: [{ key: "m2", thread: "thread-1", item: { id: "m2" }, invocations: [] }], nextCursor: null }
             : { agent: "support", channel: "productlane", exportedAt: "2026-10-07T00:00:00.000Z", query: body.query, items: [{ key: "m1", thread: "thread-1", item: { id: "m1" }, invocations: [] }], nextCursor: "next" })
         },
-        loadTargets: async () => [{ agent: "support", channel: "productlane", history: true, mode: "webhook", provider: "productlane", registration: { id: "productlane", secretHeader: "x-test-secret", secretToken: "secret" } }],
+        loadTargets: async () => [{ agent: "support", channel: "productlane", history: true, mode: "webhook", provider: "productlane", registration: { id: "productlane", path: "/api/productlane/webhook", secretHeader: "x-test-secret", secretToken: "secret" } }],
       })
       expect(exitCode).toBe(0)
       expect(bodies).toHaveLength(2)
@@ -291,6 +293,16 @@ describe("agent CLI", () => {
     finally {
       await rm(rootDir, { force: true, recursive: true })
     }
+  })
+
+  it.each(["https://other.example.com/webhook", "//other.example.com/webhook", "relative/webhook"])("rejects a non-deployment webhook path %s", async path => {
+    const stderr = stream()
+    const loadTargets = vi.fn(async () => [])
+    expect(await runAgentChannelHistoryCli(["--webhook-path", path], {
+      cwd: process.cwd(), env: {}, rootDir: process.cwd(), stderr, stdout: stream(),
+    }, { loadTargets })).toBe(1)
+    expect(stderr.output()).toContain("--webhook-path expects an absolute deployment path")
+    expect(loadTargets).not.toHaveBeenCalled()
   })
 
   it("signs stripe-sha256 Channel history requests", async () => {

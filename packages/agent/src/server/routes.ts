@@ -202,6 +202,8 @@ export function setAgentChannelDeliveryWorkflowStateResolver(resolver: AgentChan
 
 export interface AgentChannelWebhookRouteHandler {
   (request: Request, webhook?: string, options?: AgentChannelWebhookRouteOptions): Promise<Response>
+  /** Match a declared path without reading the request body or accepting a delivery. */
+  matchesPath(request: Request, options?: AgentChannelWebhookRouteOptions): Promise<boolean>
   deliveries(request: Request, webhook?: string, options?: AgentChannelWebhookRouteOptions & { limit?: number }): Promise<AgentChannelDeliveryInspection[]>
   resume(options?: AgentChannelWebhookResumeOptions): () => Promise<void>
 }
@@ -8467,6 +8469,20 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
         webhookDeadlineAbort,
       )
     })
+  }
+  handler.matchesPath = async (request, handlerOptions = {}) => {
+    const context = createRuntimeContext(
+      request,
+      undefined,
+      await resolveRuntimeWaitUntil(handlerOptions.waitUntil),
+      handlerOptions.cloudflare,
+      handlerOptions.runtime,
+      handlerOptions.capabilities,
+      routeAgentIdentity(handlerOptions),
+    )
+    return await runWithRuntimeCloudflareEnv(context, async () =>
+      (await agentWebhookRegistrations(agent, context)).some(({ registration }) => webhookRegistrationPathMatches(request, registration)),
+    )
   }
   handler.deliveries = async (request, webhook, handlerOptions = {}) => {
     const webhookId = webhook === undefined ? fallbackWebhookFromRequest(request) : webhook

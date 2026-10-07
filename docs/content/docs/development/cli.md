@@ -283,6 +283,8 @@ pnpm vitehub channels history \
 
 A Telegram direct-message Channel infers its thread when the adapter allows exactly one user. Pass `--thread <provider-thread-id>` for group conversations and adapters where one Channel serves multiple conversations, issues, or tickets. When a Channel declares multiple webhook registrations, select the deployed route and its authentication with `--webhook <id>`.
 
+Use `--webhook-path <path>` to export through a different path on the confirmed deployment origin while keeping the selected registration's authentication. This can select the built-in route on an older deployment that does not yet serve a declared `webhooks.path`.
+
 The export can only contain history available through the Chat SDK adapter or its configured State Adapter. Telegram's Bot API cannot backfill arbitrary old messages, so its durable fallback uses the configured `threadHistory` window, which defaults to 100 messages retained for seven days. Export before that window expires when the archive is intended for recovery.
 
 ## Manage Database migrations

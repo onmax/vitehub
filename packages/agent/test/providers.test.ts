@@ -1432,6 +1432,7 @@ describe("agent Vite plugin", () => {
         route: "/api/_vitehub/agents/:agent/chat",
       },
       webhook,
+      { handler: join(hostedAgentRoot, ".vitehub/agent/declared-webhook-route.ts"), middleware: true, route: "/**" },
     ])
   })
 
