@@ -227,7 +227,9 @@ function snapshotRuntimePreflightCheck(value: unknown): RuntimePreflightCheck | 
     const check = Reflect.get(value, "check")
     const required = Reflect.get(value, "required")
     if (!hasRuntimeType(id, "string") || !hasRuntimeType(kind, "string") || !hasRuntimeType(check, "function")) return
-    return { id, kind, check: check as RuntimePreflightCheck["check"], required: required === true }
+    // SAFETY: The runtime boundary verified a callable; resolveCheck supplies the documented context and normalizeResult validates its output.
+    const callback = check as RuntimePreflightCheck["check"]
+    return { id, kind, check: callback, required: required === true }
   }
   catch {
     return
