@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 
@@ -52,7 +52,66 @@ function capabilityContext(): AgentCapabilityContext {
   }
 }
 
+async function transformExtensionManifest(formatVersion: number, requires: Record<string, number>): Promise<string | undefined> {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-eve-manifest-"))
+  temporaryDirectories.push(root)
+  const extensionRoot = join(root, "node_modules", "@test", "eve-extension")
+  const extensionDist = join(extensionRoot, "dist", "extension")
+  await mkdir(extensionDist, { recursive: true })
+  await Promise.all([
+    writeFile(join(extensionRoot, "package.json"), JSON.stringify({
+      eve: { extension: { dist: "./dist/extension" } },
+      name: "@test/eve-extension",
+    })),
+    writeFile(join(extensionDist, "_manifest.json"), JSON.stringify({ formatVersion, kind: "eve-extension", requires })),
+    writeFile(join(extensionRoot, "index.js"), "export default () => ({})"),
+  ])
+  const plugin = hubAgent()
+  await (plugin.configResolved as (config: unknown) => Promise<void>)({
+    command: "serve",
+    createResolver: () => async (specifier: string) => specifier === "@test/eve-extension" ? join(extensionRoot, "index.js") : undefined,
+    plugins: [],
+    root,
+  })
+  return (plugin.transform as (...args: unknown[]) => Promise<string | undefined>).call(
+    { parse: parseAst },
+    [
+      `import { defineAgent } from "@vite-hub/agent"`,
+      `import extension from "@test/eve-extension"`,
+      `export default defineAgent({ capabilities: [extension()] })`,
+    ].join("\n"),
+    join(root, "server", "agents", "reviewer.ts"),
+  )
+}
+
 describe("Eve extension capabilities", () => {
+  it.each([
+    [1, 5, 8],
+    [2, 20, 20],
+    [2, 54, 52],
+  ])("accepts format %i tool@%i and dynamicTool@%i manifests", async (formatVersion, tool, dynamicTool) => {
+    await expect(transformExtensionManifest(formatVersion, { config: 1, dynamicTool, extension: 1, tool }))
+      .resolves.toContain(`await __vitehubEveExtensionCapability("@test/eve-extension", "pkg-_atest_seve-extension"`)
+  })
+
+  it.each([
+    [1, "tool", 20],
+    [1, "dynamicTool", 20],
+    [2, "tool", 21],
+    [2, "dynamicTool", 21],
+    [2, "tool", 76],
+    [2, "dynamicTool", 72],
+    [2, "unknown", 1],
+    [2, "toString", 1],
+    [2, "__proto__", 1],
+  ] as const)("rejects format %i %s@%i manifests", async (formatVersion, contract, version) => {
+    const requires = formatVersion === 1
+      ? { config: 1, dynamicTool: 8, extension: 1, tool: 5 }
+      : { config: 1, dynamicTool: 20, extension: 1, tool: 20 }
+    await expect(transformExtensionManifest(formatVersion, { ...requires, [contract]: version }))
+      .rejects.toThrow(`requires unsupported ${contract}@${version}`)
+  })
+
   it("accepts the current Eve compatibility manifest and publishes Eve as an optional peer", async () => {
     const packageJson = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as {
       devDependencies?: Record<string, string>
