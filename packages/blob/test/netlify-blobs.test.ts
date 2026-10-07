@@ -229,6 +229,17 @@ describe("Netlify Blobs driver", () => {
     expect(store.getMetadata).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ["non-array blobs", { blobs: {}, directories: [] }],
+    ["non-array directories", { blobs: [], directories: {} }],
+    ["non-string cursor", { blobs: [], directories: [], next_cursor: 1 }],
+  ])("rejects malformed successful list payloads with %s", async (_, payload) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })))
+
+    await expect(createDriver(options).list()).rejects.toThrow("Netlify Blobs list returned an invalid response.")
+    expect(store.getMetadata).not.toHaveBeenCalled()
+  })
+
   it("retries transient list failures", async () => {
     const cancel = vi.fn()
     vi.stubGlobal("fetch", vi.fn()
