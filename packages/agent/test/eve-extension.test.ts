@@ -52,7 +52,7 @@ function capabilityContext(): AgentCapabilityContext {
   }
 }
 
-async function transformExtensionManifest(formatVersion: number, requires: Record<string, number>): Promise<string | undefined> {
+async function transformExtensionManifest(formatVersion: number, requires: Record<string, unknown>): Promise<string | undefined> {
   const root = await mkdtemp(join(tmpdir(), "vitehub-eve-manifest-"))
   temporaryDirectories.push(root)
   const extensionRoot = join(root, "node_modules", "@test", "eve-extension")
@@ -139,6 +139,17 @@ describe("Eve extension capabilities", () => {
       kind: "eve-extension",
       requires: { config: 1, dynamicTool: 52, extension: 1, tool: 54 },
     })
+  })
+
+  it.each([
+    { requires: { dynamicTool: 21 }, error: "unsupported dynamicTool@21" },
+    { requires: { tool: 53 }, error: "unsupported tool@53" },
+    { requires: { tool: 55 }, error: "unsupported tool@55" },
+    { requires: { unknownContract: 1 }, error: "unsupported unknownContract@1" },
+    { requires: { tool: "20" }, error: "unsupported tool@20" },
+    { requires: { tool: 20.5 }, error: "unsupported tool@20.5" },
+  ])("rejects unsupported Eve contracts: $error", async ({ requires, error }) => {
+    await expect(transformExtensionManifest(2, requires)).rejects.toThrow(error)
   })
 
   it("uses the injective generated namespace as the Eve configuration scope", async () => {
