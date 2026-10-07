@@ -87,6 +87,7 @@ describe("multi-file tutorial examples", () => {
       "vite/vite.config.ts",
       "vite/src/main.ts",
       "vite/src/assets/main.css",
+      "vite/src/components/Example.vue",
       "nuxt/defaults/nuxt.config.ts",
       "vite/defaults/src/main.ts",
       "vite/theme/src/assets/main.css",
@@ -94,5 +95,6 @@ describe("multi-file tutorial examples", () => {
     expect(files).not.toContain("nuxt.config.ts")
     expect(files).not.toContain("src/main.ts")
     expect(files).not.toContain("src/assets/main.css")
+    expect(files).not.toContain("src/components/Example.vue")
   })
 })

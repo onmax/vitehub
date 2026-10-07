@@ -92,7 +92,7 @@ Load Tailwind CSS, Nuxt UI, and the package styles in this order:
 
 The Vite plugin does not register ViteHub UI components. Import them where you use them:
 
-```vue [src/components/Example.vue]
+```vue [vite/src/components/Example.vue]
 <script setup lang="ts">
 import { AgentChat } from "@vite-hub/ui";
 </script>
