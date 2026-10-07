@@ -19,12 +19,12 @@ describe("runtime preflight", () => {
     expect(manifest.checks[0]).toMatchObject({ id: "command:git", state: "available", details: { path: "/usr/bin/git" } })
     expect(manifest.diagnostics).toHaveLength(2)
     expect(manifest.diagnostics[0]).toMatchObject({
-      name: "RUNTIME_PREFLIGHT_MISSING",
+      name: "RUNTIME_R0012",
       data: { checkId: "file:AGENTS.md", kind: "file", required: false, state: "missing" },
     })
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(report).toHaveBeenCalledTimes(2)
-    expect(report.mock.calls[0]![0].diagnostic.code).toBe("RUNTIME_PREFLIGHT_MISSING")
+    expect(report.mock.calls[0]![0].diagnostic.code).toBe("RUNTIME_R0012")
   })
 
   it("bounds slow checks and keeps the reporter off the critical path", async () => {

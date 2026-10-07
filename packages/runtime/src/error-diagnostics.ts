@@ -19,5 +19,6 @@ export const runtimeErrorDiagnostics: ReturnType<typeof defineDiagnostics> = /*#
     RUNTIME_R0009: dynamicError,
     RUNTIME_R0010: dynamicError,
     RUNTIME_R0011: dynamicError,
+    RUNTIME_R0014: dynamicError,
   },
 })
