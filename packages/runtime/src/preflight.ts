@@ -45,6 +45,7 @@ export type RuntimePreflightDiagnosticData = Record<string, unknown> & {
   kind: RuntimePreflightKind
   required: boolean
   state: RuntimePreflightState
+  reason?: string
 }
 
 const preflightDiagnostics = defineDiagnostics({
@@ -209,9 +210,10 @@ async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, d
   finally { removeAbortListener?.() }
 }
 
-function diagnosticFor(check: RuntimePreflightCheck, state: RuntimePreflightState): Diagnostic<RuntimePreflightDiagnosticData> | undefined {
+function diagnosticFor(check: RuntimePreflightCheck, state: RuntimePreflightState, reason?: string): Diagnostic<RuntimePreflightDiagnosticData> | undefined {
   if (state === "available") return
-  const params = { checkId: check.id, kind: check.kind, required: check.required === true, state }
+  const params: RuntimePreflightDiagnosticData = { checkId: check.id, kind: check.kind, required: check.required === true, state }
+  if (reason) params.reason = reason
   return state === "missing"
     ? preflightDiagnostics.RUNTIME_R0012(params)
     : preflightDiagnostics.RUNTIME_R0013(params)
@@ -225,7 +227,7 @@ function snapshotRuntimePreflightCheck(value: unknown): RuntimePreflightCheck | 
     const check = Reflect.get(value, "check")
     const required = Reflect.get(value, "required")
     if (!hasRuntimeType(id, "string") || !hasRuntimeType(kind, "string") || !hasRuntimeType(check, "function")) return
-    return { id, kind, check, required: required === true }
+    return { id, kind, check: check as RuntimePreflightCheck["check"], required: required === true }
   }
   catch {
     return
@@ -235,7 +237,7 @@ function snapshotRuntimePreflightCheck(value: unknown): RuntimePreflightCheck | 
 function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePreflightCheck[], timeoutMs: number, maxChecks: number } {
   if (!options || !Array.isArray(options.checks)) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight checks must be an array." })
   const timeoutMs = options.timeoutMs ?? 250
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight timeoutMs must be between 1 and 10000." })
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 10_000) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight timeoutMs must be between 1 and 10000." })
   const maxChecks = options.maxChecks ?? 32
   if (!Number.isSafeInteger(maxChecks) || maxChecks < 1 || maxChecks > 128) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight maxChecks must be between 1 and 128." })
   if (options.checks.length > maxChecks) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight checks exceed maxChecks (${maxChecks}).` })
@@ -282,7 +284,7 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
         }
       }
       finally { bounded.cancel() }
-      const diagnostic = diagnosticFor(check, result.state)
+      const diagnostic = diagnosticFor(check, result.state, result.reason)
       const issue = diagnostic ? { check, state: result.state, diagnostic } satisfies RuntimePreflightIssue : undefined
       const summary: RuntimePreflightCheckSummary = {
         id: check.id,

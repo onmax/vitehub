@@ -22,6 +22,10 @@ describe("runtime preflight", () => {
       name: "RUNTIME_R0012",
       data: { checkId: "file:AGENTS.md", kind: "file", required: false, state: "missing" },
     })
+    expect(manifest.diagnostics[1]).toMatchObject({
+      name: "RUNTIME_R0013",
+      data: { checkId: "mcp:productlane", reason: "schema unavailable" },
+    })
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(report).toHaveBeenCalledTimes(2)
     expect(report.mock.calls[0]![0].diagnostic.code).toBe("RUNTIME_R0012")
@@ -190,6 +194,7 @@ describe("runtime preflight", () => {
   it("validates check identity and bounded options", async () => {
     await expect(runRuntimePreflight({ checks: [{ id: "same", kind: "tool", check: () => true }, { id: "same", kind: "tool", check: () => true }] })).rejects.toThrow("duplicated")
     await expect(runRuntimePreflight({ timeoutMs: 0, checks: [] })).rejects.toMatchObject({ name: "RUNTIME_R0014" })
+    await expect(runRuntimePreflight({ timeoutMs: 0.5, checks: [] })).rejects.toMatchObject({ name: "RUNTIME_R0014" })
     await expect(runRuntimePreflight({ timeoutMs: 0, checks: [] })).rejects.toThrow("timeoutMs")
     await expect(runRuntimePreflight({ maxChecks: 129, checks: [] })).rejects.toThrow("maxChecks")
     await expect(runRuntimePreflight({ maxChecks: 1, checks: [{ id: "one", kind: "tool", check: () => true }, { id: "two", kind: "tool", check: () => true }] })).rejects.toThrow("exceed maxChecks")
