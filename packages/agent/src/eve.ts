@@ -7,6 +7,7 @@ import type { ModelMessage } from "ai"
 import type { AgentCapabilityContext, AgentCapabilityDefinition, AgentToolDefinition } from "./types.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 import { agentChatApprovedTools } from "./internal/chat-approvals.ts"
+import { isCallableMember } from "./internal/runtime-type.ts"
 
 interface EveApprovalContext {
   abortSignal: AbortSignal
@@ -135,10 +136,10 @@ function toViteHubTool(
   const execute = tool.execute
   const toModelOutput = tool.toModelOutput
   const approval = tool.approval
-  if (approval && typeof approval === "object" && approval.response) {
+  if (approval && !isCallableMember(approval) && approval.response) {
     unsupportedEveRuntimeFeature("approval.response")
   }
-  const approvalRequest = typeof approval === "function" ? approval : approval?.request
+  const approvalRequest = isCallableMember(approval) ? approval : approval?.request
   const session = eveSession(context)
   const fallbackAbortSignal = context.abortSignal ?? context.invocation?.input.get().abortSignal ?? new AbortController().signal
   return {
