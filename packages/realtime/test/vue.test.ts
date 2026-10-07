@@ -174,7 +174,7 @@ describe("useRealtimeTiptap", () => {
     await expect(first).resolves.toEqual({ content: "# Saved", snapshot: { createdAt: "2026-01-01T00:00:00.000Z", entries: {}, id: "snapshot" } })
     expect(realtime.history.pending.value).toBe(true)
 
-    responses[1]!(new Response(JSON.stringify({ message: "publisher unavailable" }), { status: 500 }))
+    responses[1]!(new Response(JSON.stringify({ message: "publisher unavailable", statusMessage: "" }), { status: 500 }))
     await expect(second).rejects.toThrow("publisher unavailable")
     expect(realtime.history.pending.value).toBe(false)
     scope.stop()

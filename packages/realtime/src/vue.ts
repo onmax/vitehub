@@ -154,7 +154,7 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
         const data: unknown = await response.json().catch(() => undefined)
         const errorData = isRecord(data) ? data : undefined
         const nestedData = isRecord(errorData?.data) ? errorData.data : undefined
-        const message = typeof errorData?.statusMessage === "string"
+        const message = typeof errorData?.statusMessage === "string" && errorData.statusMessage
           ? errorData.statusMessage
           : typeof errorData?.message === "string" ? errorData.message : undefined
         if (response.status === 409 && isRetryableRealtimeCheckpointCode(typeof nestedData?.code === "string" ? nestedData.code : undefined) && attempt < 20) {
