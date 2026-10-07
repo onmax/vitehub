@@ -19,6 +19,11 @@ export function envString(value: unknown): string | undefined {
   return hasRuntimeType(plain, "string") && plain.trim() ? plain.trim() : undefined;
 }
 
+/** Accept PEM secrets from systemd and dotenv files that encode newlines as `\\n`. */
+function normalizePrivateKey(value: string | undefined): string | undefined {
+  return value?.replace(/\\n/g, "\n");
+}
+
 /**
  * Remove the persistent checkout pool created by older Babysitter releases.
  *
@@ -78,7 +83,7 @@ export async function readGitHubAppEnvironment(context: Pick<AgentCallbackContex
   const env = await channelEnv("github", context as AgentCallbackContext);
   const appId = Number(envString(env.appId));
   const keyPath = envString(env.appPrivateKeyPath);
-  const privateKey = envString(env.appPrivateKey) ?? (keyPath ? (await readFile(keyPath, "utf8")).trim() : undefined);
+  const privateKey = normalizePrivateKey(envString(env.appPrivateKey) ?? (keyPath ? (await readFile(keyPath, "utf8")).trim() : undefined));
   const installation = envString(env.appInstallationId);
   if (!Number.isSafeInteger(appId) || appId <= 0 || !privateKey) {
     throw new Error("[vitehub] The Babysitter needs a GitHub App: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_APP_PRIVATE_KEY_PATH).");
