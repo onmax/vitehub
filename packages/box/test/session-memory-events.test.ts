@@ -39,6 +39,42 @@ beforeEach(() => {
 const open = () => createSessionMemory({ cgroupParent: "/delegated", memoryMaxBytes: 1024 });
 
 describe("session memory events", () => {
+  it.each(["/bin/sh", "/bin/bash"])("restores readonly environment names through a %s launcher", async (shell) => {
+    const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const { spawnSync } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    const { tmpdir } = await import("node:os");
+    const directory = fs.mkdtempSync(`${tmpdir()}/box-launcher-`);
+    const group = await open();
+    const env = { UID: "1234", EUID: "2345", PPID: "3456", SHELLOPTS: "braceexpand", TOKEN: "secret 'quoted'\nvalue", PATH: "/no-tools", HOME: directory, NODE_OPTIONS: `--require=${directory}/hook.cjs` };
+    try {
+      fs.writeFileSync(`${directory}/hook.cjs`, `require("node:fs").appendFileSync(${JSON.stringify(`${directory}/hook-pids`)}, process.pid + "\\n");`);
+      group.spawn(`exec '${process.execPath}' -e 'console.log(JSON.stringify(process.env))'`, { env });
+      const args = [...vi.mocked(spawn).mock.calls[0]![1] as string[]];
+      const environmentFile = `${directory}/environment`;
+      fs.writeFileSync(environmentFile, vi.mocked(writeFileSync).mock.calls[0]![1]);
+      fs.writeFileSync(`${directory}/memory.events.local`, "oom 0\n");
+      args[3] = directory;
+      args[4] = `${directory}/no-oom-marker`;
+      args[5] = `${directory}/memory.events.local`;
+      for (let i = 6; i < args.length; i++) {
+        if (args[i]?.includes("vitehub-box-env-")) args[i] = environmentFile;
+      }
+      expect(args.join(" ")).not.toContain(env.TOKEN);
+      const result = spawnSync(shell, args, { env: {}, encoding: "utf8" });
+      expect(result.stderr).toBe("");
+      expect(result.status).toBe(0);
+      // The final command shell sets PPID itself, just as in an unbounded session.
+      const { PPID: _ppid, ...expected } = env;
+      expect(JSON.parse(result.stdout)).toMatchObject(expected);
+      const admittedPid = fs.readFileSync(`${directory}/cgroup.procs`, "utf8");
+      expect(admittedPid).toMatch(/^\d+$/);
+      // The hook runs once, in the final command, after admission. execve keeps its PID.
+      expect(fs.readFileSync(`${directory}/hook-pids`, "utf8")).toBe(`${admittedPid}\n`);
+    } finally {
+      await group.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
   it("allows later close listeners to complete when environment-file removal fails", async () => {
     const { ChildProcess } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
     const child = new ChildProcess();
@@ -152,11 +188,12 @@ describe("session memory events", () => {
     const group = await open();
     group.spawn("echo hello", { env: { LD_PRELOAD: "/hook.so", ENV: "/hook.sh", PATH: "/untrusted" } });
     expect(spawn).toHaveBeenCalledWith("/bin/sh", [
-      "-c", expect.stringContaining('shift 4; exec "$@"'),
+      "-c", expect.stringContaining('shift 3; exec "$@"'),
       "/bin/sh", expect.stringMatching(/^\/delegated\/vitehub-box-/),
       expect.stringMatching(/vitehub-box-oom-/),
       expect.stringMatching(/^\/delegated\/vitehub-box-.*\/memory\.events\.local$/),
-      expect.stringMatching(/vitehub-box-env-/), "/bin/sh", "-c", "echo hello",
+      process.execPath, "--input-type=commonjs", "-e", expect.stringContaining("process.execve"),
+      expect.stringMatching(/vitehub-box-env-/), "echo hello",
     ], { env: {} });
     expect(access).toHaveBeenCalled();
     expect(mkdir).toHaveBeenCalled();

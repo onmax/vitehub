@@ -128,23 +128,23 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       // after that move, so caller-controlled loaders cannot fork outside the limit.
       const environment = Object.entries(options.env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
       const environmentFile = join(tmpdir(), `vitehub-box-env-${randomUUID()}`);
-      const assignments = environment
-        .filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
-        .map(([name, value]) => `export ${name}='${value.replaceAll("'", `'"'"'`)}'`)
-        .join("\n");
       try {
-        writeFileSync(environmentFile, `${assignments}\n`, { mode: 0o600 });
+        // execve restores values without shell assignments or secret-bearing argv.
+        // The controller's Node runs with an empty environment inside the group.
+        writeFileSync(environmentFile, JSON.stringify(Object.fromEntries(environment)), { mode: 0o600 });
         chmodSync(environmentFile, 0o600);
         const child = spawn("/bin/sh", [
         "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; oom=; while IFS=" " read -r key value _; do if test "$key" = oom; then oom=$value; fi; done < "$3" || exit 125; test "$oom" = 0 || exit 125; . "$4"; shift 4; exec "$@"',
+        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; oom=; while IFS=" " read -r key value _; do if test "$key" = oom; then oom=$value; fi; done < "$3" || exit 125; test "$oom" = 0 || exit 125; shift 3; exec "$@"',
         "/bin/sh",
         path,
         healthMarker,
         join(path, "memory.events.local"),
+        process.execPath,
+        "--input-type=commonjs",
+        "-e",
+        'const fs = require("node:fs"); const env = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.execve("/bin/sh", ["/bin/sh", "-c", process.argv[2]], env);',
         environmentFile,
-        "/bin/sh",
-        "-c",
         command,
       ], { ...options, env: {} });
         child?.once("close", () => {
