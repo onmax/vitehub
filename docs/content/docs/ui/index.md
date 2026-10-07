@@ -13,7 +13,7 @@ The package owns presentation, layout, and interaction defaults. Your app owns t
 
 ## A Console with the defaults
 
-Select an Invocation to read its messages, tool calls, and result. The inspector shows its configuration and activity. This example uses the package styles without custom component slots.
+Select an Invocation to read its messages, tool calls, and result. The inspector shows its configuration and activity. This example uses the package styles and built-in layouts.
 
 ::component-preview{name="InvocationDashboardBlock" flush reset}
 ::
