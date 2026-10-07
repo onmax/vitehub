@@ -19,7 +19,7 @@ describe("runtime preflight", () => {
     expect(manifest.checks[0]).toMatchObject({ id: "command:git", state: "available", details: { path: "/usr/bin/git" } })
     expect(manifest.diagnostics).toHaveLength(2)
     expect(manifest.diagnostics[0]).toMatchObject({
-      name: "RUNTIME_PREFLIGHT_MISSING",
+      name: "RUNTIME_R0012",
       data: { checkId: "file:AGENTS.md", kind: "file", required: false, state: "missing" },
     })
     await new Promise(resolve => setTimeout(resolve, 0))
@@ -97,6 +97,47 @@ describe("runtime preflight", () => {
     expect(report).toHaveBeenCalledTimes(1)
   })
 
+  it("includes callback scheduling in each timeout budget", async () => {
+    let quickCalled = false
+    const manifest = await runRuntimePreflight({
+      timeoutMs: 1,
+      checks: [
+        {
+          id: "command:blocking",
+          kind: "command",
+          check: () => {
+            const until = Date.now() + 15
+            while (Date.now() < until) {}
+            return true
+          },
+        },
+        { id: "command:quick", kind: "command", check: () => { quickCalled = true; return true } },
+      ],
+    })
+    expect(manifest.capabilities).toEqual({ "command:blocking": "unknown", "command:quick": "unknown" })
+    expect(quickCalled).toBe(false)
+  })
+
+  it("observes a promise returned after a synchronous timeout", async () => {
+    let rejectLate: ((reason?: unknown) => void) | undefined
+    const late = new Promise<never>((_, reject) => { rejectLate = reject })
+    const manifest = await runRuntimePreflight({
+      timeoutMs: 1,
+      checks: [{
+        id: "command:blocking-promise",
+        kind: "command",
+        check: () => {
+          const until = Date.now() + 15
+          while (Date.now() < until) {}
+          return late
+        },
+      }],
+    })
+    expect(manifest.capabilities["command:blocking-promise"]).toBe("unknown")
+    rejectLate?.(new Error("late failure"))
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+
   it("does not treat callable result records as available", async () => {
     const result = Object.assign(() => true, { state: "available" })
     const manifest = await runRuntimePreflight({
@@ -125,6 +166,7 @@ describe("runtime preflight", () => {
 
   it("validates check identity and bounded options", async () => {
     await expect(runRuntimePreflight({ checks: [{ id: "same", kind: "tool", check: () => true }, { id: "same", kind: "tool", check: () => true }] })).rejects.toThrow("duplicated")
+    await expect(runRuntimePreflight({ timeoutMs: 0, checks: [] })).rejects.toMatchObject({ name: "RUNTIME_R0014" })
     await expect(runRuntimePreflight({ timeoutMs: 0, checks: [] })).rejects.toThrow("timeoutMs")
     await expect(runRuntimePreflight({ maxChecks: 129, checks: [] })).rejects.toThrow("maxChecks")
     await expect(runRuntimePreflight({ maxChecks: 1, checks: [{ id: "one", kind: "tool", check: () => true }, { id: "two", kind: "tool", check: () => true }] })).rejects.toThrow("exceed maxChecks")

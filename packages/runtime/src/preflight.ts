@@ -2,6 +2,7 @@ import { Diagnostic, type DiagnosticJSON } from "nostics"
 import { defineDiagnostics } from "nostics"
 
 import type { MaybePromise } from "./index.ts"
+import { runtimeErrorDiagnostics } from "./error-diagnostics.ts"
 import { hasRuntimeType } from "./internal/runtime-type.ts"
 
 /** The small set of runtime facts that a preflight check can describe. */
@@ -49,12 +50,12 @@ export type RuntimePreflightDiagnosticData = Record<string, unknown> & {
 const preflightDiagnostics = defineDiagnostics({
   docsBase: () => "https://vitehub.dev/docs/reference/errors-diagnostics",
   codes: {
-    RUNTIME_PREFLIGHT_MISSING: {
+    RUNTIME_R0012: {
       why: ({ checkId, kind }: RuntimePreflightDiagnosticData) => `Runtime preflight could not find ${kind} capability "${checkId}".`,
       fix: "Provide the capability in the execution environment, or mark this check optional when the Agent can continue without it.",
       data: (params: RuntimePreflightDiagnosticData) => params,
     },
-    RUNTIME_PREFLIGHT_UNKNOWN: {
+    RUNTIME_R0013: {
       why: ({ checkId, kind }: RuntimePreflightDiagnosticData) => `Runtime preflight could not verify ${kind} capability "${checkId}".`,
       fix: "Inspect the check reason and verify the capability from the same runtime that starts the Agent.",
       data: (params: RuntimePreflightDiagnosticData) => params,
@@ -149,21 +150,21 @@ function normalizeResult(value: unknown): RuntimePreflightCheckResult {
   return { state: "unknown", reason: "The preflight check returned an invalid result." }
 }
 
-function timeoutSignal(parent: AbortSignal, timeoutMs: number): { signal: AbortSignal, cancel: () => void } {
+function timeoutSignal(parent: AbortSignal, timeoutMs: number): { signal: AbortSignal, deadline: number, cancel: () => void } {
   const controller = new AbortController()
   const abort = () => controller.abort(parent.reason)
   if (parent.aborted) abort()
   else parent.addEventListener("abort", abort, { once: true })
+  const deadline = Date.now() + timeoutMs
   const timer = setTimeout(() => controller.abort(new Error("Runtime preflight check timed out.")), timeoutMs)
   const cancel = () => {
     clearTimeout(timer)
     parent.removeEventListener("abort", abort)
   }
-  return { signal: controller.signal, cancel }
+  return { signal: controller.signal, deadline, cancel }
 }
 
-async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, timeoutMs: number): Promise<RuntimePreflightCheckResult> {
-  const started = Date.now()
+async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, deadline: number): Promise<RuntimePreflightCheckResult> {
   let removeAbortListener: (() => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
     const rejectAbort = () => reject(signal.reason || new Error("Runtime preflight check was aborted."))
@@ -175,18 +176,22 @@ async function resolveCheck(check: RuntimePreflightCheck, signal: AbortSignal, t
   })
   const operation = Promise.resolve().then(() => {
     if (signal.aborted) throw signal.reason || new Error("Runtime preflight check was aborted.")
-    const started = Date.now()
+    if (Date.now() >= deadline) return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
     const value = check.check({ signal })
     // A synchronous callback blocks the event loop, so its timer cannot fire
     // until the callback returns. Apply the same deadline after it returns.
-    if (Date.now() - started > timeoutMs) return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
+    if (Date.now() >= deadline) {
+      // Do not leave a thenable returned by an over-budget callback unobserved.
+      void Promise.resolve(value).catch(() => undefined)
+      return { state: "unknown", reason: "The preflight check timed out." } satisfies RuntimePreflightCheckResult
+    }
     return value
   })
   // The abort race owns completion, but the check may still reject after it loses the race.
   void operation.catch(() => undefined)
   try {
     const result = normalizeResult(await Promise.race([operation, aborted]))
-    return Date.now() - started > timeoutMs
+    return Date.now() >= deadline
       ? { state: "unknown", reason: "The preflight check timed out." }
       : result
   }
@@ -210,19 +215,19 @@ function isRuntimePreflightCheck(value: unknown): value is RuntimePreflightCheck
 }
 
 function validateOptions(options: RuntimePreflightOptions): { checks: RuntimePreflightCheck[], timeoutMs: number, maxChecks: number } {
-  if (!options || !Array.isArray(options.checks)) throw new TypeError("[vitehub] Runtime preflight checks must be an array.")
+  if (!options || !Array.isArray(options.checks)) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight checks must be an array." })
   const timeoutMs = options.timeoutMs ?? 250
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000) throw new TypeError("[vitehub] Runtime preflight timeoutMs must be between 1 and 10000.")
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 10_000) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight timeoutMs must be between 1 and 10000." })
   const maxChecks = options.maxChecks ?? 32
-  if (!Number.isSafeInteger(maxChecks) || maxChecks < 1 || maxChecks > 128) throw new TypeError("[vitehub] Runtime preflight maxChecks must be between 1 and 128.")
-  if (options.checks.length > maxChecks) throw new TypeError(`[vitehub] Runtime preflight checks exceed maxChecks (${maxChecks}).`)
+  if (!Number.isSafeInteger(maxChecks) || maxChecks < 1 || maxChecks > 128) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight maxChecks must be between 1 and 128." })
+  if (options.checks.length > maxChecks) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight checks exceed maxChecks (${maxChecks}).` })
   const checks = [...options.checks]
   const ids = new Set<string>()
   for (const check of checks) {
     if (!isRuntimePreflightCheck(check) || !check.id.trim() || !check.kind.trim()) {
-      throw new TypeError("[vitehub] Runtime preflight checks require an id, kind, and check function.")
+      throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: "[vitehub] Runtime preflight checks require an id, kind, and check function." })
     }
-    if (ids.has(check.id)) throw new TypeError(`[vitehub] Runtime preflight check "${check.id}" is duplicated.`)
+    if (ids.has(check.id)) throw runtimeErrorDiagnostics.RUNTIME_R0014({ message: `[vitehub] Runtime preflight check "${check.id}" is duplicated.` })
     ids.add(check.id)
   }
   return { checks, timeoutMs, maxChecks }
@@ -245,7 +250,7 @@ export function startRuntimePreflight(options: RuntimePreflightOptions): Runtime
       const bounded = timeoutSignal(controller.signal, normalized.timeoutMs)
       let result: RuntimePreflightCheckResult
       try {
-        result = await resolveCheck(check, bounded.signal, normalized.timeoutMs)
+        result = await resolveCheck(check, bounded.signal, bounded.deadline)
         if (bounded.signal.aborted && !controller.signal.aborted) result = { state: "unknown", reason: "The preflight check timed out." }
       }
       catch (error) {
