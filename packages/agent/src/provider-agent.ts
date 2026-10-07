@@ -2054,8 +2054,6 @@ async function prepareWorkspace(
   }
   const paths = selectedWorkspacePaths(context)
   const materializedSources = await materializeWorkspaceSources(context, paths)
-  const initialPullRequest = inPlace ? undefined : pullRequestCheckoutPlan(context.context)
-  const checkoutPullRequest = initialPullRequest && (!paths || paths.some(path => !path || !initialPullRequest.mount || initialPullRequest.mount === path || initialPullRequest.mount.startsWith(`${path}/`)))
   // driver.cwd is the working copy. There is no session to materialize, snapshot, or write back.
   if (inPlace) return { provenance: providerSourceProvenance(context, materializedSources), pullRequestRoot: false }
   const sessionOptions: WorkspaceSessionOptions = {
@@ -2070,25 +2068,25 @@ async function prepareWorkspace(
   }
   if (context.workspaceMode !== "write") sessionOptions.writeBack = false
   const session = await workspaceSessionStarter(context.workspace)(sessionOptions)
-  let pullRequest = initialPullRequest
-  if (pullRequest && checkoutPullRequest) {
-    try {
-      // Workspace setup can resolve the channel's pull request metadata while it
-      // creates the session. Use that current plan for both checkout validation
-      // and provenance so an earlier context snapshot cannot advertise a stale
-      // head SHA or repository.
-      pullRequest = pullRequestCheckoutPlan(context.context)
-      if (!pullRequest) throw new Error("[vitehub] pull request metadata disappeared during Workspace setup.")
+  let pullRequest: PullRequestCheckoutPlan | undefined
+  let checkoutPullRequest = false
+  try {
+    // Workspace setup can resolve the channel's pull request metadata while it
+    // creates the session. Use that current plan for both checkout validation
+    // and provenance so the provider sees the verified head SHA and repository.
+    pullRequest = pullRequestCheckoutPlan(context.context)
+    checkoutPullRequest = Boolean(pullRequest && (!paths || paths.some(path => !path || !pullRequest!.mount || pullRequest!.mount === path || pullRequest!.mount.startsWith(`${path}/`))))
+    if (pullRequest && checkoutPullRequest) {
       // Give the Driver shell a real checkout so it can fetch, commit, and push with the Agent GitHub identity.
       await preparePullRequestCheckout(session, pullRequest, {
         abortSignal: context.input.abortSignal,
         env: await pullRequestCheckoutEnvironment(context.runtime.githubIdentity, pullRequest.repository, context.input.abortSignal, pullRequest.headRepository),
       })
     }
-    catch (error) {
-      await session.close({ abortSignal: context.input.abortSignal }).catch(() => undefined)
-      throw error
-    }
+  }
+  catch (error) {
+    await session.close({ abortSignal: context.input.abortSignal }).catch(() => undefined)
+    throw error
   }
   const providerMount = checkoutPullRequest ? pullRequest?.mount : undefined
   const provenance = providerSourceProvenance(context, materializedSources, providerMount, checkoutPullRequest ? pullRequest : undefined)

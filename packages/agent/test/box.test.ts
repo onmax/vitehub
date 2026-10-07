@@ -536,6 +536,40 @@ describe("Agent Box relay", () => {
 })
 
 describe("Agent Box provider execution", () => {
+  it("runs the provider from an independent authoritative Box cwd", async () => {
+    const root = await temporaryRoot()
+    const workspace = join(root, "workspace")
+    await mkdir(workspace)
+    await writeFile(join(workspace, "README.md"), "independent checkout\n")
+    const threadId = "box-independent-cwd"
+    let launched: LauncherResult | undefined
+    providerRuntime(threadId, async ({ cwd }) => {
+      expect(cwd).not.toBe(workspace)
+      const options = createProviderRuntime.mock.lastCall?.[0]
+      const script = "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(1), input, readme: require('node:fs').readFileSync('README.md', 'utf8'), mapped: process.env.PROVIDER_PATH })))"
+      launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", script, join(cwd, "notes.txt")], {
+        cwd,
+        env: { ...options?.environment, PROVIDER_PATH: join(cwd, "notes.txt") },
+        stdin: `${cwd}/notes.txt\n`,
+      })
+      expect(launched).toMatchObject({ code: 0 })
+      const boxCwd = openedBoxSession.current!.cwd
+      expect(JSON.parse(launched.stdout)).toMatchObject({
+        argv: [`${boxCwd}/notes.txt`],
+        cwd: await realpath(boxCwd),
+        input: `${boxCwd}/notes.txt\n`,
+        mapped: `${boxCwd}/notes.txt`,
+        readme: "independent checkout\n",
+      })
+    })
+    await expect(createProviderAgentAdapter<PullRequestOptions>({
+      box: { cwd: workspace, runtime: "trusted-host" },
+      provider: "codex",
+      providerSettings: { binaryPath: process.execPath },
+    }).generate(invocationContext(threadId, { prompt: "review", options: { ref: "", sha: "", token: "" } }) as never)).resolves.toMatchObject({ text: "" })
+    expect(launched).toMatchObject({ code: 0 })
+  })
+
   it("runs the provider in a Box resolved for each invocation", async () => {
     const root = await temporaryRoot()
     const { first, repository, second } = await gitRepository(root)

@@ -192,23 +192,23 @@ async function handleRelayConnection(
     .reduce((safe, value) => safe.replaceAll(value, "[REDACTED]"), text)
   const boxCwd = options.box.session.cwd
   const workspacePath = options.box.workspace?.path
-  const mappingRoot = workspacePath === undefined
+  const mirrorsLocalRoot = workspacePath === options.localRoot
+  const mirrorsLocalCwd = workspacePath === options.localCwd
+  // An authoritative Box cwd can point at a separate host checkout. In that
+  // case provider paths are anchored at the local provider cwd, while the
+  // process itself starts in the Box session cwd. Only a Box workspace that
+  // mirrors localRoot can preserve a nested provider suffix.
+  const mappingRoot = workspacePath === undefined || (!mirrorsLocalRoot && !mirrorsLocalCwd)
     ? options.localCwd || options.localRoot
-    : workspacePath === options.localRoot || workspacePath === options.localCwd
-      ? workspacePath
-      : undefined
+    : workspacePath
   const mapPath = (value: string) => mappingRoot && (value === mappingRoot
     ? boxCwd
     : value.startsWith(`${mappingRoot}/`)
       ? `${boxCwd}${value.slice(mappingRoot.length)}`
       : undefined)
-  const boxWorkingDirectory = options.localCwd === undefined || workspacePath === undefined
-    ? boxCwd
-    : workspacePath === options.localRoot
-      ? mapPath(options.localCwd)
-      : workspacePath === options.localCwd
-        ? boxCwd
-        : undefined
+  const boxWorkingDirectory = mirrorsLocalRoot && options.localCwd !== undefined
+    ? mapPath(options.localCwd)
+    : boxCwd
   const mapText = (value: string) => mappingRoot ? value.replaceAll(mappingRoot, boxCwd) : value
   const selectedArgs = options.filterArgs ? options.filterArgs(args, mapPath) : [...args]
   let disconnected = socket.destroyed
