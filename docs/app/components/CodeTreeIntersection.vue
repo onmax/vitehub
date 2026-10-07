@@ -75,10 +75,19 @@ function resolveRecords() {
 }
 
 function register() {
-  for (const child of resolveRecords()) {
-    if (!tree.value[child.label]) tree.value[child.label] = markRaw(child.component);
-    activePath.value = child.label;
+  const records = resolveRecords();
+
+  for (const child of records) {
+    if (!tree.value[child.label]) {
+      tree.value[child.label] = markRaw(child.component);
+    }
   }
+
+  // A step can introduce several files. Show the first file in document order
+  // so the code pane follows the prose instead of jumping to the last fence.
+  // Set it on every intersection, including when scrolling upward through a
+  // step whose files are already registered.
+  if (records[0]) activePath.value = records[0].label;
 }
 
 onMounted(() => {
