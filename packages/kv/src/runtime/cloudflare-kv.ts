@@ -25,6 +25,7 @@ function isCloudflareKVListPage(value: unknown): value is CloudflareKVListPage {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The provider page must expose a boolean completion marker before use.
   if (typeof page.list_complete !== "boolean" || !Array.isArray(page.keys)) return false
   if (!page.keys.every(key => {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Each provider key is untyped JavaScript data at the Cloudflare binding boundary.
     if (!key || typeof key !== "object" || Array.isArray(key)) return false
     // SAFETY: The key is known to be a non-array object from the guard above; only its unknown name field is read.
     return typeof (key as { name?: unknown }).name === "string"
