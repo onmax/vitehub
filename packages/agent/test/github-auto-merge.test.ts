@@ -124,6 +124,12 @@ describe("native auto-merge", () => {
     "Open https://example.com/@someone for details.",
     "Use @@someone as the delimiter.",
     "Use @ as the delimiter.",
+    "Contact ops+@example.com to restore service.",
+    "Contact ops-@example.com to restore service.",
+    "<!-- @other-user -->",
+    '<span title="notify @other-user">status</span>',
+    "<https://example.com/?assignee=@other-user>",
+    "<https://example.com/#@other-user>",
     "Use `@someone` in the configuration.",
     "Use `` `@someone` `` in the configuration.",
     "Use `first line\n@someone` in the configuration.",
@@ -144,6 +150,12 @@ describe("native auto-merge", () => {
   })
 
   it.each([
+    "-@other-user", "+@other-user", ".@other-user", "/@other-user",
+    "@acme/ent:platform-sre",
+    '<span title="ignored @example">@other-user</span>',
+    "<!-- @example --> @other-user",
+    "[@other-user](https://example.com)",
+    "[@other-user](@other-user)",
     "**@other-user**", "*@other-user*", "_@other-user_", "~~@other-user~~",
     "> @other-user", ">@other-user", '"@other-user"', "'@other-user'",
     "&quot;@other-user&quot;", "(@other-user)", "**@acme/ops**",
@@ -348,6 +360,25 @@ describe("host-owned repair operations", () => {
       ["api", "/repos/acme/app/issues/12", "--method", "PATCH", "-f", "body=Updated details for @existing-user."],
       expect.anything(),
     )
+  })
+
+  it("does not conflate organization enterprise team mentions", async () => {
+    const f = fixture({ restrictCommentMentions: true })
+    f.pullRequest.body = "Contact @acme/ent:platform-sre."
+    await expect(f.operations.updateMetadata({ body: "Contact @acme/ent:security." })).rejects.toThrow(/cannot add GitHub mentions/)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
+    await f.operations.updateMetadata({ body: "Updated details for @acme/ent:platform-sre." })
+  })
+
+  it("rejects body updates when a concurrent edit removes a validated mention", async () => {
+    const f = fixture({ restrictCommentMentions: true })
+    f.pullRequest.body = "Contact @existing-user."
+    let reads = 0
+    f.state.beforeRead = () => {
+      if (++reads === 2) f.pullRequest.body = "Mention removed by maintainer."
+    }
+    await expect(f.operations.updateMetadata({ body: "Updated details for @existing-user." })).rejects.toThrow(/body changed/)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
   })
 
   it("reads bounded failure logs only for a run at the admitted head", async () => {

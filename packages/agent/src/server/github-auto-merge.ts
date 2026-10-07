@@ -1,4 +1,5 @@
 import { parseMarkdown } from "comark"
+import html from "comark/plugins/html"
 import type { Node as MarkdownNode } from "comark"
 import * as v from "valibot"
 import type { GitHubHost } from "./github-host.ts"
@@ -124,7 +125,7 @@ function nonempty(value: string, name: string): string {
 const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/
 // GitHub renders mentions in Markdown, blockquotes, and quoted text. Keep
 // URL paths, email-like text, and adjacent at-signs out of the token stream.
-const githubMentionPattern = /(^|[^A-Za-z0-9@+./-])@([A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9_-]{0,38})?|\/ent:[A-Za-z0-9][A-Za-z0-9_-]*)(?=$|[^A-Za-z0-9_-])/g
+const githubMentionPattern = /(^|[^A-Za-z0-9@])@([A-Za-z0-9][A-Za-z0-9_-]{0,38}\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9_-]{0,38})?)(?=$|[^A-Za-z0-9_-])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
   const normalized = new Set<string>()
@@ -136,10 +137,11 @@ export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []):
 }
 
 async function githubMentionTokens(body: string): Promise<string[]> {
-  // Parse CommonMark without Comark extensions or automatic closing of incomplete
+  // Parse CommonMark with HTML structure, without automatic closing of incomplete
   // code spans. Only rendered text can notify; code examples must stay usable.
   const document = await parseMarkdown(body, {
     registerDefaultPlugins: false,
+    plugins: [html()],
     autoClose: false,
     autoUnwrap: false,
     linkify: false,
@@ -148,11 +150,18 @@ async function githubMentionTokens(body: string): Promise<string[]> {
   function collectMentions(node: MarkdownNode): void {
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark has already parsed the body into its string-or-element node contract.
     if (typeof node === "string") {
-      for (const match of node.matchAll(githubMentionPattern)) mentions.push(match[2]!.toLowerCase())
+      // Remove complete URL and email contexts rather than exempting punctuation
+      // that can also precede a live mention (for example, -@login).
+      const text = node
+        .replace(/\b(?:https?:\/\/|www\.)[^\s<>]+/gi, " ")
+        .replace(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, " ")
+      for (const match of text.matchAll(githubMentionPattern)) mentions.push(match[2]!.toLowerCase())
       return
     }
-    const [tag, , ...children] = node
+    const [tag, attributes, ...children] = node
     if (tag === "code" || tag === "pre" || tag === null) return
+    // Autolinks expose their destination as a label, unlike authored link text.
+    if (tag === "a" && children.length === 1 && children[0] === attributes.href && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(attributes.href))) return
     children.forEach(collectMentions)
   }
   document.nodes.forEach(collectMentions)
@@ -398,6 +407,10 @@ export function createGitHubPullRequestOperations(
           if (added) throw new Error("Pull request bodies cannot add GitHub mentions; use the guarded mention capability.")
         }
         args.push("-f", `body=${input.body}`)
+      }
+      if (input.body !== undefined) {
+        const rechecked = await snapshot()
+        if (rechecked.pullRequest.body !== current.pullRequest.body) throw new Error("Pull request body changed while validating the update; retry.")
       }
       await github.command(args, commandOptions)
     },
