@@ -220,6 +220,63 @@ describe("pull request checkout", () => {
     expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
   })
 
+  it.each([false, true])("reuses the GitHub host checkout and pushes only to the PR head with fork %s", async (forked) => {
+    const fixture = await githubFixture()
+    const headRepository = forked ? "contributor/vitehub" : "vite-hub/vitehub"
+    const headBare = forked ? join(fixture.workspace, "..", "remotes", "contributor", "vitehub.git") : fixture.bare
+    if (forked) {
+      await mkdir(join(headBare, ".."), { recursive: true })
+      await git(fixture.workspace, ["clone", "-q", "--bare", fixture.bare, headBare])
+    }
+    const env = cleanEnv(fixture.env)
+    const checkout = join(fixture.workspace, "vitehub")
+    // Match createGitHubHost(): origin fetches the base, origin pushes the head,
+    // and the local head branch has an explicit push refspec without an upstream.
+    await git(fixture.workspace, ["clone", "-q", "--no-checkout", "https://github.com/vite-hub/vitehub.git", "vitehub"], env)
+    await git(checkout, ["fetch", "-q", "--no-tags", `https://github.com/${headRepository}.git`, "refs/heads/feature"], env)
+    await git(checkout, ["checkout", "-q", "-B", "feature", "FETCH_HEAD"])
+    await git(checkout, ["remote", "set-url", "--push", "origin", `https://github.com/${headRepository}.git`])
+    await git(checkout, ["config", "remote.origin.push", "HEAD:refs/heads/feature"])
+    expect(await git(checkout, ["config", "branch.feature.remote"]).catch(() => "")).toBe("")
+    expect(await git(checkout, ["remote"])).toBe("origin")
+
+    await expect(preparePullRequestCheckout(fixture.session, {
+      headBranch: "feature",
+      headRef: "refs/pull/42/head",
+      ...(forked ? { headRepository } : {}),
+      headSha: fixture.headSha,
+      mount: "vitehub",
+      repository: "vite-hub/vitehub",
+    }, { env: fixture.env })).resolves.toBe(false)
+
+    await writeFile(join(checkout, "CHANGE.md"), "host checkout change\n")
+    await git(checkout, ["add", "CHANGE.md"])
+    await git(checkout, ["-c", "user.name=Agent", "-c", "user.email=agent@example.com", "commit", "-qm", "host checkout change"])
+    await git(checkout, ["push", "-q"], env)
+    expect(await git(headBare, ["rev-parse", "refs/heads/feature"])).toBe(await git(checkout, ["rev-parse", "HEAD"]))
+    if (forked) expect(await git(fixture.bare, ["rev-parse", "refs/heads/feature"])).toBe(fixture.headSha)
+  })
+
+  it.each([
+    ["remote.origin.pushurl", "https://github.com/other/repository.git", "wrong push destination"],
+    ["remote.origin.push", "HEAD:refs/heads/other", "wrong push refspec"],
+    ["remote.origin.mirror", "true", "wrong push refspec"],
+    ["push.default", "matching", "wrong default push configuration"],
+    ["branch.feature.pushRemote", "other", "wrong push remote"],
+  ] as const)("rejects a reused checkout with %s=%s", async (key, value, message) => {
+    const fixture = await githubFixture()
+    const plan = {
+      headBranch: "feature",
+      headRef: "refs/pull/42/head",
+      headSha: fixture.headSha,
+      mount: "vitehub",
+      repository: "vite-hub/vitehub",
+    }
+    await preparePullRequestCheckout(fixture.session, plan, { env: fixture.env })
+    await git(join(fixture.workspace, "vitehub"), ["config", key, value])
+    await expect(preparePullRequestCheckout(fixture.session, plan, { env: fixture.env })).rejects.toThrow(message)
+  })
+
   it("rejects a fetched head that differs from the webhook SHA", async () => {
     const fixture = await githubFixture()
     await expect(preparePullRequestCheckout(fixture.session, {
