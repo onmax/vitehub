@@ -2,16 +2,30 @@ import { getActiveCloudflareBinding } from "@vite-hub/internal/runtime/cloudflar
 import { createStorage } from "unstorage"
 import createDriver from "unstorage/drivers/cloudflare-kv-binding"
 import { normalizeKVListPrefix } from "./list-prefix.ts"
+import { kvErrorDiagnostics } from "../error-diagnostics.ts"
 
 import type { KVListOptions, KVListPage } from "../types.ts"
 import type { KVRuntimeDriver } from "./driver.ts"
 
 interface CloudflareKVNamespace {
-  list: (options: { cursor?: string; limit: number; prefix?: string }) => Promise<{
-    cursor?: string
-    keys: Array<{ name: string }>
-    list_complete: boolean
-  }>
+  list: (options: { cursor?: string; limit: number; prefix?: string }) => Promise<unknown>
+}
+
+interface CloudflareKVListPage {
+  cursor?: string
+  keys: Array<{ name: string }>
+  list_complete: boolean
+}
+
+function isCloudflareKVListPage(value: unknown): value is CloudflareKVListPage {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const page = value as { cursor?: unknown; keys?: unknown; list_complete?: unknown }
+  if (typeof page.list_complete !== "boolean" || !Array.isArray(page.keys)) return false
+  if (!page.keys.every(key => {
+    if (!key || typeof key !== "object" || Array.isArray(key)) return false
+    return typeof (key as { name?: unknown }).name === "string"
+  })) return false
+  return page.list_complete || (typeof page.cursor === "string" && page.cursor.length > 0)
 }
 
 function createCloudflareDriver(options: Record<string, unknown>): KVRuntimeDriver {
@@ -29,6 +43,9 @@ function createCloudflareDriver(options: Record<string, unknown>): KVRuntimeDriv
     if (cursor) listOptions.cursor = cursor
     if (prefix) listOptions.prefix = prefix
     const page = await driver.getInstance().list(listOptions)
+    if (!isCloudflareKVListPage(page)) {
+      throw kvErrorDiagnostics.KV_R0022({ message: "[vitehub] Cloudflare KV list returned an invalid page." })
+    }
     const result: KVListPage = { keys: page.keys.map((key: { name: string }) => key.name) }
     if (!page.list_complete) result.cursor = page.cursor
     return result
