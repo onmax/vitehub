@@ -4352,6 +4352,10 @@ cli_auth_credentials_store = "keyring"
   it("runs a nested pull request checkout as the provider root", async () => {
     const threadId = "thread-nested-pull-request-provider-root"
     let root = ""
+    const onExit = vi.fn(async ({ cwd }: { cwd: string }) => {
+      expect(cwd).toBe(join(root, "portal"))
+      await access(cwd)
+    })
     const provider = runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
       async onStartSession() {
         expect(createProviderRuntime.mock.lastCall?.[0].cwd).toBe(join(root, "portal"))
@@ -4411,8 +4415,13 @@ cli_auth_credentials_store = "keyring"
       repository: { fullName: "acme/portal", name: "portal" },
     })
 
-    await expect(createProviderAgentAdapter({ instructions: "provider instructions", provider: "codex" }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
+    await expect(createProviderAgentAdapter({
+      instructions: "provider instructions",
+      launch: async ({ command }) => ({ command, onExit }),
+      provider: "codex",
+    }).generate(runContext as never)).resolves.toMatchObject({ text: "" })
     expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.join(" ") === "init -q")).toBe(true)
+    expect(onExit).toHaveBeenCalledOnce()
   })
 
   it("passes a managed browser PATH to provider Workspace commands", async () => {

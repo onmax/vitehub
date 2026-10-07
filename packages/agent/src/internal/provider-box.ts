@@ -109,6 +109,8 @@ export interface ProviderBoxRelayOptions {
   launchRoot: string
   /** Local provider working directory. Paths below it are mapped to the Box working directory. */
   localRoot: string
+  /** Local provider cwd, mapped into the Box before the provider is spawned. */
+  localCwd?: string
   /** Remove provider arguments that name local paths the Box cannot read. */
   filterArgs?: (args: readonly string[], mapPath: (value: string) => string | undefined) => string[]
 }
@@ -192,6 +194,7 @@ async function handleRelayConnection(
     : value.startsWith(`${options.localRoot}/`)
       ? `${boxCwd}${value.slice(options.localRoot.length)}`
       : undefined
+  const boxWorkingDirectory = options.localCwd === undefined ? boxCwd : mapPath(options.localCwd)
   const mapText = (value: string) => value.replaceAll(options.localRoot, boxCwd)
   const selectedArgs = options.filterArgs ? options.filterArgs(args, mapPath) : [...args]
   let disconnected = socket.destroyed
@@ -200,8 +203,12 @@ async function handleRelayConnection(
   })
   let child: BoxProcess
   try {
+    if (!boxWorkingDirectory) throw new Error("[vitehub] Agent Box provider cwd is outside the mapped provider checkout.")
     const environment = Object.fromEntries(Object.entries(options.environment(env)).map(([name, value]) => [name, mapText(value)]))
-    child = await options.box.spawn(options.command, selectedArgs.map(mapText), { env: environment })
+    child = await options.box.spawn(options.command, selectedArgs.map(mapText), {
+      cwd: boxWorkingDirectory,
+      env: environment,
+    })
   }
   catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error))

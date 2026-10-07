@@ -1815,7 +1815,7 @@ export function localWorkspaceHost(hostOptions: { path?: readonly string[] | (()
             INIT_CWD: cwd,
             OLDPWD: cwd,
             PWD: cwd,
-          }, typeof hostOptions.path === "function" ? hostOptions.path() : hostOptions.path),
+          }, hasRuntimeType(hostOptions.path, "function") ? hostOptions.path() : hostOptions.path),
           signal,
         })
         let stdout = ""
@@ -3205,6 +3205,7 @@ async function* runProvider<
         environment: received => providerBoxEnvironment({ explicit: explicitEnvironment, host: process.env, prepared: preparedEnvironment, received }),
         filterArgs: options.provider === "claude-code" ? claudeBoxArgs : undefined,
         launchRoot,
+        localCwd: providerCwd,
         localRoot: root,
       })
       providerLauncher = providerBoxRelay.launcher
@@ -3579,7 +3580,7 @@ async function* runProvider<
         const exitCleanup = createProviderCleanupSignal(undefined)
         try {
           await waitForProviderOperation(
-            Promise.resolve().then(() => onProviderExit!({ cwd: root, abortSignal: exitCleanup.signal })),
+            Promise.resolve().then(() => onProviderExit!({ cwd: providerCwd, abortSignal: exitCleanup.signal })),
             exitCleanup.signal,
           )
         }

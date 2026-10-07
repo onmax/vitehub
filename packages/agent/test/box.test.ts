@@ -308,6 +308,14 @@ describe("Agent Box relay", () => {
       const result = await openedBoxSession.current!.exec("sh", ["-c", 'cat "$HOME/.codex/skills/review/SKILL.md"'])
       expect(result.stdout).toBe("review skill")
       expect(result.ok).toBe(true)
+      const options = createProviderRuntime.mock.lastCall?.[0]
+      const launched = await runLauncher(String(options?.settings?.binaryPath), ["-e", "process.stdout.write(process.cwd())"], {
+        cwd,
+        env: { ...options?.environment },
+        stdin: "",
+      })
+      expect(launched).toMatchObject({ code: 0 })
+      expect(launched.stdout).toBe(join(openedBoxSession.current!.cwd, "portal"))
     })
     const session = {
       close: vi.fn(async () => undefined),
