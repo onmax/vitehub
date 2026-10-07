@@ -558,8 +558,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.
-    const lane = ciRecoveryLane.size
-      ? await pullRequestInbox.claim(5, { only: snapshot => ciRecoveryLane.has(laneKey(snapshot)), includeBlocked: true })
+    const remainingCapacity = Math.max(0, ownerLimit - active.size);
+    const lane = ciRecoveryLane.size && remainingCapacity > 0
+      ? await pullRequestInbox.claim(Math.min(5, remainingCapacity), { only: snapshot => ciRecoveryLane.has(laneKey(snapshot)), includeBlocked: true })
       : [];
     for (const claim of lane) ciRecoveryLane.delete(laneKey(claim.snapshot));
     const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size - lane.length))];
@@ -688,7 +689,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.ci.rerun", { ...owner, runs: ciRecovery.runs.map(run => run.runId) });
             return;
           }
-          if (ciRecovery?.state === "blocked") {
+          if (ciRecovery?.state === "blocked" && !ciRecovery.permission) {
             outcome = "waiting";
             await pullRequestInbox.finish(inboxClaim, {
               text: `Automatic GitHub Actions rerun is blocked: ${ciRecovery.reason}`,

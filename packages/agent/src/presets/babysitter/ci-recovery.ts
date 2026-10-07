@@ -11,7 +11,8 @@ export function hasFailedActions(snapshot: Snapshot): boolean {
 export type CiRecoveryResult =
   | { state: "rerun"; runs: { runId: number; checkName?: string }[] }
   | { state: "waiting"; runs: { runId: number; checkName?: string; reason: string }[]; reason: string }
-  | { state: "blocked"; reason: string };
+  | { state: "blocked"; reason: string; permission?: boolean };
+type RecoveryRun = { runId: number; checkName?: string; runAttempt?: number };
 
 /** Reruns failed Actions once per PR head and records provider failures durably. */
 export async function rerunFailedActions(
@@ -23,21 +24,27 @@ export async function rerunFailedActions(
   const { repository } = claim.snapshot;
   const headSha = claim.snapshot.pr?.head?.sha;
   if (!headSha) return undefined;
-  const runs = new Map<number, { runId: number; checkName?: string }>();
+  const runs = new Map<number, RecoveryRun>();
   for (const check of Object.values(claim.snapshot.checks)) {
     if (!failed(check) || check.head_sha !== headSha) continue;
     const location = actionLocation(repository, check);
     if (!location || !Number.isSafeInteger(location.runId)) continue;
-    if (!runs.has(location.runId)) runs.set(location.runId, { runId: location.runId, checkName: check.name });
+    const runAttempt = typeof check.run_attempt === "number" ? check.run_attempt : undefined;
+    if (!runs.has(location.runId)) runs.set(location.runId, { runId: location.runId, checkName: check.name, runAttempt });
   }
   if (!runs.size) return undefined;
-  const rerun: { runId: number; checkName?: string }[] = [];
+  const rerun: RecoveryRun[] = [];
   const blocked: { runId: number; checkName?: string; reason: string }[] = [];
   const waiting: { runId: number; checkName?: string; reason: string }[] = [];
-  for (const run of [...runs.values()].slice(0, 3)) {
+  let completedRerun = false;
+  const candidates: RecoveryRun[] = [];
+  for (const run of runs.values()) {
     const metadataKey = `ci-rerun:v1:${repository}:${headSha}:${run.runId}`;
     const previous = await inbox.meta(metadataKey);
     if (isRuntimeRecord(previous) && previous.status === "succeeded") {
+      if (Number.isSafeInteger(run.runAttempt) && Number.isSafeInteger(previous.runAttempt) && run.runAttempt! > Number(previous.runAttempt)) {
+        completedRerun = true;
+      }
       waiting.push({ ...run, reason: "A rerun was already attempted for this PR head; waiting for the next check result." });
       continue;
     }
@@ -45,9 +52,15 @@ export async function rerunFailedActions(
       blocked.push({ ...run, reason: String(previous.reason ?? "Automatic GitHub Actions rerun is waiting for a retry window.") });
       continue;
     }
+    candidates.push(run);
+    if (candidates.length >= 3) break;
+  }
+  if (completedRerun) return undefined;
+  for (const run of candidates) {
+    const metadataKey = `ci-rerun:v1:${repository}:${headSha}:${run.runId}`;
     try {
       await command(["api", "-X", "POST", `repos/${repository}/actions/runs/${run.runId}/rerun-failed-jobs`], { repository, timeout: 60_000 });
-      await inbox.setMeta(metadataKey, { status: "succeeded", runId: run.runId, headSha, attemptedAt: now });
+      await inbox.setMeta(metadataKey, { status: "succeeded", runId: run.runId, headSha, runAttempt: run.runAttempt, attemptedAt: now });
       rerun.push(run);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -59,6 +72,6 @@ export async function rerunFailedActions(
   }
   if (rerun.length) return { state: "rerun", runs: rerun };
   if (waiting.length) return { state: "waiting", runs: waiting, reason: waiting.map(run => `Actions run ${run.runId}: ${run.reason}`).join("; ") };
-  if (blocked.length) return { state: "blocked", reason: blocked.map(run => `Actions run ${run.runId}: ${run.reason}`).join("; ") };
+  if (blocked.length) return { state: "blocked", permission: blocked.some(run => /\b403\b|forbidden|resource not accessible|permission|not permitted/i.test(run.reason)), reason: blocked.map(run => `Actions run ${run.runId}: ${run.reason}`).join("; ") };
   return undefined;
 }

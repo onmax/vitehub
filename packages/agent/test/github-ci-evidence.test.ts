@@ -142,6 +142,19 @@ it('reruns each failed Actions run once per PR head and then waits for evidence'
  assert.equal(second?.state, 'waiting'); assert.match((second as { reason: string }).reason, /already attempted/); assert.equal(commands.length, 1)
 })
 
+it('lets a failed rerun reach repair after the workflow attempt changes', async () => {
+ const metadata = new Map<string, unknown>(); const commands: string[][] = []
+ const claim = { snapshot: { repository, pr: { head: { sha: 'head' } }, checks: {
+   first: check({ run_attempt: 1, html_url: `https://github.com/${repository}/actions/runs/43/job/11` }),
+ } } } as unknown as Claim
+ const inbox = { meta: async (key: string) => metadata.get(key), setMeta: async (key: string, value: unknown) => { metadata.set(key, value) } }
+ const command = async (args: string[]) => { commands.push(args); return { stdout: '', stderr: '' } }
+ assert.equal((await rerunFailedActions(inbox, claim, command, 1_000))?.state, 'rerun')
+ claim.snapshot.checks.first = check({ run_attempt: 2, html_url: `https://github.com/${repository}/actions/runs/43/job/11` })
+ assert.equal(await rerunFailedActions(inbox, claim, command, 2_000), undefined)
+ assert.equal(commands.length, 1)
+})
+
 it('turns Actions rerun permission failures into a durable external blocker', async () => {
  const metadata = new Map<string, unknown>()
  const claim = { snapshot: { repository, pr: { head: { sha: 'head' } }, checks: {
