@@ -19,6 +19,7 @@ export interface ProcessAgentCapacityOptions {
   intervalMs?: number
   memory?: {
     pausePressure?: number
+    /** Reserve this much future growth for every active invocation as well as new work. */
     perInvocationBytes?: number
     reserveBytes?: number
     resumePressure?: number
@@ -115,7 +116,7 @@ export function createProcessAgentCapacity(options: ProcessAgentCapacityOptions)
       const limit = Math.min(resources.memoryHigh, resources.memoryMax)
       const cgroupAvailableMemory = Number.isFinite(limit) ? Math.max(0, limit - resources.memoryCurrent) : Number.POSITIVE_INFINITY
       const availableMemory = Math.min(resources.availableMemory, cgroupAvailableMemory)
-      const additional = Math.max(0, Math.floor((availableMemory - memory.reserveBytes) / memory.perInvocationBytes))
+      const additional = Math.max(0, Math.floor((availableMemory - memory.reserveBytes - context.active * memory.perInvocationBytes) / memory.perInvocationBytes))
       const memoryConcurrency = context.active + additional
       const concurrency = Math.max(0, Math.min(context.concurrency, memoryConcurrency))
       return concurrency > context.active
@@ -140,18 +141,22 @@ function assertPressurePolicy(value: PressurePolicy, name: "cpu" | "memory"): vo
 }
 
 async function readProcessResources(signal: AbortSignal): Promise<ProcessResourceSample> {
-  const cgroup = await readCgroupResources(signal).catch((error) => {
-    if (signal.aborted) throw error
-    return undefined
-  })
+  const [cgroup, meminfo, cpu, memory] = await Promise.all([
+    readCgroupResources(signal).catch(error => { if (signal.aborted) throw error; return undefined }),
+    readOptionalCgroupFile("/proc/meminfo", signal),
+    readOptionalCgroupFile("/proc/pressure/cpu", signal),
+    readOptionalCgroupFile("/proc/pressure/memory", signal),
+  ])
+  const hostAvailable = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo ?? "")
+  const nodeAvailable = typeof process.availableMemory === "function" ? process.availableMemory() : freemem()
   return {
-    availableMemory: typeof process.availableMemory === "function" ? process.availableMemory() : freemem(),
-    cpuPressure: cgroup?.cpuPressure ?? 0,
+    availableMemory: Math.min(nodeAvailable, hostAvailable ? Number(hostAvailable[1]) * 1024 : Number.POSITIVE_INFINITY),
+    cpuPressure: Math.max(cgroup?.cpuPressure ?? 0, parsePressure(cpu ?? "")),
     memoryCurrent: cgroup?.memoryCurrent ?? 0,
     memoryHigh: cgroup?.memoryHigh ?? Number.POSITIVE_INFINITY,
     memoryHighEvents: cgroup?.memoryHighEvents ?? 0,
     memoryMax: cgroup?.memoryMax ?? Number.POSITIVE_INFINITY,
-    memoryPressure: cgroup?.memoryPressure ?? 0,
+    memoryPressure: Math.max(cgroup?.memoryPressure ?? 0, parsePressure(memory ?? "")),
   }
 }
 

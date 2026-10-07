@@ -7,7 +7,7 @@ import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
 import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";
-import type { AgentCapabilitiesResolver, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
+import type { AgentCapabilitiesResolver, AgentInput, AgentProviderLaunchContext, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -757,6 +757,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // the host identity, but dropping the whole map loses other
               // channel-scoped capabilities needed by repair passes.
               const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              if (workerSettings.box) providerDirectory = checkout;
               const baseChannels = isRuntimeRecord(_baseChannels) ? _baseChannels : {};
               const workerBaseChannels = Object.fromEntries(Object.entries(baseChannels).map(([name, channel]) => {
                 if (!isRuntimeRecord(channel) || channel.kind !== "github") return [name, channel];
@@ -828,7 +829,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                         : await resolveRuntimeValue(workerDriver.env, context);
                     return repairEnvironment(environment, join(checkout, ".vitehub-github-auth"), prepared.env);
                   },
-                  launch: async (context) => {
+                  ...(workerSettings.box ? {} : { launch: async (context: AgentProviderLaunchContext) => {
                     if (context.purpose !== "inspection") {
                       if (!preparedDirectories.has(context.cwd)) {
                         await prepared.prepareWorkspace(context.cwd);
@@ -839,14 +840,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     return workerDriver.launch
                       ? await resolveRuntimeValue(workerDriver.launch, context)
                       : { command: context.command };
-                  },
+                  } }),
                 },
-                workspace: {
-                  ...baseWorkspace,
-                  commit: false,
-                  mode: "write" as const,
-                  store: { provider: "local" as const, root: checkout },
-                },
+                ...(workerSettings.box
+                  ? { box: { ...workerSettings.box, cwd: checkout } }
+                  : { workspace: {
+                    ...baseWorkspace,
+                    commit: false,
+                    mode: "write" as const,
+                    store: { provider: "local" as const, root: checkout },
+                  } }),
               });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
               const snapshotContext = snapshotPrompt(webhookSnapshot);

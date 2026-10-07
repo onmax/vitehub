@@ -29,7 +29,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -222,7 +222,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
     })] as never,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
     options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
-    driver: { kind: "codex", env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
+    ...(preset.box ? { box: { runtime: "trusted-host" as const } } : {}),
+    driver: { kind: "codex", ...(preset.box ? { providerSettings: { binaryPath: "/bin/true" } } : {}), env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
     agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
@@ -275,7 +276,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
             descriptions: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.description])),
             prompt: input.input,
             session: threadId,
-            instructions: await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
+            instructions: preset.box ? "Box Home instructions" : await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
             runtimeMode,
             approvalPolicy,
           });
@@ -329,6 +330,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { agentNam
     else expect(errors).toHaveBeenCalledOnce();
   }
   return {
+    checkout,
     runtime,
     reconcile,
     passes,
@@ -766,6 +768,16 @@ describe("Babysitter preset runtime", () => {
     expect(state.attempts).toBe(1);
   });
 
+
+  it("repairs through a trusted-host Box using the prepared PR working tree", async () => {
+    const f = await fixture(false, false, { box: true });
+    f.choose("pushRepair");
+    await f.reconcile();
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.push.mock.calls[0]?.[0]).toBe(f.checkout);
+    expect(f.passes).toHaveLength(1);
+  });
+
   it("repairs through broker tools, parks without polling, and resumes on new evidence with merge disabled", async () => {
     const f = await fixture();
     f.choose("pushRepair");
@@ -778,6 +790,8 @@ describe("Babysitter preset runtime", () => {
     expect(f.passes[0]?.tools).toContain("internalCheck");
     expect(f.passes[0]?.prompt).toContain("new-review-bot[bot]");
     expect(f.passes[0]?.instructions).toContain("Preserve the documented API contract.");
+    expect(f.passes[0]?.instructions).toContain("Use hosted CI for full typechecks");
+    expect(f.passes[0]?.instructions).toContain("stop after a memory-limit failure");
     expect(f.passes[0]?.instructions).not.toContain("{{{ instructions }}}");
     // An open thread disables the wait, so the pass resolves fixed threads before it parks.
     expect(f.passes[0]?.instructions).toContain("After pushing, resolve the review threads that push fixes, then stop");

@@ -38,6 +38,15 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `reviewChecks` | `[]` | Check names, such as a review bot's check, that keep a PR waiting while they run. |
 | `noFindingsReviews` | `[]` | Body prefixes of comment-only reviews that report no findings, such as `'> ✅ No new issues found.'`. They do not wake a waiting PR. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
+| `capacity` | Process defaults | Host admission `memory`, `cpu`, and `fallbackConcurrency` settings. |
+
+## Bound local verification
+
+Start with one concurrent repair on a shared Linux host. Use `options.capacity.memory.perInvocationBytes` for each worker's growth budget and `reserveBytes` for memory that other services need. Linux admission checks host and cgroup pressure and reserves growth headroom for active workers. Set `options.capacity.fallbackConcurrency` to zero if a failed sample must pause admission.
+
+A Babysitter Box uses the host-prepared PR checkout as its `cwd`. Configure its runtime, Home and requirements; the preset owns the working tree.
+
+Admission only gates new work. Configure [Box memory limits](/docs/agents/boxes) to contain provider commands and native tools. The preset runs focused local tests and lint, then uses hosted CI for full typechecks and builds. A maintainer can require a bounded local reproduction. A memory-limit failure must lead to a smaller workload or a different budget before retrying.
 
 ## Share the Console journal
 
