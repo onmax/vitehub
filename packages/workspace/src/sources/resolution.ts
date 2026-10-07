@@ -99,11 +99,19 @@ function stableWorkspaceSourceValue(value: unknown): string {
   if (value === undefined) return "undefined"
   if (value === null) return "null"
   if (value instanceof Date) return `date:${JSON.stringify(value.toJSON())}`
-  if (!hasRuntimeType(value, "object")) return `${typeof value}:${JSON.stringify(value)}`
-  const toJSON = (value as { toJSON?: () => unknown }).toJSON
-  if (typeof toJSON === "function") {
+  if (!hasRuntimeType(value, "object")) {
+    const type = hasRuntimeType(value, "string") ? "string"
+      : hasRuntimeType(value, "number") ? "number"
+        : hasRuntimeType(value, "boolean") ? "boolean"
+          : hasRuntimeType(value, "bigint") ? "bigint"
+            : hasRuntimeType(value, "symbol") ? "symbol"
+              : "function"
+    return `${type}:${JSON.stringify(value)}`
+  }
+  const toJSON = Reflect.get(value, "toJSON")
+  if (hasRuntimeType(toJSON, "function")) {
     const constructorName = value.constructor?.name ?? "object"
-    return `toJSON:${constructorName}:${stableWorkspaceSourceValue(toJSON.call(value))}`
+    return `toJSON:${constructorName}:${stableWorkspaceSourceValue(Reflect.apply(toJSON, value, []))}`
   }
   if (Array.isArray(value)) return `array:[${value.map(stableWorkspaceSourceValue).join(",")}]`
   // SAFETY: The value is a non-null object; own keys are read only for canonical binding comparison.
