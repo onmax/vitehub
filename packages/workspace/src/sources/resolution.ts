@@ -8,7 +8,7 @@ import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
 import { resolveWorkspaceRawWriteTarget, setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
 import { isInternalWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
@@ -64,10 +64,6 @@ export interface WorkspaceSourceResolutionFacade<Name extends WorkspaceName = Wo
   workspace: ReadonlyWorkspaceFacade<Name>
 }
 
-type WorkspaceMetadataTarget = {
-  getMeta?(key: string): Promise<unknown>
-}
-
 export function hasWorkspaceSourceResolvers(definition: Pick<WorkspaceDefinition, "sources"> | undefined): boolean {
   return normalizeWorkspaceSources(definition?.sources).some(source => typeof source.source.resolve === "function")
 }
@@ -96,6 +92,7 @@ function writeOperations(options: WritableWorkspaceFacadeToolOptions | undefined
 function createOverlaySourceStore<Name extends WorkspaceName>(
   workspace: ReadonlyWorkspaceFacade<Name>,
   fallback: (path: string) => boolean,
+  backingMetadataTarget?: WorkspaceMetadataTarget,
 ): WorkspaceStore & WorkspaceStoreTargetCarrier & { isTombstoned(path: string): boolean } {
   const memory = createMemoryWorkspaceStore()
   const tombstones = new Set<string>()
@@ -197,8 +194,9 @@ function createOverlaySourceStore<Name extends WorkspaceName>(
       // Internal metadata must survive overlay recreation. Resolve the backing
       // Workspace target directly so Source Sync does not write only to memory.
       if (isInternalWorkspaceMetaKey(key)) {
-        const backing = await resolveWorkspaceMetadataTarget(workspace)
-        const mutationTarget = backing ? resolveWorkspaceMetadataMutationTarget(backing) : undefined
+        const mutationTarget = backingMetadataTarget
+          ? resolveWorkspaceMetadataMutationTarget(backingMetadataTarget)
+          : undefined
         if (mutationTarget && await setWorkspaceMetadata(mutationTarget, key, value)) return
       }
       await memory.setMeta?.(key, value)
@@ -333,9 +331,14 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
 
   const selectedWorkspaceScope = options.selectedWorkspaceScope
   const sourceViewDefinition = createScopedSourceViewDefinition(resolvedDefinition, selectedWorkspaceScope)
+  // Capture the backing target before creating the overlay. Source Sync uses a
+  // private setter, so its internal state must bypass the overlay's volatile
+  // metadata map and reach the Workspace Store even after the facade is rebuilt.
+  const backingMetadataTarget = await resolveWorkspaceMetadataTarget(workspace)
   const overlayStore = createOverlaySourceStore(workspace, path =>
     !isLazySourcePath(resolvedDefinition, path)
     || selectedScopeCanSee(selectedWorkspaceScope, path) && isUnchangedStartupSourcePath(definition, resolvedDefinition, path),
+    backingMetadataTarget,
   )
   const sourceView = createWorkspaceSourceView(sourceViewDefinition, overlayStore, { reuseStartupSnapshots: true })
   const materializeSources = async (options = {}) => await sourceView.materializeSources(options)
