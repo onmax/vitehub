@@ -3308,7 +3308,11 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       ]
       // `vitehub agent invocations cancel` runs in the Nitro runtime, so it reaches the application's journals.
       // The handler exists only for the Development Server.
-      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && environment?.command === "serve"
+      // CLI discovery resolves the application config to collect contributors; it does not start Nitro.
+      // The Console's discovery config intentionally includes its broad /_vitehub/** route, so do not
+      // install or validate the development-only invocation handler in that mode.
+      const cliDiscovery = (config as { vitehubCliDiscovery?: unknown }).vitehubCliDiscovery === true
+      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && !cliDiscovery && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
       const nitro = installCloudflareState

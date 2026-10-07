@@ -1740,6 +1740,24 @@ describe("agent Vite plugin", () => {
     expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([...handlers, expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
   })
 
+  it("does not install the development invocation Nitro route during CLI discovery", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const plugin = hubAgent()
+    const configHook = plugin.config
+    if (!isRuntimeFunction(configHook)) throw new Error("Expected an Agent config hook")
+    // CLI discovery loads the Console's broad route so it can inspect all contributors, but it never starts Nitro.
+    const config = {
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+      root: hostedAgentRoot,
+      vitehubCliDiscovery: true,
+      nitro: { handlers: [{ route: "/_vitehub/**", handler: "/app/console.ts" }] },
+    } as never
+    expect(() => configHook.call({} as never, config, { command: "serve", mode: "development" })).not.toThrow()
+    const handlers = (config as { nitro: { handlers: Array<{ route: string }> } }).nitro.handlers
+    expect(handlers).toContainEqual(expect.objectContaining({ route: "/_vitehub/**" }))
+    expect(handlers).not.toContainEqual(expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" }))
+  })
+
   it.each([
     { version: 2, file: "routes/_vitehub/agent/invocations/dev.ts", command: "serve", conflict: true },
     { version: 3, file: "routes/_vitehub/agent/invocations/dev.ts", command: "serve", conflict: true },
