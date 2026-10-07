@@ -36,6 +36,25 @@ describe("internal Code Host client", () => {
     expect(fixture.calls.filter(call => call.method === "POST")).toHaveLength(2)
   })
 
+  it("renews tokens at the 60-second expiry margin", async () => {
+    const now = Date.now()
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now)
+    try {
+      let calls = 0
+      const fetcher: typeof fetch = async () => Response.json({ token: `token-${++calls}`, expires_at: new Date(now + 120_000).toISOString() })
+      const credentials = githubAppCredentials({ appId: 1, privateKey: privateKeys("pkcs8"), fetch: fetcher })
+      await expect(credentials.installationToken(1)).resolves.toMatchObject({ token: "token-1" })
+      clock.mockReturnValue(now + 59_999)
+      await expect(credentials.installationToken(1)).resolves.toMatchObject({ token: "token-1" })
+      clock.mockReturnValue(now + 60_000)
+      await expect(credentials.installationToken(1)).resolves.toMatchObject({ token: "token-2" })
+      expect(calls).toBe(2)
+    }
+    finally {
+      clock.mockRestore()
+    }
+  })
+
   it("refreshes one installation without dropping the token of another", async () => {
     const key = privateKeys("pkcs8")
     const issued = new Map<string, number>()
@@ -111,6 +130,32 @@ describe("internal Code Host client", () => {
     expect(provider.can("threads.comment", "pull_request")).toBe(false)
     await expect(provider.threads.comment({ forge: "github", instance: "github.com", repo: { forge: "github", instance: "github.com", owner: "acme", name: "app" }, kind: "pull_request", number: "1" }, "body"))
       .rejects.toThrow()
+  })
+
+  it("cancels an in-flight token fetch without cancelling another caller", async () => {
+    const controller = new AbortController()
+    let markStarted!: (signal: AbortSignal | null | undefined) => void
+    const started = new Promise<AbortSignal | null | undefined>((resolve) => { markStarted = resolve })
+    let calls = 0
+    const fetcher: typeof fetch = async (_input, init) => {
+      calls++
+      if (calls > 1) return Response.json({ token: "retry", expires_at: new Date(Date.now() + 3_600_000).toISOString() })
+      markStarted(init?.signal)
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true })
+      })
+    }
+    const credentials = githubAppCredentials({ appId: 1, privateKey: privateKeys("pkcs8"), fetch: fetcher })
+    const pending = credentials.installationToken(1, { signal: controller.signal })
+    const rejected = expect(pending).rejects.toThrow("cancelled")
+    const signal = await started
+    const other = credentials.installationToken(1)
+    controller.abort(new Error("cancelled"))
+    await rejected
+    expect(signal?.aborted).toBe(true)
+    await expect(other).resolves.toMatchObject({ token: "retry" })
+    await expect(credentials.installationToken(1)).resolves.toMatchObject({ token: "retry" })
+    expect(calls).toBe(2)
   })
 
   it("rejects an aborted token request", async () => {
