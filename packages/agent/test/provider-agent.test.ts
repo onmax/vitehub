@@ -3940,7 +3940,7 @@ cli_auth_credentials_store = "keyring"
     expect(provider.respondToRequest).toHaveBeenCalledWith(threadId, "approval-1", "decline")
   })
 
-  it("serves Capability tools through the provider MCP boundary", async () => {
+  it.each(["codex", "claude-code"] as const)("serves Capability output contracts through %s MCP boundary", async (provider) => {
     const execute = vi.fn(async (input: unknown) => ({ echoed: input }))
     runtime("thread-tools", [event("turn.completed", "thread-tools", { state: "completed" }, { turnId: "turn-1" })], {
       async onSendTurn(mcp) {
@@ -3956,20 +3956,22 @@ cli_auth_credentials_store = "keyring"
           requestInit: { headers: { Authorization: mcp!.authorizationHeader } },
         })
         await client.connect(transport)
-        expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(["search"])
+        expect((await client.listTools()).tools).toMatchObject([{ name: "search", outputSchema: { type: "object", required: ["echoed"] } }])
         await expect(client.callTool({ arguments: { query: "vitehub" }, name: "search" })).resolves.toMatchObject({
+          structuredContent: { echoed: { query: "vitehub" } },
           content: [{ text: '{"echoed":{"query":"vitehub"}}', type: "text" }],
         })
         await client.close()
       },
     })
-    const adapter = createProviderAgentAdapter({ provider: "codex" })
+    const adapter = createProviderAgentAdapter({ provider })
 
     // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
     await expect(adapter.generate(context("thread-tools", {
       tools: {
         search: {
           execute,
+          outputSchema: { type: "object", properties: { echoed: { type: "object" } }, required: ["echoed"] },
           inputSchema: { additionalProperties: false, properties: { query: { type: "string" } }, required: ["query"], type: "object" },
           name: "search",
         },

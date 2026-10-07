@@ -1,9 +1,9 @@
 import type {
   AgentCapabilityRuntimeContext,
   AgentRuntimeConfig,
-  AgentToolSchema,
   MaybePromise,
 } from "../types.ts"
+import type { JSONSchema7 } from "json-schema"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import type { MCPClientConfig as AiSdkMcpClientConfig } from "@ai-sdk/mcp"
 
@@ -49,8 +49,10 @@ export type McpToolFingerprints = Record<string, string>
  */
 export interface McpToolOverride {
   description?: string
-  inputSchema?: AgentToolSchema
-  outputSchema?: AgentToolSchema
+  /** JSON Schema validates without coercing or transforming remote arguments. */
+  inputSchema?: JSONSchema7 & { "~standard"?: never }
+  /** Extract and validate structured MCP output. MCP output contracts are objects. */
+  outputSchema?: JSONSchema7 & { type: "object", "~standard"?: never }
   title?: string
 }
 

@@ -1593,10 +1593,16 @@ async function validateToolInputUntilCanceled(tool: AgentToolDefinition, input: 
   }
 }
 
-function toolResult(value: unknown) {
+function toolOutputJsonSchema(tool: AgentToolDefinition) {
+  const schema = agentToolJsonSchema(tool.outputSchema, "output")
+  // MCP only supports object output contracts. Other Agent outputs remain text.
+  return schema?.type === "object" ? schema : undefined
+}
+
+function toolResult(value: unknown, tool: AgentToolDefinition) {
   const text = hasRuntimeType(value, "string") ? value : JSON.stringify(value) ?? String(value)
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
-  return { content: [{ text, type: "text" as const }] }
+  return { content: [{ text, type: "text" as const }], ...(toolOutputJsonSchema(tool) && isRuntimeRecord(value) ? { structuredContent: value } : {}) }
 }
 
 async function startToolServer(
@@ -1619,6 +1625,8 @@ async function startToolServer(
       description: tool.description,
       // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
       inputSchema: toolJsonSchema(tool.inputSchema) as never,
+      // SAFETY: MCP output schemas must describe an object, as checked above.
+      outputSchema: toolOutputJsonSchema(tool) as never,
       name,
     })),
   }))
@@ -1630,7 +1638,7 @@ async function startToolServer(
       try {
         const input = await validateToolInputUntilCanceled(tool, request.params.arguments || {}, executionSignal)
         executionSignal.throwIfAborted()
-        return toolResult(await tool.execute(input, { abortSignal: executionSignal }))
+        return toolResult(await tool.execute(input, { abortSignal: executionSignal }), tool)
       }
       catch (error) {
         let toolError = error
@@ -1677,7 +1685,7 @@ async function startToolServer(
             const grant = approveAgentToolRequest(approvalRequest)
             if (grant) {
               try {
-                return toolResult(await executeApprovedAgentTool(tool, grant, { abortSignal: executionSignal }))
+                return toolResult(await executeApprovedAgentTool(tool, grant, { abortSignal: executionSignal }), tool)
               }
               catch (approvedError) {
                 if (executionSignal.aborted) throw approvedError

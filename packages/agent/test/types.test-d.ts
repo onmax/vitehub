@@ -85,6 +85,7 @@ describe("agent public types", () => {
       toolOverrides: {
         support: {
           threads_get: {
+            outputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
             inputSchema: {
               additionalProperties: false,
               properties: { id: { type: "string" } },
