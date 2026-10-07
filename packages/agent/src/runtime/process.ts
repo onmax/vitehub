@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises"
-import { freemem } from "node:os"
 
 import { resolveLinuxCgroupV2Path } from "@vite-hub/runtime/node"
 
@@ -148,7 +147,7 @@ async function readProcessResources(signal: AbortSignal): Promise<ProcessResourc
     readOptionalCgroupFile("/proc/pressure/memory", signal),
   ])
   const hostAvailable = /^MemAvailable:\s+(\d+)\s+kB$/m.exec(meminfo ?? "")
-  const nodeAvailable = typeof process.availableMemory === "function" ? process.availableMemory() : freemem()
+  const nodeAvailable = process.availableMemory()
   return {
     availableMemory: Math.min(nodeAvailable, hostAvailable ? Number(hostAvailable[1]) * 1024 : Number.POSITIVE_INFINITY),
     cpuPressure: Math.max(cgroup?.cpuPressure ?? 0, parsePressure(cpu ?? "")),

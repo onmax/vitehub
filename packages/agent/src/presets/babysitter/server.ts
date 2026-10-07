@@ -829,7 +829,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                         : await resolveRuntimeValue(workerDriver.env, context);
                     return repairEnvironment(environment, join(checkout, ".vitehub-github-auth"), prepared.env);
                   },
-                  ...(workerSettings.box ? {} : { launch: async (context: AgentProviderLaunchContext) => {
+                  ...(workerSettings.box ? undefined : { launch: async (context: AgentProviderLaunchContext) => {
                     if (context.purpose !== "inspection") {
                       if (!preparedDirectories.has(context.cwd)) {
                         await prepared.prepareWorkspace(context.cwd);
