@@ -704,7 +704,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.ci.rerun", { ...owner, runs: ciRecovery.runs.map(run => run.runId) });
             return;
           }
-          if (ciRecovery?.state === "blocked" && (!ciRecovery.permission || await pullRequestInbox.meta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`))) {
+          const permissionFallback = await pullRequestInbox.meta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`);
+          if (ciRecovery?.state === "blocked" && (!ciRecovery.permission || isRuntimeRecord(permissionFallback) && permissionFallback.consumedAt)) {
             outcome = "waiting";
             await pullRequestInbox.finish(inboxClaim, {
               text: `Automatic GitHub Actions rerun is blocked: ${ciRecovery.reason}`,
@@ -733,7 +734,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             return;
           }
           if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
-            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now() });
+            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { pendingAt: Date.now() });
           }
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
@@ -1017,6 +1018,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             // A park that names no external gate still consumed a pass without progress.
             outcome = "retry";
             await pullRequestInbox.finish(inboxClaim, { text: resultText, retry: true, progress: { kind: "no-progress" } });
+          }
+          if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
+            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now() });
           }
         } catch (error) {
           if (pushedHead && (await pullRequestInbox.get(repository, number))?.status !== "terminal") {

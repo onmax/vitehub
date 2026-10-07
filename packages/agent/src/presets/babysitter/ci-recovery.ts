@@ -47,7 +47,9 @@ export async function rerunFailedActions(
   for (const run of runs.values()) {
     const metadataKey = `ci-rerun:v1:${repository}:${headSha}:${run.runId}`;
     const previous = await inbox.meta(metadataKey);
-    const succeeded = isRuntimeRecord(previous) && previous.status === "succeeded";
+    const succeeded = isRuntimeRecord(previous) && (previous.status === "succeeded" || previous.status === "pending");
+    let fenced = succeeded;
+    let posted = false;
     if (isRuntimeRecord(previous) && (previous.status === "blocked" || previous.status === "failed") && Number(previous.retryAt ?? 0) > now) {
       blocked.push({ ...run, reason: String(previous.reason ?? "Automatic GitHub Actions rerun is waiting for a retry window.") });
       continue;
@@ -72,13 +74,22 @@ export async function rerunFailedActions(
         // A missed webhook can leave the original failed job in the snapshot.
         // The idle recovery wake forces hydration; only fresh failed jobs may
         // reach repair, even when the workflow has already finished its rerun.
+        if (!newerAttempt && previous.status === "pending" && now - Number(previous.attemptedAt) >= 120_000) {
+          // An interrupted request with no newer attempt is ambiguous. Keep the
+          // fence and release repair instead of issuing a duplicate POST.
+          continue;
+        }
         if (!newerAttempt || run.completedAt < Date.parse(current.run_started_at)) {
           waiting.push({ ...run, reason: "A rerun was already attempted for this PR head; waiting for the next check result." });
         }
         continue;
       }
       attempted++;
-      await command(["api", "-X", "POST", `repos/${repository}/actions/runs/${run.runId}/rerun-failed-jobs`], { repository, timeout: 60_000 });
+      await inbox.setMeta(metadataKey, { status: "pending", runId: run.runId, headSha, runAttempt: current.run_attempt, attemptedAt: now });
+      fenced = true;
+      const endpoint = current.conclusion === "cancelled" ? "rerun" : "rerun-failed-jobs";
+      await command(["api", "-X", "POST", `repos/${repository}/actions/runs/${run.runId}/${endpoint}`], { repository, timeout: 60_000 });
+      posted = true;
       await inbox.setMeta(metadataKey, { status: "succeeded", runId: run.runId, headSha, runAttempt: current.run_attempt, attemptedAt: now });
       rerun.push(run);
     } catch (error) {
@@ -86,7 +97,7 @@ export async function rerunFailedActions(
       const permission = permissionFailure(reason);
       // A failed reconciliation read must not overwrite a successful POST and
       // allow another rerun after the retry window.
-      if (!succeeded) {
+      if (!fenced || (!succeeded && !posted && permission)) {
         const retryAt = now + (permission ? 15 * 60_000 : 2 * 60_000);
         await inbox.setMeta(metadataKey, { status: permission ? "blocked" : "failed", runId: run.runId, headSha, attemptedAt: now, retryAt, reason });
       }

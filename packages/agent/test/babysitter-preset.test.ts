@@ -31,7 +31,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -88,6 +88,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { admissio
   });
   const command = vi.fn<GitHubHost["command"]>(async (args, request) => {
     const text = args.join(" ");
+    if (preset.actionsDenied && text.includes("/actions/runs/")) throw new Error("HTTP 403: Actions permission denied");
     if (text.includes("enablePullRequestAutoMerge"))
       return {
         stdout: JSON.stringify({
@@ -155,7 +156,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { admissio
                   name: "test",
                   head_sha: head,
                   status: pushed ? "in_progress" : "completed",
-                  conclusion: pushed ? null : "success",
+                  conclusion: pushed ? null : preset.actionsDenied ? "failure" : "success",
+                  ...(preset.actionsDenied ? { app: { slug: "github-actions" }, html_url: "https://github.com/acme/app/actions/runs/1/job/1" } : {}),
                 },
               ]
             : [];
@@ -352,7 +354,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { admissio
 
 describe("Babysitter preset runtime", () => {
   it("keeps a recovery claim parked when admission permits only host work", async () => {
-    const f = await fixture(false, false, { admission: async () => ({ accepting: false, hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
+    const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {
       await f.runtime.inbox.seed("acme/app", f.pr());
       const [claim] = await f.runtime.inbox.claim(1);
@@ -362,6 +364,24 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.lastResult).toContain("waiting for host admission");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("keeps permission fallback pending through interruption and consumes it after a durable pass", async () => {
+    const f = await fixture(false, false, { actionsDenied: true });
+    const key = `ci-permission-fallback:v1:acme/app:${f.pr().head.sha}`;
+    try {
+      f.failCheckout(new DOMException("interrupted", "AbortError"));
+      await f.reconcile();
+      expect(await f.runtime.inbox.meta(key)).toHaveProperty("pendingAt");
+      expect(await f.runtime.inbox.meta(key)).not.toHaveProperty("consumedAt");
+      const restarted = await fixture(false, false, { actionsDenied: true });
+      try {
+        await restarted.runtime.inbox.setMeta(key, await f.runtime.inbox.meta(key));
+        await restarted.reconcile();
+        expect(restarted.passes).toHaveLength(1);
+        expect(await restarted.runtime.inbox.meta(key)).toHaveProperty("consumedAt");
+      } finally { await restarted.runtime.inbox.close(); }
     } finally { await f.runtime.inbox.close(); }
   });
 

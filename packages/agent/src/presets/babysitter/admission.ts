@@ -3,6 +3,7 @@ import type { AgentInvocations } from "../../invocations.ts";
 import type { Snapshot } from "../../server/github-inbox.ts";
 import { readFile, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
+/** Token limits are best-effort retained-journal thresholds, not billing caps. */
 export interface BabysitterAdmissionLimits {
   minFreeTmpBytes: number;
   hourlyInputTokens: number;
@@ -44,6 +45,7 @@ export interface BabysitterAdmissionResult {
   reason?: string;
   detail?: string;
   retryAt?: number;
+  accounting: "best-effort-retained-journal";
   state: BabysitterAdmissionState;
   limits: BabysitterAdmissionLimits;
 }
@@ -100,7 +102,7 @@ export function summarizeProxyAccounts(status: unknown, provider: string, now: n
 }
 
 /** Decides whether another model pass may start on the shared host. */
-export function babysitterAdmissionDecision(state: BabysitterAdmissionState, limits: BabysitterAdmissionLimits): Omit<BabysitterAdmissionResult, "state" | "limits"> {
+export function babysitterAdmissionDecision(state: BabysitterAdmissionState, limits: BabysitterAdmissionLimits): Omit<BabysitterAdmissionResult, "state" | "limits" | "accounting"> {
   const { windows, proxy } = state;
   if (limits.hourlyInputTokens === 0 || limits.dailyInputTokens === 0) return {
     accepting: false,
@@ -177,6 +179,6 @@ export function createBabysitterAdmission(options: { invocations?: Pick<AgentInv
     }
     try { state.proxy = summarizeProxyAccounts(JSON.parse(await readFile(options.limits.proxyStatusFile, "utf8")), options.limits.proxyProvider, now, options.limits.proxyStatusMaxAgeMs); }
     catch (error) { state.proxy = { state: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unknown" : "unreadable" }; }
-    return { ...babysitterAdmissionDecision(state, options.limits), state, limits: options.limits };
+    return { ...babysitterAdmissionDecision(state, options.limits), accounting: "best-effort-retained-journal", state, limits: options.limits };
   };
 }

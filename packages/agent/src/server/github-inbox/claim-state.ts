@@ -31,7 +31,7 @@ export function claimStopReason(claim: Claim, current: Snapshot | undefined, acc
   if (!current || current.lease !== claim.token || current.leaseUntil <= Date.now()) return 'Pull request lease lost.'
   if (current.status === 'terminal' || current.pr?.state === 'closed') return 'Pull request is no longer open.'
   const expectedHead = claim.snapshot.pr?.head?.sha
-  if (current.pr?.head?.sha !== expectedHead && current.pr?.head?.sha !== acceptedSelfHead) return 'Pull request head changed.'
+  if (current.pr?.head?.sha !== (acceptedSelfHead ?? expectedHead)) return 'Pull request head changed.'
 }
 
 
@@ -44,7 +44,7 @@ export function createClaimStopCheck(
   let acceptedSelfHead: string | undefined
   return async (): Promise<string | undefined> => {
     const reason = claimStopReason(claim, await readCurrent(), acceptedSelfHead)
-    if (reason !== 'Pull request head changed.') return reason
+    if (reason !== 'Pull request head changed.' || acceptedSelfHead) return reason
     let providerHead: string | undefined
     try { providerHead = await readProviderHead() }
     catch { return claimStopReason(claim, await readCurrent(), acceptedSelfHead) }

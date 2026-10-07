@@ -101,3 +101,7 @@ To replace the process, send SIGUSR2, wait until the drain route reports `draine
 5. With `merge: 'direct'`, passing required checks also wake it. The host merges when every check passed, every review thread is resolved, and GitHub reports the pull request as clean on the default branch. It never merges into another branch.
 
 A pull request that ends three passes on one head without a push waits for new evidence. A stacked pull request whose parent merged into the default branch is moved to the default branch.
+
+### Token admission estimates
+
+`BABYSITTER_HOURLY_INPUT_TOKENS` and `BABYSITTER_DAILY_INPUT_TOKENS` are best-effort thresholds over retained Invocation journal usage, not hard host budgets or billing caps. Health reports identify this accounting as `best-effort-retained-journal`. The host samples at most once per minute and caches the largest input-token observation per Invocation, assigned to its latest update time. Active observations are included through the journal API. Concurrent writes during pagination can be missed until a later scan; retention and host restarts can omit usage permanently. The standalone journal retains 5,000 terminal records. Read errors appear in health diagnostics and do not block admission. Use provider-side spending limits when a hard cap is required.

@@ -187,3 +187,44 @@ it('turns Actions rerun permission failures into a durable external blocker', as
  assert.equal(result?.state, 'blocked'); assert.match((result as { reason: string }).reason, /Actions run 42/)
  assert.equal((([...metadata.values()][0] as { status: string }).status), 'blocked')
 })
+
+it('uses a full rerun for canceled workflows', async () => {
+ const { inbox, claim } = await fixture([check({ conclusion: 'cancelled' })])
+ const posts: string[][] = []
+ await rerunFailedActions(inbox, claim, async args => {
+  if (args.includes('POST')) posts.push(args)
+  return { stdout: JSON.stringify(workflowRun({ conclusion: 'cancelled' })), stderr: '' }
+ })
+ assert.equal(posts[0]?.[3], `repos/${repository}/actions/runs/1/rerun`)
+})
+
+it('keeps the pre-request fence when the success write fails and reconciles after restart', async () => {
+ const { inbox, claim } = await fixture()
+ let posts = 0
+ let workflow = workflowRun()
+ const command = async (args: string[]) => {
+  if (args.includes('POST')) {
+   posts++
+   assert.equal((await inbox.meta(`ci-rerun:v1:${repository}:head:1`) as { status: string }).status, 'pending')
+  }
+  return { stdout: JSON.stringify(workflow), stderr: '' }
+ }
+ const failingStore = { meta: inbox.meta.bind(inbox), setMeta: async (key: string, value: unknown) => {
+  if ((value as { status: string }).status === 'succeeded') throw new Error('write interrupted')
+  await inbox.setMeta(key, value)
+ } }
+ assert.equal((await rerunFailedActions(failingStore, claim, command, 1000))?.state, 'blocked')
+ assert.equal((await rerunFailedActions(inbox, claim, command, 2000))?.state, 'waiting')
+ workflow = workflowRun({ run_attempt: 2 })
+ assert.equal(await rerunFailedActions(inbox, claim, command, 3000), undefined)
+ assert.equal(posts, 1)
+})
+
+it('releases an ambiguous interrupted request to repair without retrying the POST', async () => {
+ const { inbox, claim } = await fixture()
+ await inbox.setMeta(`ci-rerun:v1:${repository}:head:1`, { status: 'pending', runAttempt: 1, attemptedAt: 1000 })
+ assert.equal(await rerunFailedActions(inbox, claim, async args => {
+  assert.ok(!args.includes('POST'))
+  return { stdout: JSON.stringify(workflowRun()), stderr: '' }
+ }, 121000), undefined)
+})

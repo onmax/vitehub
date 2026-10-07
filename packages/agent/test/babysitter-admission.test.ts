@@ -1,3 +1,5 @@
+import { createClient } from "@libsql/client";
+import { createLibsqlAgentInvocationStore } from "../src/invocations/sqlite.ts";
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts";
 import { describe, expect, it } from "vitest";
 import { babysitterModelAdmission, createBabysitterAdmission, babysitterAdmissionDecision, babysitterBudgetWindows, readBabysitterAdmissionLimits } from "../src/presets/babysitter/admission.ts";
@@ -44,4 +46,23 @@ it("gates recovery model work on host admission and the same-head progress budge
   expect(babysitterModelAdmission(false, { ...snapshot, progressBudget: undefined })).toBe(false);
   expect(babysitterModelAdmission(true, { ...snapshot, pr: { number: 1, head: { sha: "b" } } })).toBe(true);
   expect(babysitterModelAdmission(true, { ...snapshot, progressBudget: undefined })).toBe(true);
+});
+
+it("includes live SQLite observations and exposes retained-journal accounting after pruning", async () => {
+  const client = createClient({ url: ":memory:" });
+  const store = createLibsqlAgentInvocationStore({ client, maxRecords: 1, maxAgeMs: false });
+  const now = Date.now();
+  const timestamp = new Date(now).toISOString();
+  const invocations = defineAgentInvocations({ store });
+  const limits = readBabysitterAdmissionLimits({ BABYSITTER_MIN_FREE_TMP_MB: "0", BABYSITTER_HOURLY_INPUT_TOKENS: "5" });
+  try {
+    await store.create({ id: "live", traceId: "live", createdAt: timestamp, updatedAt: timestamp, status: "running", observations: [] });
+    await store.update("live", { timestamp, appendObservation: { name: "usage", type: "run", timestamp, attributes: { "usage.inputTokens": 6, "vitehub.observation.id": "usage-1" } } });
+    expect(await createBabysitterAdmission({ invocations, limits })(now)).toMatchObject({ accepting: false, state: { hourlyInputTokens: 6 } });
+    await store.update("live", { timestamp, status: "completed" });
+    await store.create({ id: "next", traceId: "next", createdAt: timestamp, updatedAt: timestamp, status: "running", observations: [] });
+    await store.update("next", { timestamp, status: "completed" });
+    expect(await store.get("live")).toBeUndefined();
+    expect(await createBabysitterAdmission({ invocations, limits })(now)).toMatchObject({ accounting: "best-effort-retained-journal", accepting: true, state: { hourlyInputTokens: 0 } });
+  } finally { client.close(); }
 });

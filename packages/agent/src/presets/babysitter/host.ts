@@ -110,10 +110,6 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
-  const admission = createBabysitterAdmission({
-    invocations: agent.invocations,
-    limits: readBabysitterAdmissionLimits(),
-  });
   const github = createGitHubHost({ credentials: credentials.credentials, identity });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
   const host = await createProcessAgentHost({
@@ -133,6 +129,10 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     },
     intervalMs: 10_000,
     run: async (reason, run, accepting) => await runtime?.reconcile(reason, run, accepting),
+  });
+  const admission = createBabysitterAdmission({
+    invocations: host.invocations,
+    limits: readBabysitterAdmissionLimits(),
   });
   // Workers share the assigned journal and keep provider sessions in the host directory.
   const worker = defineAgent({
