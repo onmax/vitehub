@@ -142,4 +142,21 @@ describe("UI documentation", () => {
     expect(inspector).toContain('<div class="mx-auto h-[36rem]');
     expect(inspector).toContain('class="h-full border-x border-default"');
   });
+
+  it("keeps the docs sidebar visible without disclosure toggles", () => {
+    const sidebar = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftBody.vue"), "utf8");
+
+    expect(sidebar).toContain("flex: 1 1 0");
+    expect(sidebar).toContain("min-height: 0");
+    expect(sidebar).not.toContain("<details");
+    expect(sidebar).not.toContain("<summary");
+  });
+
+  it("lists the Vue ecosystem perspective in the getting started sidebar", () => {
+    const page = readFileSync(resolve(docsRoot, "content/docs/getting-started/built-for-vue.md"), "utf8");
+
+    expect(page).not.toContain("navigation: false");
+    expect(page).toContain("navigation.title: Built for the Vue ecosystem");
+    expect(page).toContain("I am Maxi");
+  });
 });

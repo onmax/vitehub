@@ -1,6 +1,5 @@
 ---
 title: Built for the Vue ecosystem
-navigation: false
 description: ViteHub is a server primitive library with a Vue and Nuxt point of view.
 navigation.title: Built for the Vue ecosystem
 navigation.order: 1.5
