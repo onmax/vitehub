@@ -192,7 +192,8 @@ async function handleRelayConnection(
     .reduce((safe, value) => safe.replaceAll(value, "[REDACTED]"), text)
   const boxCwd = options.box.session.cwd
   const workspacePath = options.box.workspace?.path
-  const mappingRoot = workspacePath === undefined
+  // Without a nested checkout, an explicit Box cwd remains the provider root.
+  const mappingRoot = workspacePath === undefined || options.localCwd === options.localRoot
     ? options.localCwd || options.localRoot
     : workspacePath === options.localRoot || workspacePath === options.localCwd
       ? workspacePath
@@ -202,7 +203,7 @@ async function handleRelayConnection(
     : value.startsWith(`${mappingRoot}/`)
       ? `${boxCwd}${value.slice(mappingRoot.length)}`
       : undefined)
-  const boxWorkingDirectory = options.localCwd === undefined || workspacePath === undefined
+  const boxWorkingDirectory = options.localCwd === undefined || options.localCwd === options.localRoot || workspacePath === undefined
     ? boxCwd
     : workspacePath === options.localRoot
       ? mapPath(options.localCwd)
