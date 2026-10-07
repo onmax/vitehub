@@ -4,7 +4,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
 import { createHash, createSign } from "node:crypto"
-import { lstat, mkdtemp, readdir, realpath } from "node:fs/promises"
+import { lstat, mkdtemp, readdir, realpath, rmdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { promisify } from "node:util"
@@ -747,9 +747,15 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
                 process.stdout.write("cleaned")
               }
             `, String(checkoutIdentity.dev), String(checkoutIdentity.ino)], { cwd: candidate, maxBuffer })
-            // Retain the empty inode. Node has no inode-conditional rmdir;
-            // removing its pathname could delete an empty replacement.
-            if (result.stdout === "cleaned") return
+            if (result.stdout === "cleaned") {
+              // Remove the empty path only after checking that it still names
+              // the inode the worker pinned. A replacement is left untouched.
+              const remaining = await lstat(candidate, { bigint: true }).catch(() => undefined)
+              if (candidate === checkout && remaining && remaining.dev === checkoutIdentity.dev && remaining.ino === checkoutIdentity.ino) {
+                await rmdir(candidate).catch(() => undefined)
+              }
+              return
+            }
           }
           catch (error) {
             // A move before cwd resolution needs another discovery pass.

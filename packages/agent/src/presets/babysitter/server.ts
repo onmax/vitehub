@@ -40,6 +40,7 @@ import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snaps
 import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
+import type { BabysitterAdmissionResult } from "./admission.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -65,6 +66,7 @@ export interface BabysitterRuntimeOptions {
   postPushGraceMs?: number;
   /** Delay between provider rate-limit retries. Defaults to 10 seconds. */
   providerRetryDelayMs?: number;
+  admission?: () => Promise<BabysitterAdmissionResult>;
 }
 
 /** Bound policy hooks inside an owner slot, never in the scheduler wait scan. */
@@ -479,6 +481,20 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     };
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
+    let modelAdmission = true;
+    if (options.admission) {
+      const admission = await options.admission();
+      if (!admission.accepting) {
+        modelAdmission = false;
+        const previous = await pullRequestInbox.meta("admission-skipped") as { reason?: string; at?: number } | undefined;
+        if (previous?.reason !== admission.reason || Date.now() - (previous?.at ?? 0) >= 900_000) {
+          const skipped = { at: Date.now(), reason: admission.reason, detail: admission.detail, retryAt: admission.retryAt, active_owners: active.size };
+          await pullRequestInbox.setMeta("admission-skipped", skipped);
+          schedulerEvent("babysitter.admission.skipped", { trigger: reason, ...skipped });
+        }
+        if (!admission.hostOnly) return;
+      }
+    }
     const ownerLimit = options.concurrency;
     // A provider that keeps rate-limiting would fail every claim. Park admission until the block ends.
     if (((await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0) > Date.now()) return;
@@ -559,7 +575,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       only: snapshot => Boolean(snapshot.recoveryHead && snapshot.recoveryHead === snapshot.pr?.head?.sha),
       includeBlocked: true,
     });
-    const jobs = [...lane, ...await pullRequestInbox.claim(Math.max(0, remainingCapacity - lane.length))];
+    const regular = modelAdmission
+      ? await pullRequestInbox.claim(Math.max(0, remainingCapacity - lane.length))
+      : [];
+    const jobs = [...lane, ...regular];
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {

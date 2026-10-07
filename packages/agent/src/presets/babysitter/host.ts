@@ -10,6 +10,7 @@ import { registerAgentProcessHostIntake, type AgentProcessHostContext, type Agen
 import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
 import { createBabysitterRuntime } from "./server.ts";
+import { createBabysitterAdmission, readBabysitterAdmissionLimits } from "./admission.ts";
 
 /** Reads a plain or sealed Server Env value. */
 export function envString(value: unknown): string | undefined {
@@ -104,6 +105,10 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const app = await readGitHubAppEnvironment();
   const credentials = createGitHubAppCredentials(app);
   const identity = await credentials.identity();
+  const admission = createBabysitterAdmission({
+    invocationsFile: join(context.dataDir, "invocations.sqlite"),
+    limits: readBabysitterAdmissionLimits(),
+  });
   const github = createGitHubHost({ credentials: credentials.credentials, identity });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
   const host = await createProcessAgentHost({
@@ -142,6 +147,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     event: host.event,
     error: host.error,
     wake: () => host.wake(),
+    admission,
   });
   const inbox = runtime.inbox;
   return {
@@ -166,11 +172,25 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     async health() {
       const health = await host.health();
       const queue = await inbox.summary();
+      const guard = await admission();
+      const lastSkip = await inbox.meta("admission-skipped");
       return { ...health, repositories, queue: {
         working: queue.filter(item => item.status === "working").length,
         ready: queue.filter(item => item.status === "ready" && item.dirty && !item.stackBlocked).length,
         stackBlocked: queue.filter(item => item.stackBlocked).length,
         waiting: queue.filter(item => item.status === "waiting").length,
+      }, admission: {
+        accepting: guard.accepting,
+        reason: guard.reason,
+        retryAt: guard.retryAt,
+        detail: guard.detail,
+        lastSkip,
+      }, budget: {
+        hourly: { inputTokens: guard.state.hourlyInputTokens, limit: guard.limits.hourlyInputTokens, resetsAt: guard.state.windows.hourEnd },
+        daily: { inputTokens: guard.state.dailyInputTokens, limit: guard.limits.dailyInputTokens, resetsAt: guard.state.windows.dayEnd },
+        tmp: { dir: guard.state.tmpDir, freeBytes: guard.state.freeTmpBytes, minFreeBytes: guard.limits.minFreeTmpBytes },
+        proxy: { provider: guard.limits.proxyProvider, maxWeeklyPercent: guard.limits.proxyMaxWeeklyPercent, ...guard.state.proxy },
+        errors: guard.state.errors,
       } };
     },
   };
