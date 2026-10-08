@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath } from "node:fs/promises";
+import { glob, readdir, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
+import { parseSyml } from "@yarnpkg/parsers";
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 
 const inputNames = new Set([".npmrc", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock"]);
@@ -41,6 +42,15 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     let decoded = decodeURIComponent(value);
     if (decoded.startsWith("//") || /^[a-z]:/i.test(decoded) || decoded.includes("\\") || decoded.startsWith("~")) throw new Error("Host-local dependency paths are not allowed.");
     if (!inside(resolve(base, decoded))) throw new Error("Host-local dependency paths must stay inside the checkout.");
+    // Check wildcard prefixes before deeper matching can pass through a symlink.
+    const parts = decoded.split("/");
+    for (let length = 1; length <= parts.length; length++) {
+      const pattern = parts.slice(0, length).join("/");
+      if (!/[*?{[]/.test(pattern)) continue;
+      for await (const match of glob(pattern, { cwd: base })) {
+        if (!inside(await realpath(resolve(base, match)))) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
+      }
+    }
     // Workspace globs have no realpath; validate the existing prefix as well.
     decoded = decoded.split(/[*?{[]/, 1)[0]!;
     const path = resolve(base, decoded || ".");
@@ -87,7 +97,6 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       if ([".git", "node_modules"].includes(entry.name)) continue;
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) {
-        await checkPath(path, root);
         // A package-manager input must be a regular file, so it cannot change targets.
         if (inputNames.has(entry.name)) throw new Error("Dependency inputs must not be symbolic links.");
       } else if (entry.isDirectory()) await visit(path);
@@ -96,7 +105,13 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
         if (/^<{7} /m.test(source)) throw new GitHubDependencyConflictError(`Resolve dependency conflicts in ${relative(root, path)} and call refreshDependencies before validation.`);
         hash.update(relative(root, path)).update("\0").update(source).update("\0");
         if (entry.name === ".npmrc") { validateNpmConfig(source); continue; }
-        const data: unknown = entry.name.endsWith(".json") ? JSON.parse(source) : parse(source);
+        let data: unknown;
+        if (entry.name === "yarn.lock") {
+          // Classic fields have no YAML separators. The native legacy grammar
+          // also handles headerless Classic files; modern locks declare metadata.
+          data = parseSyml(/^__metadata:/m.test(source) ? source : `# yarn lockfile v1\n${source}`);
+          if (!isRuntimeRecord(data) || Object.values(data).some(value => !isRuntimeRecord(value))) throw new Error("Invalid Yarn lockfile stanza; dependency fields must be structured.");
+        } else data = entry.name.endsWith(".json") ? JSON.parse(source) : parse(source);
         await inspect(data, directory);
         if (entry.name === "pnpm-workspace.yaml" && isRuntimeRecord(data)) {
           for (const [key, value] of Object.entries(data)) {

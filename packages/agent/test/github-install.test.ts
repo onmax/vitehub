@@ -52,6 +52,44 @@ it.each(["1.22.22", "4.9.2"])("suppresses Yarn %s delegation, plugins and worksp
   }
 });
 
+it.each([
+  ["file:/srv/outside.tgz", "# yarn lockfile v1\n"],
+  ["file:%2fsrv/outside.tgz", "# yarn lockfile v1\n"],
+  ["file:/srv/outside.tgz", ""],
+])("rejects Yarn Classic lockfile resolved source %s with header %s before execution", async (source, header) => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@1.22.22" }));
+  await writeFile(join(root, "yarn.lock"), `${header}\n"unsafe@1.0.0":\n  version "1.0.0"\n  resolved ${JSON.stringify(source)}\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it.each(["classic", "modern"])("accepts safe %s Yarn lockfile sources", async format => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: format === "classic" ? "yarn@1.22.22" : "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), format === "classic"
+    ? '# yarn lockfile v1\n\n"safe@^1.0.0", "safe@~1.0.0":\n  version "1.0.0"\n  resolved "https://registry.yarnpkg.com/safe/-/safe-1.0.0.tgz"\n'
+    : '__metadata:\n  version: 8\n\n"safe@npm:^1.0.0":\n  version: 1.0.0\n  resolution: "safe@npm:1.0.0"\n');
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it("allows unrelated external symlinks during dependency validation", async () => {
+  const root = await fixture();
+  await symlink(tmpdir(), join(root, "docs-link"));
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it.each(["packages/*", "packages/*/*"])("rejects an external symlink matched by workspace glob %s", async pattern => {
+  const root = await fixture();
+  await mkdir(join(root, "packages"));
+  await symlink(tmpdir(), join(root, "packages", "outside"));
+  await writeFile(join(root, "pnpm-workspace.yaml"), `packages:\n  - '${pattern}'\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
 it("uses the declared npm version rather than the host npm binary", async () => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
@@ -119,6 +157,7 @@ it("allows internal workspace links but rejects links through an external symlin
   await writeFile(join(root, "pnpm-lock.yaml"), "importers:\n  packages/local:\n    dependencies:\n      local:\n        version: link:../../packages/local\n");
   await installGitHubPullRequestWorkspace(root);
   await symlink(tmpdir(), join(root, "outside"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { unsafe: "file:./outside/local" } }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
 });
 it("requires a dependency refresh after changing the installed graph", async () => {

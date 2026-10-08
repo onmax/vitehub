@@ -294,6 +294,9 @@ catalogs:
       specifier: ^7.7.4
       version: 7.7.4
   tooling:
+    '@yarnpkg/parsers':
+      specifier: 3.1.0
+      version: 3.1.0
     '@types/node':
       specifier: ^24.19.1
       version: 24.19.1
@@ -693,6 +696,9 @@ importers:
 
   packages/agent:
     dependencies:
+      '@yarnpkg/parsers':
+        specifier: catalog:tooling
+        version: 3.1.0
       '@ai-sdk/gateway':
         specifier: catalog:ai
         version: 4.0.103(zod@4.6.5)
@@ -2691,6 +2697,10 @@ importers:
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
 
 packages:
+
+  "@yarnpkg/parsers@3.1.0":
+    resolution: { integrity: sha512-WoxUM/Be4hfsX06FxsvpGgfYqwgivMV7/Ol7aFuSfSmY6rRaiju4QxOEe9RUS0iYcSHWl5i9AhB1cMoE0p+XiA== }
+    engines: { node: '>=18.12.0' }
 
   '@agntn/web@0.5.5':
     resolution: {integrity: sha512-JrZEk/Jliv3sT+r1Jxj3BLdA1wQku6uO6Uyles65xJXWNK6xGa6XKua1EVidfDMqiNnquE48YCqRG6FAS0Vp5g==}
@@ -16389,6 +16399,11 @@ packages:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
 snapshots:
+
+  "@yarnpkg/parsers@3.1.0":
+    dependencies:
+      js-yaml: 4.3.2
+      tslib: 2.8.1
 
   '@agntn/web@0.5.5(@cfworker/json-schema@4.1.1)(ai@7.0.127(zod@4.6.5))(zod@4.6.5)':
     dependencies:
