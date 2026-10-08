@@ -42,4 +42,4 @@ export const statusDeliverySchema: v.GenericSchema<unknown, StatusDelivery> = v.
   }),
 });
 
-export const statusAcknowledgementSchema = v.object({ contentKey: v.string(), runId: v.string() });
+export const statusAcknowledgementSchema: v.GenericSchema<unknown, { contentKey: string; runId: string }> = v.object({ contentKey: v.string(), runId: v.string() });
