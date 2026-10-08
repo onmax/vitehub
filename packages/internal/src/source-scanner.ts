@@ -139,6 +139,7 @@ function endsWithPostfixUpdate(source: string, index: number, sign: string) {
 
 function isForOfRegexStart(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
   const operatorEnd = previousCodeIndex(source, index - 1, controlFlowRegexes)
+  if (!/(?:^|[^$\p{ID_Continue}\u200C\u200D])of$/u.test(source.slice(0, operatorEnd + 1))) return false
   let current = previousCodeIndex(source, operatorEnd - 2, controlFlowRegexes)
   if (!/(?:[$\p{ID_Continue}\])}]|\u200C|\u200D)$/u.test(source.slice(0, current + 1))) return false
   const word = /[$\p{ID_Continue}\u200C\u200D]+$/u.exec(source.slice(0, current + 1))?.[0]
@@ -219,6 +220,11 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
       controlFlowRegexes.set(index, true)
       return true
     }
+    if (source[closeParen] === "}") {
+      const result = isStatementBlockRegexStart(source, closeParen, controlFlowRegexes)
+      controlFlowRegexes.set(index, result)
+      return result
+    }
     if (source[closeParen] !== ")") {
       controlFlowRegexes.set(index, false)
       return false
@@ -229,6 +235,8 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
       if (findMatching(source, current, "(", ")", controlFlowRegexes) !== closeParen) continue
       const head = source.slice(0, current).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ")
       const result = /(?:^|[^\w$])(?:catch|for|if|while|with)\s*$/.test(head)
+        || source[index] === "{" && (/(?:^|[^\w$])switch\s*$/.test(head)
+          || /(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*$/u.test(head))
       controlFlowRegexes.set(index, result)
       return result
     }
@@ -240,6 +248,18 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
     controlFlowRegexes.delete(index)
     throw error
   }
+}
+
+function isStatementBlockRegexStart(source: string, closeBrace: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
+  for (let openBrace = closeBrace - 1; openBrace >= 0; openBrace--) {
+    if (source[openBrace] !== "{" || findMatching(source, openBrace, "{", "}", controlFlowRegexes) !== closeBrace) continue
+    const previous = previousCodeIndex(source, openBrace - 1, controlFlowRegexes)
+    if (previous < 0 || /[;{}]/.test(source[previous] ?? "")) return true
+    const head = source.slice(0, previous + 1)
+    if (/(?:^|[^$\p{ID_Continue}\u200C\u200D])(?:do|else|finally|try)$/u.test(head)) return true
+    return isControlFlowRegexStart(source, openBrace, controlFlowRegexes)
+  }
+  return false
 }
 
 function isLabeledStatementRegexStart(source: string, index: number, labelEnd: number, controlFlowRegexes: ControlFlowRegexCache) {

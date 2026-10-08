@@ -40,6 +40,33 @@ describe("source scanner", () => {
   })
 
   it.each([
+    "if (ready) {}",
+    "while (ready) {}",
+    "for (; false;) {}",
+    "try {} catch (error) {}",
+    "try {} finally {}",
+    "if (ready) {} else {}",
+    "{}",
+    "function task() {}",
+  ])("scans a regex statement after a closed block: %s", (statement) => {
+    const value = `${statement} /['"]/u.test(value)`
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
+  it.each([
+    "const value = {} / total",
+    "const value = function task() {} / total",
+    "const value = (() => {}) / total",
+    "const value = class Task {} / total",
+  ])("preserves division after an expression-owned closing brace: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
+  it.each([
     "for (é of /['\"]/u) {}",
     "for (const x of /['\"]/u) {}",
     "for await (const x of /['\"]/u) {}",
@@ -61,6 +88,11 @@ describe("source scanner", () => {
   it.each([
     "for (typeof of / total; false;) {}",
     "for (void of / total; false;) {}",
+    "for (éof / total; false;) {}",
+    "for (𐐀of / total; false;) {}",
+    "for (a\u0301of / total; false;) {}",
+    "for (a\u200Cof / total; false;) {}",
+    "for (a\u200Dof / total; false;) {}",
     "type of = number; for (value as of / total; false;) {}",
     "type of = number; for (value satisfies of / total; false;) {}",
     "for (left + of / total; false;) {}",
