@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { PullRequestInbox } from '../src/server/github-inbox.ts'
 import { snapshotPullRequest, claimStopReason, createClaimStopCheck } from '../src/server/github-inbox.ts'
 
-async function fixture() {
-  const inbox = new PullRequestInbox({path: ':memory:', repositories: ['vite-hub/vitehub']})
+async function fixture(clock?: () => number) {
+  const inbox = new PullRequestInbox({path: ':memory:', repositories: ['vite-hub/vitehub'], clock})
   await inbox.seed('vite-hub/vitehub', { number: 42, state: 'open', user: { login: 'onmax' }, head: { sha: 'new', ref: 'feature', repo: { full_name: 'vite-hub/vitehub' } }, base: { sha: 'base', ref: 'main' }, headRefOid: 'stale', headRefName: 'stale-branch', title: 'Test', html_url: 'https://github.com/vite-hub/vitehub/pull/42', updated_at: '2026-09-13T00:00:00Z' })
   return inbox
 }
@@ -125,6 +125,21 @@ test('expired lease cancels before recovery changes its token', async () => {
     const current = structuredClone(claim.snapshot)
     current.leaseUntil = Date.now() - 1
     assert.equal(claimStopReason(claim, current), 'Pull request lease lost.')
+  } finally { await inbox.close() }
+})
+
+test('an expired owner cannot park a published head before lease recovery changes its token', async () => {
+  let now = Date.now()
+  const inbox = await fixture(() => now)
+  try {
+    const claim = (await inbox.claim(1))[0]!
+    now = claim.snapshot.leaseUntil
+    const finished = await inbox.finish(claim, { text: 'Repair pushed.', wait: { kind: 'checks', headSha: 'published', reason: 'Waiting for CI.', evidenceKey: 'push-receipt' } })
+    assert.equal(finished, false)
+    const current = await inbox.get('vite-hub/vitehub', 42)
+    assert.equal(current?.lease, claim.token)
+    assert.equal(current?.status, 'working')
+    assert.equal(current?.lastResult, undefined)
   } finally { await inbox.close() }
 })
 

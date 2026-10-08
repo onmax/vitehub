@@ -681,7 +681,7 @@ export class PullRequestInbox {
   async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
-      if (!s || s.lease !== claim.token) return false
+      if (!s || s.lease !== claim.token || s.leaseUntil <= this.clock()) return false
       const pinnedHead = result.wait?.headSha
       if (result.wait && pinnedHead) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
