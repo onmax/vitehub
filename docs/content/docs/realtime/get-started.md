@@ -115,7 +115,7 @@ const { status, synced } = realtime
   <main>
     <h1>Collaborative document</h1>
     <p role="status">
-      Realtime: {{ status }} — {{ synced ? 'Document synced' : 'Waiting for sync' }}
+      Realtime: {{ status }}, {{ synced ? 'Document synced' : 'Waiting for sync' }}
     </p>
     <EditorContent :editor="editor" />
   </main>
@@ -143,7 +143,7 @@ pnpm vite dev
 ```
 
 Open the local URL printed by Vite in two browser tabs. Both tabs should show
-`Realtime: connected — Document synced`. Click the editor below the status in
+`Realtime: connected, Document synced`. Click the editor below the status in
 one tab and type a sentence; it should appear in the other tab. Edit from the
 second tab and verify that the first updates too. Both editors use the same
 `docs` Definition and `guides/getting-started.md` document path.
