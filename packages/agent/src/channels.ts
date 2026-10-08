@@ -2181,7 +2181,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
       ? await resolveEffectOption(context.channel.adapter as MaybeResolvable<Adapter, AgentChannelDeliveryEffectContext<TRuntimeConfig>>, context)
       : undefined
     if (adapter && context.run?.threadId) {
-      const threadId = adapter.channelIdFromThreadId(context.run.threadId)
+      const threadId = context.run.threadId
       if (adapter.stream && await adapter.stream(threadId, stream) !== null) return
       let body = ""
       for await (const chunk of stream) body += chunk
@@ -2242,7 +2242,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     : undefined
   if (adapter && context.run?.threadId) {
     try {
-      await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
+      await adapter.postMessage(context.run.threadId, message)
     }
     catch (error) {
       if (context.effect.intent === chatFinalReplyIntent) clearChatFinalReplyText(context.context)
