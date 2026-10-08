@@ -113,7 +113,11 @@ function eveSessionId(context: AgentCapabilityContext): string {
 
 function eveTurn(context: AgentCapabilityContext): { id: string, sequence: number } {
   const id = context.run?.runId ?? eveSessionId(context)
-  return { id, sequence: 0 }
+  return {
+    id,
+    // ViteHub has Invocation identity, but no authoritative persisted Eve turn counter.
+    get sequence() { return unsupportedEveRuntimeFeature("session.turn.sequence") },
+  }
 }
 
 function eveSession(context: AgentCapabilityContext): EveToolContext["session"] {
@@ -126,9 +130,16 @@ function eveSession(context: AgentCapabilityContext): EveToolContext["session"] 
 
 function eveLifecycleEvent(type: string, turn: EveToolContext["session"]["turn"]) {
   if (type === "session.started") return { data: {}, type }
-  const data = { sequence: turn.sequence, turnId: turn.id }
-  if (type === "step.started") return { data: { ...data, stepIndex: 0 }, type }
-  return { data, type }
+  if (type === "step.started") return {
+    data: {
+      get sequence() { return turn.sequence },
+      get modelId() { return unsupportedEveRuntimeFeature("step.started data.modelId") },
+      stepIndex: 0,
+      turnId: turn.id,
+    },
+    type,
+  }
+  return { data: { get sequence() { return turn.sequence }, turnId: turn.id }, type }
 }
 
 function unsupportedEveRuntimeFeature(name: string): never {
@@ -264,7 +275,7 @@ async function resolveEveTools(
           metadata: context.invoker.meta,
         },
         messages: toAiSdkModelMessages(context.invocation?.input.messages() ?? []),
-        model: null,
+        get model() { return event === "step.started" ? unsupportedEveRuntimeFeature("step.started context.model") : null },
         session,
       })
       if (resolved === null || resolved === undefined) continue
