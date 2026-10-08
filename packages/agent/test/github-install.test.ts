@@ -511,7 +511,7 @@ it("fingerprints executable mode changes in local file directory dependencies", 
 it("fingerprints the source contents of local file directory dependencies", async () => {
   const root = await fixture();
   await mkdir(join(root, "vendor", "pkg"), { recursive: true });
-  await writeFile(join(root, "vendor", "pkg", "package.json"), JSON.stringify({ name: "local", version: "1.0.0", bin: { local: "index.js" } }));
+  await writeFile(join(root, "vendor", "pkg", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
   await writeFile(join(root, "vendor", "pkg", "index.js"), "export const value = 1;");
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:./vendor/pkg" } }));
   await installGitHubPullRequestWorkspace(root);
@@ -544,7 +544,7 @@ it("rejects a Yarn patch relative to an unvalidated parent package filesystem", 
 it("rejects symlinks inside copied local dependency contents", async () => {
   const root = await fixture();
   await mkdir(join(root, "vendor", "pkg"), { recursive: true });
-  await writeFile(join(root, "vendor", "pkg", "package.json"), JSON.stringify({ name: "local", version: "1.0.0", bin: { local: "index.js" } }));
+  await writeFile(join(root, "vendor", "pkg", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
   await symlink(tmpdir(), join(root, "vendor", "pkg", "external"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:./vendor/pkg" } }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/regular files and directories/);
@@ -591,7 +591,7 @@ node "$HOME/.cache/manager.js"
 it("publishes refreshed dependencies and keeps workspace source links live", async () => {
   const root = await fixture();
   await mkdir(join(root, "packages", "local"), { recursive: true });
-  await writeFile(join(root, "packages", "local", "package.json"), JSON.stringify({ name: "local", version: "1.0.0", bin: { local: "index.js" } }));
+  await writeFile(join(root, "packages", "local", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
   await writeFile(join(root, "packages", "local", "index.js"), "export const value = 1;");
   await writeFile(join(root, "pnpm-workspace.yaml"), "packages: [packages/*]\n");
   await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nmkdir -p node_modules packages/local/node_modules\nprintf installed > packages/local/node_modules/installed.txt\nln -s ../packages/local node_modules/local\n');
@@ -606,7 +606,7 @@ it("removes obsolete root and workspace outputs when switching to and from Yarn 
   const root = await fixture();
   const workspace = join(root, "packages", "local");
   await mkdir(workspace, { recursive: true });
-  await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "local", version: "1.0.0", bin: { local: "index.js" } }));
+  await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
   await writeFile(join(root, "pnpm-workspace.yaml"), "packages: [packages/*]\n");
   await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nmkdir -p node_modules packages/local/node_modules\nprintf old > packages/local/node_modules/installed.txt\n');
   await installGitHubPullRequestWorkspace(root);
