@@ -69,3 +69,40 @@ it("rejects legacy npm versions with repository onload scripts before execution"
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/npm 7 or newer/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
+it("serializes host installers while cancellation does not hold up later work", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  const third = await fixture();
+  const marker = join(first, "installer-active");
+  const sequence = join(first, "sequence");
+  await writeFile(join(third, "bin", "corepack"), `#!/bin/sh
+if ! mkdir '${marker}'; then exit 88; fi
+trap 'rmdir "${marker}"' EXIT
+printf '%s\n' "$PWD" >> '${sequence}'
+sleep 0.15
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const abort = new AbortController();
+  const running = installGitHubPullRequestWorkspace(first);
+  const cancelled = installGitHubPullRequestWorkspace(second, abort.signal);
+  const last = installGitHubPullRequestWorkspace(third);
+  abort.abort(new DOMException("Cancelled queued checkout", "AbortError"));
+  await expect(cancelled).rejects.toThrow("Cancelled queued checkout");
+  await expect(running).resolves.toBeUndefined();
+  await expect(last).resolves.toBeUndefined();
+  expect((await readFile(sequence, "utf8")).trim().split("\n")).toEqual([first, third]);
+  await expect(readFile(join(second, "args.txt"))).rejects.toThrow();
+});
+
+it("releases the installer slot after a failed predecessor", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  await writeFile(join(second, "bin", "corepack"), `#!/bin/sh
+if [ "$PWD" = '${first}' ]; then exit 7; fi
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const failed = installGitHubPullRequestWorkspace(first);
+  const next = installGitHubPullRequestWorkspace(second);
+  await expect(failed).rejects.toBeInstanceOf(GitHubWorkspaceInstallError);
+  await expect(next).resolves.toBeUndefined();
+});

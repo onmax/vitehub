@@ -13,8 +13,36 @@ export class GitHubWorkspaceInstallError extends Error {
   constructor(cause: unknown) { super(`Frozen dependency installation failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
 }
 
+let installationTail: Promise<void> = Promise.resolve();
+
 /** Install frozen dependencies before entering the provider's network sandbox. */
 export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const previous = installationTail;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  // An aborted waiter releases its own reservation, but later work still waits
+  // for every predecessor. Installers can each use multiple GiB of host memory.
+  installationTail = previous.then(() => held);
+  let abort!: () => void;
+  try {
+    await Promise.race([
+      previous,
+      new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal?.reason ?? new DOMException("Installation cancelled.", "AbortError"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
+    ]);
+    signal?.throwIfAborted();
+    await installWorkspace(target, signal);
+  } finally {
+    signal?.removeEventListener("abort", abort);
+    release();
+  }
+}
+
+async function installWorkspace(target: string, signal?: AbortSignal): Promise<void> {
   if (!(await exists(join(target, "package.json")))) return;
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");

@@ -764,7 +764,8 @@ default) or `"claude-code"`. Set its model and other provider settings with the
 ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
 
 `install` defaults to `true`. The host installs dependencies from the frozen
-pnpm, npm, or Yarn lockfile before starting the provider. Lifecycle scripts and
+pnpm, npm, or Yarn lockfile before starting the provider. Installers run one at a
+time per host process to bound dependency setup memory. Lifecycle scripts and
 repository package-manager hooks, plugins, and binary delegation stay disabled.
 The package manager must name an official version, rather than a URL. Corepack
 uses the trusted npm registry and ignores checkout environment files. npm must
