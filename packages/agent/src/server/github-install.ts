@@ -6,6 +6,7 @@ import { createGitHubInstallSnapshot, publishGitHubInstallSnapshot } from "./git
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import * as v from "valibot";
+import { parse } from "yaml";
 
 const exec = promisify(execFile);
 const manifest = v.object({ packageManager: v.optional(v.string()) });
@@ -99,7 +100,11 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
         // skip-build also suppresses workspace scripts, unlike enableScripts alone.
         env.YARN_RC_FILENAME = `.vitehub-install-${randomUUID()}.yml`;
         yarnConfig = join(source, env.YARN_RC_FILENAME);
-        await writeFile(yarnConfig, "enableScripts: false\nignorePath: true\n", { flag: "wx" });
+        const projectConfig = join(source, ".yarnrc.yml");
+        const config = v.parse(v.object({ nodeLinker: v.optional(v.picklist(["pnp", "pnpm", "node-modules"])) }),
+          await exists(projectConfig) ? parse(await readFile(projectConfig, "utf8")) ?? {} : {});
+        const linker = config.nodeLinker ? `nodeLinker: ${config.nodeLinker}\n` : "";
+        await writeFile(yarnConfig, `enableScripts: false\nignorePath: true\n${linker}`, { flag: "wx" });
         args.push("--immutable", "--mode=skip-build");
       }
     }
