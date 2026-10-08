@@ -79,6 +79,8 @@ import { provideBrowserRuntimeEnvironment } from "../src/internal/browser-runtim
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { finalizeUiMessageStreamOutput } from "../src/stream-output.ts"
 import { applyAgentToolPolicies, withAgentToolStepReporting, withJsonCompatibleToolOutputs } from "../src/tool-runtime.ts"
+import { prepareGitHubPullRequestWorkspace } from "../src/server/github-checkout.ts"
+import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts"
 
 function event(type: string, threadId: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return { payload, threadId, type, ...extra }
@@ -4589,6 +4591,89 @@ cli_auth_credentials_store = "keyring"
 
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
     expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ AGENT_BROWSER_SESSION: "managed", AGENT_BROWSER_SOCKET_DIR: "/managed/socket", VITEHUB_BROWSER_ACTIVE: "1", PATH: "/managed/bin:/caller/bin", LD_LIBRARY_PATH: "/managed/lib:/caller/lib" }) }))
+  })
+
+  it.each([
+    { provider: "codex" as const, merge: false },
+    { provider: "codex" as const, merge: true },
+    { provider: "claude-code" as const, merge: false },
+    { provider: "claude-code" as const, merge: true },
+  ])("preserves a $provider checkout restored by launch in an owned Workspace, merge=$merge", async ({ provider, merge }) => {
+    const source = await mkdtemp(join(tmpdir(), "vitehub-launch-checkout-"))
+    let root = ""
+    const git = (cwd: string, ...args: string[]) => {
+      const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout.trim()
+    }
+    try {
+      git(source, "init", "-q", "-b", "main")
+      git(source, "config", "user.name", "Test")
+      git(source, "config", "user.email", "test@localhost")
+      git(source, "remote", "add", "origin", "https://github.com/acme/portal.git")
+      await writeFile(join(source, "AGENTS.md"), "native instructions")
+      await writeFile(join(source, "CLAUDE.md"), "native Claude instructions")
+      await writeFile(join(source, "file.txt"), "original\n")
+      git(source, "add", "-A")
+      git(source, "commit", "-qm", "initial")
+      git(source, "branch", "feature")
+      await writeFile(join(source, "file.txt"), "base edit\n")
+      git(source, "add", "-A")
+      git(source, "commit", "-qm", "base change")
+      const base = git(source, "rev-parse", "HEAD")
+      git(source, "checkout", "-q", "feature")
+      await writeFile(join(source, "file.txt"), "PR edit\n")
+      git(source, "add", "-A")
+      git(source, "commit", "-qm", "PR change")
+      const expectedHead = git(source, "rev-parse", "HEAD")
+      const session = {
+        close: vi.fn(async () => undefined),
+        commit: vi.fn(async () => undefined),
+        diff: vi.fn(async () => ({ entries: [] })),
+        exec: vi.fn(async (command: string, args: string[] = []) => {
+          const result = spawnSync(command, args, { cwd: root, encoding: "utf8" })
+          return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+        }),
+        readFile: vi.fn(async () => new Uint8Array()),
+      }
+      const workspace = {
+        fs: {},
+        tools: {},
+        startSession: vi.fn(async ({ target }: { target: string }) => {
+          root = target
+          await writeFile(join(root, "file.txt"), "PR edit\n")
+          return session
+        }),
+      }
+      const threadId = `thread-launch-checkout-${provider}-${merge}`
+      runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+        async onSendTurn() {
+          await writeFile(join(root, "file.txt"), "repaired\n")
+          const repairedHead = await commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["file.txt"] }, { expectedHead })
+          expect(git(root, "rev-parse", `${repairedHead}^1`)).toBe(expectedHead)
+          if (merge) expect(git(root, "rev-parse", `${repairedHead}^2`)).toBe(base)
+          expect(git(root, "log", "--format=%s")).not.toContain("vitehub provider baseline")
+          expect(git(root, "show", "HEAD:AGENTS.md")).toBe("native instructions")
+          expect(git(root, "show", "HEAD:CLAUDE.md")).toBe("native Claude instructions")
+          expect(git(root, "ls-tree", "-r", "--name-only", "HEAD")).not.toContain("vitehub-system-prompt")
+          expect(git(root, "show", "HEAD:file.txt")).toBe("repaired")
+        },
+      })
+      await createProviderAgentAdapter({
+        instructions: "generated repair instructions",
+        launch: async ({ command, cwd }) => {
+          expect(cwd).toBe(root)
+          await prepareGitHubPullRequestWorkspace(source, root, { restoreInstructions: true })
+          if (merge) await prepareGitHubRepairBase(root, { expectedHead, base })
+          return { command }
+        },
+        provider,
+      }).generate(context(threadId, { workspace, workspaceDefinition: { mode: "write", name: "repair" }, workspaceMode: "write" }) as never)
+      expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.includes("vitehub provider baseline"))).toBe(false)
+    }
+    finally {
+      await rm(source, { recursive: true, force: true })
+    }
   })
 
   it.each(["codex", "claude-code"] as const)("prepares the %s checkout merge before injecting instructions", async provider => {

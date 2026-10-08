@@ -3004,9 +3004,6 @@ async function* runProvider<
       )
       toolchainPath.push(...toolchain.bin)
     }
-    // An application-owned Git checkout in driver.cwd must not track generated instruction files either.
-    const pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
-      || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
     if (workspaceSession) {
       clearActiveWorkspaceFiles = setActiveAgentWorkspaceFiles(context.context, {
         async readFile(path) {
@@ -3200,6 +3197,18 @@ async function* runProvider<
       )
       providerLauncher = materializedLauncher.path
       providerLaunchDiagnosticPath = materializedLauncher.diagnosticPath
+    }
+    // Launch may restore source Git ancestry after Workspace initialization.
+    // Preserve a committed root checkout, but still baseline a fresh outer
+    // Workspace when the provider uses a nested source repository.
+    let pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
+      || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
+    if (!pullRequestRoot && workspaceSession && !preparedWorkspace?.projectRoot) {
+      const head = await waitForProviderOperation(
+        workspaceSession.exec("git", ["rev-parse", "--verify", "HEAD"], { abortSignal: effectiveSignal }),
+        effectiveSignal,
+      )
+      pullRequestRoot = head.exitCode === 0 && /^[\da-f]{40}(?:[\da-f]{24})?$/i.test(head.stdout.trim())
     }
     // Host launch preparation must see source-authored instruction files.
     let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
