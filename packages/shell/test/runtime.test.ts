@@ -117,6 +117,26 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await expect(session.dispose()).resolves.toMatchObject({ event: "session_disposed" })
   })
 
+  it("retains class-based background process metadata for inspection", async () => {
+    class BackgroundProcess implements ShellProcess {
+      #command = "worker"
+      get id() { return "process-1" }
+      get command() { return this.#command }
+      get cwd() { return "/workspace" }
+      async stop() { return stoppedProcessObservation(this.#command) }
+    }
+    const process = new BackgroundProcess()
+    const stop = vi.spyOn(process, "stop")
+    const session = createShellRuntime({ provider: createBackgroundProvider(async () => process) }).createSession()
+
+    const tracked = await session.startProcess("worker")
+
+    expect(tracked).toMatchObject({ id: "process-1", command: "worker", cwd: "/workspace" })
+    expect(await session.listProcesses()).toEqual([tracked])
+    await session.dispose()
+    expect(stop).toHaveBeenCalledOnce()
+  })
+
   it.each([{ commands: ["curl"] }, { commands: undefined }])("runs controlled curl through the just-bash provider network boundary with commands $commands", async ({ commands }) => {
     const workspace = new MemoryWorkspace({})
     const executeSourceRequest = vi.fn(async () => ({ content: "ok\n" }))

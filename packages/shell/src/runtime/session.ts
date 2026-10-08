@@ -136,7 +136,7 @@ class RuntimeShellSession implements ShellSession {
       )
       return stopTask
     }
-    trackedProcess = { ...process, stop }
+    trackedProcess = { id: process.id, command: process.command, cwd: process.cwd, stop }
     this.#processes.add(trackedProcess)
     finishStart()
     if (this.#disposed) {
