@@ -40,6 +40,7 @@ import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
 import { importBoxCommit } from "./box-commit.ts";
+import { importBoxRepairFiles, importBoxRepairWorkspace, publishBoxDependencies } from "./box-repair.ts";
 import { activeProviderBox } from "../../internal/provider-box.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
@@ -890,6 +891,22 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   throw changed;
                 }
               };
+              const prepareRepairWorkspace = async (directory: string) => {
+                if (!preparedDirectories.has(directory)) {
+                  if (directory !== checkout) await prepared.prepareWorkspace(directory);
+                  if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
+                    if (!pullRequest.baseRefOid) throw new Error("Conflict repair requires the exact base commit.");
+                    await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base: pullRequest.baseRefOid, signal: abortSignal });
+                    preparedMergeBase = pullRequest.baseRefOid;
+                  }
+                  if (presetOptions.install !== false) {
+                    // Dependency conflicts must be resolved before the explicit refresh tool can install.
+                    try { await installGitHubPullRequestWorkspace(directory, abortSignal); }
+                    catch (error) { if (!preparedMergeBase || abortSignal.aborted || !(error instanceof GitHubWorkspaceInstallError) || !(error.cause instanceof GitHubDependencyConflictError)) throw error; }
+                  }
+                  preparedDirectories.add(directory);
+                }
+              };
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
                 command: async (args, request) => {
                   await assertLease();
@@ -996,6 +1013,28 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 if (!session) throw new Error("The repair Box is not prepared.");
                 await assertLease();
                 if (!session.localWorkspace) await importBoxCommit(session.session, checkout, pullRequest.headRefOid, abortSignal);
+              }, {
+                beforeRepair: async (context, paths) => {
+                  if (!workerSettings.box) return;
+                  await assertLease();
+                  await assertRepairBase();
+                  const box = activeProviderBox(context);
+                  if (!box) throw new Error("The repair Box is not prepared.");
+                  if (!box.localWorkspace) {
+                    await importBoxCommit(box.session, checkout, pullRequest.headRefOid, abortSignal);
+                    if (paths) await importBoxRepairFiles(box.session, checkout, paths, abortSignal);
+                    else await importBoxRepairWorkspace(box.session, checkout, abortSignal);
+                  }
+                  await assertLease();
+                },
+                afterRefresh: async context => {
+                  if (!workerSettings.box || presetOptions.install === false) return;
+                  await assertLease();
+                  const box = activeProviderBox(context);
+                  if (!box) throw new Error("The repair Box is not prepared.");
+                  if (!box.localWorkspace) await publishBoxDependencies(box.session, checkout, abortSignal);
+                  await assertLease();
+                },
               });
               // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
               const workerCapabilities = typeof baseCapabilities === "function"
@@ -1059,20 +1098,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   },
                   ...(workerSettings.box ? undefined : { launch: async (context: AgentProviderLaunchContext) => {
                     if (context.purpose !== "inspection") {
-                      if (!preparedDirectories.has(context.cwd)) {
-                        await prepared.prepareWorkspace(context.cwd);
-                        if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
-                          if (!pullRequest.baseRefOid) throw new Error("Conflict repair requires the exact base commit.");
-                          await prepareGitHubRepairBase(context.cwd, { expectedHead: pullRequest.headRefOid, base: pullRequest.baseRefOid, signal: abortSignal });
-                          preparedMergeBase = pullRequest.baseRefOid;
-                        }
-                        if (presetOptions.install !== false) {
-                          // Dependency conflicts must be resolved before the explicit refresh tool can install.
-                          try { await installGitHubPullRequestWorkspace(context.cwd, abortSignal); }
-                          catch (error) { if (!preparedMergeBase || abortSignal.aborted || !(error instanceof GitHubWorkspaceInstallError) || !(error.cause instanceof GitHubDependencyConflictError)) throw error; }
-                        }
-                        preparedDirectories.add(context.cwd);
-                      }
+                      await prepareRepairWorkspace(context.cwd);
                       providerDirectory = context.cwd;
                     }
                     const launch = workerDriver.launch
@@ -1085,6 +1111,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   } }),
                 },
               };
+              if (workerSettings.box) {
+                // Box runtimes copy the host cwd when they open. Prepare the
+                // exact merge and installed graph before that copy is taken.
+                await prepareRepairWorkspace(checkout);
+                if (await parkBlockedModelWork()) throw new DOMException("Provider dispatch is waiting for admission.", "AbortError");
+              }
               const agent = workerSettings.box
                 ? defineAgent({ ...workerOptions, box: { ...workerSettings.box, checkout: undefined, cwd: checkout, requires: [...(workerSettings.box.requires ?? []), "git"] } })
                 : defineAgent({ ...workerOptions, workspace: {

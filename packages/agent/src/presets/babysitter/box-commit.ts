@@ -34,6 +34,10 @@ export async function importBoxCommit(session: BoxSession, checkout: string, bas
     await localGit(["-c", "protocol.file.allow=always", "fetch", "--no-tags", "--", bundle, "HEAD"]);
     if (await localGit(["rev-parse", "FETCH_HEAD"]) !== head) throw new Error("The repair Box HEAD changed during export.");
     await localGit(["merge-base", "--is-ancestor", base, head]);
+    // A broker commit may already include the imported Box ancestor. Never
+    // replace it with that older HEAD, or overwrite a divergent host repair.
+    if (await localGit(["merge-base", "--is-ancestor", head, previous]).then(() => true, () => false)) return;
+    await localGit(["merge-base", "--is-ancestor", previous, head]);
     await localGit(["update-ref", "HEAD", head, previous]);
   } finally {
     // Cleanup must not hide an import error or prevent publication of an imported commit.
