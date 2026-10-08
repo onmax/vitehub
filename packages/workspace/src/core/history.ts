@@ -8,7 +8,7 @@ import { createWorkspaceWritePolicy } from "./rules.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 
 import type { WorkspaceSourceView, WorkspaceSourceWriteGrant } from "../sources/view.ts"
-import type { Workspace, WorkspaceDefinition, WorkspaceFile, WorkspaceRetainedHistory, WorkspaceRevision, WorkspaceStore, WorkspaceWriteInput } from "./types.ts"
+import type { Workspace, WorkspaceDefinition, WorkspaceFile, WorkspaceHistoryReader, WorkspaceRetainedHistory, WorkspaceRevision, WorkspaceStore, WorkspaceWriteInput } from "./types.ts"
 
 export function requireWorkspaceHistory(workspace: Pick<Workspace, "history">): WorkspaceRetainedHistory {
   if (!workspace.history) throw historyUnavailable()
@@ -17,6 +17,20 @@ export function requireWorkspaceHistory(workspace: Pick<Workspace, "history">): 
 
 function historyUnavailable() {
   return workspaceErrorDiagnostics.WORKSPACE_R0069({ message: "[vitehub] This Workspace Store does not support retained history. Configure a Store with the history capability." })
+}
+
+/** Forward history only when the caller can inspect the complete folder. */
+export function createWorkspaceHistoryReader(history: WorkspaceHistoryReader, complete: boolean): WorkspaceHistoryReader {
+  function requireHistory() {
+    if (!complete) throw workspaceErrorDiagnostics.WORKSPACE_R0069({ message: "[vitehub] Retained folder history requires access to the complete Workspace." })
+    return history
+  }
+  return {
+    head: async () => await requireHistory().head(),
+    list: async options => await requireHistory().list(options),
+    open: async id => await requireHistory().open(id),
+    usage: async () => await requireHistory().usage(),
+  }
 }
 
 export function normalizeHistoryPath(path: string): string {

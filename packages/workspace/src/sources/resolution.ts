@@ -1,7 +1,7 @@
 import { createWorkspaceTools } from "../ai.ts"
 import { workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath, sha256 } from "../core/path.ts"
-import { normalizeHistoryPath } from "../core/history.ts"
+import { createWorkspaceHistoryReader, normalizeHistoryPath } from "../core/history.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 import { createWorkspaceWritePolicy } from "../core/rules.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
@@ -41,7 +41,6 @@ import type {
   WorkspaceSearchHit,
   WorkspaceSearchQuery,
   WorkspaceStore,
-  WorkspaceHistoryReader,
   WorkspaceHistoryCommitOptions,
   WorkspaceSession,
   WorkspaceSessionOptions,
@@ -336,12 +335,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     }
     return workspace.history
   }
-  const history: WorkspaceHistoryReader = {
-    head: async () => await requireCompleteHistory().head(),
-    list: async options => await requireCompleteHistory().list(options),
-    open: async id => await requireCompleteHistory().open(id),
-    usage: async () => await requireCompleteHistory().usage(),
-  }
+  const history = createWorkspaceHistoryReader(workspace.history, !selectedWorkspaceScope || selectedWorkspaceScope.all)
   const materializeSources = async (options = {}) => await sourceView.materializeSources(options)
   const canUseBase = (path: string) => !overlayStore.isTombstoned(normalizeWorkspacePath(path))
   let readWorkspace!: Workspace

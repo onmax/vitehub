@@ -14,7 +14,7 @@ import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 
 import type { BlobStorage } from "@vite-hub/blob"
 import type { RuntimeDrizzleDatabase } from "@vite-hub/database"
-import type { DiffOptions, GlobOptions, ListOptions, MkdirOptions, RmOptions, SnapshotOptions, WorkspaceFile, WorkspaceHistoryListOptions, WorkspaceRevision, WorkspaceRevisionView, WorkspaceSnapshot, WorkspaceStore, WorkspaceStoreHistory } from "../core/types.ts"
+import type { DiffOptions, GlobOptions, ListOptions, MkdirOptions, RmOptions, SnapshotOptions, WorkspaceFile, WorkspaceHistoryListOptions, WorkspaceHistoryListResult, WorkspaceRevision, WorkspaceRevisionView, WorkspaceSnapshot, WorkspaceStore, WorkspaceStoreHistory } from "../core/types.ts"
 
 const { workspaceHistoryRefs: refs, workspaceHistoryRevisions: revisions, workspaceHistoryObjects: objects, workspaceHistoryMetadata: metadata } = workspaceHistorySchema
 type RevisionRow = typeof revisions.$inferSelect
@@ -36,15 +36,16 @@ export interface BlobDatabaseWorkspaceStore extends WorkspaceStore {
 }
 
 function publicRevision(row: RevisionRow): WorkspaceRevision {
-  return {
+  const revision: WorkspaceRevision = {
     id: row.id,
     parentId: row.parentId,
     createdAt: row.createdAt,
-    ...(row.message === null ? {} : { message: row.message }),
-    ...(row.metadata === null ? {} : { metadata: structuredClone(row.metadata) }),
     files: row.files,
     bytes: row.bytes,
   }
+  if (row.message !== null) revision.message = row.message
+  if (row.metadata !== null) revision.metadata = structuredClone(row.metadata)
+  return revision
 }
 
 class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
@@ -140,7 +141,9 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
       cursor ? lt(revisions.sequence, cursor.sequence) : undefined,
       sql`exists (select 1 from ${refs} where ${refs.workspace} = ${workspace} and ${refs.deleted} = 0)`,
     )).orderBy(desc(revisions.sequence)).limit(limit + 1)
-    return { revisions: rows.slice(0, limit).map(publicRevision), ...(rows.length > limit ? { cursor: rows[limit - 1]!.id } : {}) }
+    const result: WorkspaceHistoryListResult = { revisions: rows.slice(0, limit).map(publicRevision) }
+    if (rows.length > limit) result.cursor = rows[limit - 1]!.id
+    return result
   }
 
   async #open(id: string): Promise<WorkspaceRevisionView> {
@@ -203,7 +206,9 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
       if (!hasRuntimeType(file.content, "string") && !(file.content instanceof Uint8Array)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
       const bytes = contentToBytes(file.content).slice()
       const digest = await sha256(bytes)
-      entries[normalized] = { digest, size: bytes.byteLength, mediaType: file.mediaType || "application/octet-stream", ...(file.metadata === undefined ? {} : { metadata: copyJsonFileMetadata(normalized, file.metadata) }) }
+      const entry: HistoryManifestFile = { digest, size: bytes.byteLength, mediaType: file.mediaType || "application/octet-stream" }
+      if (file.metadata !== undefined) entry.metadata = copyJsonFileMetadata(normalized, file.metadata)
+      entries[normalized] = entry
       contents.set(digest, bytes)
     }
     for (const path of Object.keys(entries)) {
