@@ -42,6 +42,8 @@ node rate-limit.mjs
 
 The first two calls consume the budget. The third call returns a limited decision.
 
+The window must resolve to finite milliseconds greater than zero. Invalid policies fail when you create the limiter.
+
 ```text
 1: allowed
 2: allowed

@@ -17,12 +17,13 @@ function parseRateLimitWindow(value: RateLimitWindow): number {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0031({ message: "[vitehub] Rate Limit window must use a duration such as \"10s\", \"1m\", \"1h\", or \"1d\"." })
   }
 
-  const amount = Number(match[1])
-  if (!Number.isFinite(amount) || amount <= 0) {
-    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0032({ message: "[vitehub] Rate Limit window must be greater than zero." })
+  // SAFETY: The duration regex limits the unit capture to keys in unitMilliseconds.
+  const windowMs = Math.ceil(Number(match[1]) * unitMilliseconds[match[2] as keyof typeof unitMilliseconds])
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0032({ message: "[vitehub] Rate Limit window must resolve to finite milliseconds greater than zero." })
   }
 
-  return Math.ceil(amount * unitMilliseconds[match[2] as keyof typeof unitMilliseconds])
+  return windowMs
 }
 
 export function normalizeRateLimitPolicy(policy: RateLimitPolicy): ResolvedRateLimitPolicy {
