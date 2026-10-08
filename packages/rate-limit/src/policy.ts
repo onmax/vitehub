@@ -19,8 +19,8 @@ function parseRateLimitWindow(value: RateLimitWindow): number {
 
   // SAFETY: The duration regex limits the unit capture to keys in unitMilliseconds.
   const windowMs = Math.ceil(Number(match[1]) * unitMilliseconds[match[2] as keyof typeof unitMilliseconds])
-  if (!Number.isFinite(windowMs) || windowMs <= 0) {
-    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0032({ message: "[vitehub] Rate Limit window must resolve to finite milliseconds greater than zero." })
+  if (!Number.isFinite(windowMs) || windowMs <= 0 || windowMs > 8.64e15) {
+    throw rateLimitErrorDiagnostics.RATE_LIMIT_R0032({ message: "[vitehub] Rate Limit window must resolve to finite milliseconds greater than zero and at most 8640000000000000." })
   }
 
   return windowMs

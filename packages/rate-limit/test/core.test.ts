@@ -141,6 +141,19 @@ describe("Rate Limit core", () => {
     expect(() => createRateLimiter(options)).toThrow("finite")
   })
 
+  it.each(["8640000000000001ms", "8640000000001s", "144000000001m", "2400000001h", "100000001d"] as const)("rejects %s windows outside the timestamp range", (window) => {
+    expect(() => createRateLimiter({ driver: memoryRateLimitDriver(), limit: 1, window })).toThrow("8640000000000000")
+  })
+
+  it.each(["8640000000000000ms", "100000000d"] as const)("keeps %s counter reset timestamps inspectable", async (window) => {
+    const limiter = createRateLimiter({ driver: memoryRateLimitDriver({ now: () => 60_001 }), limit: 1, window })
+    const consumed = await limiter.consume({ key: "user" })
+    expect(consumed.resetAt).toBe(8.64e15)
+    const counter = await limiter.peek({ key: "user" })
+    expect(counter).toMatchObject({ resetAt: 8.64e15, status: "known", used: 1 })
+    expect(new Date(consumed.resetAt!).toISOString()).toBe("+275760-09-13T00:00:00.000Z")
+  })
+
   it("consumes a fixed window atomically in memory", async () => {
     let now = 60_001
     const driver = memoryRateLimitDriver({ now: () => now })

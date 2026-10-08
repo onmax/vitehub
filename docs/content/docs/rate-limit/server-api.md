@@ -25,7 +25,7 @@ The ID, `limit`, `window`, `enforcement`, and `failure` must use static literals
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `limit` | positive integer | required | Allowed consumptions in each fixed window. |
-| `window` | duration string | required | Fixed window such as `10s`, `1m`, `1h`, or `1d`. It must resolve to finite milliseconds greater than zero. |
+| `window` | duration string | required | Fixed window such as `10s`, `1m`, `1h`, or `1d`. It must resolve to finite milliseconds greater than zero and at most `8.64e15`. |
 | `enforcement` | `"best-effort" \| "strict"` | `"best-effort"` | Minimum enforcement guarantee the selected driver must provide. |
 | `failure` | `"deny" \| "allow"` | `"deny"` | Whether an unavailable driver returns a denied or allowed unavailable decision. |
 | `key` | `string` | request client address | Runtime identity for a user, tenant, account, or API client. |
