@@ -128,6 +128,7 @@ const hostedAgentRoot = join(import.meta.dirname, "../../../fixtures/tutorials/a
 function agentProviderOutputAliases(extra: Array<{ find: string; replacement: string }> = []) {
   return [
     ...extra,
+    { find: "@vite-hub/agent/server/registry", replacement: resolve(import.meta.dirname, "../src/server/registry.ts") },
     { find: "@vite-hub/agent/server/internal", replacement: resolve(import.meta.dirname, "../src/server/internal.ts") },
     { find: "@vite-hub/agent/server/workspace", replacement: resolve(import.meta.dirname, "../src/server/workspace.ts") },
     { find: "@vite-hub/agent/state/sqlite", replacement: resolve(import.meta.dirname, "../src/state/sqlite.ts") },

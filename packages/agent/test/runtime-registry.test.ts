@@ -47,7 +47,8 @@ it.each(['review', '__proto__'])('bundles the published runtime lookup for %s wi
   const aliases = (configured as { resolve: { alias: Record<string, string> } }).resolve.alias
   const registry = aliases['#vitehub/agent/registry']!
   expect(configured).toMatchObject({ nitro: { alias: { '#vitehub/agent/registry': registry } } })
-  expect(await readFile(registry, 'utf8')).toContain("if (typeof resetPublicUrlAgentNames === 'function') resetPublicUrlAgentNames()")
+  expect(await readFile(registry, 'utf8')).toContain('import { resetPublicUrlAgentNames } from "@vite-hub/agent/server/registry"')
+  expect(await readFile(registry, 'utf8')).toContain('\nresetPublicUrlAgentNames()\n')
   expect(await readFile(registry, 'utf8')).toContain('await import(')
   const entry = join(root, 'entry.ts')
   await writeFile(entry, `import { getAgentFromRegistry } from '@vite-hub/agent'
@@ -120,17 +121,20 @@ export async function inspect() {
 it('clears external runtime aliases on each internal-first Vite SSR load', async () => {
   const { root } = await fixture(false)
   const packageRoot = fileURLToPath(new URL('..', import.meta.url))
-  const runtime = await import('@vite-hub/runtime')
+  const probe = join(root, 'runtime-probe.mjs')
+  await writeFile(probe, "export { registerPublicUrlAgentName, resolvePublicUrl } from '@vite-hub/runtime'")
   await mkdir(join(root, 'node_modules/@vite-hub'), { recursive: true })
   await symlink(packageRoot, join(root, 'node_modules/@vite-hub/agent'), 'dir')
   await symlink(join(packageRoot, '../workspace'), join(root, 'node_modules/@vite-hub/workspace'), 'dir')
+  await symlink(join(packageRoot, '../runtime'), join(root, 'node_modules/@vite-hub/runtime'), 'dir')
   vi.stubGlobal('__VITEHUB_PUBLIC_URL__', { agents: { review: 'https://review.example' } })
   try {
     for (let load = 0; load < 2; load++) {
-      runtime.registerPublicUrlAgentName('removed-agent', 'review')
-      expect(runtime.resolvePublicUrl({ agentName: 'removed-agent' })).toBe('https://review.example')
       const server = await createServer({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { middlewareMode: true, watch: null } })
       try {
+        const runtime = await server.ssrLoadModule(probe)
+        runtime.registerPublicUrlAgentName('removed-agent', 'review')
+        expect(runtime.resolvePublicUrl({ agentName: 'removed-agent' })).toBe('https://review.example')
         const internal = await server.ssrLoadModule(join(packageRoot, 'dist/server/internal.js'))
         expect(typeof internal.resetPublicUrlAgentNames).toBe('function')
         expect((await server.ssrLoadModule(join(root, '.vitehub/agent/registry.mjs'))).default).toEqual({})
@@ -138,7 +142,6 @@ it('clears external runtime aliases on each internal-first Vite SSR load', async
       } finally { await server.close() }
     }
   } finally {
-    runtime.resetPublicUrlAgentNames()
     vi.unstubAllGlobals()
   }
 }, 30_000)
