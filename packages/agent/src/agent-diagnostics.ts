@@ -7,9 +7,6 @@ const providerErrorEnvelopeSchema = v.object({
 })
 
 const agentTypeDiagnosticCodes = new Set([
-  "AGENT_R0942",
-  "AGENT_R0943",
-  "AGENT_R0945",
   "AGENT_R0923",
   "AGENT_R0922",
   "AGENT_R0921",
@@ -276,6 +273,9 @@ const agentTypeDiagnosticCodes = new Set([
   "AGENT_R0933",
   "AGENT_R0939",
   "AGENT_R0940",
+  "AGENT_R0942",
+  "AGENT_R0943",
+  "AGENT_R0945",
   "AGENT_R0501",
   "AGENT_R0508",
   "AGENT_R0509",
@@ -476,16 +476,6 @@ const dynamicError = {
 export const agentDiagnostics = defineDiagnostics({
   docsBase: () => "https://vitehub.dev/docs/reference/errors-diagnostics#agent-public-errors",
   codes: {
-    AGENT_C0011: {
-      why: "[vitehub] codeHost() requires valid host, repositories, output limit and operations for its mode.",
-      fix: "Use mode write for write operations and policy. Use repository names or owner/* patterns.",
-    },
-    AGENT_R0941: dynamicError,
-    AGENT_R0942: dynamicError,
-    AGENT_R0943: dynamicError,
-    AGENT_R0944: dynamicError,
-    AGENT_R0945: dynamicError,
-
     AGENT_R0907: dynamicError,
     AGENT_R0908: dynamicError,
     AGENT_R0909: dynamicError,
@@ -1539,6 +1529,11 @@ export const agentDiagnostics = defineDiagnostics({
       fix: "Set vitehub({ observability: { service } }) in the Vite config.",
     },
     AGENT_R0940: dynamicError,
+    AGENT_R0941: dynamicError,
+    AGENT_R0942: dynamicError,
+    AGENT_R0943: dynamicError,
+    AGENT_R0944: dynamicError,
+    AGENT_R0945: dynamicError,
     AGENT_R0928: {
       why: "[vitehub] Provider Agent Drivers are not included in Worker builds. They start local Codex or Claude Code processes, which require a Node.js host.",
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",
@@ -1550,6 +1545,10 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_C0010: {
       why: ({ id, unsupported }: { id: string, unsupported: string[] }) => `[vitehub] Invocation-resolved Capability "${id}" cannot contribute ${unsupported.join(", ")}. Attach definition-time behavior in a static capabilities array.`,
       fix: "Move triggers, workspaceSources, and chat access to a static capabilities array.",
+    },
+    AGENT_C0011: {
+      why: "[vitehub] codeHost() requires valid host, repositories, output limit and operations for its mode.",
+      fix: "Use mode write for write operations and policy. Use repository names or owner/* patterns.",
     },
     AGENT_R0003: {
       why: ({ name }: { name: string }) => `[vitehub:agent] Tool "${name}" failed with a retryable policy decision.`,
