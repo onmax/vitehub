@@ -508,6 +508,10 @@ describe("@vite-hub/shell just-bash runtime", () => {
     { encoding: "utf-8", content: "\u0080é" },
     { encoding: "binary", content: "\u0000\u0080\u00ff" },
     { encoding: "latin1", content: "\u0000\u0080\u00ff" },
+    { encoding: "binary", content: "🙂" },
+    { encoding: "latin1", content: "🙂" },
+    { encoding: "binary", content: "x".repeat(65536) + "🙂" },
+    { encoding: "latin1", content: "x".repeat(65536) + "🙂" },
     { encoding: "hex", content: "0080ff" },
     { encoding: "hex", content: "ff0" },
     { encoding: "hex", content: "fgzz80" },
@@ -516,7 +520,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
     { encoding: "base64", content: "A" },
     { encoding: "base64", content: "AA!=" },
     { encoding: "base64", content: "__8=" },
-  ] as const)("matches Just Bash writes for $encoding input $content", async ({ encoding, content }) => {
+  ] as const)("matches Just Bash writes for $encoding case %#", async ({ encoding, content }) => {
     for (const method of ["writeFile", "appendFile"] as const) {
       const path = "/workspace/data.bin"
       const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": "prefix" }))
