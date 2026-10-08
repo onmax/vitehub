@@ -141,7 +141,14 @@ async function readJson<T>(response: Response, parse: (value: unknown) => T): Pr
     const message = await response.text().catch(() => "")
     throw new Error(`Upload request failed with status ${response.status}${message ? `: ${message}` : ""}`)
   }
-  return parse(await response.json())
+  let body: unknown
+  try {
+    body = await response.json()
+  }
+  catch {
+    throw new Error("Upload request returned malformed JSON.")
+  }
+  return parse(body)
 }
 
 /**
