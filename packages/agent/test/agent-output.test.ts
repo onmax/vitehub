@@ -628,6 +628,24 @@ describe("agent output helpers", () => {
     expect(events).toEqual([{ type: "usage", usageRecord }])
   })
 
+  it.each(["iterable", "stream", "fullStream"] as const)("delivers usage before a fatal %s consumer stops", async shape => {
+    const usageRecord = { usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 } }
+    const chunks = (async function* () {
+      yield { type: "usage", usageRecord }
+      yield { type: "error", error: "terminal failure" }
+      throw new Error("source stopped")
+    })()
+    const events: unknown[] = []
+    const read = async () => {
+      for await (const event of streamAgentOutputToEvents(shape === "iterable" ? chunks : { [shape]: chunks })) {
+        if (event.type === "error") throw new Error(event.error)
+        events.push(event)
+      }
+    }
+    await expect(read()).rejects.toThrow("terminal failure")
+    expect(events).toEqual([{ type: "usage", usageRecord }])
+  })
+
   it("preserves measured usage when fallback text throws", async () => {
     const failure = new Error("text interrupted")
     const usageRecord = { usage: { inputTokens: 7 } }

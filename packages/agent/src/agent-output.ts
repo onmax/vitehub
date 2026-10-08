@@ -713,6 +713,10 @@ async function* streamChunksToEvents(
         finishEvent = event
         continue
       }
+      if (event.type === "error" && !event.recoverable && usageRecord) {
+        yield { type: "usage", usageRecord }
+        usageRecord = undefined
+      }
       yield event
     }
   }
@@ -742,6 +746,12 @@ async function* streamChunksToEventsWithTextFallback(
       if (event.type === "finish" || event.type === "usage") {
         terminalEvents.push(event)
         continue
+      }
+      if (event.type === "error" && !event.recoverable) {
+        // Fatal consumers stop pulling here, so flush retained accounting first.
+        for (const terminal of terminalEvents.splice(0)) {
+          if (terminal.type === "usage") yield terminal
+        }
       }
       yield event
     }
