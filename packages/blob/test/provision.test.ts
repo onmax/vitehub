@@ -81,6 +81,12 @@ describe("blob cloudflare provision step", () => {
     await expect(plan(fetchImpl)).rejects.toMatchObject({ code: "BLOB_R0018" })
   })
 
+  it("rejects a Cloudflare bucket-list response without a result envelope", async () => {
+    const fetchImpl = mockFetch(async () => jsonResponse({ success: true }))
+
+    await expect(plan(fetchImpl)).rejects.toMatchObject({ code: "BLOB_R0018" })
+  })
+
   it("rejects a repeated R2 pagination cursor", async () => {
     const fetchImpl = mockFetch(async () => jsonResponse({
       success: true,
