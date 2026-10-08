@@ -63,6 +63,8 @@ describe("source scanner", () => {
 
   it.each([
     "<Email></Email>",
+    '<Email /* " */></Email>',
+    '<Email></Email /* " */>',
     "<Email />",
     "<T extends />",
     "<Email<string>></Email>",
@@ -94,6 +96,8 @@ describe("source scanner", () => {
 
   it.each([
     ['<Email>{import(target)}</Email>', '{import(target)}'],
+    ['<Email /* " */>{import(target)}</Email>', '{import(target)}'],
+    ['<Email>{import(target)}</Email /* " */>', '{import(target)}'],
     ['<Email<() => string>>{import(target)}</Email>', '{import(target)}'],
     ['<Email value={import(target)} />', '{import(target)}'],
     ['<Email><Email>{import(target)}</Email></Email>', '{import(target)}'],
@@ -106,7 +110,7 @@ describe("source scanner", () => {
     expect(masked).not.toContain("<Email")
   })
 
-  it.each(['<Email label="{import(fake)}">import(fake)</Email>', '<Email<string>>import(fake)</Email>'])("masks raw JSX fake requests: %s", (source) => {
+  it.each(['<Email label="{import(fake)}">import(fake)</Email>', '<Email<string>>import(fake)</Email>', '<Email /* " */>import(fake)</Email>', '<Email>import(fake)</Email /* " */>', `<Email label='/* " */'>import(fake)</Email>`])("masks raw JSX fake requests: %s", (source) => {
     expect(jsxScanner.maskSourceLiterals(source)).toBe(" ".repeat(source.length))
   })
 

@@ -521,6 +521,8 @@ function readJsxElement(source: string, index: number, controlFlowRegexes: Contr
   }
   if (!name && source[current] !== ">") return
   while (current < source.length && source[current] !== ">") {
+    current = skipWhitespaceAndComments(source, current)
+    if (source[current] === ">") break
     if (source[current] === "\"" || source[current] === "'") {
       const end = source.indexOf(source[current], current + 1)
       if (end === -1) return
@@ -541,8 +543,10 @@ function readJsxElement(source: string, index: number, controlFlowRegexes: Contr
   if (!source.includes(`</${name}`, current)) return
   while (current < source.length) {
     if (source.startsWith("</", current)) {
-      const closing = /^<\/([$_\p{ID_Start}][-$.:\p{ID_Continue}\u200C\u200D]*)?\s*>/u.exec(source.slice(current))
-      return closing && (closing[1] ?? "") === name ? { end: current + closing[0].length, expressions } : undefined
+      const closing = /^<\/([$_\p{ID_Start}][-$.:\p{ID_Continue}\u200C\u200D]*)?(?=[\s/>])/u.exec(source.slice(current))
+      if (!closing || (closing[1] ?? "") !== name) return
+      const end = skipWhitespaceAndComments(source, current + closing[0].length)
+      return source[end] === ">" ? { end: end + 1, expressions } : undefined
     }
     if (source[current] === "<") {
       const end = skipJsxElement(source, current, controlFlowRegexes)
