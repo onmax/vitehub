@@ -416,6 +416,23 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
 }
 
 describe("Babysitter preset runtime", () => {
+  it("releases the active owner slot when durable lease cleanup fails", async () => {
+    const f = await fixture(false);
+    vi.spyOn(f.runtime.inbox, "release").mockRejectedValueOnce(new Error("temporary state store failure"));
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect(f.runtime.workload().running).toBe(0);
+      await f.runtime.inbox.ingest("feedback-after-cleanup-failure", "issue_comment", {
+        repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+        comment: { id: 700, body: "Please check the new repair requirement.", user: { login: "developer" } },
+      });
+      await f.reconcile();
+      expect(f.passes).toHaveLength(2);
+      expect(f.runtime.workload().running).toBe(0);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("parks model work until the recorded provider quota cooldown ends", async () => {
     const f = await fixture(false);
     const until = Date.now() + 60 * 60_000;

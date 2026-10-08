@@ -43,8 +43,11 @@ export function createClaimStopCheck(
 ): () => Promise<string | undefined> {
   let acceptedSelfHead: string | undefined
   return async (): Promise<string | undefined> => {
-    const reason = claimStopReason(claim, await readCurrent(), acceptedSelfHead)
-    if (reason !== 'Pull request head changed.' || acceptedSelfHead) return reason
+    const observed = await readCurrent()
+    const reason = claimStopReason(claim, observed, acceptedSelfHead)
+    if (reason !== 'Pull request head changed.') return reason
+    // A previous proof must not authorize rollback to the original claim head.
+    if (acceptedSelfHead && observed?.pr?.head?.sha === claim.snapshot.pr?.head?.sha) return reason
     let providerHead: string | undefined
     try { providerHead = await readProviderHead() }
     catch { return claimStopReason(claim, await readCurrent(), acceptedSelfHead) }
