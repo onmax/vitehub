@@ -42,6 +42,14 @@ class MemoryWorkspaceStore implements WorkspaceStore {
   #baseline: WorkspaceSnapshot | undefined
   #mutationQueue: Promise<void> = Promise.resolve()
 
+  fork(): MemoryWorkspaceStore {
+    const fork = new MemoryWorkspaceStore()
+    fork.#nodes = structuredClone(this.#nodes)
+    fork.#meta = structuredClone(this.#meta)
+    fork.#baseline = structuredClone(this.#baseline)
+    return fork
+  }
+
   async readFile(path: string): Promise<WorkspaceFile | undefined> {
     const normalized = normalizeWorkspacePath(path)
     const node = this.#nodes.get(normalized)
@@ -235,4 +243,10 @@ class MemoryWorkspaceStore implements WorkspaceStore {
 
 export function createMemoryWorkspaceStore(): WorkspaceStore {
   return new MemoryWorkspaceStore()
+}
+
+/** Internal copy for Store adapters that publish draft mutations only after validation. */
+export function forkMemoryWorkspaceStore(store: WorkspaceStore): WorkspaceStore {
+  if (!(store instanceof MemoryWorkspaceStore)) throw workspaceError("[vitehub] Only memory Workspace Stores can be forked.")
+  return store.fork()
 }

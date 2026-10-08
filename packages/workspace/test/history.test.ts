@@ -263,6 +263,25 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { 
     await session.close()
   })
 
+  it("keeps the previous draft when a write's final Database check fails", async () => {
+    const { store, database } = await setup(driver)
+    await store.writeFile("keep.txt", { path: "keep.txt", content: "accepted" })
+    await store.mkdir("empty")
+    const before = await store.stat("keep.txt")
+    const select = database.select.bind(database)
+    vi.spyOn(database, "select")
+      .mockImplementationOnce(select)
+      .mockImplementationOnce(select)
+      .mockImplementationOnce(() => { throw new Error("injected Database failure") })
+    await expect(store.writeFile("keep.txt", { path: "keep.txt", content: "rejected" })).rejects.toThrow("injected Database failure")
+    expect(await store.readFile("keep.txt")).toMatchObject({ content: "accepted" })
+    expect(await store.stat("keep.txt")).toEqual(before)
+    expect(await store.stat("empty")).toMatchObject({ type: "directory" })
+    await store.snapshot()
+    const revision = await store.history.head()
+    expect(await (await store.history.open(revision!.id)).readFile("keep.txt")).toBe("accepted")
+  })
+
   it("retains a 200-file folder and uploads no bytes for an unchanged publication", async () => {
     const { facade, uploads } = await setup(driver)
     const workspace = facade()

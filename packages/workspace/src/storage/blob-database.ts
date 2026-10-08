@@ -6,7 +6,7 @@ import { workspaceConflict, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata, copyJsonWorkspaceMetadata } from "../core/file-metadata.ts"
 import { normalizeHistoryPath } from "../core/history.ts"
 import { contentToBytes, decodeFile, isExcludedWorkspacePath, normalizeSafeWorkspacePath, sha256 } from "../core/path.ts"
-import { createMemoryWorkspaceStore } from "./memory.ts"
+import { createMemoryWorkspaceStore, forkMemoryWorkspaceStore } from "./memory.ts"
 import { workspaceStoreTarget } from "./target.ts"
 import { createSnapshotFromEntries, diffSnapshots } from "./utils.ts"
 import { workspaceHistorySchema, type HistoryManifestFile } from "./history-schema.ts"
@@ -351,11 +351,13 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
   async #write(operation: (store: WorkspaceStore) => Promise<void>) {
     await this.#mutate(async () => {
       const draft = await this.#loadDraft()
+      const candidate = forkMemoryWorkspaceStore(draft.store)
       const dirty = this.#dirty
       this.#dirty = true
       try {
-        await operation(draft.store)
+        await operation(candidate)
         await this.#assertActive()
+        this.#draft = Promise.resolve({ store: candidate, head: draft.head })
       }
       catch (error) {
         this.#dirty = dirty
