@@ -21,7 +21,15 @@ describe("source scanner", () => {
     expect(call?.argument).toBe(`{ value: "real" }`)
   })
 
+  it.each(["break", "continue", "debugger"])("scans a regex statement after an automatic semicolon boundary: %s", (statement) => {
+    const value = `while (ready) { ${statement}\n/['"]/u.test(value) }`
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
   it.each([
+    "for (é of /['\"]/u) {}",
     "for (const x of /['\"]/u) {}",
     "for await (const x of /['\"]/u) {}",
     "for // loop\n(const [x = f()] of // list\n /['\"]/u) {}",

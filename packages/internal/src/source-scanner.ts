@@ -127,7 +127,7 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
       throw error
     }
   }
-  return !token || /[({[=,:!&|?;>+\-*%^~]/.test(token) || /\b(?:await|case|delete|do|else|in|instanceof|return|throw|typeof|void|yield)$/.test(token)
+  return !token || /[({[=,:!&|?;>+\-*%^~]/.test(token) || /\b(?:await|break|case|continue|debugger|delete|do|else|in|instanceof|return|throw|typeof|void|yield)$/.test(token)
 }
 
 function endsWithPostfixUpdate(source: string, index: number, sign: string) {
@@ -140,8 +140,8 @@ function endsWithPostfixUpdate(source: string, index: number, sign: string) {
 function isForOfRegexStart(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
   const operatorEnd = previousCodeIndex(source, index - 1, controlFlowRegexes)
   let current = previousCodeIndex(source, operatorEnd - 2, controlFlowRegexes)
-  if (!/[\w$\])}]/.test(source[current] ?? "")) return false
-  const word = /[\w$]+$/.exec(source.slice(0, current + 1))?.[0]
+  if (!/(?:[$\p{ID_Continue}\])}]|\u200C|\u200D)$/u.test(source.slice(0, current + 1))) return false
+  const word = /[$\p{ID_Continue}\u200C\u200D]+$/u.exec(source.slice(0, current + 1))?.[0]
   if (word && /^(?:const|let|var|in|instanceof|typeof|void|delete|await|yield|new)$/.test(word)
     && source[previousCodeIndex(source, current - word.length, controlFlowRegexes)] !== ".") return false
 
@@ -153,7 +153,7 @@ function isForOfRegexStart(source: string, index: number, controlFlowRegexes: Co
       if (/\bawait$/.test(source.slice(0, headEnd + 1))) {
         headEnd = previousCodeIndex(source, headEnd - 5, controlFlowRegexes)
       }
-      return /(?:^|[^\w$])for$/.test(source.slice(0, headEnd + 1))
+      return /(?:^|[^$\p{ID_Continue}\u200C\u200D])for$/u.test(source.slice(0, headEnd + 1))
     }
     const open = char === ")" ? "(" : char === "]" ? "[" : char === "}" ? "{" : undefined
     if (open) {
