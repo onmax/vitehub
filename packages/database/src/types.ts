@@ -109,6 +109,12 @@ export interface RuntimeDrizzleDatabaseConfig {
   name: string
 }
 
+export interface CloudflareD1Projection {
+  binding?: string
+  provisionedId?: string
+  resource: "configured" | "inherited" | "opaque"
+}
+
 export interface ResolvedDrizzleDatabaseConfig extends RuntimeDrizzleDatabaseConfig {
   cloudflare?: ResolvedCloudflareD1BindingConfig
   dialect: DatabaseDialect
@@ -121,10 +127,9 @@ export interface ResolvedDrizzleDatabaseConfig extends RuntimeDrizzleDatabaseCon
 export interface ResolvedDBViteConfig {
   databaseNames: string[]
   databases: Record<string, ResolvedDrizzleDatabaseConfig>
-  definitionCloudflareResourceConfigured: Record<string, boolean>
   definitionDefaults: {
     cloudflare?: CloudflareD1BindingConfig
-    cloudflareBindings?: Record<string, string>
+    cloudflareProjections: Record<string, CloudflareD1Projection>
     connection?: DatabaseConnectionConfig
   }
   definitions: DiscoveredDatabaseDefinition[]

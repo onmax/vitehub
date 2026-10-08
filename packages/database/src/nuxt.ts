@@ -14,7 +14,7 @@ import { getDatabaseNuxtProvisionStateKey } from "./provision.ts"
 import { renderDatabaseRuntimeModule } from "./internal/runtime-module.ts"
 import { writeGeneratedDatabaseArtifacts } from "./internal/generated.ts"
 import { writeHostedDatabaseRuntimeModules } from "./internal/vite-build.ts"
-import { resolveConfigValue } from "./config-value.ts"
+import { resolveConfigValue, withConfigValueFallback } from "./config-value.ts"
 import { resolveDBViteConfig } from "./config.ts"
 import { hubDb as hubDbVite } from "./vite.ts"
 
@@ -99,7 +99,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
     const databaseConfig = resolvedOptions.driver === "d1"
       ? resolveDBViteConfig(resolvedOptions, root, { serverDirs })
       : undefined
-    const sourceMigrationsDir = databaseConfig && !databaseConfig.definitionCloudflareResourceConfigured.default
+    const sourceMigrationsDir = databaseConfig && databaseConfig.definitionDefaults.cloudflareProjections.default?.resource === "inherited"
       ? databaseConfig.databases.default?.migrationsDir
       : undefined
     const d1 = resolveDatabaseNuxtD1Options(
@@ -115,10 +115,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
     const runtimeOptions = d1?.d1Database
       ? {
           ...effectiveOptions,
-          // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Keep runtime lookup when a Database ID is an Env declaration.
-          databaseId: typeof resolvedOptions.databaseId === "object"
-            ? { ...resolvedOptions.databaseId, default: resolvedOptions.databaseId.default ?? d1.d1Database.database_id }
-            : resolvedOptions.databaseId ?? d1.d1Database.database_id,
+          databaseId: withConfigValueFallback(resolvedOptions.databaseId, d1.d1Database.database_id),
         }
       : effectiveOptions
     const viteOptions = resolveDatabaseViteOptions({ ...runtimeOptions, projectRoot: root })

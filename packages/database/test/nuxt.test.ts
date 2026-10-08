@@ -372,7 +372,7 @@ describe("Database Nuxt integration", () => {
     }
   })
 
-  it("does not assign migrations from a definition with its own D1 resource to the Nuxt binding", async () => {
+  it.each([true, false])("handles a separate opaque D1 resource with HTTP available: %s", async (http) => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-db-nuxt-separate-migrations-"))
     const definition = join(rootDir, "server/databases/config.ts")
     await mkdir(dirname(definition), { recursive: true })
@@ -395,6 +395,7 @@ describe("Database Nuxt integration", () => {
           driver: "d1",
           databaseId: "content-id",
           databaseName: "content-db",
+          ...(http ? { cloudflare: { http: true } } : {}),
         },
         dev: false,
         nitro: { preset: "cloudflare_module" },
@@ -404,6 +405,10 @@ describe("Database Nuxt integration", () => {
 
       await hubDb()(undefined, nuxt)
       const nitroConfig = {}
+      if (!http) {
+        await expect(callHook(hooks, "nitro:config", nitroConfig)).rejects.toMatchObject({ code: "DATABASE_B0003" })
+        return
+      }
       await callHook(hooks, "nitro:config", nitroConfig)
 
       expect(nitroConfig).not.toHaveProperty(

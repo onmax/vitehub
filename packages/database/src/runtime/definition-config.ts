@@ -1,11 +1,11 @@
 import definitionDefaults from "#vitehub/database/definition-defaults"
 import { resolveRuntimeCloudflareConfig } from "../internal/cloudflare.ts"
 
-import type { DatabaseDefinition, RuntimeDrizzleDatabaseConfig } from "../types.ts"
+import type { CloudflareD1Projection, DatabaseDefinition, RuntimeDrizzleDatabaseConfig } from "../types.ts"
 
 interface DatabaseDefinitionDefaults {
   cloudflare?: DatabaseDefinition["cloudflare"]
-  cloudflareBindings?: Record<string, string>
+  cloudflareProjections?: Record<string, CloudflareD1Projection>
   connection?: DatabaseDefinition["connection"]
 }
 
@@ -19,7 +19,7 @@ export function runtimeConfig(
   defaults: DatabaseDefinitionDefaults = definitionDefaults,
 ): RuntimeDrizzleDatabaseConfig {
   const cloudflare = resolveRuntimeCloudflareConfig(defaults.cloudflare, definition.cloudflare, {
-    binding: defaults.cloudflareBindings?.[definition.name],
+    ...defaults.cloudflareProjections?.[definition.name],
     name: definition.name,
   })
   const config: RuntimeDrizzleDatabaseConfig = {

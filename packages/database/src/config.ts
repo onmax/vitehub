@@ -12,11 +12,12 @@ import {
 import { findIdentifierCalls, findMatching, splitTopLevel } from "@vite-hub/internal/source-scanner"
 import { readProvisionStateSync } from "@vite-hub/internal/provision-state"
 
-import { createRuntimeEnvConfigValue, resolveConfigValue } from "./config-value.ts"
+import { createRuntimeEnvConfigValue, resolveConfigValue, withConfigValueFallback } from "./config-value.ts"
 import { cloudflareOptions, mergeCloudflareConfig, resolveCloudflareD1Binding, resolveCloudflareD1BindingName } from "./internal/cloudflare.ts"
 
 import type {
   CloudflareD1BindingConfig,
+  CloudflareD1Projection,
   CloudflareD1HttpConfig,
   DatabaseConfigValue,
   DatabaseConnectionConfig,
@@ -140,7 +141,7 @@ function readStringValue(body: string | undefined, property: string): string | u
   return typeof resolved === "string" && resolved.trim() ? resolved : undefined
 }
 
-type DefinitionCloudflareResource = "inherited" | "configured" | "opaque"
+type DefinitionCloudflareResource = CloudflareD1Projection["resource"]
 
 function readDefinitionCloudflareResource(expression: string | undefined): DefinitionCloudflareResource {
   if (expression?.trim() === "undefined") return "inherited"
@@ -351,22 +352,26 @@ export function resolveDBViteConfig(
   if (!definitions.length) return
 
   const databases: Record<string, ResolvedDrizzleDatabaseConfig> = {}
-  const cloudflareBindings: Record<string, string> = {}
-  const definitionCloudflareResourceConfigured: Record<string, boolean> = {}
+  const cloudflareProjections: Record<string, CloudflareD1Projection> = {}
   const generatedDrizzleConfigFilesByDatabase: Record<string, string> = {}
   const generatedSchemaFilesByDatabase: Record<string, string> = {}
   const provisionState = readProvisionStateSync(rootDir)
   for (const definition of definitions) {
     const migrationsDir = getDefaultMigrationsDir(rootDir, definition)
     const definitionCloudflare = readDefinitionCloudflareConfig(definition.handler)
-    definitionCloudflareResourceConfigured[definition.name] = definitionCloudflare.resource !== "inherited"
+    const projection: CloudflareD1Projection = { resource: definitionCloudflare.resource }
+    cloudflareProjections[definition.name] = projection
     const generatedSchemaFile = createGeneratedSchemaFile(rootDir, definition.name)
     generatedDrizzleConfigFilesByDatabase[definition.name] = createGeneratedDrizzleConfigFile(rootDir, definition.name)
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
     const cloudflare = normalizeCloudflareConfig(mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value), definition.name, migrationsDir)
-    if (cloudflare && definitionCloudflare.resource !== "opaque") {
-      const projection = resolveCloudflareD1Binding({ ...cloudflare, database: definition.name }, { provisionState })
-      if (projection.d1Database) cloudflareBindings[definition.name] = projection.bindingName
+    if (cloudflare) {
+      projection.provisionedId = provisionState.cloudflare?.d1?.[definition.name]
+      if (definitionCloudflare.resource !== "opaque") {
+        cloudflare.databaseId = withConfigValueFallback(cloudflare.databaseId, projection.provisionedId)
+        const native = resolveCloudflareD1Binding({ ...cloudflare, database: definition.name }, { provisionState })
+        if (native.d1Database) projection.binding = native.bindingName
+      }
     }
     databases[definition.name] = {
       cloudflare,
@@ -381,14 +386,12 @@ export function resolveDBViteConfig(
     }
   }
 
-  const definitionDefaults: ResolvedDBViteConfig["definitionDefaults"] = {}
-  if (Object.keys(cloudflareBindings).length) definitionDefaults.cloudflareBindings = cloudflareBindings
+  const definitionDefaults: ResolvedDBViteConfig["definitionDefaults"] = { cloudflareProjections }
   if (options && options.driver === "d1") definitionDefaults.cloudflare = cloudflareOptions(options) ?? {}
   if (options && options.connection) definitionDefaults.connection = options.connection
   return {
     databaseNames: definitions.map(definition => definition.name),
     databases,
-    definitionCloudflareResourceConfigured,
     definitionDefaults,
     definitions,
     generatedDrizzleConfigFile: createGeneratedDefinitionPath(rootDir, {

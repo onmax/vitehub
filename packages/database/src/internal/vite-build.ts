@@ -124,6 +124,14 @@ export async function writeHostedDatabaseRuntimeModules(
   runtimeConfig: ResolvedDBViteConfig,
   providers: readonly DBProvider[] = ["cloudflare", "vercel"],
 ) {
+  const opaqueNativeDatabases = runtimeConfig.databaseNames.filter((name) => {
+    const database = runtimeConfig.databases[name]
+    return runtimeConfig.definitionDefaults.cloudflareProjections?.[name]?.resource === "opaque"
+      && database?.cloudflare && !database.cloudflare.http && !isRemoteLibsqlConnectionUrl(database.connection?.url)
+  })
+  if (providers.includes("cloudflare") && opaqueNativeDatabases.length) {
+    throw databaseErrorDiagnostics.DATABASE_B0003({ message: `[vitehub] Cloudflare native D1 output requires a literal cloudflare block for databases: ${opaqueNativeDatabases.join(", ")}. Use a literal block so ViteHub can project the resource, or configure D1 HTTP or a remote libSQL connection.` })
+  }
   const definitionDefaults = normalizeDefinitionDefaults(runtimeConfig.definitionDefaults)
   const normalizedRuntimeConfig = { ...runtimeConfig, definitionDefaults }
   const definitionDefaultsFile = resolve(generatedDir, "definition-defaults.mjs")
