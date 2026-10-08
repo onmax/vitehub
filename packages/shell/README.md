@@ -66,6 +66,8 @@ export async function searchDocs() {
 
 `shell.exec()` creates a short-lived Shell Session and returns a Shell Observation with `event`, `exitCode`, `stdout`, and `stderr`. The provider above has no network access, background processes, or interactive processes, and its Workspace filesystem cannot write.
 
+For writable access, pass `useWorkspace(name, { mode: "write" }).fs` directly to `createWritableWorkspaceFs()`. The adapter accepts Workspace writes that return revision receipts. Its `writeFile()` and `appendFile()` methods wait for the write and return `void`.
+
 ## Providers and boundaries
 
 - `@vite-hub/shell/providers/just-bash` runs selected commands in `just-bash` against a supplied filesystem adapter.
