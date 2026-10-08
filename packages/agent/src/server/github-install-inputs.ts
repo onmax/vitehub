@@ -35,7 +35,7 @@ function checkDownloadSource(value: string): void {
     if (/\.git\/?$/i.test(url.pathname) || url.hostname === "github.com" && !githubArchive) throw new Error("Git dependencies require preparation inside the provider sandbox.");
   } else if (/(?:^|@)git@/i.test(decoded)) throw new Error("Dependency downloads require a trusted HTTPS registry or code host.");
 }
-const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict"]);
+const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict", "legacy-peer-deps", "install-links"]);
 const patternSettings = new Set(["hoist-pattern", "public-hoist-pattern"]);
 const workspaceFields = new Set(["packages", "catalog", "catalogs", "catalogMode", "overrides", "packageExtensions", "patchedDependencies", "onlyBuiltDependencies", "ignoredBuiltDependencies", "neverBuiltDependencies", "allowBuilds"]);
 
