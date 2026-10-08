@@ -344,7 +344,35 @@ function isOwnMcpString(value: McpRecord, key: PropertyKey): boolean {
 }
 
 function hasOptionalMcpString(value: McpRecord, key: PropertyKey): boolean {
-  return !Reflect.has(value, key) || isOwnMcpString(value, key)
+  return hasOptionalMcpField(value, key, isMcpString)
+}
+
+function hasOptionalMcpField(value: McpRecord, key: PropertyKey, validate: (field: unknown) => boolean): boolean {
+  return !Reflect.has(value, key) || (Object.hasOwn(value, key) && validate(Reflect.get(value, key)))
+}
+
+function isMcpNumber(value: unknown): value is number {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- MCP numeric metadata crosses a runtime protocol boundary.
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function isMcpArrayOf(value: unknown, validate: (entry: unknown) => boolean): boolean {
+  return isDenseArray(value) && value.every(validate)
+}
+
+function isResourceAnnotations(value: unknown): boolean {
+  return isRecord(value)
+    && hasOptionalMcpField(value, "audience", audience => isMcpArrayOf(audience, role => role === "assistant" || role === "user"))
+    && hasOptionalMcpString(value, "lastModified")
+    && hasOptionalMcpField(value, "priority", isMcpNumber)
+}
+
+function isResourceIcon(value: unknown): boolean {
+  return isRecord(value)
+    && isOwnMcpString(value, "src")
+    && hasOptionalMcpString(value, "mimeType")
+    && hasOptionalMcpField(value, "sizes", sizes => isMcpArrayOf(sizes, isMcpString))
+    && hasOptionalMcpField(value, "theme", theme => theme === "dark" || theme === "light")
 }
 
 function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
@@ -352,6 +380,12 @@ function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
     && isOwnMcpString(value, "name")
     && isOwnMcpString(value, "uri")
     && hasOptionalMcpString(value, "mimeType")
+    && hasOptionalMcpString(value, "title")
+    && hasOptionalMcpString(value, "description")
+    && hasOptionalMcpField(value, "size", isMcpNumber)
+    && hasOptionalMcpField(value, "_meta", isRecord)
+    && hasOptionalMcpField(value, "annotations", isResourceAnnotations)
+    && hasOptionalMcpField(value, "icons", icons => isMcpArrayOf(icons, isResourceIcon))
 }
 
 function isResourceContent(value: unknown): value is McpResourceContent {
@@ -375,7 +409,7 @@ function parseResourceListPage(value: unknown): { nextCursor?: string, resources
   if (!isDenseArray(resources) || resources.some(resource => !isResourceDescriptor(resource)) || (nextCursor !== undefined && !isMcpString(nextCursor))) {
     throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
   }
-  // SAFETY: Every resource has the string name and URI required by the MCP listing contract.
+  // SAFETY: Every resource field declared by McpResourceDescriptor has passed validation.
   return { nextCursor, resources: resources as McpResourceDescriptor[] }
 }
 

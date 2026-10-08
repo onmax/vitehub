@@ -335,6 +335,54 @@ describe("mcpResources", () => {
   })
 
   it.each([
+    { title: 42 },
+    { description: [] },
+    { size: "large" },
+    { size: Number.NaN },
+    { _meta: [] },
+    { annotations: null },
+    { annotations: { audience: ["system"] } },
+    { annotations: { audience: sparseArray() } },
+    { annotations: { lastModified: 42 } },
+    { annotations: { priority: "high" } },
+    { icons: {} },
+    { icons: sparseArray() },
+    { icons: [null] },
+    { icons: [{ src: 42 }] },
+    { icons: [{ src: "icon.svg", mimeType: 42 }] },
+    { icons: [{ src: "icon.svg", sizes: [42] }] },
+    { icons: [{ src: "icon.svg", sizes: sparseArray() }] },
+    { icons: [{ src: "icon.svg", theme: "blue" }] },
+    Object.create({ title: "inherited" }),
+  ])("rejects malformed descriptor metadata before calling the path mapper", async metadata => {
+    const resource = Object.assign(metadata, { name: "item.txt", uri: "resource://example/item.txt" })
+    const path = vi.fn((resource: McpResourceDescriptor) => resource.title?.toLowerCase() ?? resource.name)
+    const source = mcpResources({ path, server: malformedListClient({ resources: [resource] }) })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/invalid listResources response/i)
+    expect(path).not.toHaveBeenCalled()
+  })
+
+  it("preserves valid optional descriptor metadata for the path mapper", async () => {
+    const resource: McpResourceDescriptor = {
+      _meta: { custom: true },
+      annotations: { audience: ["assistant", "user"], lastModified: "2026-10-08T00:00:00Z", priority: 0.5 },
+      description: "Resource description",
+      icons: [{ mimeType: "image/svg+xml", sizes: ["any"], src: "icon.svg", theme: "dark" }],
+      mimeType: "text/plain",
+      name: "item.txt",
+      size: 12,
+      title: "Item.txt",
+      uri: "resource://example/item.txt",
+    }
+    const path = vi.fn((resource: McpResourceDescriptor) => resource.title?.toLowerCase())
+    const source = mcpResources({ path, server: malformedListClient({ resources: [resource] }) })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).resolves.toEqual(["item.txt"])
+    expect(path).toHaveBeenCalledWith(resource)
+  })
+
+  it.each([
     { contents: undefined },
     { contents: sparseArray() },
     { contents: [undefined] },
