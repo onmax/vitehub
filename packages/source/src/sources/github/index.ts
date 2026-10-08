@@ -33,6 +33,7 @@ function isGitHubCommitResponse(value: unknown): value is GitHubCommitResponse {
 function isGitHubContentResponse(value: unknown): value is GitHubContentResponse {
   return isRecord(value)
     && isNonEmptyString(value.type)
+    && isNonEmptyString(value.sha)
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- GitHub JSON fields must be validated before the typed response is used.
     && (value.content === undefined || typeof value.content === "string")
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- GitHub JSON fields must be validated before the typed response is used.

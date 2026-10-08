@@ -41,7 +41,7 @@ describe("@vite-hub/source GitHub source", () => {
     {
       action: async (source: ReturnType<typeof github>) => await source.getMeta?.("README.md", { rootDir: process.cwd() }),
       description: "content",
-      response: { type: "file", sha: 42 },
+      response: { type: "file" },
       ref: "main",
       url: "https://api.github.com/repos/acme/app/contents/README.md?ref=main",
     },
