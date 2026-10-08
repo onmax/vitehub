@@ -13143,6 +13143,45 @@ describe("server helpers", () => {
     expect(adapter.stream).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ...[false, true].flatMap(native => ["text", "array", "resolver"].flatMap(form => (native ? ["fallback"] : ["loading", "fallback"]).map(option => ({ native, form, option })))),
+  ])("formats citation-bearing loading text, native=$native form=$form option=$option", async ({ native, form, option }) => {
+    const adapter = createTestChatAdapter()
+    if (native) adapter.stream = vi.fn(async (threadId: string, chunks: AsyncIterable<string | StreamChunk>) => {
+      for await (const _chunk of chunks) { /* consume the final reply */ }
+      return { id: "streamed", threadId, raw: {} }
+    })
+    const started = deferred<void>()
+    const finish = deferred<void>()
+    const text = "Working. citeturn0view0"
+    const configuredText = form === "array" ? [text] : form === "resolver" ? () => text : text
+    const agent = defineAgent({
+      channels: { telegram: testTelegram(telegram, {
+        // SAFETY: The fixture supplies the Chat SDK adapter used by placeholder delivery.
+        adapter: () => adapter as never,
+        messages: {
+          ...(native ? { stream: true } : { delivery: "manual", stream: false }),
+          ...(option === "loading" ? { loading: { text: configuredText } } : { fallbackStreamingPlaceholderText: configuredText }),
+        },
+      }) },
+      driver: { run: async () => { started.resolve(); await finish.promise; return "Done" } },
+      hooks: native ? {} : { "agent:finish": event => event.reply(event.text!) },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = handler(chatWebhookRequest(91_400 + Number(native) * 10 + ["text", "array", "resolver"].indexOf(form) * 2 + Number(option === "fallback")), "telegram")
+    try {
+      await started.promise
+      await vi.waitFor(() => expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", "Working. [source link unavailable]"))
+      expect(JSON.stringify(adapter.postMessage.mock.calls)).not.toContain("cite")
+      finish.resolve()
+      expect((await response).status).toBe(200)
+    } finally {
+      finish.resolve()
+      await response.catch(() => undefined)
+    }
+  })
+
   it("hands the configured fallback back to Chat SDK when native streaming declines", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13502,7 +13541,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "expired recovery lease", "claim lease loss", "cleanup lease loss", "replacement recovery owner", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
+  it.each(["normal", "citation notice", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "expired recovery lease", "claim lease loss", "cleanup lease loss", "replacement recovery owner", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13533,13 +13572,23 @@ describe("server helpers", () => {
     const prompts: string[] = []
     const createAgent = (adapter: ReturnType<typeof createTestChatAdapter>) => defineAgent({
       name: "support",
-      capabilities: [
+      ...(scenario === "citation notice" ? { channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture supplies the Chat SDK adapter used by restart recovery.
+          adapter: () => adapter as never,
+          messages: {
+            errorFallbackText: ({ publicError, defaultText }) => publicError.code === "HOST_RESTARTED"
+              ? "Restarted. citeturn0view0"
+              : defaultText,
+          },
+        }),
+      } } : { capabilities: [
         defineChatCapability({
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           platforms: { telegram: () => adapter as never },
           webhooks: { telegram: {} },
         }),
-      ],
+      ] }),
       driver: {
         run: async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
           prompts.push(JSON.stringify(input))
@@ -13600,7 +13649,7 @@ describe("server helpers", () => {
       }
       await expect(drain).resolves.toEqual({ active: 1, interrupted: 1, unsettled: 0 })
       await Promise.allSettled(waitUntilTasks)
-      const restartNotice = "The server restarted while I was working on this. I'll retry it automatically."
+      const restartNotice = scenario === "citation notice" ? "Restarted. [source link unavailable]" : "The server restarted while I was working on this. I'll retry it automatically."
       expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
 
       if (scenario === "concurrent recovery" || scenario === "expired recovery lease" || scenario === "claim lease loss" || scenario === "cleanup lease loss" || scenario === "replacement recovery owner" || scenario === "index contention") {
@@ -20213,6 +20262,40 @@ describe("server helpers", () => {
     expect(adapter.postMessage.mock.invocationCallOrder[1]).toBeLessThan(adapter.deleteMessage.mock.invocationCallOrder[0]!)
   })
 
+  it.each(["final", "loading", "manual", "stream"] as const)("delivers readable citations through the %s webhook path", async (delivery) => {
+    const adapter = createTestChatAdapter()
+    const text = "Answer. citeturn228505view0turn395856view0 See [the PR](https://github.com/acme/portal/pull/1188)."
+    const expected = "Answer. [source link unavailable] See [the PR](https://github.com/acme/portal/pull/1188)."
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture supplies the Chat SDK adapter used by the webhook handler.
+          adapter: () => adapter as never,
+          messages: delivery === "loading" ? { loading: { text: "Loading…" } }
+            : delivery === "manual" ? { delivery: "manual" }
+              : { stream: delivery === "stream", fallbackStreamingPlaceholderText: null },
+        }),
+      },
+      driver: { run: () => delivery === "stream" ? {
+        fullStream: (async function* () {
+          for (const character of text) yield { text: character, type: "text-delta" }
+          yield { type: "finish", finishReason: "stop" }
+        })(),
+      } : text },
+      hooks: {
+        "agent:finish": event => event.reply(event.text!),
+      },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = await handler(chatWebhookRequest(91_300 + ["final", "loading", "manual", "stream"].indexOf(delivery)), "telegram")
+    expect(response.status).toBe(200)
+    const sent = [...adapter.postMessage.mock.calls, ...adapter.editMessage.mock.calls]
+    expect(JSON.stringify(sent)).not.toContain("")
+    const answers = sent.filter(call => JSON.stringify(call).includes(expected))
+    expect(answers).toHaveLength(1)
+  })
+
   it("does not repeat the final text when a finish hook replies with it after streaming", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
@@ -20598,6 +20681,35 @@ describe("server helpers", () => {
         },
       ])
       expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", "Your meal was saved, but the final reply failed.")
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it.each([false, true])("formats citations in error fallback delivery, manual=%s", async (manual) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture implements the Chat SDK adapter used by the webhook handler.
+          adapter: () => adapter as never,
+          messages: {
+            stream: false,
+            errorFallbackText: "Read [the source](https://example.com). citeturn0view0",
+            ...(manual ? { delivery: "manual", loading: { text: "Loading…" } } : {}),
+          },
+        }),
+      },
+      driver: { run: () => { throw new Error("model timeout") } },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    try {
+      await expect(handler(chatWebhookRequest(manual ? 91_311 : 91_310), "telegram")).rejects.toThrow("model timeout")
+      const delivered = [...adapter.postMessage.mock.calls, ...adapter.editMessage.mock.calls].flat()
+      expect(delivered).toContainEqual("Read [the source](https://example.com). [source link unavailable]")
+      expect(JSON.stringify(delivered)).not.toContain("cite")
     } finally {
       consoleError.mockRestore()
     }
