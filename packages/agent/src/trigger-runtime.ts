@@ -468,7 +468,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
   // once, then give each verifier its own copy so one verifier cannot affect the
   // bytes seen by the next verifier.
   let requestBody: Promise<Uint8Array> | undefined
-  const readRawBody = async (): Promise<Uint8Array> => {
+  const readRawBody = async (): Promise<Uint8Array<ArrayBuffer>> => {
     if (options.rawBody) return Uint8Array.from(options.rawBody)
     requestBody ??= request.clone().arrayBuffer().then(value => new Uint8Array(value))
     return Uint8Array.from(await requestBody)
@@ -503,11 +503,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
       continue
     }
     if (registration.signature === "github-sha256") {
-      // `readRawBody` always returns a fresh Uint8Array, but TypeScript's
-      // platform type also permits SharedArrayBuffer in `Uint8Array.buffer`.
-      // The Web Crypto API receives the detached ArrayBuffer created above.
-      // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- Uint8Array.from creates a fresh ArrayBuffer, so Web Crypto receives bytes that are independent from caller memory.
-      const body = (await readRawBody()).buffer as ArrayBuffer
+      const body = (await readRawBody()).buffer
       const expected = `sha256=${await hmacSha256(secretToken, body)}`
       if (await constantTimeEqual(expected, headerValue)) {
         return { registration, verified: true }
