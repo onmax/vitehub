@@ -365,6 +365,7 @@ function maskDeclarationTypeParameters(source: string, head: string, controlFlow
     const next = generic.index + generic[0].length - 1
     // Ignore candidate keywords inside type parameters that were already read.
     if (end !== undefined && next <= end) continue
+    if (isMemberAccessName(head, generic.index)) continue
     masked ??= maskSourceLiteralsWithContext(head, controlFlowRegexes)
     if (masked[generic.index] !== head[generic.index]) continue
     const close = findMatchingWithContext(source, next, "<", ">", controlFlowRegexes)

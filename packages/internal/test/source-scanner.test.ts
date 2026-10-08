@@ -243,6 +243,7 @@ describe("source scanner", () => {
     "class Task<T> {}",
     "class Task<T> extends Base {}",
     'class Task<T> extends registry["class<U>"] {}',
+    "class Task<T> extends registry.class<U> {}",
     "class Task<T = Array<string>> {}",
     "class Task<T extends { subject: string }> {}",
     "class Task<T extends () => string> {}",
