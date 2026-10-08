@@ -44,11 +44,11 @@ interface VercelWorkflowApiModule {
 interface VercelWorkflowRuntimeModule {
   getWorld: () => Promise<{
     steps: {
-      list: (options: unknown) => Promise<{ cursor?: string, data: unknown[], hasMore: boolean }>
+      list: (options: unknown) => Promise<{ cursor?: string | null, data: unknown[], hasMore: boolean }>
     }
   }> | {
     steps: {
-      list: (options: unknown) => Promise<{ cursor?: string, data: unknown[], hasMore: boolean }>
+      list: (options: unknown) => Promise<{ cursor?: string | null, data: unknown[], hasMore: boolean }>
     }
   }
 }
@@ -141,8 +141,8 @@ function normalizeStepPage(page: unknown): { cursor?: string, data: unknown[], h
   const { cursor, data, hasMore } = value
   if (!Array.isArray(data)) throw invalidVercelResult("step page data")
   if (!hasRuntimeType(hasMore, "boolean")) throw invalidVercelResult("step page hasMore flag")
-  if (cursor !== undefined && !hasRuntimeType(cursor, "string")) throw invalidVercelResult("step page cursor")
-  return { ...(cursor === undefined ? {} : { cursor }), data, hasMore }
+  if (cursor !== undefined && cursor !== null && !hasRuntimeType(cursor, "string")) throw invalidVercelResult("step page cursor")
+  return { ...(cursor === undefined || cursor === null ? {} : { cursor }), data, hasMore }
 }
 
 function normalizeStatus(status: unknown): WorkflowRunStatus {
