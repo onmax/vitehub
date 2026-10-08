@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import { resolveBox } from "@vite-hub/box";
 import { importBoxCommit } from "../src/presets/babysitter/box-commit.ts";
+import { importBoxRepairFiles, publishBoxDependencies } from "../src/presets/babysitter/box-repair.ts";
+import { chmod, lstat, mkdir, symlink } from "node:fs/promises";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -30,6 +32,45 @@ async function fixture() {
   const session = await (await resolveBox({ runtime: "trusted-host", cwd: remote }, {})).open();
   return { checkout, remote, base, session, signal: new AbortController().signal };
 }
+
+it("transfers binary files, executable files, symlinks and deletions without changing host Git metadata", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.remote, "binary.bin"), new Uint8Array([0, 255, 10]));
+    await writeFile(join(f.remote, "run.sh"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(f.remote, "run.sh"), 0o755);
+    await symlink("binary.bin", join(f.remote, "link"));
+    await rm(join(f.remote, "source.txt"));
+    await importBoxRepairFiles(f.session, f.checkout, ["binary.bin", "run.sh", "link", "source.txt"], f.signal);
+    expect(await readFile(join(f.checkout, "binary.bin"))).toEqual(Buffer.from([0, 255, 10]));
+    expect((await lstat(join(f.checkout, "run.sh"))).mode & 0o111).toBe(0o111);
+    expect((await lstat(join(f.checkout, "link"))).isSymbolicLink()).toBe(true);
+    await expect(lstat(join(f.checkout, "source.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(f.base);
+  } finally { await f.session.close(); }
+});
+
+it("rejects host metadata paths and symlinked destination parents before copying Box edits", async () => {
+  const f = await fixture();
+  try {
+    await symlink(".git", join(f.checkout, "metadata"));
+    await expect(importBoxRepairFiles(f.session, f.checkout, [".git/config"], f.signal)).rejects.toThrow("inside the assigned checkout");
+    await expect(importBoxRepairFiles(f.session, f.checkout, ["metadata/config"], f.signal)).rejects.toThrow("parent must stay inside");
+    expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(f.base);
+  } finally { await f.session.close(); }
+});
+
+it("publishes dependencies into the active Box and removes obsolete root outputs", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(join(f.checkout, "node_modules", "example"), { recursive: true });
+    await writeFile(join(f.checkout, "node_modules", "example", "index.js"), "export const ready = true\n");
+    await writeFile(join(f.remote, ".pnp.cjs"), "old PnP output\n");
+    await publishBoxDependencies(f.session, f.checkout, f.signal);
+    expect(await readFile(join(f.remote, "node_modules", "example", "index.js"), "utf8")).toContain("ready = true");
+    await expect(lstat(join(f.remote, ".pnp.cjs"))).rejects.toMatchObject({ code: "ENOENT" });
+  } finally { await f.session.close(); }
+});
 
 it("imports a remote repair commit before the Box closes, including a second push", async () => {
   const f = await fixture();
@@ -58,6 +99,33 @@ it("leaves the host HEAD unchanged when bundle transfer fails", async () => {
     expect(read).toHaveBeenCalled();
     expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(f.base);
     expect(await git(f.remote, "status", "--porcelain")).toBe("");
+  } finally { await f.session.close(); }
+});
+
+it("retains a host repair that already contains the imported Box commit", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.remote, "source.txt"), "Box repair\n");
+    await git(f.remote, "commit", "-am", "Box repair");
+    await importBoxCommit(f.session, f.checkout, f.base, f.signal);
+    await writeFile(join(f.checkout, "source.txt"), "host follow-up\n");
+    await git(f.checkout, "commit", "-am", "host follow-up");
+    const latest = await git(f.checkout, "rev-parse", "HEAD");
+    await importBoxCommit(f.session, f.checkout, f.base, f.signal);
+    expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(latest);
+  } finally { await f.session.close(); }
+});
+
+it("rejects a divergent Box commit instead of replacing an existing host repair", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.remote, "source.txt"), "Box repair\n");
+    await git(f.remote, "commit", "-am", "Box repair");
+    await writeFile(join(f.checkout, "source.txt"), "host repair\n");
+    await git(f.checkout, "commit", "-am", "host repair");
+    const latest = await git(f.checkout, "rev-parse", "HEAD");
+    await expect(importBoxCommit(f.session, f.checkout, f.base, f.signal)).rejects.toThrow();
+    expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(latest);
   } finally { await f.session.close(); }
 });
 

@@ -16,7 +16,10 @@ function stringField(input: unknown, key: string, allowEmpty = false): string {
   return value;
 }
 
-export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, beforePush?: (context: AgentInvocationContextStore) => Promise<void>) {
+export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, beforePush?: (context: AgentInvocationContextStore) => Promise<void>, workspace?: {
+  beforeRepair(context: AgentInvocationContextStore, paths?: readonly string[]): Promise<void>;
+  afterRefresh(context: AgentInvocationContextStore): Promise<void>;
+}) {
   return defineCapability({
     id: "babysitter.github",
     tools: context => ({
@@ -67,7 +70,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
         name: "refreshDependencies",
         description: "Install frozen dependencies after resolving dependency conflicts or changing manifests or lockfiles. Run before validation.",
         inputSchema: noArguments,
-        execute: async () => { await operations.refreshDependencies(); return { refreshed: true }; },
+        execute: async () => { await workspace?.beforeRepair(context.context); await operations.refreshDependencies(); await workspace?.afterRefresh(context.context); return { refreshed: true }; },
       },
       commitRepair: {
         name: "commitRepair",
@@ -80,6 +83,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
         },
         execute: async (input: unknown) => {
           if (!isRuntimeRecord(input) || !Array.isArray(input.paths) || !input.paths.every(path => hasRuntimeType(path, "string"))) throw new Error("Expected explicit repair paths.");
+          await workspace?.beforeRepair(context.context, input.paths);
           const head = await operations.commitRepair({ message: stringField(input, "message"), paths: input.paths });
           return { head };
         },
