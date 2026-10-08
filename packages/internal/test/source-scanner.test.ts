@@ -4,6 +4,7 @@ import {
   createSourceScanner,
   findDefaultExportCall,
   findIdentifierCalls,
+  maskSourceLiterals,
   readObjectProperty,
   readObjectPropertyNames,
   splitTopLevel,
