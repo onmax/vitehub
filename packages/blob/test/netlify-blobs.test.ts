@@ -247,6 +247,34 @@ describe("Netlify Blobs driver", () => {
     expect(store.getMetadata).not.toHaveBeenCalled()
   })
 
+  it("preserves blobs when directories are omitted", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      blobs: [{ etag: "one", key: "one.txt" }],
+    }), { status: 200 })))
+    store.getMetadata.mockResolvedValue({ metadata: {} })
+
+    await expect(createDriver(options).list({ folded: true })).resolves.toMatchObject({
+      blobs: [{ pathname: "one.txt", httpEtag: "one" }],
+      folders: [],
+      hasMore: false,
+    })
+    expect(store.getMetadata).toHaveBeenCalledTimes(1)
+    expect(store.getMetadata).toHaveBeenCalledWith("one.txt", { consistency: undefined })
+  })
+
+  it("preserves directories when blobs are omitted", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      directories: ["folder/"],
+    }), { status: 200 })))
+
+    await expect(createDriver(options).list({ folded: true })).resolves.toMatchObject({
+      blobs: [],
+      folders: ["folder/"],
+      hasMore: false,
+    })
+    expect(store.getMetadata).not.toHaveBeenCalled()
+  })
+
   it("retries transient list failures", async () => {
     const cancel = vi.fn()
     vi.stubGlobal("fetch", vi.fn()
