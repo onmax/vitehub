@@ -108,7 +108,9 @@ Start Vite and call the route:
 
 ```bash [commands/run]
 pnpm vite dev
-curl -X POST http://localhost:5173/api/onboard
+curl -X POST http://localhost:5173/api/onboard \
+  -H 'content-type: application/json' \
+  -d '{"email":"ada@example.com"}'
 ```
 
 The response includes a run id and a provider status. Use

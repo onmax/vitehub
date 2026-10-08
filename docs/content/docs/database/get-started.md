@@ -22,7 +22,7 @@ choosing a hosted database.
 ## Install
 
 ```bash [commands/install]
-pnpm add @vite-hub/database drizzle-orm nitro
+pnpm add @vite-hub/database drizzle-orm nitro h3
 pnpm add -D @vite-hub/cli drizzle-kit vite
 ```
 

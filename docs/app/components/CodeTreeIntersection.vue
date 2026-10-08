@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef } from "vue";
+import { computed, inject, isVNode, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useTemplateRef } from "vue";
 import type { Ref, VNode } from "vue";
 
 const props = defineProps<{
@@ -12,31 +12,29 @@ const props = defineProps<{
 const slots = defineSlots<{ default?: () => VNode[] }>();
 
 type CodeTreeItem = { baseLabel: string; label: string; component: VNode };
-type SlotRecord = { default?: () => unknown };
 
 const target = useTemplateRef<HTMLDivElement>("target");
 
 const tree = inject<Ref<Record<string, unknown>>>("codeTree", ref({}));
 const activePath = inject<Ref<string>>("codeTreeActive", ref(""));
 
-function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value;
-}
-
 function defaultChildren(slot: VNode): VNode[] {
   const children = slot.children;
   if (Array.isArray(children)) return children.filter(isVNode);
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vue exposes VNode children as text, arrays, or a slot record; parse that public union here.
   if (typeof children !== "object" || children === null) return [];
-
-  const renderDefault = (children as SlotRecord).default;
+  if (!("default" in children)) return [];
+  const renderDefault = children.default;
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- A Vue slot record can hold metadata as well as functions; only invoke a callable default slot.
   if (typeof renderDefault !== "function") return [];
 
-  const rendered = renderDefault();
+  const rendered: unknown = renderDefault();
   return Array.isArray(rendered) ? rendered.filter(isVNode) : [];
 }
 
 function propString(slot: VNode, name: "filename" | "label") {
   const value = slot.props?.[name];
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- MDC passes arbitrary VNode props; accept only a nonempty string as a file label.
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
@@ -127,7 +125,8 @@ onMounted(async () => {
         continue;
       }
 
-      const index = Number((entry.target as HTMLElement).dataset.vhTutorialCodeIndex);
+      if (!(entry.target instanceof HTMLElement)) continue;
+      const index = Number(entry.target.dataset.vhTutorialCodeIndex);
       if (Number.isInteger(index)) activate(index);
     }
   }, { rootMargin: "0px 0px -60% 0px" });
@@ -153,7 +152,7 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
-<style scoped>
+<style>
 .vh-tutorial-code-marker {
   display: block;
   height: 1px;

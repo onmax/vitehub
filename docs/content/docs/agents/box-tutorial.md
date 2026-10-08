@@ -62,7 +62,7 @@ export default defineEventHandler(async () => {
   const session = await box.open();
   try {
     await session.files.write(
-      ".vitehub/box-check.txt",
+      "workspace/.vitehub/box-check.txt",
       new TextEncoder().encode("Box is ready\n"),
     );
     const result = await session.exec(

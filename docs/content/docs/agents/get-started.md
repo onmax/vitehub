@@ -83,8 +83,8 @@ Start Vite and send one request:
 
 ```bash [commands/request]
 pnpm vite dev
-curl -X POST http://localhost:5173/api/greeting \\
-  -H 'content-type: application/json' \\
+curl -X POST http://localhost:5173/api/greeting \
+  -H 'content-type: application/json' \
   -d '{"prompt":"Ada"}'
 ```
 

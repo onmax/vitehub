@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, watch } from "vue";
+import { computed, isVNode, provide, ref, watch } from "vue";
 import type { VNode } from "vue";
 import type { ContentPage } from "../composables/useDocsPage";
 
@@ -28,10 +28,6 @@ function selectCodePath(path?: string) {
     activePath.value = path;
     selectedPath.value = path;
   }
-}
-
-function isVNode(value: unknown): value is VNode {
-  return typeof value === "object" && value !== null && "type" in value;
 }
 
 const pageUi = {
