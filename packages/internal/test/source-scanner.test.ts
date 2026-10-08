@@ -15,6 +15,7 @@ describe("source scanner", () => {
     "value / /['\"]/u.test(text)",
     "value / /* gap */ /['\"]/u.test(text)",
     "value < /['\"]/u.source",
+    "class X extends /['\"]/u.constructor {}",
   ])("scans regex operands after expression operators: %s", (value) => {
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
     expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
@@ -71,8 +72,14 @@ describe("source scanner", () => {
     "prepare()\nfunction task() {}",
     "function task(): void {}",
     "class Task {}",
+    "obj . export\nclass Task {}",
+    "obj /* gap */ . /* name */ declare\nclass Task {}",
     "@dec\nclass Task {}",
     "@dec()\nclass Task {}",
+    "@factory().dec\nclass Task {}",
+    "@factory.dec().next\nclass Task {}",
+    "@(factory().dec)\nclass Task {}",
+    "@(factory.dec().next)\nclass Task {}",
   ])("scans a regex statement after a closed block: %s", (statement) => {
     const value = `${statement} /['"]/u.test(value)`
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
@@ -81,7 +88,50 @@ describe("source scanner", () => {
   })
 
   it.each([
+    `import "x"`,
+    `import { value } from "x"`,
+    `import{value}from"x"`,
+    `import { "value" as value } from "x"`,
+    `import "x" with { type: "json" }`,
+    `export{value}from"x"`,
+    `export*from"x"`,
+    `export { value } from "x"`,
+    `export * from "x"`,
+    `const value = 1; export { value }`,
+    "interface Task {}",
+    "enum Task {}",
+    "namespace Task {}",
+    "type Task = {}",
+  ])("scans a regex after module and TypeScript declarations: %s", (statement) => {
+    const value = `${statement}\n/['"]/u.test(value)`
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
+  it.each([
+    "export @dec class Task {}",
+    "export default @dec class Task {}",
+    "export @dec() class Task {}",
+    "export @factory().dec class Task {}",
+    "export default @(factory().dec) class Task {}",
+  ])("scans a regex after an exported decorated class: %s", (statement) => {
+    const value = `${statement}\n/['"]/u.test(value)`
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const calls = findIdentifierCalls(`${value}\nconst definition = defineThing({ value: "real" })`, "defineThing")
+    expect(calls[0]?.arguments[0]).toBe(`{ value: "real" }`)
+  })
+
+  it.each([
     "const value = {} / total",
+    `const value = "x"\n/ total`,
+    `import "x"\nconst value = from\n"y"\n/ total`,
+    `import "x"\n{ value }\nfrom\n"y"\n/ total`,
+    `const value = 1; export { value }\n"y"\n/ total`,
+    `obj.\nimport\n{ value }\nfrom\n"x"\n/ total`,
+    `import("x")\n/ total`,
+    `const value = {} as Task / total`,
+    `const value = {} satisfies Task / total`,
     "const value = function task() {} / total",
     "const value = (() => {}) / total",
     "const value = class Task {} / total",
@@ -97,10 +147,30 @@ describe("source scanner", () => {
     "const text = `x${ /* object */ {} / total}`",
     "const value = @dec\nclass Task {} / total",
     "const value =\n@dec\nclass Task {} / total",
-  ])("preserves division after an expression-owned closing brace: %s", (value) => {
+    "const value = @(factory().dec)\nclass Task {} / total",
+    "const value = @(factory.dec().next)\nclass Task {} / total",
+    "promise.catch(handler) / total",
+    "control.for(handler) / total",
+    "control.if(handler) / total",
+    "control.with(handler) / total",
+    "control.while(handler) / total",
+    "promise?.catch(handler) / total",
+    "promise /* gap */ . /* name */ catch(handler) / total",
+    "promise . catch(handler) / total",
+    "obj.extends / total",
+    "obj . extends / total",
+    "obj /* gap */ . /* name */ extends / total",
+  ])("preserves division after complete expressions: %s", (value) => {
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
     const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
     expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
+  it("preserves division in a default-exported expression", () => {
+    const value = `export default "x"\n/ total`
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const calls = findIdentifierCalls(`${value}\nconst definition = defineThing({ value: "real" })`, "defineThing")
+    expect(calls[0]?.arguments[0]).toBe(`{ value: "real" }`)
   })
 
   it("shares regex classifications across repeated declarations", () => {

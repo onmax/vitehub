@@ -132,11 +132,13 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
     const end = previousCodeIndex(source, index - 1, controlFlowRegexes)
     return source.slice(end - 2, end + 1) === "..."
   }
-  const keyword = /\b(?:await|break|case|continue|debugger|delete|do|else|in|instanceof|new|return|throw|typeof|void|yield)$/.exec(token)?.[0]
+  const keyword = /\b(?:await|break|case|continue|debugger|delete|do|else|extends|in|instanceof|new|return|throw|typeof|void|yield)$/.exec(token)?.[0]
   if (!keyword) return false
   const end = previousCodeIndex(source, index - 1, controlFlowRegexes)
   const start = end - keyword.length + 1
-  return source.slice(start, end + 1) === keyword && !/[$\p{ID_Continue}\u200C\u200D]$/u.test(source.slice(0, start))
+  return source.slice(start, end + 1) === keyword
+    && !/[$\p{ID_Continue}\u200C\u200D]$/u.test(source.slice(0, start))
+    && source[previousCodeIndex(source, start - 1, controlFlowRegexes)] !== "."
 }
 
 function endsWithPostfixUpdate(source: string, index: number, sign: string) {
@@ -229,6 +231,10 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
       controlFlowRegexes.set(index, true)
       return true
     }
+    if (isModuleDeclarationRegexStart(source, index, closeParen, controlFlowRegexes)) {
+      controlFlowRegexes.set(index, true)
+      return true
+    }
     if (source[closeParen] === "}") {
       const result = isStatementBlockRegexStart(source, closeParen, controlFlowRegexes)
       controlFlowRegexes.set(index, result)
@@ -243,9 +249,11 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
       if (source[current] !== "(") continue
       if (findMatching(source, current, "(", ")", controlFlowRegexes) !== closeParen) continue
       const head = source.slice(0, current).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ")
-      const result = /(?:^|[^\w$])(?:catch|for|if|while|with)\s*$/.test(head)
-        || source[index] === "{" && (/(?:^|[^\w$])switch\s*$/.test(head)
-          || /(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*$/u.test(head))
+      const keywordEnd = previousCodeIndex(source, current - 1, controlFlowRegexes)
+      const keyword = /(?:^|[^$\p{ID_Continue}\u200C\u200D])(catch|for|if|while|with|switch)$/u.exec(source.slice(0, keywordEnd + 1))?.[1]
+      const controlHead = keyword && source[previousCodeIndex(source, keywordEnd - keyword.length, controlFlowRegexes)] !== "."
+      const result = !!controlHead && (keyword !== "switch" || source[index] === "{")
+        || source[index] === "{" && /(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*$/u.test(head)
       controlFlowRegexes.set(index, result)
       return result
     }
@@ -257,6 +265,41 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
     controlFlowRegexes.delete(index)
     throw error
   }
+}
+
+function isModuleDeclarationRegexStart(source: string, index: number, previous: number, controlFlowRegexes: ControlFlowRegexCache) {
+  if (!/[\r\n\u2028\u2029]/.test(source.slice(previous + 1, index))) return false
+  if (source[previous] !== "}" && source[previous] !== "\"" && source[previous] !== "'") return false
+  const head = maskSourceLiteralsWithContext(source.slice(0, previous + 1), controlFlowRegexes)
+  const module = /(?:^|[;{}\r\n\u2028\u2029])\s*(?:import(?![$\p{ID_Continue}\u200C\u200D])(?:\s*(?:type(?![$\p{ID_Continue}\u200C\u200D])\s*)?(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*,\s*(?:\{[^{}]*\}|\*\s*as\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*))?|\{[^{}]*\}|\*\s*as\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)\s*(?<![$\p{ID_Continue}\u200C\u200D])from)?|export(?![$\p{ID_Continue}\u200C\u200D])\s*(?:type(?![$\p{ID_Continue}\u200C\u200D])\s*)?(?:\*(?:\s*as\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?|\{[^{}]*\})\s*(?<![$\p{ID_Continue}\u200C\u200D])from)\s*(?:\b(?:with|assert)\s*\{[^{}]*\})?\s*$/u.exec(head)
+  const declaration = module ?? /(?:^|[;{}\r\n\u2028\u2029])\s*export(?![$\p{ID_Continue}\u200C\u200D])\s*(?:type(?![$\p{ID_Continue}\u200C\u200D])\s*)?\{[^{}]*\}\s*$/u.exec(head)
+  if (!declaration) return false
+  const start = declaration.index + declaration[0].search(/import|export/)
+  if (source[previousCodeIndex(source, start - 1, controlFlowRegexes)] === ".") return false
+  let depth = 0
+  let specifiers = 0
+  let specifierEnd = start
+  for (let current = start; current <= previous; current++) {
+    const char = source[current]
+    if (isQuote(char)) {
+      const end = skipQuoted(source, current, controlFlowRegexes)
+      if (depth === 0) {
+        if (char === "`") return false
+        specifiers += 1
+        if (specifiers > 1) return false
+        specifierEnd = end
+      }
+      current = end - 1
+    }
+    else if (char === "/" && source[current + 1] === "/") current = skipLineComment(source, current) - 1
+    else if (char === "/" && source[current + 1] === "*") current = skipBlockComment(source, current) - 1
+    else if (char === "/") return false
+    else if (char === "{") depth += 1
+    else if (char === "}") depth -= 1
+  }
+  return module
+    ? specifiers === 1 && /^\s*(?:(?:with|assert)\s*\{[^{}]*\})?\s*$/.test(head.slice(specifierEnd))
+    : specifiers === 0
 }
 
 function isStatementBlockRegexStart(source: string, closeBrace: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
@@ -275,12 +318,13 @@ function isStatementBlockRegexStart(source: string, closeBrace: number, controlF
 
 function isDeclarationBlockStart(source: string, openBrace: number, controlFlowRegexes: ControlFlowRegexCache) {
   const head = source.slice(0, openBrace).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => comment.replace(/[^\r\n\u2028\u2029]/g, " "))
-  const declaration = /(?:^|[;{}\r\n\u2028\u2029])\s*(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*\([^{}]*\)(?:\s*:[^;{}]+)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?(?:\s+extends\s+[^;{}]+)?)\s*$/u.exec(head)
+  const declaration = /(?<![$\p{ID_Continue}\u200C\u200D])(?:(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*\([^{}]*\)(?:\s*:[^;{}]+)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?(?:\s+extends\s+[^;{}]+)?|interface\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*<[^;{}]*>)?(?:\s+extends\s+[^;{}]+)?|(?:const\s+)?enum\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*|(?:namespace|module)\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*\.\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)*|type\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*<[^;{}]*>)?\s*=)\s*$/u.exec(head)
   if (!declaration) return false
-  const before = declarationPrefix(source, head, declaration.index, controlFlowRegexes)
+  const { before, end } = declarationPrefix(source, head, declaration.index, controlFlowRegexes)
   if (/[=([,:?!&|+\-*/%^~<>.]$/.test(before)) return false
   if (/(?:^|[^.$\p{ID_Continue}\u200C\u200D])(?:await|delete|in|instanceof|new|typeof|void)$/u.test(before)) return false
-  const keyword = /\b(?:class|function)\b/.exec(declaration[0])
+  if (before && !/[;{}]$/.test(before) && !/[\r\n\u2028\u2029]/.test(head.slice(end, declaration.index))) return false
+  const keyword = /\b(?:class|function|interface|enum|namespace|module|type)\b/.exec(declaration[0])
   if (!keyword) return false
   const keywordStart = declaration.index + keyword.index
   return maskSourceLiteralsWithContext(source.slice(0, keywordStart + keyword[0].length), controlFlowRegexes).slice(keywordStart) === keyword[0]
@@ -289,20 +333,38 @@ function isDeclarationBlockStart(source: string, openBrace: number, controlFlowR
 function declarationPrefix(source: string, head: string, offset: number, controlFlowRegexes: ControlFlowRegexCache) {
   let end = previousCodeIndex(source, offset - 1, controlFlowRegexes) + 1
   while (end > 0) {
-    let decoratorEnd = end
-    if (source[end - 1] === ")") {
-      let openParen = end - 2
-      while (openParen >= 0 && (source[openParen] !== "(" || findMatching(source, openParen, "(", ")", controlFlowRegexes) !== end - 1)) openParen -= 1
-      if (openParen < 0) break
-      decoratorEnd = previousCodeIndex(source, openParen - 1, controlFlowRegexes) + 1
+    const decorator = findDecoratorStart(source, head, end - 1, controlFlowRegexes)
+    if (decorator !== undefined) {
+      end = previousCodeIndex(source, decorator - 1, controlFlowRegexes) + 1
+      continue
     }
-    const decorator = source[decoratorEnd - 1] === "@"
-      ? { index: decoratorEnd - 1 }
-      : /@\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*\.\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)*$/u.exec(head.slice(0, decoratorEnd))
-    if (!decorator) break
-    end = previousCodeIndex(source, decorator.index - 1, controlFlowRegexes) + 1
+    const modifier = /(?:^|[^.$\p{ID_Continue}\u200C\u200D])(export(?:\s+default)?|declare|abstract)$/u.exec(head.slice(0, end))?.[1]
+    if (!modifier || source[previousCodeIndex(source, end - modifier.length - 1, controlFlowRegexes)] === ".") break
+    end = previousCodeIndex(source, end - modifier.length - 1, controlFlowRegexes) + 1
   }
-  return head.slice(0, end).trimEnd()
+  return { before: head.slice(0, end).trimEnd(), end }
+}
+
+function findDecoratorStart(source: string, head: string, end: number, controlFlowRegexes: ControlFlowRegexCache): number | undefined {
+  let current = end
+  while (current >= 0) {
+    if (source[current] === ")") {
+      let openParen = current - 1
+      while (openParen >= 0 && (source[openParen] !== "(" || findMatching(source, openParen, "(", ")", controlFlowRegexes) !== current)) openParen -= 1
+      if (openParen < 0) return
+      current = previousCodeIndex(source, openParen - 1, controlFlowRegexes)
+      if (source[current] === "@") return current
+      continue
+    }
+    else {
+      const identifier = /[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*$/u.exec(head.slice(0, current + 1))?.[0]
+      if (!identifier) return
+      current = previousCodeIndex(source, current - identifier.length, controlFlowRegexes)
+    }
+    if (source[current] === "@") return current
+    if (source[current] === ".") current = previousCodeIndex(source, current - 1, controlFlowRegexes)
+    else if (source[current] !== ")") return
+  }
 }
 
 function isLabeledStatementRegexStart(source: string, index: number, labelEnd: number, controlFlowRegexes: ControlFlowRegexCache) {
