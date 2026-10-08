@@ -17643,12 +17643,12 @@ describe("server helpers", () => {
       await blocked
       return "internal output"
     })
-    const createBatch = vi.fn(async ([{ params }]: Array<{ params: { input?: AgentRunInput } }>) => {
+    const createBatch = vi.fn(async ([{ id, params }]: Array<{ id: string; params: { input?: AgentRunInput } }>) => {
       workflowPayloads.push(params)
       if (createBatch.mock.calls.length === 3) {
         recoveredRetryStarted.resolve()
         await recoveredRetryBlocked
-        return [{ id: "recovered-retry", status: async () => ({ status: "queued" }) }]
+        return [{ id, status: async () => ({ status: "queued" }) }]
       }
       throw new Error("provider response was lost")
     })
