@@ -1,5 +1,5 @@
 import { createEffectBoundary } from "@vite-hub/internal/effect"
-import { AnnotationsSchema, BlobResourceContentsSchema } from "@modelcontextprotocol/sdk/types.js"
+import { AnnotationsSchema, BlobResourceContentsSchema, ResourceContentsSchema } from "@modelcontextprotocol/sdk/types.js"
 import { Effect } from "effect"
 
 import { sourceError } from "../core/errors.ts"
@@ -360,6 +360,10 @@ function isMcpNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value)
 }
 
+function isMcpMetadata(value: unknown): boolean {
+  return ResourceContentsSchema.shape._meta.safeParse(value).success
+}
+
 function isMcpArrayOf(value: unknown, validate: (entry: unknown) => boolean): boolean {
   return isDenseArray(value) && value.every(validate)
 }
@@ -388,7 +392,7 @@ function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
     && hasOptionalMcpString(value, "title")
     && hasOptionalMcpString(value, "description")
     && hasOptionalMcpField(value, "size", isMcpNumber)
-    && hasOptionalMcpField(value, "_meta", isRecord)
+    && hasOptionalMcpField(value, "_meta", isMcpMetadata)
     && hasOptionalMcpField(value, "annotations", isResourceAnnotations)
     && hasOptionalMcpField(value, "icons", icons => isMcpArrayOf(icons, isResourceIcon))
 }
@@ -397,7 +401,7 @@ function isResourceContent(value: unknown): value is McpResourceContent {
   if (!isRecord(value)
     || !isOwnMcpString(value, "uri")
     || !hasOptionalMcpString(value, "mimeType")
-    || !hasOptionalMcpField(value, "_meta", isRecord)) return false
+    || !hasOptionalMcpField(value, "_meta", isMcpMetadata)) return false
   const hasTextKey = Object.hasOwn(value, "text")
   const hasBlobKey = Object.hasOwn(value, "blob")
   const hasText = hasTextKey && isMcpString(Reflect.get(value, "text"))

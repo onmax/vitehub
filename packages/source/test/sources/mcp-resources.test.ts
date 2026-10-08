@@ -340,6 +340,9 @@ describe("mcpResources", () => {
     { size: "large" },
     { size: Number.NaN },
     { _meta: [] },
+    { _meta: new Date("2026-10-08T00:00:00Z") },
+    { _meta: new Map([["custom", true]]) },
+    { _meta: new Set(["custom"]) },
     { annotations: null },
     { annotations: { audience: ["system"] } },
     { annotations: { audience: sparseArray() } },
@@ -464,6 +467,9 @@ describe("mcpResources", () => {
     { _meta: [] },
     { _meta: null },
     { _meta: "invalid" },
+    { _meta: new Date("2026-10-08T00:00:00Z") },
+    { _meta: new Map([["custom", true]]) },
+    { _meta: new Set(["custom"]) },
     Object.create({ _meta: { inherited: true } }),
   ])("rejects malformed content metadata before serializing multiple contents", async metadata => {
     const content = Object.assign(metadata, { text: "first", uri: "resource://example/item.txt" })
