@@ -122,7 +122,8 @@ function nonempty(value: string, name: string): string {
   return value
 }
 
-const githubLoginPattern = /^(?!.*--)[A-Za-z0-9](?:[A-Za-z0-9_-]{0,37}[A-Za-z0-9_])?$/
+// Managed users add one underscore and an alphanumeric enterprise shortcode of 3-8 characters.
+const githubLoginPattern = /^(?=.{1,39}$)[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*(?:_[A-Za-z0-9]{3,8})?$/
 // GitHub renders mentions in Markdown, blockquotes, and quoted text. Keep
 // URL paths, email-like text, and adjacent at-signs out of the token stream.
 const githubMentionPattern = /(^|[^A-Za-z0-9@])@([A-Za-z0-9][A-Za-z0-9_-]{0,38}\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)?)(?=$|[^A-Za-z0-9_-])/g

@@ -204,17 +204,17 @@ describe("native auto-merge", () => {
     expect(explicit.command).not.toHaveBeenCalled()
   })
 
-  it.each(["octocat-", "octo--cat"])("rejects malformed allowlisted login %s before contacting GitHub", async (login) => {
+  it.each(["octocat-", "octo--cat", "octo_cat_", "octo__cat", "_octo", "octo_", "octo_ab", "octo_abcdefghi", "octo_a-b"])("rejects malformed allowlisted login %s before contacting GitHub", async (login) => {
     const f = fixture({ mentionAllowlist: [login] })
     await expect(f.operations.mention(login, "Please restore the service.")).rejects.toThrow(/login|allowlist/)
     expect(f.command).not.toHaveBeenCalled()
   })
 
-  it("accepts managed-user logins in the mention allowlist", async () => {
-    const f = fixture({ mentionAllowlist: ["mona-cat_octo"] })
-    await f.operations.mention("mona-cat_octo", "Please restore the service.")
+  it.each(["mona-cat_octo", "mona-cat_abc", "mona-cat_abc12345", "octo_admin", "ab_admin"])("accepts managed-user login %s in the mention allowlist", async login => {
+    const f = fixture({ mentionAllowlist: [login] })
+    await f.operations.mention(login, "Please restore the service.")
     expect(f.command).toHaveBeenCalledWith(
-      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@mona-cat_octo\n\nPlease restore the service."],
+      ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", `body=@${login}\n\nPlease restore the service.`],
       expect.anything(),
     )
   })
