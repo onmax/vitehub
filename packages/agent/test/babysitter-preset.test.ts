@@ -209,7 +209,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { allowOpe
   const commit = vi.fn(async (directory: string, input: { message: string; paths: string[] }) => remoteBox
     ? await commitGitHubPullRequestWorkspace(directory, input, { expectedHead: head })
     : head);
-  const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void }) => {
+  const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }) => {
     pushed = true;
     if (remoteBox) {
       expect(remoteBox.closed).toBe(false);
@@ -1516,6 +1516,28 @@ describe("Babysitter preset runtime", () => {
       expect(f.commit).not.toHaveBeenCalled();
       expect(f.push).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("records repair publication when the live base advances after the remote push", async () => {
+    const settings = { mergeableState: "dirty", baseBranchHead: "e".repeat(40) };
+    const f = await fixture(false, false, settings);
+    f.choose("pushRepair");
+    const originalPush = f.push.getMockImplementation()!;
+    f.push.mockImplementationOnce(async (...args) => {
+      await args[1]?.beforePush?.();
+      const head = await originalPush(...args);
+      settings.baseBranchHead = "f".repeat(40);
+      if (args[1]?.afterPush) await args[1].afterPush(head);
+      else await args[1]?.beforePush?.();
+      return head;
+    });
+    try {
+      await f.reconcile();
+      const stored = await f.runtime.inbox.get("acme/app", 12);
+      expect(f.push).toHaveBeenCalledOnce();
+      expect(stored?.status).toBe("waiting");
+      expect(stored?.wait?.headSha).toBe("b".repeat(40));
     } finally { await f.runtime.inbox.close(); }
   });
 
