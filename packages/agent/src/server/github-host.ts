@@ -62,7 +62,8 @@ export interface GitHubHostPullRequest {
 
 export interface GitHubHostCheckout extends GitHubHostAccess {
   path: string
-  prepareWorkspace(target: string): Promise<void>
+  /** Restore source instruction files only before the provider injects its instructions. */
+  prepareWorkspace(target: string, options?: { restoreInstructions?: boolean }): Promise<void>
   commitRepair(target: string, input: GitHubRepairCommit, options?: { verifyDependencies?: boolean }): Promise<string>
   push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void> }): Promise<string>
   signal: AbortSignal
@@ -777,7 +778,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       const fetched = (await exec("git", ["-C", checkout, "rev-parse", "HEAD"], commandOptions)).stdout.trim()
       if (fetched !== pullRequest.headSha) throw agentDiagnostics.AGENT_R0767({ message: `Pull request head changed from ${pullRequest.headSha} to ${fetched}.` })
       operation.signal.throwIfAborted()
-      const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
+      const prepareWorkspace = async (target: string, options: { restoreInstructions?: boolean } = {}) => await prepareGitHubPullRequestWorkspace(checkout, target, { ...options, signal: operation.signal })
       let pushHead = pullRequest.headSha
       const commitRepair = async (target: string, input: GitHubRepairCommit, commitOptions?: { verifyDependencies?: boolean }) => await commitGitHubPullRequestWorkspace(target, input, { expectedHead: pushHead, signal: operation.signal, identity: env, verifyDependencies: commitOptions?.verifyDependencies })
       const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void> } = {}) => {

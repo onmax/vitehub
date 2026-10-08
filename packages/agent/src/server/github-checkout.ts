@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 const exec = promisify(execFile)
 
 /** Restore PR checkout history in a separate materialized provider workspace. */
-export async function prepareGitHubPullRequestWorkspace(checkout: string, target: string, options: { signal?: AbortSignal } = {}): Promise<void> {
+export async function prepareGitHubPullRequestWorkspace(checkout: string, target: string, options: { signal?: AbortSignal, restoreInstructions?: boolean } = {}): Promise<void> {
   options.signal?.throwIfAborted()
   const source = await realpath(checkout)
   const destination = await realpath(target)
@@ -115,9 +115,13 @@ export async function prepareGitHubPullRequestWorkspace(checkout: string, target
     await sanitize('--worktree')
     if (materializedPaths) {
       const trackedPaths = new Set((await git(destination, ['ls-files', '-z'])).split('\0').filter(Boolean))
-      const omitted = [...trackedPaths].filter(path => !materializedPaths.has(path) || /(?:^|\/)(?:AGENTS|CLAUDE)\.md$/.test(path))
+      const instructions = (path: string) => /(?:^|\/)(?:AGENTS|CLAUDE)\.md$/.test(path)
+      // Before provider instruction injection, restore the assigned source files
+      // so skip-worktree materialization differences cannot block a base merge.
+      const restore = (path: string) => options.restoreInstructions && instructions(path)
+      const omitted = [...trackedPaths].filter(path => !restore(path) && (!materializedPaths.has(path) || instructions(path)))
       if (omitted.length) await git(destination, ['update-index', '--skip-worktree', '--', ...omitted])
-      const selected = [...trackedPaths].filter(path => materializedPaths.has(path) && !/(?:^|\/)(?:AGENTS|CLAUDE)\.md$/.test(path))
+      const selected = [...trackedPaths].filter(path => restore(path) || (materializedPaths.has(path) && !instructions(path)))
       if (selected.length) await git(destination, ['checkout-index', '--force', '--', ...selected])
       // Keep generated-only baseline files out of a provider's ordinary git add -A.
       const generated = [...materializedPaths].filter(path => !trackedPaths.has(path))

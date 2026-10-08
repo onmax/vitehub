@@ -941,7 +941,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               };
               const prepareRepairWorkspace = async (directory: string) => {
                 if (!preparedDirectories.has(directory)) {
-                  if (directory !== checkout) await prepared.prepareWorkspace(directory);
+                  if (directory !== checkout) await prepared.prepareWorkspace(directory, { restoreInstructions: true });
                   if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
                     const base = await readRepairBase();
                     await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base, signal: abortSignal, fetch: { url: `https://github.com/${repository}.git`, env: prepared.env } });
@@ -1015,7 +1015,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   try {
                     const result = await prepared.push(providerDirectory, {
                       signal: abortSignal,
-                      beforePush: async () => { await assertLease(); },
+                      beforePush: async () => { await assertLease(); await assertRepairBase(); },
                     });
                     // A no-op push does not advance the remote head and emits
                     // no synchronize webhook; do not park this generation as
