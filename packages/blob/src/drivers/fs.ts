@@ -182,17 +182,11 @@ async function writeAtomic(root: string, path: string, bytes: Uint8Array | strin
   }
 }
 
-async function removeMetadata(root: string, pathname: string) {
-  const legacy = resolveMetaPath(root, pathname)
-  await assertNoSymlinkPath(root, legacy)
-  const directory = dirname(legacy)
-  const prefix = generationMetaPrefix(root, pathname)
-  const names = await readdir(directory).catch((error) => {
-    if (isNotFound(error)) return []
-    throw error
-  })
-  for (const name of names.filter(name => name.startsWith(prefix))) {
-    const path = resolve(directory, name)
+async function removeMetadata(root: string, pathname: string, generation?: BigIntStats) {
+  // Only reclaim a generation observed before unlinking the payload. A prefix
+  // sweep can erase a concurrent writer's prepared (or newly live) metadata.
+  if (generation) {
+    const path = generationMetaPath(root, pathname, generation)
     await assertNoSymlinkPath(root, path)
     await rm(path, { force: true })
   }
@@ -417,19 +411,28 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await Promise.all((Array.isArray(pathnames) ? pathnames : [pathnames]).map(async pathname => {
         const path = resolveBlobPath(root, pathname)
         await assertNoSymlinkPath(root, path)
+        const generation = await stat(path, { bigint: true }).catch((error) => {
+          if (isNotFound(error)) return undefined
+          throw error
+        })
         await rm(path, { force: true })
-        await removeMetadata(root, pathname)
+        await removeMetadata(root, pathname, generation)
       }))
     },
     async get(pathname) {
       try {
         const path = resolveBlobPath(root, pathname)
         for (let attempt = 0; attempt < 3; attempt++) {
-          await assertNoSymlinkPath(root, path)
-          const before = await stat(path, { bigint: true }).catch((error) => {
-            if (isDirectoryError(error)) return null
-            throw error
-          })
+          const before = await (async () => {
+            try {
+              await assertNoSymlinkPath(root, path)
+              return await stat(path, { bigint: true })
+            }
+            catch (error) {
+              if (isDirectoryError(error)) return null
+              throw error
+            }
+          })()
           if (!before?.isFile()) return null
           const bytes = await readFile(path)
           const meta = await readMetadata(root, pathname, before)

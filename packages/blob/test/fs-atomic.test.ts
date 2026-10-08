@@ -74,12 +74,13 @@ it.each(["bytes", "metadata", "publication"] as const)("keeps partial %s hidden 
 })
 
 
-it("retries a read spanning publication and removes all metadata generations on deletion", async () => {
+it("retries a read spanning publication and deletes only the observed generation", async () => {
   const root = await mkdtemp(join(tmpdir(), "blob-atomic-"))
   roots.push(root)
   const driver = createDriver({ driver: "fs", base: root })
   const writer = createDriver({ driver: "fs", base: root })
   await driver.put("file.txt", "old", { contentType: "text/plain" })
+  const oldMetadata = await readdir(join(root, ".vitehub", "blob-meta"))
   let replaced = false
   vi.mocked(readFile).mockImplementation(async (...args) => {
     const bytes = await actual.readFile(...args)
@@ -94,7 +95,8 @@ it("retries a read spanning publication and removes all metadata generations on 
   expect(blob?.type).toBe("text/html")
   expect(await driver.head("file.txt")).toMatchObject({ size: 9, customMetadata: { version: "new" } })
   await driver.delete("file.txt")
-  expect(await readdir(join(root, ".vitehub", "blob-meta"))).toEqual([])
+  expect(await readdir(join(root, ".vitehub", "blob-meta"))).toEqual(oldMetadata)
+  expect(await driver.get("file.txt")).toBeNull()
 })
 
 it("reads legacy metadata until the new payload generation is published", async () => {
@@ -109,4 +111,56 @@ it("reads legacy metadata until the new payload generation is published", async 
   expect((await driver.get("file.txt"))?.type).toBe("text/html")
   await driver.delete("file.txt")
   expect(await readdir(join(root, ".vitehub", "blob-meta"))).toEqual([])
+})
+
+
+it("preserves a replacement prepared before concurrent deletion", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blob-atomic-"))
+  roots.push(root)
+  const driver = createDriver({ driver: "fs", base: root })
+  const writer = createDriver({ driver: "fs", base: root })
+  await driver.put("file.txt", "old", { contentType: "text/plain" })
+  let release!: () => void
+  let reached!: () => void
+  const paused = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { reached = resolve })
+  vi.mocked(rename).mockImplementation(async (from, to) => {
+    if (to === join(root, "file.txt")) {
+      reached()
+      await paused
+    }
+    await actual.rename(from, to)
+  })
+  const publication = writer.put("file.txt", "new bytes", { contentType: "text/html", customMetadata: { version: "new" } })
+  await started
+  try {
+    await driver.delete("file.txt")
+    expect(await driver.get("file.txt")).toBeNull()
+    expect(await driver.head("file.txt")).toBeNull()
+    expect((await driver.list()).blobs).toEqual([])
+  }
+  finally {
+    release()
+    await publication
+  }
+  const blob = await driver.get("file.txt")
+  expect(await blob?.text()).toBe("new bytes")
+  expect(blob?.type).toBe("text/html")
+  const expected = { size: 9, contentType: "text/html", customMetadata: { version: "new" } }
+  expect(await driver.head("file.txt")).toMatchObject(expected)
+  expect((await driver.list()).blobs).toEqual([expect.objectContaining(expected)])
+  await driver.delete("file.txt")
+  expect(await driver.get("file.txt")).toBeNull()
+  expect(await readdir(join(root, ".vitehub", "blob-meta"))).toEqual([])
+})
+
+
+it.each(["_vitehub", "_vitehub/derived"])("treats descendants of legacy file %s as missing", async (pathname) => {
+  const root = await mkdtemp(join(tmpdir(), "blob-atomic-"))
+  roots.push(root)
+  const driver = createDriver({ driver: "fs", base: root })
+  await driver.put(pathname, "legacy data")
+  expect(await driver.get(`${pathname}/missing`)).toBeNull()
+  expect(await driver.head(`${pathname}/missing`)).toBeNull()
+  expect(await (await driver.get(pathname))?.text()).toBe("legacy data")
 })
