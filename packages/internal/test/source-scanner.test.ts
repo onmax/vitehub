@@ -217,10 +217,35 @@ describe("source scanner", () => {
     expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
   })
 
-  it.each(["count++ / total", "count-- / total"])("trims comments after postfix division: %s", (value) => {
+  it.each([
+    "count++ / total",
+    "count-- / total",
+    "count++ /* gap */ / total",
+    "count-- /* gap */ / total",
+    "object.return++ / total",
+    "count!++ / total",
+    "count!-- / total",
+  ])("trims comments after postfix division: %s", (value) => {
     for (const comment of ["// after\n", "/* after */"]) {
       expect(readObjectProperty(`{ value: ${value} ${comment}}`, "value")).toBe(value)
     }
+  })
+
+  it.each([
+    "++/['\"]/u.lastIndex",
+    "--/['\"]/u.lastIndex",
+    "++ /* gap */ /['\"]/u.lastIndex",
+    "-- /* gap */ /['\"]/u.lastIndex",
+    "(() => { let value; return value = ++/['\"]/u.lastIndex })()",
+    "(() => { let value; return value = --/['\"]/u.lastIndex })()",
+    "(() => { return ++/['\"]/u.lastIndex })()",
+    "(() => { return --/['\"]/u.lastIndex })()",
+  ])("scans a regex operand after a prefix update: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
+    expect(maskSourceLiterals(value)).not.toContain("['\"]")
+    const call = findDefaultExportCall(`export default defineThing({ value: ${value}, manual: true })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: ${value}, manual: true }`)
   })
 
   it.each(["count+++/['\"]/u", "count---/['\"]/u"])("scans a regex after a compact update and operator: %s", (value) => {

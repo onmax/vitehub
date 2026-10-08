@@ -66,6 +66,18 @@ describe("Schedule JSX discovery", () => {
 })
 
 describe.each([false, true])("Schedule option discovery, server=%s", (server) => {
+  it.each([
+    "++/['\"]/u.lastIndex",
+    "--/['\"]/u.lastIndex",
+    "(() => { let value; return value = ++/['\"]/u.lastIndex })()",
+    "(() => { return --/['\"]/u.lastIndex })()",
+    "count!++ / total",
+    "count!-- / total",
+  ])("reads metadata after an update expression: %s", async (value) => {
+    const { discover } = await fixture(`export default defineSchedule({ cron: '0 9 * * *', handler: () => ${value}, manual: true, allowRuntimeSchedules: true })`, server)
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
   it.each(['const text = "</Email>";', "/* </Email> */", "/* </Email> */ /* after */", "/* </Email> */ /* after; */", '/* </Email> */ /* after" */', "/* </Email> */ / /;", "/* </Email> */\nconst pattern = /Email/;"])("reads metadata after a TypeScript assertion with a later closing tag: %s", async (after) => {
     const { discover } = await fixture(`const first = <Email>value;\nexport default defineSchedule({ cron: '0 9 * * *', handler() {}, manual: true, allowRuntimeSchedules: true });\n${after}`, server)
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])

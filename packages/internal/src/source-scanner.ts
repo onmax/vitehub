@@ -159,7 +159,7 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
       const previous = previousCodeIndex(source, index - 1, controlFlowRegexes)
       const result = token === "of"
         ? isLabeledStatementRegexStart(source, index, previous, controlFlowRegexes) || isForOfRegexStart(source, index, controlFlowRegexes)
-        : !endsWithPostfixUpdate(source, previous, token)
+        : !endsWithPostfixUpdate(source, previous, token, controlFlowRegexes)
       controlFlowRegexes.set(index, result)
       return result
     }
@@ -182,11 +182,23 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
     && !/[.#]/.test(source[previousCodeIndex(source, start - 1, controlFlowRegexes)] ?? "")
 }
 
-function endsWithPostfixUpdate(source: string, index: number, sign: string) {
+function endsWithPostfixUpdate(source: string, index: number, sign: string, controlFlowRegexes: ControlFlowRegexCache) {
   let count = 0
   while (source[index - count] === sign) count += 1
   // Update operators consume pairs; an odd trailing sign starts a new expression.
-  return count > 0 && count % 2 === 0
+  if (count === 0 || count % 2 !== 0) return false
+  const start = index - count + 1
+  let contextStart = start
+  let previous = previousCodeIndex(source, start - 1, controlFlowRegexes)
+  // Non-null assertions retain the context of their operand.
+  while (source[previous] === "!") {
+    contextStart = previous
+    previous = previousCodeIndex(source, previous - 1, controlFlowRegexes)
+  }
+  if (/[\r\n\u2028\u2029]/.test(source.slice(previous + 1, start))) return false
+  const token = /[$\p{ID_Continue}\u200C\u200D]+$/u.exec(source.slice(0, previous + 1))?.[0] ?? source[previous] ?? ""
+  return !isRegexLiteralStart(source, contextStart, token, controlFlowRegexes)
+    && !isControlFlowRegexStart(source, contextStart, controlFlowRegexes)
 }
 
 function isForOfRegexStart(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
