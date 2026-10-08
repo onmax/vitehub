@@ -185,3 +185,17 @@ test('each successive worker repair head is verified while unrelated heads still
     assert.equal(reads, 3)
   } finally { await inbox.close() }
 })
+
+
+test('an original-head source rollback cannot park a verified repair head', async () => {
+  const inbox = await fixture()
+  try {
+    const claim = (await inbox.claim(1))[0]!
+    await inbox.ingest('repair-push', 'push', { repository: { full_name: 'vite-hub/vitehub' }, ref: 'refs/heads/feature', after: 'repair' })
+    await inbox.ingest('rollback-push', 'push', { repository: { full_name: 'vite-hub/vitehub' }, ref: 'refs/heads/feature', after: 'new' })
+    const finished = await inbox.finish(claim, { text: 'Repair pushed.', wait: { kind: 'checks', headSha: 'repair', reason: 'Waiting for CI.', evidenceKey: 'push-receipt' }, progress: { kind: 'verified', evidence: 'push:repair' }, verifiedPushHeads: ['repair'] })
+    assert.equal(finished, false)
+    assert.equal((await inbox.get('vite-hub/vitehub', 42))?.status, 'ready')
+    assert.equal((await inbox.get('vite-hub/vitehub', 42))?.wait, undefined)
+  } finally { await inbox.close() }
+})

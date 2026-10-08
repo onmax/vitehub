@@ -869,12 +869,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // The cancellation watcher alone leaves a window for a reclaimed worker.
               const repairOperation = new AsyncLocalStorage<boolean>();
               const repairEvidenceKey = (snapshot: Snapshot, current = snapshot) => {
-                const published = current.pr?.head?.sha !== pullRequest.headRefOid && verifiedPushHeads.has(current.pr?.head?.sha ?? "");
+                const published = !!pushedHead && verifiedPushHeads.has(pushedHead);
                 const original = published && snapshot === inboxClaim.snapshot;
                 const checks: Snapshot["checks"] = original ? {} : Object.fromEntries(Object.entries(snapshot.checks).filter(([key]) =>
-                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase())));
+                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase())
+                  && (!published || verifiedPushHeads.has(snapshot.checks[key]?.head_sha ?? ""))));
                 const statuses: Snapshot["statuses"] = original ? {} : Object.fromEntries(Object.entries(snapshot.statuses).filter(([key]) =>
-                  String(current.statuses[key]?.state).toLowerCase() !== "success"));
+                  String(current.statuses[key]?.state).toLowerCase() !== "success"
+                  && (!published || verifiedPushHeads.has(snapshot.statuses[key]?.sha ?? ""))));
                 if (published) {
                   for (const key of Object.keys(checks)) checks[key] = { ...checks[key], head_sha: pullRequest.headRefOid };
                   for (const key of Object.keys(statuses)) statuses[key] = { ...statuses[key], sha: pullRequest.headRefOid };
@@ -888,7 +890,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 }, waitPolicy);
               };
               let observePendingPush: ((current: Snapshot) => void) | undefined;
-              verifiedPushHeads.add(pullRequest.headRefOid);
               const pendingInboxHeads = new Set([pullRequest.headRefOid]);
               const assertLease = async () => {
                 abortSignal.throwIfAborted();

@@ -1412,19 +1412,20 @@ describe("Babysitter preset runtime", () => {
     } finally { release?.(); timers.mockRestore(); get.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
   });
 
-  it.each([{ published: false, lateOwn: false }, { published: true, lateOwn: false }, { published: true, lateOwn: true }])("fences source pushes before synchronize, published=$published lateOwn=$lateOwn", async ({ published, lateOwn }) => {
+  it.each([{ published: false, lateOwn: false, rollback: false }, { published: true, lateOwn: false, rollback: false }, { published: true, lateOwn: true, rollback: false }, { published: true, lateOwn: false, rollback: true }])("fences source pushes before synchronize, published=$published lateOwn=$lateOwn rollback=$rollback", async ({ published, lateOwn, rollback }) => {
     const f = await fixture();
     f.choose("pushRepair");
     f.onAdmission(() => {});
     const timers = vi.spyOn(globalThis, "setInterval");
     const renew = vi.spyOn(f.runtime.inbox, "renew");
     let rejected = false;
+    const otherHead = rollback ? f.pr().head.sha : "c".repeat(40);
     f.push.mockImplementationOnce(async (_target, options) => {
       if (published) await options?.afterPush?.("b".repeat(40));
       await f.runtime.inbox.ingest("other-source-push", "push", {
-        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: "c".repeat(40),
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: otherHead,
       });
-      expect((await f.runtime.inbox.get("acme/app", 12))?.sourcePushHead).toBe("c".repeat(40));
+      expect((await f.runtime.inbox.get("acme/app", 12))?.sourcePushHead).toBe(otherHead);
       if (lateOwn) await f.runtime.inbox.ingest("delayed-own-source-push", "push", {
         repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: "b".repeat(40),
       });
@@ -1445,6 +1446,33 @@ describe("Babysitter preset runtime", () => {
       expect(current.status).toBe("ready");
       expect(current.wait).toBeUndefined();
     } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it.each(["check", "status"])("fences a failed %s for an owned push before synchronize", async evidence => {
+    const f = await fixture(false, false, { operationCount: 2, expectedOperationErrorAt: 1 });
+    f.choose("pushRepair");
+    const head = "b".repeat(40);
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await options?.beforePush?.(head);
+      await f.runtime.inbox.ingest("early-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      if (evidence === "check") await f.runtime.inbox.ingest("early-failure", "check_run", {
+        repository: { full_name: "acme/app" }, check_run: { id: 99, name: "new failure", head_sha: head, status: "completed", conclusion: "failure", pull_requests: [{ number: 12 }] },
+      });
+      else await f.runtime.inbox.ingest("early-failure", "status", {
+        repository: { full_name: "acme/app" }, sha: head, context: "new failure", state: "failure",
+      });
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(evidence === "check" ? current.checks["check_run:99"]?.conclusion : current.statuses["new failure"]?.state).toBe("failure");
+      await expect(options?.afterPush?.(head)).rejects.toThrow("evidence changed");
+      return head;
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(head);
+    } finally { await f.runtime.inbox.close(); }
   });
 
   it("retains an accepted worker push before the local push command returns", async () => {

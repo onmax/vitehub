@@ -569,6 +569,9 @@ existing PRs still receive lifecycle evidence that can cancel their active work.
 through a caller-supplied paginated REST reader and optional thread reader.
 `finish()` parks completed work or schedules a retry; feedback and terminal CI
 results wake it by default. Pending CI updates persist without starting another pass.
+CI for a source push can arrive before the PR synchronize event. The inbox retains
+it for the active claim or a durable pushed-head wait. A rollback to the original
+claimed head revokes repair custody, even while synchronize still reports that head.
 For explicit durable waits, pass `wait: { reason, evidenceKey }` to `finish()`.
 The inbox binds the wait to the current head and excludes it from claims until
 `wake(observedSnapshot, evidenceKey)` sees changed evidence. See the
