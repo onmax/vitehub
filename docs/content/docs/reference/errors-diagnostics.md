@@ -48,6 +48,12 @@ Use the operational code to choose application behavior. Use a Nostics code to l
 
 ## Agent diagnostics
 
+<a id="runtime-preflight"></a>
+
+### Runtime preflight diagnostics
+
+Runtime preflight checks report missing or unverified capabilities with `RUNTIME_R0012` and `RUNTIME_R0013`. Inspect the check identifier, kind, state, and reason, then provide the capability or adjust the check when it is optional. Invalid preflight options use `RUNTIME_R0014` and must be corrected before checks start.
+
 Agent configuration, build, and runtime defects use the `AGENT_C####`, `AGENT_B####`, and `AGENT_R####` families. Application tools can use their own Nostics catalog:
 
 ```ts

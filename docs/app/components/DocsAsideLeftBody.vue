@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { docsManifest, normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
+import {
+  docsManifest,
+  getDocsPageByPath,
+  normalizeDocsPath,
+} from "~~/modules/vitehub-docs/runtime/utils/docs";
 import {
   getDocsCatalog,
   getDocsRelatedSections,
@@ -10,15 +14,24 @@ import {
 const route = useRoute();
 const currentPath = computed(() => normalizeDocsPath(route.path));
 const section = computed(() => getDocsSectionForPath(docsManifest.sections, route.path));
-const pageGroups = computed(() => section.value ? getDocsSidebarGroups(section.value) : []);
-const related = computed(() => section.value ? getDocsRelatedSections(docsManifest.sections, section.value) : []);
+const pageGroups = computed(() => {
+  if (!section.value) return [];
+  const groups = getDocsSidebarGroups(section.value);
+  const perspective = getDocsPageByPath("/docs/getting-started/built-for-vue");
+  if (section.value.id !== "ui" || !perspective) return groups;
+  return groups.map((group) =>
+    group.label === "Start" ? { ...group, pages: [...group.pages, perspective] } : group,
+  );
+});
+const related = computed(() =>
+  section.value ? getDocsRelatedSections(docsManifest.sections, section.value) : [],
+);
 // Outside every section, for example on the catalog, the sidebar lists every product by category.
 const catalog = getDocsCatalog(docsManifest.sections);
 
 function isActive(path: string) {
   return currentPath.value === normalizeDocsPath(path);
 }
-
 </script>
 
 <template>
@@ -67,7 +80,7 @@ function isActive(path: string) {
 
     <NuxtLink to="/docs" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
       <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
-      <span class="min-w-0 truncate">All products</span>
+      <span class="min-w-0 truncate">Browse all docs</span>
     </NuxtLink>
   </nav>
 
@@ -134,7 +147,10 @@ function isActive(path: string) {
   padding: 0.25rem 1.25rem;
   color: var(--ui-text-muted);
   font-size: 0.875rem;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
 }
 
 .vh-docs-sidebar-link.is-grouped {

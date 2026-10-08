@@ -238,10 +238,16 @@ describe("Code Host capability", () => {
     const error = await run(set, "merge", input).catch((caught: unknown) => caught)
     expect(error).toMatchObject({ code: "APPROVAL_REQUIRED" })
     expect(fetcher).not.toHaveBeenCalled()
-    const grant = approveAgentToolRequest((error as Error).cause)!
+    const request = (error as Error).cause as { input: { sha: string } }
+    expect(request.input.sha).toBe(input.sha)
+    const reviewedSha = input.sha
+    request.input.sha = "b".repeat(40)
+    input.sha = "c".repeat(40)
+    const grant = approveAgentToolRequest(request)!
+    request.input.sha = "d".repeat(40)
     await expect(executeApprovedAgentTool(set.code_host_merge!, grant)).rejects.toMatchObject({ code: "AGENT_R0944" })
     const init = fetcher.mock.calls[0]?.[1] as RequestInit
-    expect(JSON.parse(String(init.body))).toMatchObject({ [host === "forgejo" ? "head_commit_id" : "sha"]: input.sha })
+    expect(JSON.parse(String(init.body))).toMatchObject({ [host === "forgejo" ? "head_commit_id" : "sha"]: reviewedSha })
   })
 
   it.each([

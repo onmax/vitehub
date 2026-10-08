@@ -604,7 +604,6 @@ function message(error: unknown) {
     <AgentInvocationInspector
       v-else-if="tab === 'details'"
       :invocation="invocation"
-      :show-capabilities="false"
       :show-error="false"
       :show-sources="!workspace || !!workspaceError"
       :show-status="false"
