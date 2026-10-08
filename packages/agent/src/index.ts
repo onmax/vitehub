@@ -4704,7 +4704,7 @@ async function createAgentInvocationContext<
         }
         await validateCapabilityInput(false)
         if (intercept) {
-          const channelMessage = !internalDefinition?.[baseAgentData] && activeChannelContext
+          const channelMessage = capabilities.input.data === undefined && !internalDefinition?.[baseAgentData] && activeChannelContext
             ? await channelMessageData(
               activeChannelContext.channel,
               activeChannelContext.channelId,
