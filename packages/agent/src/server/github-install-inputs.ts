@@ -6,7 +6,19 @@ import { parseSyml } from "@yarnpkg/parsers";
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 
 const inputNames = new Set([".npmrc", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock"]);
-const dependencyFields = new Set(["dependencies", "devDependencies", "optionalDependencies", "resolutions", "overrides", "catalog", "catalogs", "patchedDependencies"]);
+const dependencyFields = new Set(["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "resolutions", "overrides", "catalog", "catalogs", "patchedDependencies"]);
+const sourceFields = new Set(["resolved", "tarball", "resolution", "version", "specifier", "repo"]);
+const downloadHosts = new Set(["registry.npmjs.org", "registry.yarnpkg.com", "pkg.pr.new", "github.com", "codeload.github.com"]);
+
+function checkDownloadSource(value: string): void {
+  // Yarn's nested protocols can percent-encode their underlying source URL.
+  const decoded = decodeURIComponent(value);
+  const source = decoded.match(/(?:^|[@:(])([a-z][a-z\d+.-]*:\/\/.+)/i)?.[1];
+  if (source && !/^file:/i.test(source)) {
+    const url = new URL(source.replace(/^git\+/i, ""));
+    if (url.protocol !== "https:" || !downloadHosts.has(url.hostname) || url.port || url.username || url.password) throw new Error("Dependency downloads require a trusted HTTPS registry or code host.");
+  } else if (/(?:^|@)git@/i.test(decoded)) throw new Error("Dependency downloads require a trusted HTTPS registry or code host.");
+}
 const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict"]);
 const patternSettings = new Set(["hoist-pattern", "public-hoist-pattern"]);
 const workspaceFields = new Set(["packages", "catalog", "catalogs", "catalogMode", "overrides", "packageExtensions", "patchedDependencies", "onlyBuiltDependencies", "ignoredBuiltDependencies", "neverBuiltDependencies", "allowBuilds"]);
@@ -73,6 +85,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   async function inspect(value: unknown, base: string, dependency = false, field = ""): Promise<void> {
     if (hasRuntimeType(value, "string")) {
       if (field === "workspaces") { await checkPath(value, base, true); return; }
+      if (dependency || sourceFields.has(field)) checkDownloadSource(value);
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
       const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
       if (local) await checkPath(local[1]!, base);
@@ -91,6 +104,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       } else {
         // Lockfile package keys may themselves contain file: sources.
         if (/(?:^|@)(?:file|link|portal):/i.test(key)) await inspect(key, base);
+        if (/:\/\//.test(decodeURIComponent(key))) checkDownloadSource(key);
         await inspect(entry, base, dependency || dependencyFields.has(key), key === "packages" && field === "workspaces" ? "workspaces" : key);
       }
     }
