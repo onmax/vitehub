@@ -65,6 +65,12 @@ describe("source scanner", () => {
     "<Email></Email>",
     "<Email />",
     "<T extends />",
+    "<Email<string>></Email>",
+    "<Email <string>>import(fake)</Email>",
+    "<Email\n<Array<string>> />",
+    "<Email<Array<string>> />",
+    "<Email<{ subject: string }>>{import(target)}</Email>",
+    "<Email<() => string>>{import(target)}</Email>",
     "<T>(value) =&gt; value</T>",
     "<T extends={Email}>(value) {() => value}</T>",
     String.raw`<Email subject="C:\"></Email>`,
@@ -88,6 +94,7 @@ describe("source scanner", () => {
 
   it.each([
     ['<Email>{import(target)}</Email>', '{import(target)}'],
+    ['<Email<() => string>>{import(target)}</Email>', '{import(target)}'],
     ['<Email value={import(target)} />', '{import(target)}'],
     ['<Email><Email>{import(target)}</Email></Email>', '{import(target)}'],
     ['<Email>{<Email>{import(target)}</Email>}</Email>', '{       {import(target)}        }'],
@@ -99,8 +106,7 @@ describe("source scanner", () => {
     expect(masked).not.toContain("<Email")
   })
 
-  it("masks braces and fake requests inside quoted JSX attributes", () => {
-    const source = '<Email label="{import(fake)}">import(fake)</Email>'
+  it.each(['<Email label="{import(fake)}">import(fake)</Email>', '<Email<string>>import(fake)</Email>'])("masks raw JSX fake requests: %s", (source) => {
     expect(jsxScanner.maskSourceLiterals(source)).toBe(" ".repeat(source.length))
   })
 
@@ -230,6 +236,15 @@ describe("source scanner", () => {
     "if (ready) {} else {}",
     "{}",
     "function task() {}",
+    "function task<T>() {}",
+    "function task<T = Array<string>>() {}",
+    "function task<T extends { subject: string }>() {}",
+    "function task<T extends () => string>() {}",
+    "class Task<T> {}",
+    "class Task<T> extends Base {}",
+    "class Task<T = Array<string>> {}",
+    "class Task<T extends { subject: string }> {}",
+    "class Task<T extends () => string> {}",
     "const marker = 1\nfunction task() {}",
     "prepare()\nfunction task() {}",
     "function task(): void {}",
@@ -295,6 +310,8 @@ describe("source scanner", () => {
     `const value = {} as Task / total`,
     `const value = {} satisfies Task / total`,
     "const value = function task() {} / total",
+    "const value = function task<T>() {} / total",
+    "const value = class Task<T> {} / total",
     "const value = (() => {}) / total",
     "const value = class Task {} / total",
     "const value =\nfunction task() {} / total",

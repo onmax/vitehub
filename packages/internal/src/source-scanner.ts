@@ -357,9 +357,26 @@ function isStatementBlockRegexStart(source: string, closeBrace: number, controlF
   return false
 }
 
+function maskDeclarationTypeParameters(source: string, head: string, controlFlowRegexes: ControlFlowRegexCache) {
+  let start: number | undefined
+  let end: number | undefined
+  for (const generic of head.matchAll(/(?<![$\p{ID_Continue}\u200C\u200D])(?:function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?|(?:interface|type)\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)\s*</gu)) {
+    const next = generic.index + generic[0].length - 1
+    // Ignore candidate keywords inside type parameters that were already read.
+    if (end !== undefined && next <= end) continue
+    const close = findMatchingWithContext(source, next, "<", ">", controlFlowRegexes)
+    if (close === undefined || close >= head.length) continue
+    start = next
+    end = close
+  }
+  if (start === undefined || end === undefined) return head
+  return head.slice(0, start) + head.slice(start, end + 1).replace(/[^\r\n\u2028\u2029]/g, " ") + head.slice(end + 1)
+}
+
 function isDeclarationBlockStart(source: string, openBrace: number, controlFlowRegexes: ControlFlowRegexCache) {
-  const head = source.slice(0, openBrace).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => comment.replace(/[^\r\n\u2028\u2029]/g, " "))
-  const declaration = /(?<![$\p{ID_Continue}\u200C\u200D])(?:(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*\([^{}]*\)(?:\s*:[^;{}]+)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?(?:\s+extends\s+[^;{}]+)?|interface\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*<[^;{}]*>)?(?:\s+extends\s+[^;{}]+)?|(?:const\s+)?enum\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*|(?:namespace|module)\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*\.\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)*|type\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*<[^;{}]*>)?\s*=)\s*$/u.exec(head)
+  let head = source.slice(0, openBrace).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => comment.replace(/[^\r\n\u2028\u2029]/g, " "))
+  head = maskDeclarationTypeParameters(source, head, controlFlowRegexes)
+  const declaration = /(?<![$\p{ID_Continue}\u200C\u200D])(?:(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*\([^{}]*\)(?:\s*:[^;{}]+)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?(?:\s+extends\s+[^;{}]+)?|interface\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s+extends\s+[^;{}]+)?|(?:const\s+)?enum\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*|(?:namespace|module)\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*\.\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)*|type\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*\s*=)\s*$/u.exec(head)
   if (!declaration) return false
   const { before, end } = declarationPrefix(source, head, declaration.index, controlFlowRegexes)
   if (/[=([,:?!&|+\-*/%^~<>.]$/.test(before)) return false
@@ -485,11 +502,19 @@ function skipJsxElement(source: string, index: number, controlFlowRegexes: Contr
 }
 
 function readJsxElement(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): JsxElement | undefined {
-  const tag = /^<([$_\p{ID_Start}][-$.:\p{ID_Continue}\u200C\u200D]*)?(?=[\s/>])/u.exec(source.slice(index))
+  const tag = /^<([$_\p{ID_Start}][-$.:\p{ID_Continue}\u200C\u200D]*)?(?=[\s/<>])/u.exec(source.slice(index))
   if (!tag) return
   const name = tag[1] ?? ""
   const expressions: JsxElement["expressions"] = []
   let current = index + tag[0].length
+  if (name && sourceSyntaxes.get(controlFlowRegexes) === "tsx") {
+    const typeArguments = skipWhitespaceAndComments(source, current)
+    if (source[typeArguments] === "<") {
+      const end = findMatchingWithContext(source, typeArguments, "<", ">", controlFlowRegexes)
+      if (end === undefined) return
+      current = end + 1
+    }
+  }
   if (!name && source[current] !== ">") return
   while (current < source.length && source[current] !== ">") {
     if (source[current] === "\"" || source[current] === "'") {

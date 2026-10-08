@@ -37,7 +37,7 @@ describe("Schedule JSX discovery", () => {
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
   })
 
-  it.each(["<Email></Email>", "<Email />", "<T extends />", "<T>(value) =&gt; value</T>", "<T extends={Email}>(value) {() => value}</T>", "<><Email /></>", String.raw`<Email subject="C:\"></Email>`, `<Email></Email>*/['"]/u`, `<Email></Email> * /['"]/u`, "<Email></Email>*/ /", "<Email></Email>*/a/*value", "<Email></Email>*/a/*value*/b/", "<Email></Email>*/a/*value + 1 /* after */"])("reads literal metadata from a server .tsx definition: %s", async (jsx) => {
+  it.each(["<Email></Email>", "<Email />", "<T extends />", "<Email<string>></Email>", "<Email<{ subject: string }>>{import(target)}</Email>", "<T>(value) =&gt; value</T>", "<T extends={Email}>(value) {() => value}</T>", "<><Email /></>", String.raw`<Email subject="C:\"></Email>`, `<Email></Email>*/['"]/u`, `<Email></Email> * /['"]/u`, "<Email></Email>*/ /", "<Email></Email>*/a/*value", "<Email></Email>*/a/*value*/b/", "<Email></Email>*/a/*value + 1 /* after */"])("reads literal metadata from a server .tsx definition: %s", async (jsx) => {
     const { discover } = await fixture(`export default defineSchedule({ cron: '0 9 * * *', handler: () => ${jsx}, manual: true, allowRuntimeSchedules: true })`, true, ".tsx")
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
   })
@@ -46,6 +46,11 @@ describe("Schedule JSX discovery", () => {
 describe.each([false, true])("Schedule option discovery, server=%s", (server) => {
   it.each(['const text = "</Email>";', "/* </Email> */", "/* </Email> */ /* after */", "/* </Email> */ /* after; */", '/* </Email> */ /* after" */', "/* </Email> */ / /;", "/* </Email> */\nconst pattern = /Email/;"])("reads metadata after a TypeScript assertion with a later closing tag: %s", async (after) => {
     const { discover } = await fixture(`const first = <Email>value;\nexport default defineSchedule({ cron: '0 9 * * *', handler() {}, manual: true, allowRuntimeSchedules: true });\n${after}`, server)
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
+  it.each(["function task<T>() {}", "class Task<T> {}"])("reads metadata after a generic declaration: %s", async (declaration) => {
+    const { discover } = await fixture(`${declaration}\n/['"]/u.test(value);\nexport default defineSchedule({ cron: '0 9 * * *', handler() {}, manual: true, allowRuntimeSchedules: true });`, server)
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
   })
 

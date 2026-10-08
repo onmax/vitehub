@@ -1463,12 +1463,14 @@ it("retains nested repositories when a requested handler has a computed import",
 })
 
 it.each([
-  ["{import(target)}", true],
-  ["import(target)", false],
-  ["<Email value={import(target)} />", true],
-  ["{<Email>{import(target)}</Email>}", true],
-  ["{(() => { if (ready) {} /pattern/.test(value); return import(target) })()} import(fake)", true],
-])("traces computed imports in JSX expressions: %s", async (body, executable) => {
+  ["Email", "{import(target)}", true],
+  ["Email", "import(target)", false],
+  ["Email", "<Email value={import(target)} />", true],
+  ["Email", "{<Email>{import(target)}</Email>}", true],
+  ["Email", "{(() => { if (ready) {} /pattern/.test(value); return import(target) })()} import(fake)", true],
+  ["Email<{ subject: string }>", "{import(target)}", true],
+  ["Email<string>", "import(fake)", false],
+])("traces computed imports in JSX expressions: %s %s", async (tag, body, executable) => {
   const rootDir = await mkdtemp(join(tmpdir(), "vitehub-provider-jsx-computed-repository-"))
   tempDirs.push(rootDir)
   const handler = join(rootDir, "server", "view.tsx")
@@ -1485,7 +1487,7 @@ it.each([
     writeFile(imported, "export const computed = true\n"),
     writeFile(join(dirname(fake), ".git"), "gitdir: /tmp/fake.git\n"),
     writeFile(fake, "export const fake = true\n"),
-    writeFile(handler, `const target = "../computed-worktree/workflow.mjs"; const fake = "../fake-worktree/workflow.mjs"; export const view = () => <Email>${body}</Email>;`),
+    writeFile(handler, `const target = "../computed-worktree/workflow.mjs"; const fake = "../fake-worktree/workflow.mjs"; export const view = () => <${tag}>${body}</Email>;`),
   ])
   await bundleEsmEntry(handler, join(rootDir, "proof.mjs"), {
     format: "esm",
