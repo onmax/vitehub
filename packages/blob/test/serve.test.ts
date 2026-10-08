@@ -453,6 +453,24 @@ describe("Blob response transforms", () => {
     expect(request.res.headers.get("etag")).toBeNull()
   })
 
+  it("serves a fresh derivative when reading the cache fails", async () => {
+    const get = driver.get.bind(driver)
+    const failure = new Error("Cache read unavailable")
+    const log = vi.spyOn(console, "error").mockImplementation(() => {})
+    vi.spyOn(driver, "get").mockImplementation(async pathname => {
+      if (pathname.startsWith("_vitehub/derived/")) throw failure
+      return get(pathname)
+    })
+
+    const request = event()
+    const [error, body] = await storage.serve(request, "private/original", options)
+    expect(error).toBeNull()
+    expect(await new Response(body).text()).toBe("public")
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(request.res.headers.get("cache-control")).toBe(options.cacheControl)
+    expect(log).toHaveBeenCalledWith("[vitehub/blob] Transform cache read failed", failure)
+  })
+
   it("serves the fresh derivative even when caching fails", async () => {
     const warning = vi.spyOn(console, "error").mockImplementation(() => {})
     vi.spyOn(driver, "put").mockRejectedValue(new Error("storage unavailable"))

@@ -22,6 +22,19 @@ afterEach(async () => {
 })
 
 describe("filesystem content hash snapshots", () => {
+  it.each(["blob-meta", "blob-hashes"])("preserves errors when internal %s is a file", async (directory) => {
+    const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-cache-"))
+    directories.push(base)
+    const driver = createDriver({ base, driver: "fs" })
+    await driver.put("photo", "original")
+    const path = join(base, ".vitehub", directory)
+    await fs.rm(path, { recursive: true })
+    await fs.writeFile(path, "corrupt")
+
+    await expect(driver.head("photo")).rejects.toMatchObject({ code: "ENOTDIR" })
+    if (directory === "blob-meta") await expect(driver.get("photo")).rejects.toMatchObject({ code: "ENOTDIR" })
+  })
+
   it("keeps hash backfill separate from a concurrent put's content metadata", async () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-cache-"))
     directories.push(base)

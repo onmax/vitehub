@@ -191,10 +191,19 @@ function toBlobObject(entry: FsBlobEntry): BlobObject {
 async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | null> {
   try {
     const path = resolveBlobPath(root, pathname)
-    await assertNoSymlinkPath(root, path)
     for (let attempt = 0; attempt < 3; attempt++) {
-      const stats = await stat(path, { bigint: true })
-      if (!stats.isFile()) return null
+      // Legacy content files may block descendant paths, but internal sidecar errors must propagate.
+      const stats = await (async () => {
+        try {
+          await assertNoSymlinkPath(root, path)
+          return await stat(path, { bigint: true })
+        }
+        catch (error) {
+          if (isDirectoryError(error)) return null
+          throw error
+        }
+      })()
+      if (!stats?.isFile()) return null
       const meta = await readMetadata(root, pathname)
       const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
       const cached = await readHash(root, pathname)
@@ -218,7 +227,7 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
     throw new Error("Blob changed while reading its filesystem metadata.")
   }
   catch (error) {
-    if (isNotFound(error) || isDirectoryError(error)) return null
+    if (isNotFound(error)) return null
     throw error
   }
 }

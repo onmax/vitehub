@@ -268,7 +268,12 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
             }
           }
 
-          const cached = cachePath ? await driver.get(cachePath) : null
+          const cached = cachePath
+            ? await driver.get(cachePath).catch((error) => {
+              console.error("[vitehub/blob] Transform cache read failed", error)
+              return null
+            })
+            : null
           let body = cachePath
             ? await readDerived(cached, etag!)
             : await driver.get(normalizedPath)
