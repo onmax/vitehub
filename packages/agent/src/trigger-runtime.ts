@@ -506,6 +506,7 @@ export async function verifyAgentWebhookRequest<TRuntimeConfig extends AgentRunt
       // `readRawBody` always returns a fresh Uint8Array, but TypeScript's
       // platform type also permits SharedArrayBuffer in `Uint8Array.buffer`.
       // The Web Crypto API receives the detached ArrayBuffer created above.
+      // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- readRawBody returns an owned Uint8Array, so Web Crypto receives an ArrayBuffer it can consume without sharing caller memory.
       const body = (await readRawBody()).buffer as ArrayBuffer
       const expected = `sha256=${await hmacSha256(secretToken, body)}`
       if (await constantTimeEqual(expected, headerValue)) {
