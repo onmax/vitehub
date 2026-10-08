@@ -1038,17 +1038,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return [name, sanitized];
               }));
               const baseCapabilities = workerSettings.capabilities;
-              const repair = repairCapability({
-                ...operations,
-                commitRepair: input => repairOperation.run(true, () => operations.commitRepair(input)),
-                push: () => repairOperation.run(true, () => operations.push()),
-              }, merge.mode === "auto", async (context) => {
+              const repair = repairCapability(operations, merge.mode === "auto", async (context) => {
                 if (!workerSettings.box) return;
                 const session = activeProviderBox(context);
                 if (!session) throw new Error("The repair Box is not prepared.");
                 await assertLease();
                 if (!session.localWorkspace) await importBoxCommit(session.session, checkout, pullRequest.headRefOid, abortSignal);
               }, {
+                runRepair: execute => repairOperation.run(true, execute),
                 beforeRepair: async (context, paths) => {
                   if (!workerSettings.box) return;
                   await assertLease();

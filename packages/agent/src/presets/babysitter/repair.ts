@@ -19,7 +19,9 @@ function stringField(input: unknown, key: string, allowEmpty = false): string {
 export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, beforePush?: (context: AgentInvocationContextStore) => Promise<void>, workspace?: {
   beforeRepair(context: AgentInvocationContextStore, paths?: readonly string[]): Promise<void>;
   afterRefresh(context: AgentInvocationContextStore): Promise<void>;
+  runRepair?<T>(execute: () => Promise<T>): Promise<T>;
 }) {
+  const withinRepair = <T>(execute: () => Promise<T>) => workspace?.runRepair ? workspace.runRepair(execute) : execute();
   return defineCapability({
     id: "babysitter.github",
     tools: context => ({
@@ -70,7 +72,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
         name: "refreshDependencies",
         description: "Install frozen dependencies after resolving dependency conflicts or changing manifests or lockfiles. Run before validation.",
         inputSchema: noArguments,
-        execute: async () => { await workspace?.beforeRepair(context.context); await operations.refreshDependencies(); await workspace?.afterRefresh(context.context); return { refreshed: true }; },
+        execute: () => withinRepair(async () => { await workspace?.beforeRepair(context.context); await operations.refreshDependencies(); await workspace?.afterRefresh(context.context); return { refreshed: true }; }),
       },
       commitRepair: {
         name: "commitRepair",
@@ -81,23 +83,23 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           required: ["message", "paths"],
           additionalProperties: false,
         },
-        execute: async (input: unknown) => {
+        execute: (input: unknown) => withinRepair(async () => {
           if (!isRuntimeRecord(input) || !Array.isArray(input.paths) || !input.paths.every(path => hasRuntimeType(path, "string"))) throw new Error("Expected explicit repair paths.");
           await workspace?.beforeRepair(context.context, input.paths);
           const head = await operations.commitRepair({ message: stringField(input, "message"), paths: input.paths });
           return { head };
-        },
+        }),
       },
       pushRepair: {
         name: "pushRepair",
         description:
           "Push committed repairs to this PR's pinned source branch. After pushing, resolve any review threads fixed by the push before ending the pass.",
         inputSchema: noArguments,
-        execute: async () => {
+        execute: () => withinRepair(async () => {
           await beforePush?.(context.context);
           await operations.push();
           return { pushed: true };
-        },
+        }),
       },
       commentOnPullRequest: {
         name: "commentOnPullRequest",
