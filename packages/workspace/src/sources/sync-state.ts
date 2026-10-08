@@ -41,13 +41,13 @@ export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyn
   }
 
   if (state.claims !== undefined) {
-    if (!state.claims || typeof state.claims !== "object" || Array.isArray(state.claims)) return
+    if (!state.claims || !hasRuntimeType(state.claims, "object") || Array.isArray(state.claims)) return
     for (const [path, claims] of Object.entries(state.claims)) {
       if (!state.paths[path] || !Array.isArray(claims) || claims.length === 0) return
       const mounts = new Set<string>()
       for (const claim of claims) {
-        if (!claim || typeof claim !== "object" || Array.isArray(claim)) return
-        if (typeof claim.digest !== "string" || typeof claim.sourcePath !== "string" || typeof claim.mountPath !== "string") return
+        if (!claim || !hasRuntimeType(claim, "object") || Array.isArray(claim)) return
+        if (!hasRuntimeType(claim.digest, "string") || !hasRuntimeType(claim.sourcePath, "string") || !hasRuntimeType(claim.mountPath, "string")) return
         if (mounts.has(claim.mountPath)) return
         mounts.add(claim.mountPath)
       }

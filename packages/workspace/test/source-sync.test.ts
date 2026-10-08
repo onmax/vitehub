@@ -291,7 +291,11 @@ describe("Workspace Source Sync", () => {
     await expect(workspace.exists("docs/stale.md")).resolves.toBe(false)
   })
 
-  it.each([false, true])("retains same-path claims across mount changes, reverse=%s", async (reverse) => {
+  it.each([
+    [false, false, false], [true, false, false],
+    [false, true, false], [true, true, false],
+    [false, false, true], [true, false, true],
+  ])("retains same-path claims across mount changes, reverse=%s, refresh=%s, edited=%s", async (reverse, refresh, edited) => {
     const store = createMemoryWorkspaceStore()
     const rootItems = new Map([["docs/a.md", "original"]])
     const docsItems = new Map([["a.md", "updated"]])
@@ -322,14 +326,16 @@ describe("Workspace Source Sync", () => {
     const restoredDocs = await create("docs", docsItems)
     const dropping = reverse ? restoredRoot : restoredDocs
     const retained = reverse ? restoredDocs : restoredRoot
+    if (edited) await store.writeFile("docs/a.md", { path: "docs/a.md", content: "user edit" })
     ;(reverse ? rootItems : docsItems).clear()
     expect((await dropping.sync({ sources: ["docs"] })).status).toBe("ready")
     expect(await store.readFile("docs/a.md")).toBeDefined()
-    // The surviving owner refreshes its content before releasing the final claim.
-    expect((await retained.sync({ sources: ["docs"] })).status).toBe("ready")
+    // Cleanup also works without refreshing the surviving owner first.
+    if (refresh) expect((await retained.sync({ sources: ["docs"] })).status).toBe("ready")
     ;(reverse ? docsItems : rootItems).clear()
-    expect((await retained.sync({ sources: ["docs"] })).sources[0]?.counts.removed).toBe(1)
-    expect(await store.readFile("docs/a.md")).toBeUndefined()
+    expect((await retained.sync({ sources: ["docs"] })).sources[0]?.counts.removed).toBe(edited ? 0 : 1)
+    if (edited) expect((await store.readFile("docs/a.md"))?.content).toBe("user edit")
+    else expect(await store.readFile("docs/a.md")).toBeUndefined()
     expect(readWorkspaceSourceSyncState(await store.getMeta!(metaKey))?.paths).toEqual({})
   })
 

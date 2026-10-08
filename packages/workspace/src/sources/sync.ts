@@ -223,15 +223,24 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
   const paths: WorkspaceSourceSyncState["paths"] = {}
   const claims: NonNullable<WorkspaceSourceSyncState["claims"]> = {}
   for (const path of new Set([...Object.keys(current?.paths ?? {}), ...Object.keys(plan.nextState.paths)])) {
-    const retained = current?.paths[path] ? sourceSyncPathClaims(current, path).filter(claim => claim.mountPath !== plan.source.mountPath) : []
+    const retained = current?.paths[path] ? sourceSyncPathClaims(current, path).filter(claim => claim.mountPath !== plan.source.mountPath).map(claim => ({ ...claim })) : []
     const next = plan.nextState.paths[path]
     if (next) retained.push(next)
+    else if (current && retained.length > 0 && sourceMountOwnsPath(plan.source, path)) {
+      const departing = sourceSyncPathClaims(current, path).find(claim => claim.mountPath === plan.source.mountPath)
+      // Transfer cleanup authority only for bytes the departing mount still owns.
+      // Never adopt a user edit as Source-owned content.
+      if (departing && await shouldRemoveStalePath(sourceStore, path, departing)) {
+        for (const claim of retained) claim.digest = departing.digest
+      }
+    }
     if (retained.length === 0) continue
     // Keep the path index for readers that only need to know whether a path is owned.
     paths[path] = retained[retained.length - 1]!
     if (retained.length > 1) claims[path] = retained.sort((left, right) => left.mountPath!.localeCompare(right.mountPath!))
   }
-  const nextState = { ...plan.nextState, paths, ...(Object.keys(claims).length ? { claims } : {}) }
+  const nextState: WorkspaceSourceSyncState = { ...plan.nextState, paths }
+  if (Object.keys(claims).length) nextState.claims = claims
   if (!workspaceSourceSyncStateEquals(current, nextState)) {
     await store.setMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName), nextState)
   }
