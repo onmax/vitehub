@@ -56,6 +56,17 @@ export default defineConfig({
 
 ## Vite Integration
 
+Database instances expose Drizzle's `batch()` method on D1, D1 HTTP, and libSQL.
+The batch executes atomically. Use conditional statements in a batch when a
+change must compare and update shared state without an interactive transaction.
+
+```ts
+await db.batch([
+  db.insert(schema.notes).values({ title: "First note" }),
+  db.insert(schema.notes).values({ title: "Second note" }),
+])
+```
+
 Use `src/database.ts` or `server/databases/config.ts` for one default database. Use `src/<name>.database.ts` or `server/databases/<name>/config.ts` with the same `name` option when every database is named. Vite discovers those files, writes generated Drizzle artifacts, and lets server handlers import `@vite-hub/database/drizzle`. A project cannot mix a default Database Definition with Named Database Definitions.
 
 `@vite-hub/database/drizzle` is resolved by the Vite integration for server code and provider output. Plain `node` execution of files that import it is not a supported local runtime path.
