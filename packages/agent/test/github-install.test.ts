@@ -162,6 +162,31 @@ mkdir -p node_modules
   await expect(next).resolves.toBeUndefined();
 });
 
+it("does not queue dependency-free workspaces behind an active installer", async () => {
+  const first = await fixture();
+  const empty = await fixture();
+  await rm(join(empty, "package.json"));
+  const started = join(first, "started");
+  const release = join(first, "release");
+  await writeFile(join(empty, "bin", "corepack"), `#!/bin/sh
+touch '${started}'
+while [ ! -f '${release}' ]; do sleep 0.02; done
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const running = installGitHubPullRequestWorkspace(first);
+  let completed = false;
+  let skipped: Promise<void> | undefined;
+  try {
+    await vi.waitFor(async () => { await readFile(started); });
+    skipped = installGitHubPullRequestWorkspace(empty).then(() => { completed = true; });
+    await vi.waitFor(() => expect(completed).toBe(true), { timeout: 1000 });
+  } finally {
+    await writeFile(release, "");
+    await Promise.all([running, skipped]);
+  }
+  await expect(readFile(join(empty, ".git", "vitehub-install.json"))).rejects.toThrow();
+});
+
 it.each(["cache", "cafile"])("rejects project npm %s paths before execution", async setting => {
   const root = await fixture();
   await writeFile(join(root, ".npmrc"), `${setting}=/srv/outside\n`);

@@ -19,6 +19,8 @@ let installationTail: Promise<void> = Promise.resolve();
 /** Install frozen dependencies before entering the provider's network sandbox. */
 export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal): Promise<void> {
   signal?.throwIfAborted();
+  if (!(await exists(join(target, "package.json")))) return;
+  signal?.throwIfAborted();
   const previous = installationTail;
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
