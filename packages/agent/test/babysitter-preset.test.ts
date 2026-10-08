@@ -446,6 +446,39 @@ describe("Babysitter preset runtime", () => {
     } finally { await upgraded.runtime.inbox.close(); vi.unstubAllGlobals(); }
   });
 
+  it.each(["commitRepair", "pushRepair"] as const)("allows %s across an unrelated repository push", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    f.onRepair(async () => {
+      await f.runtime.inbox.ingest("other-branch-pushed", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40), repo: { ...f.pr().base.repo, pushed_at: "2026-10-08T20:00:00Z", size: 12345, open_issues_count: 20 } } },
+      });
+    });
+    try {
+      await f.reconcile();
+      if (operation === "commitRepair") expect(f.commit).toHaveBeenCalledOnce();
+      else expect(f.push).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("releases the active owner slot when durable lease cleanup fails", async () => {
+    const f = await fixture(false);
+    vi.spyOn(f.runtime.inbox, "release").mockRejectedValueOnce(new Error("temporary state store failure"));
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect(f.runtime.workload().running).toBe(0);
+      await f.runtime.inbox.ingest("feedback-after-cleanup-failure", "issue_comment", {
+        repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+        comment: { id: 700, body: "Please check the new repair requirement.", user: { login: "developer" } },
+      });
+      await f.reconcile();
+      expect(f.passes).toHaveLength(2);
+      expect(f.runtime.workload().running).toBe(0);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("parks model work until the recorded provider quota cooldown ends", async () => {
     const f = await fixture(false);
     const until = Date.now() + 60 * 60_000;

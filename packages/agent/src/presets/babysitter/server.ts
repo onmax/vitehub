@@ -1322,14 +1322,18 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           // A rejected or ambiguous host merge retains its durable attempt
           // fence, but a finished owner must never retain a queue lease.
           // Normal finish/release paths have already cleared this token.
-          await pullRequestInbox.release(inboxClaim);
-          schedulerEvent("babysitter.owner.finished", {
-            durationMs: Date.now() - startedAt,
-            outcome,
-            ...owner,
-          });
-          active.delete(`${repository}#${number}`);
-          options.wake?.();
+          try {
+            await pullRequestInbox.release(inboxClaim);
+          } finally {
+            // State-store cleanup and event callbacks cannot retain process capacity.
+            active.delete(`${repository}#${number}`);
+            schedulerEvent("babysitter.owner.finished", {
+              durationMs: Date.now() - startedAt,
+              outcome,
+              ...owner,
+            });
+            options.wake?.();
+          }
         }
       }),
     )

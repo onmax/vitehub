@@ -78,7 +78,11 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<Babysitt
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
   return createHash("sha256").update(JSON.stringify({ head, headRef: snapshot.pr?.head?.ref, headRepository: snapshot.pr?.head?.repo?.full_name,
     draft: snapshot.pr?.draft, title: snapshot.pr?.title, body: snapshot.pr?.body,
-    base: snapshot.pr?.base, comments: feedback(snapshot.comments, policy), reviews: feedback(snapshot.reviews, policy),
+    // Repository counters and timestamps change on unrelated pushes. Only the
+    // target ref, commit and repository identity define this merge input.
+    base: snapshot.pr?.base && { sha: snapshot.pr.base.sha, ref: snapshot.pr.base.ref,
+      repository: (snapshot.pr.base.repo?.full_name ?? snapshot.repository).toLowerCase() },
+    comments: feedback(snapshot.comments, policy), reviews: feedback(snapshot.reviews, policy),
     reviewComments: feedback(snapshot.reviewComments, policy), threads, failures })).digest("hex");
 }
 
