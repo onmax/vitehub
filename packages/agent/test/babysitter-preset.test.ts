@@ -292,7 +292,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
   const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
-  let operation: "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
+  let operation: "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | "readBaseCheckEvidence" | "readBaseCheckLogs" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async (options: { settings?: { launchArgs?: string }; environment?: NodeJS.ProcessEnv }) => {
     let threadId = `pass-${passes.length}`;
@@ -1216,6 +1216,40 @@ describe("Babysitter preset runtime", () => {
       expect(f.pr().base.sha).not.toBe(baseBranchHead);
       expect(f.passes).toHaveLength(1);
       expect(prepareGitHubRepairBase).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ expectedHead: f.pr().head.sha, base: baseBranchHead, fetch: { url: "https://github.com/acme/app.git", env: expect.objectContaining({ GH_TOKEN: "host-secret" }) } }));
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each([
+    [false, "readBaseCheckEvidence"], [true, "readBaseCheckEvidence"],
+    [false, "readBaseCheckLogs"], [true, "readBaseCheckLogs"],
+  ] as const)("pins %s conflict repair CI tools to the prepared live base through %s", async (box, operation) => {
+    const liveBase = "e".repeat(40);
+    const f = await fixture(false, false, { box, mergeableState: "dirty", baseBranchHead: liveBase });
+    const staleBase = f.pr().base.sha;
+    vi.mocked(prepareGitHubRepairBase).mockImplementationOnce(async () => { f.advanceBase(liveBase); });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const path = args.find(arg => arg.startsWith("/repos/"));
+      if (path === `/repos/acme/app/commits/${liveBase}/check-runs?per_page=100`)
+        return { stdout: JSON.stringify({ total_count: 0, check_runs: [] }), stderr: "" };
+      if (path === `/repos/acme/app/commits/${liveBase}/statuses?per_page=100`)
+        return { stdout: "[]", stderr: "" };
+      if (path === `/repos/acme/app/actions/runs?head_sha=${liveBase}&per_page=100`)
+        return { stdout: JSON.stringify({ total_count: 0, workflow_runs: [] }), stderr: "" };
+      if (path === "/repos/acme/app/actions/runs/42")
+        return { stdout: JSON.stringify({ head_sha: liveBase, repository: { full_name: "acme/app" } }), stderr: "" };
+      if (args[0] === "run" && args[1] === "view") return { stdout: "base failure logs", stderr: "" };
+      return await command(args, request);
+    });
+    f.choose(operation, operation === "readBaseCheckLogs" ? { runId: 42 } : {});
+    try {
+      await f.reconcile();
+      expect(staleBase).not.toBe(liveBase);
+      expect(f.passes).toHaveLength(1);
+      expect(f.command.mock.calls.some(([args]) => args.some(arg => operation === "readBaseCheckEvidence"
+        ? arg.includes(`/commits/${liveBase}/check-runs`)
+        : arg === "/repos/acme/app/actions/runs/42"))).toBe(true);
+      expect(f.command.mock.calls.some(([args]) => args.some(arg => arg.includes(`/commits/${staleBase}/`)))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 
