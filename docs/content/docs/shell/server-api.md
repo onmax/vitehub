@@ -22,6 +22,8 @@ Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Wo
 
 Writable Workspace filesystems keep content unchanged when a move resolves to the same source and destination. Missing sources fail. Moves into descendants fail before changing content.
 
+Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
+
 ## Use Shell sessions
 
 A Shell Session keeps policy across repeated commands: call budget, output size, timeouts, and process budget.
