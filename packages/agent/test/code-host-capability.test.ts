@@ -168,9 +168,19 @@ describe("Code Host capability", () => {
     expect(() => codeHost({ operations: ["merge"] } as never)).toThrow("codeHost() requires valid")
     expect(() => codeHost({ repositories: [] })).toThrow("codeHost() requires valid")
     expect(() => codeHost({ repositories: ["acme/../app"] })).toThrow("codeHost() requires valid")
+    expect(() => codeHost(null as never)).toThrow("codeHost() requires valid")
+    expect(() => codeHost([] as never)).toThrow("codeHost() requires valid")
+    expect(() => codeHost({ mode: "write", policy: "maybe" } as never)).toThrow("codeHost() requires valid")
+    expect(() => codeHost({ mode: "edit" } as never)).toThrow()
     expect(() => defineAgent({ driver: { run: () => "done" }, capabilities: [codeHost(), codeHost()] })).toThrow(
       "Duplicate capability",
     )
+  })
+
+  it("shows the approval policy in metadata", () => {
+    expect(codeHost({ ...base, mode: "write", operations: ["review", "merge"] }).metadata).toMatchObject({ approval: ["review:approve", "merge"] })
+    expect(codeHost({ ...base, mode: "write", policy: "deny" }).metadata).toMatchObject({ approval: "deny" })
+    expect(codeHost({ ...base, mode: "write", policy: () => "allow" }).metadata).toMatchObject({ approval: "custom" })
   })
 
   it("returns normalized reads with capped files, patches and log tails", async () => {

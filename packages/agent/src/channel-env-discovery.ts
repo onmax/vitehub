@@ -231,7 +231,11 @@ export function discoverBuiltInChannelUses(
       })
     })
   }
-  return uses.sort((left, right) => left.index - right.index).map(({ kind, optionKeys, stringOptions }) => ({ kind, optionKeys, ...(stringOptions ? { stringOptions } : {}) }))
+  return uses.sort((left, right) => left.index - right.index).map(({ kind, optionKeys, stringOptions }) => {
+    const use: DiscoveredChannelUse = { kind, optionKeys }
+    if (stringOptions) use.stringOptions = stringOptions
+    return use
+  })
 }
 
 function channelFactoryReference(

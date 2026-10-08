@@ -199,11 +199,29 @@ const codeHostWrite = defineGrant(
   "vitehub.agent.code-host-write",
   (binding: { operation: CodeHostWriteOperation, repository: string }) => Object.freeze({ ...binding }),
 )
+const policyDecisionSchema = v.picklist(["allow", "deny", "require-approval", "retryable-failure"])
+const policySchema = v.union([
+  policyDecisionSchema,
+  v.custom<(context: AgentToolPolicyContext) => MaybePromise<AgentToolPolicyDecision>>(value => v.is(v.function(), value)),
+])
+const optionsSchema = v.object({
+  host: v.optional(v.picklist(["github", "gitlab", "forgejo"]), "github"),
+  baseUrl: v.optional(v.pipe(v.string(), v.url())),
+  repositories: v.optional(v.pipe(v.array(text), v.minLength(1))),
+  maxOutputLength: v.optional(v.pipe(number, v.maxValue(Number.MAX_SAFE_INTEGER)), 20_000),
+  mode: v.optional(v.unknown()),
+  operations: v.optional(v.pipe(v.array(v.picklist([...readOperations, ...writeOperations])), v.minLength(1))),
+  policy: v.optional(policySchema),
+})
 const repositoryPattern = /^[^\s/*\\?#]+(?:\/[^\s/*\\?#]+)*\/(?:[^\s/*\\?#]+|\*)$/
 
+const sealedEnvSchema = v.looseObject({ unseal: v.function() })
+const envTextSchema = v.pipe(v.string(), v.trim(), v.minLength(1))
+
+/** Server Env values can be plain strings or sealed secrets. Empty values count as missing. */
 function envString(value: unknown): string | undefined {
-  if (isRuntimeRecord(value) && typeof value.unseal === "function") value = value.unseal()
-  return typeof value === "string" && value.trim() ? value.trim() : undefined
+  const parsed = v.safeParse(envTextSchema, v.is(sealedEnvSchema, value) ? value.unseal() : value)
+  return parsed.success ? parsed.output : undefined
 }
 
 async function connection(
@@ -326,10 +344,10 @@ async function call(
       const page = await provider.threads.filesPage(thread(input.number), { perPage: input.limit, signal })
       return {
         ...page,
-        items: page.items.map(({ patch, ...file }) => ({
-          ...file,
-          ...(input.patch && patch !== undefined ? { patch: patch.slice(0, max), truncated: patch.length > max } : {}),
-        })),
+        items: page.items.map(({ patch, ...file }) => {
+          if (!input.patch || patch === undefined) return file
+          return { ...file, patch: patch.slice(0, max), truncated: patch.length > max }
+        }),
       }
     }
     case "list_checks": {
@@ -433,21 +451,11 @@ function write(
 
 /** Read and write repository data through one Code Host API. Credentials come from Server Env. */
 export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabilityDefinition {
-  if (!options || typeof options !== "object" || Array.isArray(options)) throw agentDiagnostics.AGENT_C0011()
-  const mode = normalizeMode(options.mode, "codeHost()")
-  const policy = options.policy
-  const parsed = v.safeParse(
-    v.object({
-      host: v.optional(v.picklist(["github", "gitlab", "forgejo"]), "github"),
-      baseUrl: v.optional(v.pipe(v.string(), v.url())),
-      repositories: v.optional(v.pipe(v.array(text), v.minLength(1))),
-      maxOutputLength: v.optional(v.pipe(number, v.maxValue(Number.MAX_SAFE_INTEGER)), 20_000),
-      operations: v.optional(v.pipe(v.array(v.picklist([...readOperations, ...writeOperations])), v.minLength(1))),
-    }),
-    options,
-  )
-  if (!parsed.success) throw agentDiagnostics.AGENT_C0011()
-  const { host, maxOutputLength: max, baseUrl } = parsed.output
+  const parsed = v.safeParse(optionsSchema, options)
+  // Valibot accepts arrays as objects, so reject them here.
+  if (!parsed.success || Array.isArray(options)) throw agentDiagnostics.AGENT_C0011()
+  const mode = normalizeMode(parsed.output.mode, "codeHost()")
+  const { host, maxOutputLength: max, baseUrl, policy } = parsed.output
   const configuredRepositories = parsed.output.repositories && Object.freeze([...parsed.output.repositories])
   const operations = [
     ...new Set<CodeHostOperation>(
@@ -460,9 +468,6 @@ export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabili
   if (
     operations.some(op => mode === "read" && isWriteOperation(op)) ||
     (mode === "read" && policy !== undefined) ||
-    (policy !== undefined &&
-      typeof policy !== "function" &&
-      !["allow", "deny", "require-approval", "retryable-failure"].includes(policy)) ||
     configuredRepositories?.some(
       repo => !repositoryPattern.test(repo) || repo.split("/").some(part => part === "." || part === ".."),
     )
@@ -512,12 +517,10 @@ export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabili
       unavailable,
       approval:
         policy === undefined
-          ? enabled
-              .filter(op => op === "close" || op === "merge" || op === "review")
-              .map(op => (op === "review" ? "review:approve" : op))
-          : typeof policy === "function"
-            ? "custom"
-            : policy,
+          ? enabled.flatMap(op => (op === "review" ? ["review:approve"] : op === "close" || op === "merge" ? [op] : []))
+          : v.is(policyDecisionSchema, policy)
+            ? policy
+            : "custom",
       repositories: configuredRepositories ?? "pull-request",
     },
     tools: async context => {
