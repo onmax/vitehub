@@ -180,6 +180,20 @@ describe("useRealtimeTiptap", () => {
     scope.stop()
   })
 
+  it.each([
+    { content: 42, snapshot: { entries: {}, id: "snapshot", createdAt: "2026-01-01T00:00:00.000Z" } },
+    { content: "# Saved", snapshot: null },
+    { content: "# Saved", snapshot: { entries: { "page.md": { type: "file", size: -1 } }, id: "snapshot", createdAt: "2026-01-01T00:00:00.000Z" } },
+  ])("rejects malformed successful checkpoint responses", async responseBody => {
+    vi.stubGlobal("window", { location: { host: "example.com", protocol: "https:" } })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(responseBody))))
+    const scope = effectScope()
+    const realtime = scope.run(() => useRealtimeTiptap("docs", ref("page.md")))!
+
+    await expect(realtime.history.checkpoint()).rejects.toThrow("The realtime checkpoint response was malformed.")
+    scope.stop()
+  })
+
   it("rejects checkpoints without entering pending state while disabled", async () => {
     vi.stubGlobal("window", { location: { host: "example.com", protocol: "https:" } })
     const scope = effectScope()

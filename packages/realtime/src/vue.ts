@@ -18,6 +18,40 @@ export type RealtimeStatus = "connected" | "connecting" | "disconnected"
 
 const workspaceChangeFlushIntervalMs = 11
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint responses cross an untrusted HTTP boundary.
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function isString(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint responses cross an untrusted HTTP boundary.
+  return typeof value === "string"
+}
+
+function isCheckpointEntry(value: unknown): boolean {
+  if (!isRecord(value) || (value.type !== "file" && value.type !== "directory")) return false
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint responses cross an untrusted HTTP boundary.
+  return (value.digest === undefined || typeof value.digest === "string")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint responses cross an untrusted HTTP boundary.
+    && (value.size === undefined || typeof value.size === "number" && Number.isSafeInteger(value.size) && value.size >= 0)
+    && (value.metadata === undefined || isRecord(value.metadata))
+}
+
+function isRealtimeCheckpoint(value: unknown): value is RealtimeCheckpoint {
+  if (!isRecord(value) || !isString(value.content) || !isRecord(value.snapshot)) return false
+  const snapshot = value.snapshot
+  if (!isString(snapshot.id) || !isString(snapshot.createdAt) || !isRecord(snapshot.entries)) return false
+  return Object.values(snapshot.entries).every(isCheckpointEntry)
+}
+
+function parseRealtimeCheckpoint(value: unknown): RealtimeCheckpoint {
+  if (!isRealtimeCheckpoint(value)) {
+    throw realtimeErrorDiagnostics.REALTIME_R0012({ message: "The realtime checkpoint response was malformed." })
+  }
+  // SAFETY: isRealtimeCheckpoint validates every field consumed by the client.
+  return value
+}
+
 export interface UseRealtimeTiptapOptions {
   enabled?: MaybeRefOrGetter<boolean>
 }
@@ -127,7 +161,7 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
           body: Uint8Array.from(Y.encodeStateAsUpdate(current)).buffer,
           method: "POST",
         })
-        if (response.ok) return await response.json() as RealtimeCheckpoint
+        if (response.ok) return parseRealtimeCheckpoint(await response.json())
         const data = await response.json().catch(() => undefined) as { data?: { code?: string }, message?: string, statusMessage?: string } | undefined
         if (response.status === 409 && isRetryableRealtimeCheckpointCode(data?.data?.code) && attempt < 20) {
           await new Promise(resolve => setTimeout(resolve, 50))
