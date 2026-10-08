@@ -18,8 +18,12 @@ function parseRateLimitWindow(value: RateLimitWindow): number {
   }
 
   // SAFETY: The duration regex limits the unit capture to keys in unitMilliseconds.
-  const windowMs = Math.ceil(Number(match[1]) * unitMilliseconds[match[2] as keyof typeof unitMilliseconds])
-  if (!Number.isFinite(windowMs) || windowMs <= 0 || windowMs > 8.64e15) {
+  const unitMs = unitMilliseconds[match[2] as keyof typeof unitMilliseconds]
+  const [integer, fraction = ""] = match[1]!.split(".")
+  // Number can round a fraction above the timestamp limit back down to the limit.
+  const fractionalOverflow = Number(integer) === 8.64e15 / unitMs && /[1-9]/.test(fraction)
+  const windowMs = Math.ceil(Number(match[1]) * unitMs)
+  if (!Number.isFinite(windowMs) || windowMs <= 0 || windowMs > 8.64e15 || fractionalOverflow) {
     throw rateLimitErrorDiagnostics.RATE_LIMIT_R0032({ message: "[vitehub] Rate Limit window must resolve to finite milliseconds greater than zero and at most 8640000000000000." })
   }
 

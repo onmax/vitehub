@@ -145,7 +145,11 @@ describe("Rate Limit core", () => {
     expect(() => createRateLimiter({ driver: memoryRateLimitDriver(), limit: 1, window })).toThrow("8640000000000000")
   })
 
-  it.each(["8640000000000000ms", "100000000d"] as const)("keeps %s counter reset timestamps inspectable", async (window) => {
+  it.each(["8640000000000000.1ms", "8640000000000.0001s", "144000000000.000001m", "2400000000.00000001h", "100000000.000000001d"] as const)("rejects fractional overflow in %s before decimal rounding", (window) => {
+    expect(() => createRateLimiter({ driver: memoryRateLimitDriver(), limit: 1, window })).toThrow("8640000000000000")
+  })
+
+  it.each(["8640000000000000ms", "100000000d", "8640000000000000.000ms", "100000000.000000000d"] as const)("keeps %s counter reset timestamps inspectable", async (window) => {
     const limiter = createRateLimiter({ driver: memoryRateLimitDriver({ now: () => 60_001 }), limit: 1, window })
     const consumed = await limiter.consume({ key: "user" })
     expect(consumed.resetAt).toBe(8.64e15)
