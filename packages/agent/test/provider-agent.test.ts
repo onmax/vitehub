@@ -2765,6 +2765,29 @@ cli_auth_credentials_store = "keyring"
       usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10, details: { usageStatus: "partial", usageScope: "main_agent" } } } })
   })
 
+  it("emits terminal usage before propagating external cancellation", async () => {
+    const threadId = "thread-external-abort-usage"
+    const controller = new AbortController()
+    const failure = new Error("external cancellation")
+    const tokenUsage = { usageStatus: "partial", usageScope: "main_agent", hasSubagents: false, inputTokens: 7, outputTokens: 3 }
+    runtime(threadId, [event("turn.aborted", threadId, {
+      get reason() { controller.abort(failure); return "cancelled" },
+      tokenUsage,
+    }, { turnId: "turn-1" })])
+    const events: StreamEvent[] = []
+    const read = async () => {
+      // SAFETY: The provider adapter stream returns normalized Agent events.
+      const output = await createProviderAgentAdapter({ provider: "codex" }).stream!(context(threadId, {
+        input: { abortSignal: controller.signal, prompt: "hello" },
+      }) as never) as AsyncIterable<StreamEvent>
+      for await (const value of output) events.push(value)
+    }
+    await expect(read()).rejects.toBe(failure)
+    expect(events.filter(value => value.type === "usage")).toMatchObject([
+      { usageRecord: { usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 } } },
+    ])
+  })
+
   it("retains measured snapshots when terminal usage is unavailable", async () => {
     const threadId = "thread-terminal-unavailable"
     runtime(threadId, [

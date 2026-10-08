@@ -233,7 +233,7 @@ it('retries a definite rerun rejection after its provider retry window', async (
  const { inbox, claim } = await fixture()
  let posts = 0
  const command = async (args: string[]) => {
-  if (args.includes('POST')) { posts++; throw new Error('gh: Service unavailable (HTTP 500)') }
+  if (args.includes('POST')) { posts++; throw new Error('gh: Unprocessable Entity (HTTP 422)') }
   return { stdout: JSON.stringify(workflowRun()), stderr: '' }
  }
  assert.equal((await rerunFailedActions(inbox, claim, command, 1000))?.state, 'blocked')
@@ -242,4 +242,20 @@ it('retries a definite rerun rejection after its provider retry window', async (
  assert.equal(posts, 1)
  assert.equal((await rerunFailedActions(inbox, claim, command, 121001))?.state, 'blocked')
  assert.equal(posts, 2)
+})
+
+it('retains the rerun fence after an ambiguous HTTP 500 response', async () => {
+ const { inbox, claim } = await fixture()
+ let posts = 0
+ let workflow = workflowRun()
+ const command = async (args: string[]) => {
+  if (args.includes('POST')) { posts++; throw new Error('gh: Service unavailable (HTTP 500)') }
+  return { stdout: JSON.stringify(workflow), stderr: '' }
+ }
+ assert.equal((await rerunFailedActions(inbox, claim, command, 1000))?.state, 'blocked')
+ assert.equal((await inbox.meta(`ci-rerun:v1:${repository}:head:1`) as { status: string }).status, 'pending')
+ workflow = workflowRun({ run_attempt: 2 })
+ assert.equal(await rerunFailedActions(inbox, claim, command, 121001), undefined)
+ assert.equal(await rerunFailedActions(inbox, claim, command, 241001), undefined)
+ assert.equal(posts, 1)
 })
