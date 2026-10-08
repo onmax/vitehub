@@ -1,4 +1,5 @@
 import { defineGrant } from "@vite-hub/runtime/internal/grant"
+import { Diagnostic } from "nostics"
 import * as v from "valibot"
 
 import { agentDiagnostics } from "../agent-diagnostics.ts"
@@ -210,12 +211,14 @@ async function connection(
   host: CodeHostKind,
   repository: string,
   baseUrl: string | undefined,
+  signal: AbortSignal | undefined,
 ) {
   if (host === "github" && context.runtimeContext?.githubIdentity) {
-    const access = await context.runtimeContext.githubIdentity.access({ repository, signal: context.abortSignal })
+    const access = await context.runtimeContext.githubIdentity.access({ repository, signal })
     if (access.token) return { host, baseUrl, token: access.token }
   }
   const specs = builtInCodeHostEnv[host]
+  // Keep the capability context object: Server Env is cached by its identity for one Invocation.
   const env = await readBuiltInEnv(host, specs, Object.keys(specs), context)
   const resolvedBaseUrl = baseUrl ?? envString(env.baseUrl)
   if (host === "github") {
@@ -225,11 +228,11 @@ async function connection(
       : undefined
     if (appId && privateKey) {
       const app = githubAppCredentials({ appId, privateKey, baseUrl: resolvedBaseUrl })
-      const installation = envString(env.appInstallationId) ?? (await app.installation(repository, context.abortSignal))
+      const installation = envString(env.appInstallationId) ?? (await app.installation(repository, signal))
       return {
         host,
         baseUrl: resolvedBaseUrl,
-        token: (await app.installationToken(installation, { signal: context.abortSignal })).token,
+        token: (await app.installationToken(installation, { signal })).token,
       }
     }
   }
@@ -576,7 +579,7 @@ export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabili
             const signal = execution?.abortSignal ?? context.abortSignal
             signal?.throwIfAborted()
             try {
-              const config = await connection({ ...context, abortSignal: signal }, host, repository, baseUrl)
+              const config = await connection(context, host, repository, baseUrl, signal)
               const provider = await codeHostProvider({ ...config, readOnly: mode === "read" })
               signal?.throwIfAborted()
               return normalized(
@@ -587,8 +590,8 @@ export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabili
             }
             catch (error) {
               if (signal?.aborted) signal.throwIfAborted()
-              if (isRuntimeRecord(error) && typeof error.code === "string" && error.code.startsWith("AGENT_"))
-                throw error
+              // Only ViteHub diagnostics pass through. Host and transport errors become AGENT_R0944.
+              if (error instanceof Diagnostic) throw error
               const status = codeHostErrorStatus(error)
               throw agentDiagnostics.AGENT_R0944({
                 message: `[vitehub] Code Host ${operation} failed${status ? ` with HTTP ${status}` : ""}. Check host support and repository access.`,

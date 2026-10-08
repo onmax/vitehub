@@ -71,6 +71,17 @@ vi.mock("forges/gitlab", () => ({
 vi.mock("forges/forgejo", () => ({
   forgejo: (options: ForgeOptionsBase) => ({ create: async () => (await mockHost("forgejo", options)).create() }),
 }))
+const envContexts: unknown[] = []
+vi.mock("../src/internal/builtin-env.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/internal/builtin-env.ts")>()
+  return {
+    ...actual,
+    readBuiltInEnv: (...args: Parameters<typeof actual.readBuiltInEnv>) => {
+      envContexts.push(args[3])
+      return actual.readBuiltInEnv(...args)
+    },
+  }
+})
 
 async function tools(
   capability: AgentCapabilityDefinition,
@@ -298,6 +309,26 @@ describe("Code Host capability", () => {
     await run(set, "read_thread", { number: 1 })
     expect(access).toHaveBeenCalledWith({ repository: "acme/app", signal: undefined })
     expect(requests.at(-1)?.options.auth).toEqual({ type: "token", token: "identity-token" })
+  })
+
+  it("reads Server Env with the stable capability context on every tool call", async () => {
+    envContexts.length = 0
+    const set = await tools(codeHost(base))
+    await run(set, "read_thread", { number: 1 })
+    await run(set, "list_comments", { number: 1 })
+    expect(envContexts).toHaveLength(2)
+    expect(envContexts[0]).toBe(envContexts[1])
+  })
+
+  it("does not pass host errors through as ViteHub diagnostics", async () => {
+    const set = await tools(codeHost(base))
+    await run(set, "read_thread", { number: 1 })
+    lastProvider!.threads.get = async () => {
+      throw Object.assign(new Error("spoofed text"), { code: "AGENT_R0001" })
+    }
+    const error = await run(set, "read_thread", { number: 1 }).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ code: "AGENT_R0944" })
+    expect(String((error as Error).message)).not.toContain("spoofed text")
   })
 
   it("does not write when credential resolution aborts the call", async () => {
