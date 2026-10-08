@@ -2570,6 +2570,7 @@ async function postChatStream(
   abortSignal?: AbortSignal,
   maximumDeadline?: number,
 ): Promise<void> {
+  if (fallback) fallback = formatChannelCitationText(fallback)
   const originalResponse = response
   response = {
     getText: () => formatChannelCitationText(originalResponse.getText()),
@@ -4104,7 +4105,7 @@ async function chatSdkLockKey(adapter: Adapter, threadId: string, options: Agent
 function createChatSdkConfig(adapterName: string, adapter: Adapter, state: StateAdapter, options: AgentChatOptions | undefined): ChatConfig {
   const configuredPlaceholderText = options?.loading?.text ?? options?.fallbackStreamingPlaceholderText
   const fallbackStreamingPlaceholderText = isRuntimeString(configuredPlaceholderText)
-    ? configuredPlaceholderText
+    ? formatChannelCitationText(configuredPlaceholderText)
     : configuredPlaceholderText === null
       ? null
       : undefined
@@ -6457,7 +6458,8 @@ async function handleChatSdkMessage(
       state: state.state,
     })
     const inlineRunContext = run?.runId ? withAgentInvocationResponseOwner(runContext, run.runId) : runContext
-    const thinkingFallback = invocation.metadata?.thinkingFallback
+    const configuredThinkingFallback = invocation.metadata?.thinkingFallback
+    const thinkingFallback = isRuntimeString(configuredThinkingFallback) ? formatChannelCitationText(configuredThinkingFallback) : configuredThinkingFallback
     if (bufferedDelivery && isRuntimeString(thinkingFallback)) {
       const placeholderDelivery = thread.post(thinkingFallback).then(async (placeholder) => {
         if (invocationDeadlineAbort?.signal.aborted) {
@@ -6702,7 +6704,7 @@ function createChatSdkMessageThread(
 ): Thread {
   const configuredPlaceholderText = options?.loading?.text ?? options?.fallbackStreamingPlaceholderText
   const fallbackStreamingPlaceholderText = isRuntimeString(configuredPlaceholderText)
-    ? configuredPlaceholderText
+    ? formatChannelCitationText(configuredPlaceholderText)
     : configuredPlaceholderText === null
       ? null
       : undefined

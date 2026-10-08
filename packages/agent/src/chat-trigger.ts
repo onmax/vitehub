@@ -315,13 +315,14 @@ async function resolveChatThinkingFallback<TRuntimeConfig extends AgentRuntimeCo
   if (hasRuntimeType(fallback, "function")) {
     const resolved = await fallback(args)
     if (resolved === null) return null
-    return hasRuntimeType(resolved, "string") ? resolved : undefined
+    return hasRuntimeType(resolved, "string") ? formatChannelCitationText(resolved) : undefined
   }
   if (Array.isArray(fallback)) {
     if (fallback.length === 0) return null
-    return fallback[Math.floor(Math.random() * fallback.length)]
+    const selected = fallback[Math.floor(Math.random() * fallback.length)]
+    return selected === undefined ? undefined : formatChannelCitationText(selected)
   }
-  if (hasRuntimeType(fallback, "string")) return fallback
+  if (hasRuntimeType(fallback, "string")) return formatChannelCitationText(fallback)
   return undefined
 }
 

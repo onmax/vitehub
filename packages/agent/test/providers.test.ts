@@ -13143,6 +13143,45 @@ describe("server helpers", () => {
     expect(adapter.stream).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ...[false, true].flatMap(native => ["text", "array", "resolver"].flatMap(form => ["loading", "fallback"].map(option => ({ native, form, option })))),
+  ])("formats citation-bearing loading text, native=$native form=$form option=$option", async ({ native, form, option }) => {
+    const adapter = createTestChatAdapter()
+    if (native) adapter.stream = vi.fn(async (threadId: string, chunks: AsyncIterable<string | StreamChunk>) => {
+      for await (const _chunk of chunks) { /* consume the final reply */ }
+      return { id: "streamed", threadId, raw: {} }
+    })
+    const started = deferred<void>()
+    const finish = deferred<void>()
+    const text = "Working. citeturn0view0"
+    const configuredText = form === "array" ? [text] : form === "resolver" ? () => text : text
+    const agent = defineAgent({
+      channels: { telegram: testTelegram(telegram, {
+        // SAFETY: The fixture supplies the Chat SDK adapter used by placeholder delivery.
+        adapter: () => adapter as never,
+        messages: {
+          ...(native ? { stream: true } : { delivery: "manual", stream: false }),
+          ...(option === "loading" ? { loading: { text: configuredText } } : { fallbackStreamingPlaceholderText: configuredText }),
+        },
+      }) },
+      driver: { run: async () => { started.resolve(); await finish.promise; return "Done" } },
+      hooks: native ? {} : { "agent:finish": event => event.reply(event.text!) },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = handler(chatWebhookRequest(91_400 + Number(native) * 10 + ["text", "array", "resolver"].indexOf(form) * 2 + Number(option === "fallback")), "telegram")
+    try {
+      await started.promise
+      await vi.waitFor(() => expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", "Working. [source link unavailable]"))
+      expect(JSON.stringify(adapter.postMessage.mock.calls)).not.toContain("cite")
+      finish.resolve()
+      expect((await response).status).toBe(200)
+    } finally {
+      finish.resolve()
+      await response.catch(() => undefined)
+    }
+  })
+
   it("hands the configured fallback back to Chat SDK when native streaming declines", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
