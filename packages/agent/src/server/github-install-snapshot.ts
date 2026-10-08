@@ -29,21 +29,21 @@ export async function createGitHubInstallSnapshot(target: string): Promise<GitHu
     for (const entry of await readdir(checkout)) {
       if (entry === ".git") continue;
       await cp(join(checkout, entry), join(directory, entry), {
-      recursive: true, dereference: false, verbatimSymlinks: true,
-      filter: async source => {
-        const path = relative(checkout, source);
-        const parts = path.split(sep);
-        if (basename(source) === "node_modules") {
-          managedDirectories.add(relative(checkout, dirname(source)));
-          return false;
-        }
-        if (basename(source) === ".git"
-          || rootOutputs.has(path) || parts[0] === ".yarn" && yarnOutputs.has(parts[1]!)) return false;
-        const info = await lstat(source, { bigint: true });
-        if (path === ".yarn" && !info.isDirectory()) throw new Error("Yarn installation output must use a regular checkout directory.");
-        if (info.isDirectory()) identities.set(path, { dev: String(info.dev), ino: String(info.ino) });
-        return true;
-      },
+        recursive: true, dereference: false, verbatimSymlinks: true,
+        filter: async source => {
+          const path = relative(checkout, source);
+          const parts = path.split(sep);
+          if (basename(source) === "node_modules") {
+            managedDirectories.add(relative(checkout, dirname(source)));
+            return false;
+          }
+          if (basename(source) === ".git"
+            || rootOutputs.has(path) || parts[0] === ".yarn" && yarnOutputs.has(parts[1]!)) return false;
+          const info = await lstat(source, { bigint: true });
+          if (path === ".yarn" && !info.isDirectory()) throw new Error("Yarn installation output must use a regular checkout directory.");
+          if (info.isDirectory()) identities.set(path, { dev: String(info.dev), ino: String(info.ino) });
+          return true;
+        },
       });
     }
     await chmod(directory, 0o700);
