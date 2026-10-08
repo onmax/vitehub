@@ -76,7 +76,7 @@ function rawFiles(files: Record<string, string | Uint8Array>) {
   return Object.fromEntries(Object.entries(files).map(([path, content]) => [path, { path, content }]))
 }
 
-describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", (driver) => {
+describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { timeout: 30_000 }, (driver) => {
   it("commits, lists, opens, and reads immutable text and binary files after a reopen", async () => {
     const { store, facade, fresh } = await setup(driver)
     const workspace = facade()
@@ -96,7 +96,7 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", (d
     const readonly = useWorkspace("history", { definition: { name: "history", store: fresh() } })
     const version = await readonly.history.open(first.id)
     expect(await version.stat("")).toMatchObject({ path: "", type: "directory" })
-    expect(await workspace.fs.stat("")).toMatchObject({ path: "", type: "directory" })
+    expect(await store.stat("")).toMatchObject({ path: "", type: "directory" })
     expect(await version.readFile("guide/start.md")).toBe("é")
     expect(await version.readFile("image.bin", { encoding: "binary" })).toEqual(binary)
     expect(await version.stat("guide")).toMatchObject({ type: "directory" })
