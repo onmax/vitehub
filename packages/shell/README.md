@@ -78,6 +78,8 @@ The Just Bash `commands` list also applies to controlled `curl` requests. A Sour
 
 The provider copies the command list at creation. Later changes to the supplied list do not change its permissions or network boundary.
 
+The writable Workspace filesystem leaves content unchanged when a move resolves to the same source and destination. Missing sources fail. It rejects moves into descendants before changing content.
+
 ## Use with Agents
 
 `workspaceShell()` in [`@vite-hub/agent`](../agent/README.md) exposes scoped shell work through an Agent Capability. It attaches Workspace Scope, Shell policy, metadata, and tools to the Agent Definition; do not expose an unrestricted raw runtime to a model.

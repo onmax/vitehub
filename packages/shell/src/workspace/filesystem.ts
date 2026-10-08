@@ -201,8 +201,15 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
 
   async mv(src: string, dest: string): Promise<void> {
     const workspace = this.#requireWritable()
-    const from = this.#toRelativePath(src)
-    const to = this.#toRelativePath(dest)
+    const from = this.#toRelativePath(src).replace(/\/$/, "")
+    const to = this.#toRelativePath(dest).replace(/\/$/, "")
+    if (from === to) {
+      await workspace.stat(from)
+      return
+    }
+    if (!from || to.startsWith(`${from}/`)) {
+      throw shellErrorDiagnostics.SHELL_R0022({ message: `[vitehub] Cannot move Workspace path "${src}" into itself, "${dest}".` })
+    }
     await copyWorkspacePath(workspace, from, to)
     await workspace.rm(from, { recursive: true, force: true })
     await this.#refreshPaths()
