@@ -89,7 +89,8 @@ export async function codeHostWebhookInput(provider: ForgeProvider, delivery: We
     const nativeReview = record(native.review)
     const id = detail && (detail.type === "comment" || detail.type === "review_comment") ? Number(detail.comment?.id) : Number(nativeReview.id || attributes.id || number)
     const actor = { id: Number(event.actor.id) || undefined, login: event.actor.login, type: event.actor.isBotHint ? "Bot" : "User" }
-    const rawPullRequest = record(native.merge_request || native.pull_request || attributes)
+    // GitLab notes carry merge_request. Forgejo comments carry issue. Pull request events carry pull_request.
+    const rawPullRequest = record(native.merge_request || native.pull_request || native.issue || attributes)
     const payload: GitHubIssueCommentPayload = {
       action: lifecycle ? action : event.kind === "review" ? "submitted" : event.action,
       repository: { full_name: repository, name: thread.repo.name, owner: { login: thread.repo.owner } },

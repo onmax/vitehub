@@ -30,7 +30,7 @@ export default defineAgent({
 
 `forgejo()` uses Codeberg by default. Set `baseUrl` to the instance root for self-managed GitLab or Forgejo. The Channel adds the API path.
 
-Enable `pullRequest` to accept slash commands. Configure `reconcile.mentions` to accept mentions, `reconcile.comments` to accept comments without a command, or `reconcile.triggers` for event-specific filters and mentions. Comment trigger events are `comment`, `review`, and `review_comment`. Lifecycle events are `opened`, `reopened`, `synchronize`, and `ready_for_review`. `reconcile: true` enables these lifecycle events.
+Enable `pullRequest` to accept slash commands. Configure `reconcile.mentions` to accept mentions, `reconcile.comments` to accept comments without a command, or `reconcile.triggers` for event-specific filters and mentions. Comment trigger events are `comment`, `review`, and `review_comment`. Lifecycle events are `opened`, `reopened`, `synchronize`, and `ready_for_review`. `reconcile: true` enables these lifecycle events. Only GitLab reports `ready_for_review`. Forgejo sends no draft to ready event, so `forgejo()` does not accept it in `reconcile.events`.
 
 The final reply is a pull request comment. Set `pullRequest.reply: false` to stop that reply. Delivery effects can add reactions, update the triggering comment, or report commit statuses. `statusContext` defaults to `ViteHub Agent`. `activity: true` keeps one managed comment with session links and status. The authenticated account owns that comment.
 
@@ -101,6 +101,6 @@ GitLab sends its secret in `X-Gitlab-Token`. Forgejo signs the body. A wrong sig
 
 These Channels do not provide `pullRequest.workspace` checkout, artifacts, or `authorAssociation` filters. `webhookSecret: false` is not supported. Configure a Workspace through the Agent's other Capabilities if needed.
 
-GitLab supports approval reviews through its API. A review body or a comment review is not supported there. Use a reply comment for review text. Forgejo supports native reviews, but its CI runs, jobs, and check reruns are not available through these Channels.
+GitLab has approvals, not reviews. An `APPROVE` review effect approves the merge request and posts the review text as a separate note. A comment review posts a note. GitLab has no request changes review, so that effect fails with `AGENT_R0946`. Forgejo supports native reviews, but its CI runs, jobs, and check reruns are not available through these Channels.
 
-Metadata reads have limits. Set `maxBodyLength`, `maxCommentBodyLength`, `maxComments`, and `maxFiles` on `pullRequest` to change them. The context reports omitted items and unavailable metadata. Activity lookup scans at most 500 comments after a restart.
+Metadata reads have limits. Set `maxBodyLength`, `maxCommentBodyLength`, `maxComments`, and `maxFiles` on `pullRequest` to change them. The context reports omitted items and unavailable metadata. After a restart, activity lookup scans the newest 500 comments.

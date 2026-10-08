@@ -16,6 +16,10 @@ it("keeps Code Host options neutral and infers message methods", () => {
   gitlab({ sync: {} })
   // @ts-expect-error Repository names must be strings.
   forgejo({ sync: { repositories: [1] } })
+  gitlab({ pullRequest: { reconcile: { events: ["ready_for_review"] } } })
+  forgejo({ pullRequest: { reconcile: { events: ["opened", "synchronize"] } } })
+  // @ts-expect-error Forgejo sends no ready for review event.
+  forgejo({ pullRequest: { reconcile: { events: ["ready_for_review"] } } })
   // @ts-expect-error Code Host Channels do not provide checkout.
   gitlab({ pullRequest: { workspace: true } })
   // @ts-expect-error Code Host Channels always verify webhooks.

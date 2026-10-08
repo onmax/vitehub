@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { defineChatCapability as chat } from "../src/chat-trigger.ts"
 import { defineAgent, runAgentTrigger, verifyAgentWebhookRequest } from "../src/index.ts"
-import type { CodeHostChannelOptions } from "../src/channels.ts"
+import type { ForgejoChannelOptions } from "../src/channels.ts"
 
 function runtime(request?: Request) {
   return {
@@ -382,7 +382,7 @@ it.each(["gitlab", "forgejo"] as const)("verifies the %s Channel through the cli
   const { gitlab, forgejo } = await import("../src/channels.ts")
   const { signDelivery } = await import("forges/testing")
   const channel = kind === "gitlab" ? gitlab({ webhookSecret: "secret", pullRequest: true }) : forgejo({ webhookSecret: "secret", pullRequest: true })
-  const factory = (options: CodeHostChannelOptions) => kind === "gitlab" ? gitlab(options) : forgejo(options)
+  const factory = (options: ForgejoChannelOptions) => kind === "gitlab" ? gitlab(options) : forgejo(options)
   expect(factory({ webhooks: false }).webhooks).toBe(false)
   const configured = factory({ webhookSecret: "secret", webhooks: [{ id: "first", secretToken: false, signature: { verify: () => true } }, { id: "second" }] }).webhooks
   expect(configured).toEqual([

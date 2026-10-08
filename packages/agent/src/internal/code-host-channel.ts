@@ -136,18 +136,36 @@ export function codeHostActivityComments(provider: ForgeProvider, target: CodeHo
   const ref = codeHostThreadRef(provider, target)
   const path = `/repos/${target.repository}/issues/${target.number}/comments`
   return {
+    /** Newest comments first, so a restart finds the managed activity comment on long threads. */
     async list(): Promise<Comment[]> {
-      if (provider.kind !== "github") return await limitedPages(async cursor => await provider.threads.commentsPage(ref, { perPage: 100, cursor }), limit)
-      // GitHub has no reverse comments verb. Read Link paging from the last page.
-      const first = await codeHostChannelRead(provider, "AGENT_R0353", async () => await provider.request<unknown[]>("GET", path, { query: { per_page: 100 } }))
+      if (provider.kind === "gitlab") {
+        const notesPath = `/projects/${encodeURIComponent(target.repository)}/merge_requests/${target.number}/notes`
+        const items: unknown[] = []
+        for (let page = 1; items.length < limit; page++) {
+          const response = await codeHostChannelRead(provider, "AGENT_R0353", async () => await provider.request<unknown[]>("GET", notesPath, {
+            query: { sort: "desc", order_by: "created_at", per_page: 100, page },
+          }))
+          if (!Array.isArray(response.data) || !response.data.length) break
+          items.push(...response.data)
+          if (response.data.length < 100) break
+        }
+        return items.slice(0, limit).map(raw => rawComment(provider, target, raw))
+      }
+      // GitHub and Forgejo have no reverse comments order. Read the pages from the last page.
+      const sizeParameter = provider.kind === "github" ? "per_page" : "limit"
+      const first = await codeHostChannelRead(provider, "AGENT_R0353", async () => await provider.request<unknown[]>("GET", path, { query: { [sizeParameter]: 100 } }))
       if (!Array.isArray(first.data) || !first.data.length) return []
       const lastUrl = first.headers.get("link")?.split(",").map(part => part.trim()).find(part => part.endsWith('rel="last"'))?.match(/^<([^>]+)>/)?.[1]
-      const lastPage = lastUrl ? Number(new URL(lastUrl).searchParams.get("page")) : undefined
+      const total = provider.kind === "github" ? undefined : Number(first.headers.get("x-total-count"))
+      const lastPage = lastUrl
+        ? Number(new URL(lastUrl).searchParams.get("page"))
+        : total && Number.isSafeInteger(total) ? Math.ceil(total / first.data.length) : undefined
       if (!lastPage || !Number.isSafeInteger(lastPage) || lastPage <= 1) return first.data.slice(-limit).reverse().map(raw => rawComment(provider, target, raw))
       const items: unknown[] = []
-      const pageLimit = Math.ceil(limit / 100) + 1
+      // A host can cap the page size below 100. Count pages with the size it returned.
+      const pageLimit = Math.ceil(limit / first.data.length) + 1
       for (let page = lastPage; page > Math.max(1, lastPage - pageLimit) && items.length < limit; page--) {
-        const response = await codeHostChannelRead(provider, "AGENT_R0354", async () => await provider.request<unknown[]>("GET", path, { query: { per_page: 100, page } }))
+        const response = await codeHostChannelRead(provider, "AGENT_R0354", async () => await provider.request<unknown[]>("GET", path, { query: { [sizeParameter]: 100, page } }))
         if (!Array.isArray(response.data)) break
         items.push(...response.data.reverse())
       }
@@ -310,12 +328,19 @@ export function codeHostDeliveryEffects<TRuntimeConfig extends AgentRuntimeConfi
       if (!target) return
       const provider = await options.provider(context)
       const body = await bodyFor(context, provider)
-      if (!body) return
       const payload = isRecord(context.effect.payload) ? context.effect.payload : {}
       const event = maybeString(payload.event) || maybeString(context.effect.metadata?.event) || "COMMENT"
-      await codeHostChannelWrite(provider, async () => await provider.threads.createReview(codeHostThreadRef(provider, target), {
-        body, event: event === "APPROVE" || event === "approve" ? "approve" : event === "REQUEST_CHANGES" || event === "request_changes" ? "request_changes" : "comment",
-      }))
+      const review = event === "APPROVE" || event === "approve" ? "approve" : event === "REQUEST_CHANGES" || event === "request_changes" ? "request_changes" : "comment"
+      const ref = codeHostThreadRef(provider, target)
+      if (provider.kind === "gitlab") {
+        // GitLab has approvals, not reviews. An approval has no body, so the review text is a note.
+        if (review === "request_changes") throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] GitLab has no request changes review. Use an approve or comment review." })
+        if (review === "approve") await codeHostChannelWrite(provider, async () => await provider.threads.createReview(ref, { event: "approve" }))
+        if (body) await codeHostChannelWrite(provider, async () => await provider.threads.comment(ref, body))
+        return
+      }
+      if (!body) return
+      await codeHostChannelWrite(provider, async () => await provider.threads.createReview(ref, { body, event: review }))
     },
     async status(context) {
       const target = options.target(context)
