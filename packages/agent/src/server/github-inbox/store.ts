@@ -7,7 +7,7 @@ import { isRuntimeNumber, isRuntimeString } from '../../internal/runtime-value.t
 import { isRuntimeRecord } from '../../internal/runtime-type.ts'
 import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
 import type { AgentRunActivity } from '../../types.ts'
-import { isStatusDeliveryCurrent, statusProjectionText, statusAcknowledgementSchema, statusDeliverySchema, statusOutboxPrefix, statusSentPrefix, statusTargetKey, workerBlockerPrefix, type StatusDelivery } from './status-delivery.ts'
+import { isStatusDeliveryCurrent, statusProjectionText, statusAcknowledgementSchema, statusDeliverySchema, statusOutboxPrefix, statusSentPrefix, statusWriterPrefix, statusTargetKey, workerBlockerPrefix, type StatusDelivery } from './status-delivery.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
 import { matchesGitHubPullRequestFilter } from '../../internal/github-pull-request-filter.ts'
@@ -250,6 +250,14 @@ export class PullRequestInbox {
       s.dirtyAt, s.nextAt, s.lease, s.leaseUntil, s.wait ? 1 : 0, s.progressBudget?.exhausted && s.progressBudget.head === head ? 1 : 0,
       s.pr?.state === undefined ? null : String(s.pr.state).toLowerCase(), head ?? null, s.pr?.head?.ref ?? null, s.pr?.base?.ref ?? null,
     ])
+    if (this.activityAuthors.size && s.status === 'terminal') {
+      const target = statusTargetKey(s)
+      const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, `${statusOutboxPrefix}${target}`))
+      const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
+      if (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed') {
+        await this.enqueueStatusProjectionIn(tx, s)
+      }
+    }
   }
   private empty(repository: string, number: number): Snapshot {
     return { repository, number, pr: null, generation: 0, handled: 0, dirtyAt: this.clock(), nextAt: 0,
@@ -313,6 +321,41 @@ export class PullRequestInbox {
     if (claim?.startedAt !== undefined) delivery.activity.startedAt = new Date(claim.startedAt).toISOString()
     await this.setMetaIn(tx, `${statusOutboxPrefix}${key}`, delivery)
   }
+  private async statusWritersIn(tx: PullRequestInboxExecutor, target: string): Promise<string[]> {
+    const parsed = v.safeParse(v.array(v.string()), await this.metaIn(tx, `${statusWriterPrefix}${target}`))
+    return parsed.success ? parsed.output : []
+  }
+  private async settleStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<string[]> {
+    const target = statusTargetKey(observed)
+    const remaining = (await this.statusWritersIn(tx, target)).filter(lease => lease !== observed.lease)
+    if (remaining.length) await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, remaining)
+    else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusWriterPrefix}${target}`])
+    return remaining
+  }
+  private async enqueueStatusProjectionIn(tx: PullRequestInboxExecutor, current: Snapshot): Promise<void> {
+    const target = statusTargetKey(current)
+    const key = `${statusOutboxPrefix}${target}`
+    const surviving = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+    const now = this.clock()
+    const version = randomUUID()
+    const text = statusProjectionText(current)
+    const head = current.pr?.head?.sha
+    if (!head) return
+    const contentKey = digest(['projection', head, current.generation, text])
+    const delivery: StatusDelivery = {
+      version, contentKey, repository: current.repository, number: current.number,
+      head, generation: current.generation, projection: true,
+      text, attempts: 0, nextAt: now,
+      activity: { runId: `saved:${target}:${contentKey}:${version}`,
+        status: current.status === 'terminal' ? 'completed' : 'queued',
+        updatedAt: new Date(now).toISOString(), links: [], tasks: [], summary: text },
+    }
+    if (surviving.success && surviving.output.lease && (surviving.output.leaseUntil ?? 0) > now) {
+      delivery.lease = surviving.output.lease
+      delivery.leaseUntil = surviving.output.leaseUntil
+    }
+    await this.setMetaIn(tx, key, delivery)
+  }
   /** A bounded batch of due deliveries. Invalid metadata never reaches the publisher. */
   async pendingStatusDeliveries(limit = 5): Promise<StatusDelivery[]> {
     if (!Number.isInteger(limit) || limit < 1) throw new Error('Status delivery limit must be a positive integer')
@@ -341,7 +384,14 @@ export class PullRequestInbox {
         const statusRunId = `saved:${statusTargetKey(pending)}:${pending.contentKey}`
         const runId = pending.activity.runId.startsWith(`${statusRunId}:`) ? pending.activity.runId : statusRunId
         const delivery = { ...pending, activity: { ...pending.activity, runId }, lease: randomUUID(), leaseUntil: now + leaseMs }
-        await this.setMetaIn(tx, `${statusOutboxPrefix}${statusTargetKey(pending)}`, delivery)
+        // Expiry releases delivery ownership, not the external HTTP writer.
+        // Keep replaced writers durable until their actual publication settles.
+        const target = statusTargetKey(pending)
+        const writers = new Set(await this.statusWritersIn(tx, target))
+        if (pending.lease) writers.add(pending.lease)
+        writers.add(delivery.lease)
+        await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, [...writers])
+        await this.setMetaIn(tx, `${statusOutboxPrefix}${target}`, delivery)
         claimed.push(delivery)
         if (claimed.length === limit) break
       }
@@ -362,6 +412,7 @@ export class PullRequestInbox {
   /** Version and lease comparisons preserve newer results and fence replaced consumers. */
   async finishStatusDelivery(observed: StatusDelivery, outcome: 'delivered' | 'discarded'): Promise<boolean> {
     return await this.transaction(async tx => {
+      const writers = await this.settleStatusWriterIn(tx, observed)
       const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
       const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
       if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
@@ -376,14 +427,24 @@ export class PullRequestInbox {
           await this.reconcileStatusWriterIn(tx, observed)
           return false
         }
-        await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, runId: observed.activity.runId, head: observed.head, deliveredAt: this.clock() })
+        await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, runId: observed.activity.runId, status: observed.activity.status, head: observed.head, deliveredAt: this.clock() })
       }
-      await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
+      if (writers.length) {
+        if (outcome === 'discarded') await this.reconcileStatusWriterIn(tx, observed)
+        else {
+          // An older accepted request can still land after this acknowledgement.
+          // Replay with a fresh activity identity until every writer has settled.
+          const version = randomUUID()
+          await this.setMetaIn(tx, key, { ...released, version, nextAt: this.clock() + 60_000,
+            activity: { ...released.activity, runId: `saved:${statusTargetKey(observed)}:${released.contentKey}:${version}` } })
+        }
+      } else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
       return true
     })
   }
   async retryStatusDelivery(observed: StatusDelivery, failure: unknown): Promise<boolean> {
     return await this.transaction(async tx => {
+      await this.settleStatusWriterIn(tx, observed)
       const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
       const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
       if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
@@ -405,7 +466,10 @@ export class PullRequestInbox {
   /** Repair the external projection after a replaced writer finally settles. */
   async reconcileSettledStatusWriter(observed: StatusDelivery): Promise<boolean> {
     if (!observed.lease) return false
-    return await this.transaction(tx => this.reconcileStatusWriterIn(tx, observed))
+    return await this.transaction(async tx => {
+      await this.settleStatusWriterIn(tx, observed)
+      return await this.reconcileStatusWriterIn(tx, observed)
+    })
   }
   private async reconcileStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<boolean> {
     const target = statusTargetKey(observed)
@@ -423,30 +487,14 @@ export class PullRequestInbox {
     if (!resultCurrent) {
       // The old HTTP write may have replaced a newer comment. Persist an
       // honest queue/closure projection without relabelling the saved result.
-      const now = this.clock()
-      const version = randomUUID()
-      const text = statusProjectionText(current)
-      const projectionKey = digest(['projection', current.pr.head.sha, current.generation, text])
-      const delivery: StatusDelivery = {
-        version, contentKey: projectionKey, repository: current.repository, number: current.number,
-        head: current.pr.head.sha, generation: current.generation, projection: true,
-        text, attempts: 0, nextAt: now,
-        activity: { runId: `saved:${target}:${projectionKey}:${version}`,
-          status: current.status === 'terminal' ? 'completed' : 'queued',
-          updatedAt: new Date(now).toISOString(), links: [], tasks: [], summary: text },
-      }
-      if (surviving.success && surviving.output.lease && (surviving.output.leaseUntil ?? 0) > now) {
-        delivery.lease = surviving.output.lease
-        delivery.leaseUntil = surviving.output.leaseUntil
-      }
-      await this.setMetaIn(tx, key, delivery)
+      await this.enqueueStatusProjectionIn(tx, current)
       return true
     }
     if (survivingCurrent) {
       // Its side effect may already have happened while its response is still
       // pending. Preserve ownership, but fence that acknowledgement and replay.
       const version = randomUUID()
-      await this.setMetaIn(tx, key, { ...surviving.output, version, activity: {
+      await this.setMetaIn(tx, key, { ...surviving.output, version, nextAt: this.clock(), activity: {
         ...surviving.output.activity, runId: `saved:${target}:${surviving.output.contentKey}:${version}`,
       } })
       return true

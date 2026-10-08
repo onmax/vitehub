@@ -2,6 +2,7 @@ import * as v from "valibot";
 import type { Snapshot } from "./store.ts";
 
 export const statusOutboxPrefix = "status-outbox:v1:";
+export const statusWriterPrefix = "status-writers:v1:";
 export const statusSentPrefix = "status-sent:v1:";
 export const workerBlockerPrefix = "worker-blocker:v1:";
 export const statusTargetKey = (snapshot: { repository: string; number: number }): string => `${snapshot.repository}#${snapshot.number}`;
@@ -45,7 +46,7 @@ export const statusDeliverySchema: v.GenericSchema<unknown, StatusDelivery> = v.
   }),
 });
 
-export const statusAcknowledgementSchema: v.GenericSchema<unknown, { contentKey: string; runId: string }> = v.object({ contentKey: v.string(), runId: v.string() });
+export const statusAcknowledgementSchema = v.object({ contentKey: v.string(), runId: v.string(), status: v.optional(v.picklist(["queued", "failed", "completed", "waiting"])) });
 
 /** Describe current work without replacing the saved result or handling evidence. */
 export function statusProjectionText(snapshot: Snapshot): string {

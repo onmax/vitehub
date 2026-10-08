@@ -779,3 +779,50 @@ test('persists correction atomically when publication is in flight during closur
   assert.equal((await restarted.pendingStatusDeliveries())[0]?.text, 'Pull request closed.')
   assert.equal(await restarted.meta('status-sent:v1:acme/app#239'), undefined)
 })
+
+for (const via of ['webhook', 'snapshot'] as const) test(`publishes closure after an acknowledged waiting status via ${via}`, async t => {
+  const { inbox, claim, open } = await fixture(t)
+  await inbox.finish(claim, blocked('Waiting for input.'))
+  const published: string[] = []
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } })
+  await recovery.flush()
+  assert.deepEqual(await inbox.metaEntries('status-outbox:v1:'), [])
+  if (via === 'webhook') await inbox.ingest('closure-after-ack', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  else await inbox.seed(repository, { ...pr, state: 'closed' })
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  await createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async delivery => { published.push(delivery.text) } }).flush()
+  assert.deepEqual(published, ['Waiting for input.', 'Pull request closed.'])
+  assert.equal((await restored.get(repository, pr.number))?.lastResult, 'Waiting for input.')
+})
+
+test('keeps a durable correction after acknowledgement while a replaced writer can still mutate the comment', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const [old] = await inbox.claimStatusDeliveries()
+  assert.ok(old?.leaseUntil)
+  await inbox.wake((await inbox.get(repository, pr.number))!, 'new-feedback')
+  await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+  setClock(old.leaseUntil + 1)
+  const [replacement] = await inbox.claimStatusDeliveries()
+  assert.ok(replacement)
+  await inbox.ingest('closed-with-old-writer', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  assert.equal(await inbox.finishStatusDelivery(replacement, 'delivered'), false)
+  let projection = ''
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  const recovery = createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async delivery => { projection = delivery.text } })
+  await recovery.flush()
+  assert.equal(projection, 'Pull request closed.')
+  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 1, 'a correction cannot be forgotten while the old HTTP write can still land')
+  // The replaced write reaches GitHub after the correction, but its response
+  // never reaches the host. Recovery must not depend on that response.
+  projection = old.text
+  setClock(old.leaseUntil + 60_002)
+  await recovery.flush()
+  assert.equal(projection, 'Pull request closed.', 'durable replay repairs a late write without the old host settling it')
+  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 1)
+  await inbox.reconcileSettledStatusWriter(old)
+  await recovery.flush()
+  assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
+})
