@@ -41,6 +41,7 @@ const workspaceFields = new Set(["packages", "catalog", "catalogs", "catalogMode
 
 function supportedSetting(key: string, value: unknown): boolean {
   const normalized = key.replace(/\[\]$/, "").replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+  if (normalized === "link-workspace-packages" && value === "deep") return true;
   if (booleanSettings.has(normalized)) return value === true || value === false || value === "true" || value === "false";
   if (normalized === "node-linker") return value === "isolated" || value === "hoisted" || value === "pnp";
   if (patternSettings.has(normalized)) return Array.isArray(value)
