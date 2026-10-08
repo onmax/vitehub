@@ -488,6 +488,7 @@ async function createTrustedHostSession(options: {
   else await mkdir(workspace, { recursive: true });
   const memory = options.resources ? await createSessionMemory(options.resources) : undefined;
   let destroyPromise: Promise<void> | undefined;
+  let closing = false;
   const processes = new Set<ChildProcessWithoutNullStreams>();
   const processGroups = new Set<number>();
   const session = {
@@ -500,6 +501,7 @@ async function createTrustedHostSession(options: {
     processes,
     root: options.root,
     async destroy() {
+      closing = true;
       const cleanup = async () => {
         await this.stop();
         // Keep the state lease while cgroup descendants may still access it.
@@ -613,6 +615,9 @@ async function createTrustedHostSession(options: {
       );
       runOptions.abortSignal?.throwIfAborted();
       await memory?.assertHealthy();
+      // No await may separate this fence from launch and process registration.
+      // Teardown either owns the registered child or prevents its launch.
+      if (closing) throw new Error("Trusted host Box session is closing.");
       const child = (memory ? memory.spawn : spawnChildProcess)(runOptions.command, {
         cwd,
         detached: process.platform !== "win32",

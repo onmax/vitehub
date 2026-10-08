@@ -37,6 +37,35 @@ describe("trusted-host resource snapshots", () => {
     }
   });
 
+  it("rejects a pending launch when teardown starts during its health check", async () => {
+    let enter!: () => void;
+    let resume!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; });
+    const resumed = new Promise<void>(resolve => { resume = resolve; });
+    const spawn = vi.fn(() => { throw new Error("late launcher executed"); });
+    vi.mocked(createSessionMemory).mockResolvedValueOnce({
+      assertHealthy: async () => { enter(); await resumed; },
+      close: async () => {},
+      kill: async () => {},
+      spawn,
+    });
+    const box = await resolveBox({
+      runtime: { kind: "trusted-host", resources: { cgroupParent: "/delegated", memoryMaxBytes: 1024 } },
+    }, {});
+    const session = await box.open();
+    if (!session.spawn) throw new Error("trusted-host must support spawn");
+    const launch = session.spawn("echo", ["should-not-run"]);
+    const rejected = expect(launch).rejects.toThrow("Trusted host Box session is closing.");
+    await entered;
+    try {
+      await session.close();
+    } finally {
+      resume();
+    }
+    await rejected;
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("retains the state lease after failed cgroup cleanup until close succeeds", async () => {
     const root = await mkdtemp(join(tmpdir(), "box-cleanup-lease-"));
     const close = vi.fn().mockRejectedValueOnce(new Error("cgroup remains populated")).mockResolvedValue(undefined);
