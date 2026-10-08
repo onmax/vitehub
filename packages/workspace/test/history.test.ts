@@ -375,6 +375,43 @@ class ViteHubBlobFailure extends ViteHubError<"BLOB_OPERATION_FAILED", { operati
 }
 
 describe("history policy and capabilities", () => {
+  it("runs resolved history validators and hooks once with the same base Definition", async () => {
+    const { store } = await setup("libsql")
+    const validate = vi.fn((input: import("../src/core/types.ts").WorkspaceWriteInput) => ({ ...input, content: input.operation === "writeFile" ? `${input.content}!` : undefined, mediaType: "text/custom", metadata: { validated: true } }))
+    const before = vi.fn()
+    const checked = vi.fn()
+    const after = vi.fn()
+    const error = vi.fn()
+    const definition = { name: "history", store, rules: { "**": { validate } }, hooks: { "write:before": before, "write:validate": checked, "write:after": after, "write:error": error } }
+    const base = useWorkspace("history", { mode: "write", definition })
+    const invocation = { context: { entries: () => new Map<string, unknown>().entries(), get: () => undefined, has: () => false } }
+    const resolved = await createWorkspaceSourceResolutionFacade(base, definition, { invocation, overlay: true })
+    // SAFETY: Source resolution preserves the writable input facade.
+    const workspace = resolved.workspace as import("../src/core/use.ts").WritableWorkspaceFacade
+    const first = await workspace.history.commit({ ifHead: null, files: { "a.txt": "ok" } })
+    const view = await workspace.history.open(first.id)
+    expect(await view.readFile("a.txt")).toBe("ok!")
+    expect(await view.stat("a.txt")).toMatchObject({ mediaType: "text/custom", metadata: { validated: true } })
+    expect(validate).toHaveBeenCalledTimes(1)
+    expect(before).toHaveBeenCalledTimes(1)
+    expect(checked).toHaveBeenCalledTimes(1)
+    expect(after).toHaveBeenCalledTimes(1)
+    expect(error).not.toHaveBeenCalled()
+    const second = await workspace.history.commit({ ifHead: first.id, files: {} })
+    expect(validate).toHaveBeenCalledTimes(2)
+    expect(before).toHaveBeenCalledTimes(2)
+    expect(checked).toHaveBeenCalledTimes(2)
+    expect(after).toHaveBeenCalledTimes(2)
+    vi.spyOn(store.history, "commit").mockRejectedValueOnce(new Error("publication failed"))
+    await expect(workspace.history.commit({ ifHead: second.id, files: { "a.txt": "next" } })).rejects.toThrow("publication failed")
+    expect(validate).toHaveBeenCalledTimes(3)
+    expect(before).toHaveBeenCalledTimes(3)
+    expect(checked).toHaveBeenCalledTimes(3)
+    expect(after).toHaveBeenCalledTimes(2)
+    expect(error).toHaveBeenCalledTimes(1)
+    expect(await workspace.history.head()).toEqual(second)
+  })
+
   it("keeps configured limits when validators replace the write input", async () => {
     for (const policy of [
       { rule: { maxBytes: 3 }, content: "too-large", mediaType: undefined, error: "limits writes" },

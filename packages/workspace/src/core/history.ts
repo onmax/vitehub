@@ -11,7 +11,7 @@ import type { WorkspaceSourceView, WorkspaceSourceWriteGrant } from "../sources/
 import type { Workspace, WorkspaceDefinition, WorkspaceFile, WorkspaceHistoryCommitOptions, WorkspaceHistoryReader, WorkspaceRetainedHistory, WorkspaceRevision, WorkspaceStore, WorkspaceStoreHistory, WorkspaceWriteInput } from "./types.ts"
 
 // Keep per-file hook output when a resolved facade forwards the public file set.
-// The base facade still applies its own policy and Source grants.
+// The base facade checks its rules and Source grants without repeating callbacks.
 const forwardedHistoryFiles = new WeakMap<WorkspaceHistoryCommitOptions, Record<string, WorkspaceFile>>()
 
 export function forwardWorkspaceHistoryFiles(options: Parameters<WorkspaceStoreHistory["commit"]>[0]): WorkspaceHistoryCommitOptions {
@@ -70,6 +70,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
         throw workspaceError("[vitehub] History commit requires ifHead to be a revision id or null.")
       }
       const forwardedFiles = forwardedHistoryFiles.get(options)
+      const beforeWrite = forwardedFiles ? policy.check : policy.before
       const desired: Record<string, WorkspaceFile> = Object.create(null)
       for (const [path, content] of Object.entries(options.files)) {
         const normalized = normalizeHistoryPath(path)
@@ -102,7 +103,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
           continue
         }
         const requested = await files.assertWritable(path)
-        const input = await policy.before({
+        const input = await beforeWrite({
           content: file?.content,
           mediaType: file?.mediaType,
           metadata: file?.metadata,
@@ -111,7 +112,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
           previous: before,
           workspace: definition.name,
         })
-        inputs.push(input)
+        if (!forwardedFiles) inputs.push(input)
         try {
           if (input.path !== requested.path || input.operation !== (file ? "writeFile" : "rm")) throw workspaceError(`[vitehub] History validators cannot rewrite file paths or operations: ${path}.`)
           grants.push(await files.assertWritable(input.path))
@@ -121,7 +122,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
           }
         }
         catch (error) {
-          await policy.error(input, error)
+          if (!forwardedFiles) await policy.error(input, error)
           throw error
         }
       }
