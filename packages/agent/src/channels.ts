@@ -1,3 +1,4 @@
+import { createCodeHostChannelSyncProvider } from "./internal/code-host-channel-sync.ts"
 import { codeHostIngest, codeHostWebhookInput, codeHostChannelMetadata, codeHostChannelPullRequest, codeHostActivityComment } from "./internal/code-host-events.ts"
 import { messageChannelReplyBody, setMessageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
 export { messageChannelReplyBody, messageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
@@ -638,6 +639,8 @@ export interface CodeHostChannelOptions<TRuntimeConfig extends AgentRuntimeConfi
   webhookSecret?: MaybeResolvable<string | { unseal: () => string } | undefined, AgentCallbackContext<TRuntimeConfig>>
   /** Commit status name. Default: ViteHub Agent. */
   statusContext?: string
+  /** Repositories whose webhooks the Channel sync command manages. */
+  sync?: { repositories: readonly string[] }
   pullRequest?: boolean | PullRequestOptions
 }
 
@@ -3150,13 +3153,20 @@ function codeHostPullRequestOptions(options: PullRequestOptions): GitHubPullRequ
   return { ...options, workspace: false, reconcile: mapped }
 }
 
+function codeHostChannelSetting<TRuntimeConfig extends AgentRuntimeConfig>(
+  kind: "gitlab" | "forgejo",
+  options: Pick<CodeHostChannelOptions<TRuntimeConfig>, "baseUrl" | "token" | "webhookSecret">,
+) {
+  return async (field: "baseUrl" | "token" | "webhookSecret", context: AgentCallbackContext<TRuntimeConfig>) =>
+    cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context))
+}
+
 function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem, TKind extends "gitlab" | "forgejo">(
   kind: TKind,
   options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods> {
-  const { activity, baseUrl: _baseUrl, token: _token, webhookSecret: _secret, statusContext, pullRequest: pullRequestInput, ...channelOptions } = options
-  const setting = async (field: "baseUrl" | "token" | "webhookSecret", context: AgentCallbackContext<TRuntimeConfig>) =>
-    cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context))
+  const { activity, baseUrl: _baseUrl, token: _token, webhookSecret: _secret, statusContext, sync, pullRequest: pullRequestInput, ...channelOptions } = options
+  const setting = codeHostChannelSetting(kind, options)
   const services: CodeHostChannelServices<TRuntimeConfig> = {
     kind,
     provider: async context => await codeHostProvider({ host: kind, baseUrl: await setting("baseUrl", context), token: await setting("token", context), fetch: codeHostChannelFetch(globalThis.fetch) }),
@@ -3220,7 +3230,7 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
       },
     }
   }
-  return defineChannel(kind, {
+  const channel = defineChannel(kind, {
     ...channelOptions,
     activity: activityDefinition,
     messages: false,
@@ -3247,6 +3257,18 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
         },
       },
     }),
+  })
+  return withAgentChannelSyncDefinition<TRuntimeConfig, typeof channel>(channel, {
+    provider: kind,
+    async resolve(context) {
+      const [baseUrl, token, webhookSecret] = sync ? await Promise.all([
+        setting("baseUrl", context), setting("token", context), setting("webhookSecret", context),
+      ]) : []
+      return createCodeHostChannelSyncProvider({
+        host: kind, baseUrl, token, webhookSecret, repositories: sync?.repositories,
+        pullRequest: pullRequestInput, activity: Boolean(activity),
+      })
+    },
   })
 }
 

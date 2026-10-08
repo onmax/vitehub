@@ -1535,6 +1535,13 @@ export const agentDiagnostics = defineDiagnostics({
     AGENT_R0944: dynamicError,
     AGENT_R0945: dynamicError,
     AGENT_R0946: dynamicError,
+    AGENT_R0981: dynamicError,
+    AGENT_R0982: dynamicError,
+    AGENT_R0983: dynamicError,
+    AGENT_R0984: dynamicError,
+    AGENT_R0985: dynamicError,
+    AGENT_R0986: dynamicError,
+    AGENT_R0987: dynamicError,
     AGENT_R0928: {
       why: "[vitehub] Provider Agent Drivers are not included in Worker builds. They start local Codex or Claude Code processes, which require a Node.js host.",
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",
