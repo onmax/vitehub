@@ -33,7 +33,7 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [
     vue(),
-    nitro(),
+    nitro() as never,
     vitehub({
       preset: 'node',
       realtime: { authority: 'memory' },
