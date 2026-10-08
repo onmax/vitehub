@@ -5,7 +5,8 @@ import { isStatusDeliveryCurrent, type StatusDelivery } from "../../server/githu
 export function isWorkerBlocker(snapshot: Pick<Snapshot, "wait" | "lastResult">): boolean {
   if (snapshot.wait?.kind !== "external" || snapshot.wait.wake || snapshot.wait.retryAt !== undefined) return false;
   const text = `${snapshot.wait.reason}\n${snapshot.lastResult ?? ""}`;
-  return /MCP tool call requires approval|approval policy is never|read.only[^\n]{0,80}\.git|\.git[^\n]{0,80}read.only|writable (?:\.git|Git (?:metadata|checkout))|restore frozen-lockfile dependency installation|host must prepare (?:the )?exact.base merge|host must restore (?:the )?prepared merge metadata\/index|prepared merge metadata or index changed outside the host repair tools/i.test(text);
+  return /MCP tool call requires approval|approval policy is never|read.only[^\n]{0,80}\.git|\.git[^\n]{0,80}read.only|writable (?:\.git|Git (?:metadata|checkout))|restore frozen-lockfile dependency installation|host must prepare (?:the )?exact.base merge|host must restore (?:the )?prepared merge metadata\/index|prepared merge metadata or index changed outside the host repair tools/i.test(text)
+    || /host (?:commitRepair|commit gate)[^\n]{0,80}rejects dependency state[^\n]{0,80}(?:successful|refreshDependencies)/i.test(text);
 }
 
 export interface BabysitterStatusRecovery {

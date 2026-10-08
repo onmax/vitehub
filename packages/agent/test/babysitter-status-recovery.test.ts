@@ -151,6 +151,7 @@ test('release recovery persists the queued projection while worker admission is 
 for (const reason of [
   'Host must restore the prepared merge metadata/index for PR HEAD, retaining repair files.',
   'commitRepair reproduced: Prepared merge metadata or index changed outside the host repair tools.',
+  'Host commitRepair repeatedly rejects dependency state despite successful refreshDependencies and repeated focused validation.',
 ]) test(`a corrected release retries the prepared merge worker blocker once: ${reason}`, async t => {
   const { inbox, claim, open } = await fixture(t)
   const result = { text: reason, wait: { kind: 'external' as const, headSha: head, reason, evidenceKey: 'merge-metadata' } }
