@@ -286,13 +286,24 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           return "merged";
         }
         const reconcileEnqueued = async (): Promise<"merged" | "blocked"> => {
-          const [owner, name] = repository.split("/");
-          const response = await readGraphql(repository, 1, signal)(`query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid mergeQueueEntry{id}}}}`, { owner, name, number });
-          const queued = v.parse(v.object({ data: v.object({ repository: v.object({ pullRequest: v.object({ state: v.string(), headRefOid: v.string(), mergeQueueEntry: v.nullable(v.object({ id: v.string() })) }) }) }) }), response).data.repository.pullRequest;
-          if (queued.mergeQueueEntry) return await parkMerge("Waiting for queued GitHub merge request.");
+          const [repositoryOwner, name] = repository.split("/");
+          const response = await readGraphql(repository, 1, signal)(`query($owner:String!,$name:String!,$number:Int!,$since:DateTime!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid mergeQueueEntry{id} timelineItems(last:1,since:$since,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename ... on RemovedFromMergeQueueEvent{createdAt beforeCommit{oid}}}}}}}`, { owner: repositoryOwner, name, number, since: new Date(pending.startedAt).toISOString() });
+          const queued = v.parse(v.object({ data: v.object({ repository: v.object({ pullRequest: v.object({
+            state: v.string(), headRefOid: v.string(), mergeQueueEntry: v.nullable(v.object({ id: v.string() })),
+            timelineItems: v.object({ nodes: v.array(v.nullable(v.object({ __typename: v.string(), createdAt: v.optional(v.string()), beforeCommit: v.optional(v.nullable(v.object({ oid: v.string() }))) }))) }),
+          }) }) }) }), response).data.repository.pullRequest;
+          const latest = queued.timelineItems.nodes.at(-1);
+          // A null membership read can lag queue admission or completion. Only
+          // a matching removal after this request, with no later enqueue event,
+          // proves that GitHub no longer owns this same-head queued merge.
+          const removed = latest?.__typename === "RemovedFromMergeQueueEvent" && latest.beforeCommit?.oid === pending.head && latest.createdAt !== undefined && Date.parse(latest.createdAt) >= pending.startedAt;
+          const terminal = queued.state === "MERGED" || queued.state === "CLOSED";
+          const headChanged = /^[a-f\d]{40}$/i.test(queued.headRefOid) && queued.headRefOid !== pending.head;
+          if (!terminal && !headChanged && (queued.mergeQueueEntry || !removed)) return await parkMerge("Waiting for a definitive GitHub merge queue outcome.");
           await pullRequestInbox.hydrate(claim, { refresh: true });
           await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
-          await pullRequestInbox.finish(claim, { text: "Final enqueued result reconciled; pull request left the merge queue.", terminal: queued.state !== "OPEN", retry: queued.state === "OPEN" });
+          await pullRequestInbox.finish(claim, { text: `Enqueued merge reconciled: ${terminal ? queued.state.toLowerCase() : headChanged ? "expected head changed" : "matching queue removal confirmed"}.`, terminal, retry: !terminal });
+          if (queued.state === "MERGED") schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: pending.head, avoided_invocation: true });
           return queued.state === "MERGED" ? "merged" : "blocked";
         };
         if (pending.enqueued) return await reconcileEnqueued();

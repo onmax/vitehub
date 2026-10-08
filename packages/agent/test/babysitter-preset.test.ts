@@ -575,7 +575,7 @@ describe("Babysitter preset runtime", () => {
       if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify(mode === "immediate" ? { status: "enqueued", details: {} } : { status: "pending", details: { uuid, expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }), stderr: "" };
       if (args.some(arg => arg.includes("mergeQueueEntry"))) {
         if (membership === "unavailable") throw new Error("Queue read unavailable");
-        return { stdout: JSON.stringify({ data: { repository: { pullRequest: { state: "OPEN", headRefOid: "a".repeat(40), mergeQueueEntry: membership ? { id: "queued" } : null } } } }), stderr: "" };
+        return { stdout: JSON.stringify({ data: { repository: { pullRequest: { state: "OPEN", headRefOid: "a".repeat(40), mergeQueueEntry: membership ? { id: "queued" } : null, timelineItems: { nodes: [] } } } } }), stderr: "" };
       }
       return command(args, request);
     });
@@ -583,8 +583,38 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       vi.setSystemTime(Date.now() + 31_000);
       await f.reconcile();
-      if (membership === false) expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ enqueued: true });
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
+  });
+
+  it.each(["removed", "old-removal", "wrong-head-removal", "readded", "head-changed", "merged", "closed"])("reconciles enqueued merges only with definitive %s evidence", async outcome => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startedAt = Date.now();
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify({ status: "enqueued", details: {} }), stderr: "" };
+      if (args.some(arg => arg.includes("mergeQueueEntry"))) {
+        const removed = { __typename: "RemovedFromMergeQueueEvent", createdAt: new Date(startedAt + (outcome === "old-removal" ? -60_000 : 1_000)).toISOString(), beforeCommit: { oid: (outcome === "wrong-head-removal" ? "b" : "a").repeat(40) } };
+        const event = outcome === "readded" ? { __typename: "AddedToMergeQueueEvent" } : removed;
+        return { stdout: JSON.stringify({ data: { repository: { pullRequest: {
+          state: outcome === "merged" ? "MERGED" : outcome === "closed" ? "CLOSED" : "OPEN",
+          headRefOid: (outcome === "head-changed" ? "b" : "a").repeat(40), mergeQueueEntry: null,
+          timelineItems: { nodes: [event] },
+        } } } }), stderr: "" };
+      }
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      vi.setSystemTime(startedAt + 31_000);
+      await f.reconcile();
+      const definitive = ["removed", "head-changed", "merged", "closed"].includes(outcome);
+      if (definitive) expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
       else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ enqueued: true });
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe(outcome === "merged" || outcome === "closed" ? "terminal" : definitive ? "ready" : "waiting");
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
