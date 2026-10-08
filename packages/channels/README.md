@@ -125,7 +125,7 @@ Only connectors declared as own properties of the definition can receive message
 
 For each connector delivery, Channels attempts to write `outbound.started` and either `outbound.completed` or `outbound.failed` JSON metadata under the `vitehub.channel.send` scope. Input validation and definition-loading failures return before delivery logging starts. ViteHub omits message text and connector options from those events. Failed events include up to 2,000 characters of the thrown error message, so connectors must not put credentials or message content in errors. Connector code can still read, transmit, or log every value it receives; keep credentials in server-only configuration and redact provider failures before throwing them.
 
-Delivery logging is best effort. A logging failure does not change the result of a send. An inaccessible optional message `id` is omitted from the receipt and log without changing delivery success.
+Delivery logging is best effort. A logging failure does not change the result of a send. An inaccessible or non-string optional message `id` is omitted from the receipt and log without changing delivery success.
 
 This package is separate from Agent Channels. `@vite-hub/channels` sends ordinary application messages with `defineOutboundChannel()`. The earlier `defineChannel()` export is a deprecated alias for one release; `defineChannel()` from `@vite-hub/agent/channels` defines an Agent Channel Kind. [`@vite-hub/agent/channels`](https://vitehub.dev/docs/agents/channels) describes where Agent Invocations come from, inbound delivery, threads, and Agent reply policy.
 

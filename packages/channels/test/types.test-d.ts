@@ -43,6 +43,15 @@ const metadataChannel = createChannel("metadata-only", defineOutboundChannel({
 
 metadataChannel.send("Build finished.", { connector: "webhook" })
 
+defineOutboundChannel({
+  connectors: {
+    pingOnly: {
+      // @ts-expect-error Connectors must accept every string exposed by Channel.send().
+      send: (_text: "ping", _options: NamedConnectorOptions) => ({ status: "accepted" }),
+    },
+  },
+})
+
 async function checkSendTuple() {
   const [error, receipt] = await channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
   if (error) {

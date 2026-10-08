@@ -10,6 +10,8 @@ icon: i-lucide-code-2
 
 `useChannel()` returns immediately. `send()` performs the connector call and returns `[null, receipt]` on success or `[error, null]` on failure. The receipt has the Channel name, connector name, ViteHub delivery id, and optional provider message id. Check the error before using the receipt.
 
+The optional provider `id` must be a string. Unreadable or non-string IDs are omitted from successful receipts and delivery logs.
+
 Named clients share one definition load for the active runtime registry. A failed load can retry on a later send. Replacing the runtime registry invalidates the cached definition for existing clients.
 
 ```ts [server/api/build-finished.post.ts]

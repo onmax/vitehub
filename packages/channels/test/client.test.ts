@@ -165,6 +165,18 @@ describe("createChannel", () => {
     }
   })
 
+  it.each([123, null, false, {}, ["provider-id"], new String("provider-id")].map(id => ({ id })))("omits a non-string connector ID without retrying delivery: $id", async ({ id }) => {
+    const send = vi.fn(() => ({ id, status: "accepted" }))
+    const channel = createChannel("alerts", defineOutboundChannel({ connectors: { webhook: { send } } }))
+
+    const [error, receipt] = await channel.send("Build finished.", { connector: "webhook" })
+
+    expect(error).toBeNull()
+    expect(receipt).toMatchObject({ channel: "alerts", connector: "webhook", status: "accepted" })
+    expect(receipt).not.toHaveProperty("id")
+    expect(send).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ["", "non-empty"],
     ["Build finished.", "requires a connector"],

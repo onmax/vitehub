@@ -12,10 +12,10 @@ export interface ChannelSendResult extends ChannelConnectorResult {
 export type ChannelSendOutcome = [error: Error, receipt: null] | [error: null, receipt: ChannelSendResult]
 
 export interface ChannelConnector<TOptions = Record<string, unknown>, TResult extends object = ChannelConnectorResult> {
-  send(text: string, options: TOptions): Promise<TResult> | TResult
+  send: (text: string, options: TOptions) => Promise<TResult> | TResult
 }
 
-export type ChannelConnectorMap = Record<string, ChannelConnector<object, object>>
+export type ChannelConnectorMap = Record<string, ChannelConnector<never, object>>
 
 export interface ChannelDefinition<
   TConnectors extends ChannelConnectorMap = ChannelConnectorMap,

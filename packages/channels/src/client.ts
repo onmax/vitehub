@@ -58,8 +58,9 @@ function normalizeConnectorResult(result: object): ChannelConnectorResult {
   }
   const normalized: ChannelConnectorResult = Object.fromEntries(entries)
   try {
-    const id = Reflect.get(result, "id")
-    if (id !== undefined) normalized.id = id
+    const id: unknown = Reflect.get(result, "id")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- JavaScript connectors can return invalid optional IDs after delivery succeeds.
+    if (typeof id === "string") normalized.id = id
   }
   catch {
     // Delivery already succeeded. An inaccessible optional ID must not encourage a resend.
