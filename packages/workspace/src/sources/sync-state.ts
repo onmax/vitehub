@@ -10,6 +10,7 @@ export interface WorkspaceSourceSyncStatePath {
 
 export interface WorkspaceSourceSyncState {
   configHash: string
+  claims?: Record<string, WorkspaceSourceSyncStatePath[]>
   mountPath: string
   paths: Record<string, WorkspaceSourceSyncStatePath>
   source: string
@@ -39,7 +40,25 @@ export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyn
     if (entry.mountPath !== undefined && !hasRuntimeType(entry.mountPath, "string")) return
   }
 
+  if (state.claims !== undefined) {
+    if (!state.claims || typeof state.claims !== "object" || Array.isArray(state.claims)) return
+    for (const [path, claims] of Object.entries(state.claims)) {
+      if (!state.paths[path] || !Array.isArray(claims) || claims.length === 0) return
+      const mounts = new Set<string>()
+      for (const claim of claims) {
+        if (!claim || typeof claim !== "object" || Array.isArray(claim)) return
+        if (typeof claim.digest !== "string" || typeof claim.sourcePath !== "string" || typeof claim.mountPath !== "string") return
+        if (mounts.has(claim.mountPath)) return
+        mounts.add(claim.mountPath)
+      }
+    }
+  }
   return state
+}
+
+/** Legacy records contain one claim per path; new records retain overlapping mounts. */
+export function sourceSyncPathClaims(state: WorkspaceSourceSyncState, path: string): WorkspaceSourceSyncStatePath[] {
+  return state.claims?.[path] ?? [{ ...state.paths[path]!, mountPath: state.paths[path]!.mountPath ?? state.mountPath }]
 }
 
 export function workspaceSourceSyncStateEquals(left: WorkspaceSourceSyncState | undefined, right: WorkspaceSourceSyncState): boolean {
@@ -50,6 +69,7 @@ export function workspaceSourceSyncStateEquals(left: WorkspaceSourceSyncState | 
 function canonicalSourceSyncState(state: WorkspaceSourceSyncState): WorkspaceSourceSyncState {
   return {
     configHash: state.configHash,
+    claims: state.claims,
     mountPath: state.mountPath,
     paths: Object.fromEntries(Object.entries(state.paths).sort(([left], [right]) => left.localeCompare(right))),
     source: state.source,

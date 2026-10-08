@@ -291,6 +291,48 @@ describe("Workspace Source Sync", () => {
     await expect(workspace.exists("docs/stale.md")).resolves.toBe(false)
   })
 
+  it.each([false, true])("retains same-path claims across mount changes, reverse=%s", async (reverse) => {
+    const store = createMemoryWorkspaceStore()
+    const rootItems = new Map([["docs/a.md", "original"]])
+    const docsItems = new Map([["a.md", "updated"]])
+    const create = async (mount: string, items: Map<string, string>) => {
+      registerWorkspace("overlapping-sync", defineWorkspace({
+        store,
+        sources: { docs: {
+          mount: { path: mount },
+          sync: { stale: "remove" },
+          async getKeys() { return [...items.keys()] },
+          async getItem(key: string) { return { key, content: items.get(key)! } },
+        } },
+      }))
+      return await useRegisteredWorkspace("overlapping-sync")
+    }
+    const root = await create("", rootItems)
+    const docs = await create("docs", docsItems)
+    const first = reverse ? docs : root
+    const second = reverse ? root : docs
+    expect((await first.sync({ sources: ["docs"] })).status).toBe("ready")
+    expect((await second.sync({ sources: ["docs"] })).status).toBe("ready")
+    expect((await store.readFile("docs/a.md"))?.content).toBe(reverse ? "original" : "updated")
+    const metaKey = sourceSyncMetaKey("docs", "overlapping-sync")
+    expect(readWorkspaceSourceSyncState(await store.getMeta!(metaKey))?.claims?.["docs/a.md"]).toHaveLength(2)
+
+    // Recreate views to verify claims survive beyond the original facade objects.
+    const restoredRoot = await create("", rootItems)
+    const restoredDocs = await create("docs", docsItems)
+    const dropping = reverse ? restoredRoot : restoredDocs
+    const retained = reverse ? restoredDocs : restoredRoot
+    ;(reverse ? rootItems : docsItems).clear()
+    expect((await dropping.sync({ sources: ["docs"] })).status).toBe("ready")
+    expect(await store.readFile("docs/a.md")).toBeDefined()
+    // The surviving owner refreshes its content before releasing the final claim.
+    expect((await retained.sync({ sources: ["docs"] })).status).toBe("ready")
+    ;(reverse ? docsItems : rootItems).clear()
+    expect((await retained.sync({ sources: ["docs"] })).sources[0]?.counts.removed).toBe(1)
+    expect(await store.readFile("docs/a.md")).toBeUndefined()
+    expect(readWorkspaceSourceSyncState(await store.getMeta!(metaKey))?.paths).toEqual({})
+  })
+
   it.each(["archive", ""])("retains legacy ownership when a Source moves to mount %j", async (mountPath) => {
     const store = createMemoryWorkspaceStore()
     const items = new Map([["file.md", "# File\n"]])

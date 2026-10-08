@@ -372,7 +372,7 @@ Learn more at [vitehub.dev](https://vitehub.dev).
 
 Startup and build Source cleanup track ownership by Workspace name. When definitions share a Store, removing or refreshing one definition does not remove files last materialized by another definition. Cleanup also preserves files without a recorded Workspace owner, including files from legacy snapshots. Shared paths still contain the most recent write.
 
-Source Sync and runtime Source materialization change files only inside the mount of the Source that they process. A Source with an empty mount owns the Workspace root. Source Sync with `stale: "remove"` removes only stale paths inside the current mount. If you move a Source mount, the files in the old mount stay. Remove them yourself if you do not need them.
+Source Sync and runtime Source materialization change files only inside the mount of the Source that they process. A Source with an empty mount owns the Workspace root. Source Sync with `stale: "remove"` removes only stale paths inside the current mount. If you move a Source mount, the files in the old mount stay. Remove them yourself if you do not need them. When mounts for the same Source key share an output path, sync retains their claims separately. Each mount can update the file, but stale cleanup removes it only after the other mounts release their claims and its content still matches the remaining claim.
 
 `history.rebase({ takeRemote })` replaces local content at each listed path, so each path must be writable. A Source-backed path fails with a read-only error before the Store rebases.
 
