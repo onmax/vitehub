@@ -170,6 +170,7 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
   async exists(path: string): Promise<boolean> {
     try {
       const relativePath = this.#toRelativePath(path)
+      if (!relativePath) return true
       return await this.workspace.exists(relativePath)
     }
     catch {
@@ -178,16 +179,21 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
   }
 
   async stat(path: string): Promise<FsStat> {
-    const absolutePath = this.#resolveFromRoot(path)
-    if (absolutePath === workspaceMountPoint) {
+    const relativePath = this.#toRelativePath(path)
+    if (!relativePath) {
       return statFromEntry({ path: "", type: "directory" })
     }
-    return statFromEntry(await this.workspace.stat(this.#toRelativePath(absolutePath)))
+    return statFromEntry(await this.workspace.stat(relativePath))
   }
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const workspace = this.#requireWritable()
-    await workspace.mkdir(this.#toRelativePath(path), { recursive: options?.recursive })
+    const relativePath = this.#toRelativePath(path)
+    if (!relativePath) {
+      if (options?.recursive) return
+      throw shellErrorDiagnostics.SHELL_R0023({ message: `[vitehub] Workspace directory already exists: "${path}".` })
+    }
+    await workspace.mkdir(relativePath, { recursive: options?.recursive })
     await this.#refreshPaths()
   }
 
