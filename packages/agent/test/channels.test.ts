@@ -2232,8 +2232,8 @@ describe("agent channels", () => {
       "https://api.github.test/repos/vite-hub/vitehub/pulls/42/reviews",
       expect.objectContaining({
         body: JSON.stringify({
-          body: "Review body\n\n![Login badge](<https://assets.example/review/screenshots/login.png>)",
           event: "COMMENT",
+          body: "Review body\n\n![Login badge](<https://assets.example/review/screenshots/login.png>)",
         }),
         headers: expect.objectContaining({ authorization: "Bearer installation-token" }),
         method: "POST",

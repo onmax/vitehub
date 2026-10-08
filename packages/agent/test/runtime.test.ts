@@ -5332,9 +5332,9 @@ describe("agent message protocol", () => {
       "https://api.github.test/repos/vite-hub/vitehub/statuses/abc123",
       expect.objectContaining({
         body: JSON.stringify({
+          state: "success",
           context: "ViteHub Review",
           description: "Review completed.",
-          state: "success",
         }),
         method: "POST",
       }),
