@@ -78,7 +78,6 @@ describe("queue provision step", () => {
   it.each([
     [null],
     ["welcome"],
-    [sparseQueueList],
   ])("rejects malformed Cloudflare queue entries: %s", async (result) => {
     const rootDir = await createTempDir()
     await writeFile(join(rootDir, "welcome.queue.ts"), "export default null\n", "utf8")
@@ -86,6 +85,19 @@ describe("queue provision step", () => {
 
     await expect(createQueueProvisionStep(() => rootDir).plan(provisionContext(fetchImpl)))
       .rejects.toMatchObject({ code: "QUEUE_R0011" })
+  })
+
+  it("rejects sparse Cloudflare queue lists before JSON serialization", async () => {
+    const rootDir = await createTempDir()
+    await writeFile(join(rootDir, "welcome.queue.ts"), "export default null\n", "utf8")
+    const response = new Response()
+    const json = vi.spyOn(response, "json").mockResolvedValue({ success: true, result: sparseQueueList })
+    const fetchImpl: typeof globalThis.fetch = async () => response
+
+    await expect(createQueueProvisionStep(() => rootDir).plan(provisionContext(fetchImpl)))
+      .rejects.toMatchObject({ code: "QUEUE_R0011" })
+    expect(json).toHaveBeenCalledOnce()
+    expect(Object.hasOwn(sparseQueueList, 0)).toBe(false)
   })
 
   it("provisions the same prefixed physical queue name used by deployment output", async () => {
