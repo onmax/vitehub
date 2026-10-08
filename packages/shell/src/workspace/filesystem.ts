@@ -204,7 +204,7 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
     const from = this.#toRelativePath(src).replace(/\/$/, "")
     const to = this.#toRelativePath(dest).replace(/\/$/, "")
     if (from === to) {
-      await workspace.stat(from)
+      if (from) await workspace.stat(from)
       return
     }
     if (!from || to.startsWith(`${from}/`)) {
