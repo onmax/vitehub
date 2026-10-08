@@ -98,10 +98,13 @@ pnpm add @ai-sdk/vue
 ```ts [src/composables/use-chat.ts]
 import { useChat } from "@ai-sdk/vue";
 
-const { messages, status, sendMessage, stop } = useChat();
+export function useAppChat() {
+  return useChat();
+}
 ```
 
-Pass those values to [`AgentChat`](/docs/ui/chat) and place
+Call `useAppChat()` in the component's `<script setup>` and pass its returned
+values to [`AgentChat`](/docs/ui/chat). Place
 [`AgentChatPrompt`](/docs/ui/chat-prompt) in its `composer` slot. The [Chat
 App block](/docs/ui/blocks/chat-app) shows session switching and attachments.
 ::
