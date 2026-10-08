@@ -899,10 +899,20 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return current;
               };
               let preparedMergeBase: string | undefined;
+              const readRepairBase = async () => {
+                // PR snapshots can retain an older base after its branch moves.
+                // Conflict preparation must merge the current target branch.
+                const [ref] = await readRest(`repos/${repository}/git/ref/heads/${encodeURIComponent(pullRequest.baseRefName)}`, ".", abortSignal);
+                if (!isRuntimeRecord(ref) || ref.ref !== `refs/heads/${pullRequest.baseRefName}` || !isRuntimeRecord(ref.object)
+                  || ref.object.type !== "commit" || !hasRuntimeType(ref.object.sha, "string") || !/^[a-f\d]{40}$/i.test(ref.object.sha)) {
+                  throw new Error("Conflict repair requires the exact live base branch commit.");
+                }
+                return ref.object.sha;
+              };
               const assertRepairBase = async () => {
                 if (!preparedMergeBase) return;
                 const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", abortSignal);
-                if (!isRuntimeRecord(live) || !isRuntimeRecord(live.base) || live.base.sha !== preparedMergeBase) {
+                if (!isRuntimeRecord(live) || !isRuntimeRecord(live.base) || live.base.ref !== pullRequest.baseRefName || await readRepairBase() !== preparedMergeBase) {
                   await pullRequestInbox.hydrate(inboxClaim, { refresh: true });
                   const changed = new DOMException("Pull request base changed; retry the conflict repair against current GitHub state.", "AbortError");
                   passController.abort(changed);
@@ -913,9 +923,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 if (!preparedDirectories.has(directory)) {
                   if (directory !== checkout) await prepared.prepareWorkspace(directory);
                   if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
-                    if (!pullRequest.baseRefOid) throw new Error("Conflict repair requires the exact base commit.");
-                    await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base: pullRequest.baseRefOid, signal: abortSignal });
-                    preparedMergeBase = pullRequest.baseRefOid;
+                    const base = await readRepairBase();
+                    await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base, signal: abortSignal });
+                    preparedMergeBase = base;
                   }
                   if (presetOptions.install !== false) {
                     // Dependency conflicts must be resolved before the explicit refresh tool can install.

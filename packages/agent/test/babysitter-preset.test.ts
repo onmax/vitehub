@@ -56,7 +56,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -175,6 +175,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { allowOpe
       return { stdout: "", stderr: "" };
     if (path === "repos/acme/app")
       return { stdout: JSON.stringify({ delete_branch_on_merge: false }), stderr: "" };
+    if (path.startsWith("repos/acme/app/git/ref/heads/"))
+      return { stdout: JSON.stringify({ ref: `refs/heads/${pr().base.ref}`, object: { type: "commit", sha: preset.baseBranchHead ?? pr().base.sha } }), stderr: "" };
     const data =
       path.includes("pulls?state") || path === "repos/acme/app/pulls/12"
         ? [pr()]
@@ -1404,6 +1406,33 @@ describe("Babysitter preset runtime", () => {
     expect(f.commit).toHaveBeenCalledOnce();
     const committed = await promisify(execFile)("git", ["-C", f.checkout, "show", "HEAD:source.ts"]);
     expect(committed.stdout).toBe("export const value = 2\n");
+  });
+
+  it.each([false, true])("prepares the live target branch when the PR base snapshot is stale (Box: %s)", async box => {
+    const baseBranchHead = "e".repeat(40);
+    const f = await fixture(false, false, { box, mergeableState: "dirty", baseBranchHead });
+    try {
+      await f.reconcile();
+      expect(f.pr().base.sha).not.toBe(baseBranchHead);
+      expect(f.passes).toHaveLength(1);
+      expect(prepareGitHubRepairBase).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ expectedHead: f.pr().head.sha, base: baseBranchHead }));
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["commitRepair", "pushRepair"] as const)("rejects %s when the live base moves but the PR snapshot stays stale", async operation => {
+    const settings = { mergeableState: "dirty", baseBranchHead: "e".repeat(40) };
+    const f = await fixture(false, false, settings);
+    const staleBase = f.pr().base.sha;
+    f.choose(operation, operation === "commitRepair" ? { message: "resolve base conflict", paths: ["source.ts"] } : {});
+    f.onAdmission(() => { settings.baseBranchHead = "f".repeat(40); });
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect(f.pr().base.sha).toBe(staleBase);
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    } finally { await f.runtime.inbox.close(); }
   });
 
   it("prepares the exact conflict base and frozen dependencies before opening a Box", async () => {
