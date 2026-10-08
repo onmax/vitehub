@@ -39,6 +39,8 @@ export interface BabysitterOptions {
   noFindingsReviews: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
+  /** Install frozen dependencies on the host before repair. Lifecycle scripts stay disabled. Defaults to true. */
+  install: boolean;
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
@@ -177,6 +179,7 @@ export const babysitter: BabysitterAgent = defineAgent({
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
     noFindingsReviews: [] as string[],
     concurrency: 1,
+    install: true,
     autoMerge: false,
   },
   configure: ({ driver, merge, reviewChecks, noFindingsReviews, autoMerge, concurrency }) => {

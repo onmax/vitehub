@@ -1,5 +1,6 @@
 import { defineCapability } from "../../capability-runtime.ts";
 import type { GitHubPullRequestOperations } from "../../server/github.ts";
+import { isRuntimeRecord, hasRuntimeType } from "../../internal/runtime-type.ts";
 
 const noArguments = { type: "object", properties: {}, additionalProperties: false } as const;
 
@@ -59,6 +60,21 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability input is untyped until this runtime boundary validates it.
           if (!input || typeof input !== "object" || !("runId" in input) || typeof input.runId !== "number") throw new Error("Expected a run ID.");
           return operations.readBaseCheckLogs(input.runId);
+        },
+      },
+      commitRepair: {
+        name: "commitRepair",
+        description: "Stage the named repair files and commit them on the host. Git metadata is read-only in the provider sandbox. Call pushRepair after validation and this commit.",
+        inputSchema: {
+          type: "object",
+          properties: { message: { type: "string", minLength: 1 }, paths: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } } },
+          required: ["message", "paths"],
+          additionalProperties: false,
+        },
+        execute: async (input: unknown) => {
+          if (!isRuntimeRecord(input) || !Array.isArray(input.paths) || !input.paths.every(path => hasRuntimeType(path, "string"))) throw new Error("Expected explicit repair paths.");
+          const head = await operations.commitRepair({ message: stringField(input, "message"), paths: input.paths });
+          return { head };
         },
       },
       pushRepair: {

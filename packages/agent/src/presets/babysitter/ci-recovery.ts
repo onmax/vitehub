@@ -97,7 +97,8 @@ export async function rerunFailedActions(
       const permission = permissionFailure(reason);
       // A failed reconciliation read must not overwrite a successful POST and
       // allow another rerun after the retry window.
-      if (!fenced || (!succeeded && !posted && permission)) {
+      const rejected = /\bHTTP[ :]+[45]\d\d\b/i.test(reason);
+      if (!fenced || (!succeeded && !posted && (permission || rejected))) {
         const retryAt = now + (permission ? 15 * 60_000 : 2 * 60_000);
         await inbox.setMeta(metadataKey, { status: permission ? "blocked" : "failed", runId: run.runId, headSha, attemptedAt: now, retryAt, reason });
       }

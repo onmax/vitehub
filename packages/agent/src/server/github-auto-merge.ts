@@ -1,5 +1,6 @@
 import * as v from "valibot"
 import type { GitHubHost } from "./github-host.ts"
+import type { GitHubRepairCommit } from "./github-repair.ts"
 
 const actor = v.nullable(v.object({ login: v.string(), __typename: v.string() }))
 const reviewSchema = v.object({ author: actor, state: v.string() })
@@ -67,6 +68,8 @@ export interface GitHubPullRequestOperationsOptions {
   eligible?: (pullRequest: GitHubPullRequestOperationSnapshot) => boolean | Promise<boolean>
   /** Host-owned checkout push, already bound to its source branch and expected-head lease. */
   push?: () => Promise<string>
+  /** Host-owned staging and commit in the assigned repair checkout. */
+  commitRepair?: (input: GitHubRepairCommit) => Promise<string>
   signal?: AbortSignal
 }
 
@@ -92,6 +95,7 @@ export interface GitHubPullRequestOperations {
   resolveThread(id: string): Promise<void>
   updateMetadata(input: { title?: string, body?: string }): Promise<void>
   push(): Promise<void>
+  commitRepair(input: GitHubRepairCommit): Promise<string>
 }
 
 const snapshotQuery = `query($owner:String!,$name:String!,$number:Int!){
@@ -329,6 +333,12 @@ export function createGitHubPullRequestOperations(
       if (input.body !== undefined) args.push("-f", `body=${input.body}`)
       await snapshot()
       await github.command(args, commandOptions)
+    },
+    async commitRepair(input) {
+      if (!options.commitRepair) throw new Error("This worker has no host-owned commit operation.")
+      await snapshot()
+      options.signal?.throwIfAborted()
+      return await options.commitRepair(input)
     },
     async push() {
       if (!options.push) throw new Error("This worker has no host-owned push operation.")

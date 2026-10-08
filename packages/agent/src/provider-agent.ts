@@ -3109,6 +3109,16 @@ async function* runProvider<
         ? { PATH: `${[capabilityEnvironment?.PATH, ...toolchainPath].filter(Boolean).join(delimiter)}${delimiter}${providerEnvironmentOverrides?.PATH || process.env.PATH || ""}` }
         : {}),
     })
+    const nativeUnattendedTools = options.provider === "codex" && options.permissions === "allow-edits-unattended" && Object.keys(context.tools || {}).length > 0
+    if (nativeUnattendedTools) {
+      toolServer = await waitForProviderOperation(
+        startToolServer(context.tools!, effectiveSignal, emitToolEvent, capabilityApprovals, capabilityApprovalIds),
+        effectiveSignal,
+        lateToolServer => lateToolServer.close(),
+        observeLateCleanup,
+      )
+      providerRuntimeEnvironment.T3_MCP_BEARER_TOKEN = toolServer.mcp.authorizationHeader.slice("Bearer ".length)
+    }
     let providerLauncher: string | undefined
     if (options.launch !== undefined) {
       if (!hasRuntimeType(providerCommand, "string")) {
@@ -3188,6 +3198,19 @@ async function* runProvider<
       auxiliaryEnvironmentLaunchArgs,
       generatedLaunchArgs,
       gateway?.launchArgs,
+      // The assigned host tools enforce Capability authorization themselves.
+      // Preauthorize their exact names so unattended native approval cannot
+      // reject them before the host receives the request. Shell policy stays intact.
+      ...(nativeUnattendedTools
+        ? [
+          ...(toolServer ? [`-c 'mcp_servers.t3-code.url=${JSON.stringify(toolServer.mcp.endpoint)}'`] : []),
+          '-c \'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"\'',
+          '-c \'shell_environment_policy.exclude=["T3_MCP_BEARER_TOKEN"]\'',
+          // CLI override paths split on dots without parsing quoted TOML keys.
+          // An inline table preserves the exact tool names, including punctuation.
+          `-c '${(`mcp_servers.t3-code.tools={${Object.keys(context.tools ?? {}).map(name => `${JSON.stringify(name)}={approval_mode="approve"}`).join(",")}}`).replaceAll("'", "'\\''")}'`,
+        ]
+        : []),
       // Login profiles reset PATH and hide the invocation's managed browser CLI.
       ...(options.provider === "codex" && capabilityEnvironment?.PATH ? ['-c "allow_login_shell=false"'] : []),
       ...(codexCredentialHome ? ['-c "cli_auth_credentials_store=\\"file\\""'] : []),
@@ -3235,7 +3258,7 @@ async function* runProvider<
       finalizeLateRuntimeCreation,
     )
     effectiveSignal?.throwIfAborted()
-    if (Object.keys(context.tools || {}).length) {
+    if (!toolServer && Object.keys(context.tools || {}).length) {
       toolServer = await waitForProviderOperation(
         startToolServer(context.tools!, effectiveSignal, emitToolEvent, capabilityApprovals, capabilityApprovalIds),
         effectiveSignal,
@@ -3249,7 +3272,10 @@ async function* runProvider<
     effectiveSignal?.throwIfAborted()
     const session = await waitForProviderOperation(runtime.startSession({
       cwd: root,
-      mcp: toolServer?.mcp,
+      // The runtime's thread-scoped MCP map replaces server configuration,
+      // including per-tool approval modes. Use the complete launch configuration
+      // for these host-authorized unattended tools instead.
+      mcp: nativeUnattendedTools ? undefined : toolServer?.mcp,
       model: options.model,
       resumeCursor,
       runtimeMode: providerRuntimeMode[options.permissions ?? defaultAgentProviderPermissions],

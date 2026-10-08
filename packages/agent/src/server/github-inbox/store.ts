@@ -34,7 +34,7 @@ export interface GitHubInboxSummary {
   stackBlocked?: boolean; stackParent?: { number: number; state: string }
 }
 export type Claim = { token: string; generation: number; snapshot: Snapshot }
-export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number }
+export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
 /** Normalize REST and discovery records once, before they enter the inbox. */
@@ -280,7 +280,7 @@ export class PullRequestInbox {
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
   private directMergeKey(repository: string, number: number): string { return `direct-merge:${repository}:${number}` }
   /** Atomically records that a claim has started an irreversible merge request. */
-  async beginDirectMerge(claim: Claim, head: string): Promise<boolean> {
+  async beginDirectMerge(claim: Claim, head: string, asynchronous = false): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token || s.generation !== claim.generation ||
@@ -288,7 +288,7 @@ export class PullRequestInbox {
       if (await this.metaIn(tx, this.directMergeKey(s.repository, s.number)) !== undefined) return false
       await this.setMetaIn(tx, this.directMergeKey(s.repository, s.number), {
         token: claim.token, generation: claim.generation, revision: claim.snapshot.revision ?? 0,
-        head, startedAt: this.clock(),
+        head, startedAt: this.clock(), ...(asynchronous ? { asynchronous } : {}),
       } satisfies DirectMergeAttempt)
       return true
     })
@@ -302,6 +302,17 @@ export class PullRequestInbox {
       !isRuntimeString(attempt.head) || !Number.isFinite(attempt.startedAt)) return undefined
     // SAFETY: the required fields were validated above before this DirectMergeAttempt assertion.
     return attempt as DirectMergeAttempt
+  }
+  /** Save the provider's request identity without releasing the merge fence. */
+  async recordDirectMergeRequest(repository: string, number: number, token: string, requestId: string): Promise<boolean> {
+    if (!/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(requestId)) throw new TypeError('Expected an asynchronous merge UUID.')
+    return await this.transaction(async tx => {
+      const key = this.directMergeKey(repository, number)
+      const attempt = await this.metaIn(tx, key)
+      if (!isRuntimeRecord(attempt) || attempt.token !== token || attempt.asynchronous !== true) return false
+      await this.setMetaIn(tx, key, { ...attempt, requestId })
+      return true
+    })
   }
   async clearDirectMerge(repository: string, number: number, token: string): Promise<boolean> {
     return await this.transaction(async tx => {

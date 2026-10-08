@@ -117,7 +117,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
       if (!text.includes("reviewThreads")) await onAdmission?.();
       return { stdout: JSON.stringify({ data }), stderr: "" };
     }
-    if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ merged: true }), stderr: "" };
+    if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ status: "merged", details: { sha: "b".repeat(40) } }), stderr: "" };
     if (text.includes("/protection/required_status_checks"))
       return { stdout: JSON.stringify({ contexts: [], checks: [] }), stderr: "" };
     if (text.includes("/rules/branches/"))
@@ -198,6 +198,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
       const result = await run({
         path: checkout,
         prepareWorkspace: prepare,
+        commitRepair: async () => head,
         push,
         signal: checkoutController.signal,
         env: { GIT_AUTHOR_NAME: "Repair bot", GIT_AUTHOR_EMAIL: "repair@example.test", GIT_COMMITTER_NAME: "Repair bot", GIT_COMMITTER_EMAIL: "repair@example.test", GH_TOKEN: "host-secret" },
@@ -244,11 +245,14 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
   const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
   let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
   let operationArguments: Record<string, unknown> = {};
-  createProviderRuntime.mockImplementation(async () => {
+  createProviderRuntime.mockImplementation(async (options: { settings?: { launchArgs?: string }; environment?: NodeJS.ProcessEnv }) => {
     let threadId = `pass-${passes.length}`;
     let finishTurn!: () => void;
     const turnSent = new Promise<void>(resolve => { finishTurn = resolve });
-    let mcp: { endpoint: string; authorizationHeader: string } | undefined;
+    const configuredEndpoint = options.settings?.launchArgs?.match(/mcp_servers\.t3-code\.url=("[^"]+")/)?.[1];
+    let mcp: { endpoint: string; authorizationHeader: string } | undefined = configuredEndpoint
+      ? { endpoint: JSON.parse(configuredEndpoint), authorizationHeader: `Bearer ${options.environment?.T3_MCP_BEARER_TOKEN}` }
+      : undefined;
     let runtimeMode: string | undefined;
     let approvalPolicy: string | undefined;
     return {
@@ -257,7 +261,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
       stopSession: async () => {},
       interruptTurn: async () => {},
       startSession: async (input: { mcp?: typeof mcp, runtimeMode?: string, approvalPolicy?: string, threadId: string }) => {
-        mcp = input.mcp;
+        mcp = input.mcp ?? mcp;
         threadId = input.threadId;
         runtimeMode = input.runtimeMode;
         approvalPolicy = input.approvalPolicy;
@@ -353,6 +357,16 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
 }
 
 describe("Babysitter preset runtime", () => {
+  it("retargets ordinary stack work while model admission is blocked", async () => {
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const f = await fixture(false, false, { base: "feat/parent", parents, admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
+    try {
+      await f.reconcile();
+      expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(true);
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("keeps a recovery claim parked when admission permits only host work", async () => {
     const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {
@@ -363,7 +377,7 @@ describe("Babysitter preset runtime", () => {
       await f.runtime.inbox.wake(waiting, "ci-recovery", { recovery: true });
       await f.reconcile();
       expect(createProviderRuntime).not.toHaveBeenCalled();
-      expect((await f.runtime.inbox.get("acme/app", 12))?.lastResult).toContain("waiting for host admission");
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lastResult).toContain("Recovered CI is healthy");
     } finally { await f.runtime.inbox.close(); }
   });
 
@@ -382,6 +396,20 @@ describe("Babysitter preset runtime", () => {
         expect(restarted.passes).toHaveLength(1);
         expect(await restarted.runtime.inbox.meta(key)).toHaveProperty("consumedAt");
       } finally { await restarted.runtime.inbox.close(); }
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("processes new feedback after a same-head permission fallback was consumed", async () => {
+    const f = await fixture(false, false, { actionsDenied: true });
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      await f.runtime.inbox.ingest("new-permission-feedback", "issue_comment", {
+        repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+        comment: { id: 73, body: "Please repair the additional validation finding", user: { login: "developer" } },
+      });
+      await f.reconcile();
+      expect(f.passes).toHaveLength(2);
     } finally { await f.runtime.inbox.close(); }
   });
 
@@ -424,9 +452,32 @@ describe("Babysitter preset runtime", () => {
     try {
       await f.reconcile();
       const merge = f.command.mock.calls.find(([args]) => args.join(" ").includes("-X PUT"));
-      expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge", "merge_method=squash", `sha=${"a".repeat(40)}`]));
+      expect(merge?.[0]).toEqual(expect.arrayContaining(["repos/acme/app/pulls/12/merge-async", "merge_method=squash", "merge_action=direct_merge", "bypass_rules=false", `sha=${"a".repeat(40)}`]));
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("persists an asynchronous merge and waits for confirmed completion", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    const uuid = "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42";
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify({ status: "pending", details: { uuid, expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }), stderr: "" };
+      if (args.includes(`repos/acme/app/pulls/12/merge-async/${uuid}`)) return { stdout: JSON.stringify({ status: "merged", details: { sha: "b".repeat(40) } }), stderr: "" };
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
+      await f.runtime.inbox.ingest("async-merge-complete", "issue_comment", { repository: { full_name: "acme/app" }, issue: { number: 12, pull_request: {} }, action: "created", comment: { id: 123, body: "Merge result available", user: { login: "developer" } } });
+      await f.reconcile();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
+      expect(createProviderRuntime).not.toHaveBeenCalled();
     } finally { await f.runtime.inbox.close(); }
   });
 
@@ -450,8 +501,9 @@ describe("Babysitter preset runtime", () => {
     const command = f.command.getMockImplementation()!;
     f.command.mockImplementation(async (args, request) => {
       const result = await command(args, request);
-      if (args.includes("-X") && args.includes("PUT") && args.some((arg) => arg.endsWith("/merge"))) {
-        return { ...result, stdout: JSON.stringify({ merged: false, message: "Not mergeable" }) };
+      if (args.includes("-X") && args.includes("PUT")) {
+        if (f.command.mock.calls.filter(([call]) => call.includes("PUT")).length === 1) throw new Error("Connection reset after merge request delivery");
+        throw Object.assign(new Error("gh: Merge already pending (HTTP 409)"), { stdout: JSON.stringify({ status: "pending", details: { uuid: "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42", expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }) });
       }
       return result;
     });
@@ -460,6 +512,29 @@ describe("Babysitter preset runtime", () => {
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeDefined();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).not.toBe("terminal");
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      await f.runtime.inbox.ingest("merge-reconcile-wake", "check_run", { repository: { full_name: "acme/app" }, action: "completed", check_run: { id: 2, name: "test", head_sha: "a".repeat(40), status: "completed", conclusion: "success", pull_requests: [{ number: 12 }] } });
+      await f.reconcile();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42" });
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(2);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("releases a rejected merge claim and records a timed retry", async () => {
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes("PUT")) throw new Error("gh: Base branch was modified. Review and try the merge again (HTTP 405)");
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.retryAt).toEqual(expect.any(Number));
+      await f.reconcile();
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
     } finally { await f.runtime.inbox.close(); }
   });
 

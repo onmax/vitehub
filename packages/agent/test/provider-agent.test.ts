@@ -2465,6 +2465,22 @@ cli_auth_credentials_store = "keyring"
     else expect(session).not.toHaveProperty("approvalPolicy")
   })
 
+  it("preauthorizes only assigned host tools for unattended Codex edits", async () => {
+    const threadId = "thread-unattended-host-tools";
+    const provider = runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })]);
+    // SAFETY: This fixture uses the same host tool contract as an Agent Capability.
+    await createProviderAgentAdapter({ provider: "codex", permissions: "allow-edits-unattended" }).generate(context(threadId, {
+      tools: { pushRepair: { inputSchema: { type: "object", properties: {} }, execute: async () => ({ pushed: true }) } },
+    }) as never);
+    const args = String(createProviderRuntime.mock.lastCall?.[0].settings?.launchArgs);
+    expect(args).toContain('mcp_servers.t3-code.tools={"pushRepair"={approval_mode="approve"}}');
+    expect(args).toContain('bearer_token_env_var="T3_MCP_BEARER_TOKEN"');
+    expect(args).toContain('shell_environment_policy.exclude=["T3_MCP_BEARER_TOKEN"]');
+    expect(createProviderRuntime.mock.lastCall?.[0].environment?.T3_MCP_BEARER_TOKEN).toEqual(expect.any(String));
+    expect(args).not.toContain("default_tools_approval_mode");
+    expect(provider.startSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "auto-accept-edits", approvalPolicy: "never", mcp: undefined }));
+  });
+
   it("keeps provider session state for the lifetime of an Agent Definition", async () => {
     const agent = defineAgent({ driver: "codex", runtime: false })
 

@@ -104,7 +104,7 @@ export function babysitterRepositories(filter: unknown): string[] {
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
 export async function createBabysitterProcessHost(context: AgentProcessHostContext): Promise<AgentProcessHostInstance> {
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
-  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
+  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; driver?: string } };
   const repositories = babysitterRepositories(agent.options.filter);
   await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
@@ -132,7 +132,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   });
   const admission = createBabysitterAdmission({
     invocations: host.invocations,
-    limits: readBabysitterAdmissionLimits(),
+    limits: readBabysitterAdmissionLimits(process.env, agent.options.driver),
   });
   // Workers share the assigned journal and keep provider sessions in the host directory.
   const worker = defineAgent({

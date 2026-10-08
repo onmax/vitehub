@@ -763,6 +763,19 @@ export default defineAgent({
 default) or `"claude-code"`. Set its model and other provider settings with the
 ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
 
+`install` defaults to `true`. The host installs dependencies from the frozen
+pnpm, npm, or Yarn lockfile before starting the provider. Lifecycle scripts stay
+disabled. Installation failures are recorded in `.git/vitehub-install.json` and
+retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
+Workers call `commitRepair` with a message and explicit repair paths, then
+`pushRepair`. The host commits because the provider sandbox protects Git metadata.
+Unattended Codex runs preauthorize only the assigned host tools. Capability checks
+still run on the host, and the native shell keeps its edit sandbox.
+
+Direct merges use GitHub's asynchronous API, including native stacks. The inbox
+records the request UUID and waits for GitHub to confirm a merge. Finished owners
+release their queue lease while preserving any unresolved merge attempt.
+
 `merge` defaults to `false`:
 
 | Value | Behavior |
