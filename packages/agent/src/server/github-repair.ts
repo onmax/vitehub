@@ -73,11 +73,12 @@ export async function commitGitHubPullRequestWorkspace(
 
 const mergeRecordSchema = v.object({ head: v.string(), base: v.string(), index: v.string() });
 const digest = (index: string) => createHash("sha256").update(index).digest("hex");
-function repairGit(target: string, options: { signal?: AbortSignal; identity?: Record<string, string | undefined> }) {
+function repairGit(target: string, options: { signal?: AbortSignal; identity?: Record<string, string | undefined>; env?: Record<string, string> }) {
   // No shell credentials, ambient Git bindings, global configuration, hooks,
   // signing programs or filesystem monitors may run during a host commit.
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
+    ...options.env,
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_TERMINAL_PROMPT: "0",
@@ -91,11 +92,15 @@ function repairGit(target: string, options: { signal?: AbortSignal; identity?: R
 }
 
 /** Prepare an exact-base merge on the host before Git metadata becomes read-only. */
-export async function prepareGitHubRepairBase(target: string, options: { expectedHead: string; base: string; signal?: AbortSignal }): Promise<void> {
+export async function prepareGitHubRepairBase(target: string, options: { expectedHead: string; base: string; signal?: AbortSignal; fetch?: { url: string; env: Record<string, string> } }): Promise<void> {
   if (!/^[a-f\d]{40}$/i.test(options.base)) throw new Error("Repair base must be an exact commit SHA.");
   const git = repairGit(target, options);
   if (await realpath(await git("rev-parse", "--show-toplevel")) !== await realpath(target) || !(await lstat(join(target, ".git"))).isDirectory()) throw new Error("Base merge requires an independent prepared checkout.");
   if (await git("rev-parse", "HEAD") !== options.expectedHead || await git("status", "--porcelain")) throw new Error("Base merge requires the clean assigned PR head.");
+  // The live branch may have advanced after the checkout fetched its objects.
+  // This runs only during host preparation, before provider writes are admitted.
+  if (options.fetch) await repairGit(target, { signal: options.signal, env: options.fetch.env })("fetch", "--no-tags", "--", options.fetch.url, options.base);
+  await git("cat-file", "-e", `${options.base}^{commit}`);
   try {
     await git("merge", "--no-commit", "--no-ff", "--no-verify", "--", options.base);
   } catch (error) {

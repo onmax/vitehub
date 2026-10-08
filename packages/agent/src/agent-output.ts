@@ -692,29 +692,33 @@ async function* streamChunksToEvents(
   let usageRecord: AgentUsageRecord | undefined
   let explicitUsageEvent = false
   let finishEvent: StreamEvent | undefined
-  for await (const chunk of chunks) {
-    const explicitlyPhasedTextChunk = chunk && hasRuntimeType(chunk, "object")
-      // SAFETY: Agent output normalization establishes the asserted stream result contract.
-      && "phase" in chunk && (chunk as { phase?: unknown }).phase !== undefined
-      // SAFETY: Agent output normalization establishes the asserted stream result contract.
-      && "type" in chunk && ["text", "text-delta", "text-end", "text-start"].includes(String((chunk as { type?: unknown }).type))
-    if (explicitlyPhasedTextChunk && observation) observation.explicitTextPhaseSeen = true
-    if (!explicitUsageEvent) usageRecord = usageRecordFromStreamChunk(chunk, usageSource) ?? usageRecord
-    const event = toAgentStreamEvent(chunk, toolNames, textPhases, undefined, messageState)
-    if (!event) continue
-    if (event.type === "text-delta" && event.phase !== undefined && observation) {
-      observation.explicitTextPhaseSeen = true
+  try {
+    for await (const chunk of chunks) {
+      const explicitlyPhasedTextChunk = chunk && hasRuntimeType(chunk, "object")
+        && "phase" in chunk && chunk.phase !== undefined
+        && "type" in chunk && ["text", "text-delta", "text-end", "text-start"].includes(String(chunk.type))
+      if (explicitlyPhasedTextChunk && observation) observation.explicitTextPhaseSeen = true
+      if (!explicitUsageEvent) usageRecord = usageRecordFromStreamChunk(chunk, usageSource) ?? usageRecord
+      const event = toAgentStreamEvent(chunk, toolNames, textPhases, undefined, messageState)
+      if (!event) continue
+      if (event.type === "text-delta" && event.phase !== undefined && observation) {
+        observation.explicitTextPhaseSeen = true
+      }
+      if (event.type === "usage") {
+        usageRecord = withFallbackUsageMetadata(event.usageRecord, usageSource)
+        explicitUsageEvent = true
+        continue
+      }
+      if (event.type === "finish") {
+        finishEvent = event
+        continue
+      }
+      yield event
     }
-    if (event.type === "usage") {
-      usageRecord = withFallbackUsageMetadata(event.usageRecord, usageSource)
-      explicitUsageEvent = true
-      continue
-    }
-    if (event.type === "finish") {
-      finishEvent = event
-      continue
-    }
-    yield event
+  }
+  catch (error) {
+    if (usageRecord) yield { type: "usage", usageRecord }
+    throw error
   }
   usageRecord ??= await usageFromResult(usageSource)
   if (usageRecord) yield { type: "usage", usageRecord }
@@ -759,6 +763,14 @@ async function* streamChunksToEventsWithTextFallback(
         }
       }
     }
+  }
+  catch (error) {
+    // The source may fail after measuring usage or during fallback text.
+    // Preserve its counters without reporting a successful finish.
+    for (const event of terminalEvents) {
+      if (event.type === "usage") yield event
+    }
+    throw error
   }
   finally {
     if (textIterator && !textIteratorClosed) {

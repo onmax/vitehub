@@ -114,3 +114,17 @@ it("commits unchanged dependency inputs after staged validation", async () => {
   const head = await commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["package.json", "package-lock.json"] }, options);
   expect(JSON.parse(await git(root, "show", `${head}:package.json`)).version).toBe("1.0.0");
 });
+
+it("fetches an exact live base that advanced after checkout creation", async () => {
+  const { root, expectedHead } = await fixture();
+  const checkout = await mkdtemp(join(tmpdir(), "vitehub-live-base-")); roots.push(checkout);
+  await git(root, "clone", "--no-local", root, checkout);
+  await writeFile(join(root, "live-base.txt"), "new base\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "advance base");
+  const base = await git(root, "rev-parse", "HEAD");
+  await expect(git(checkout, "cat-file", "-e", base)).rejects.toThrow();
+  await prepareGitHubRepairBase(checkout, { expectedHead, base, fetch: { url: root, env: {} } });
+  expect((await readFile(join(checkout, ".git", "MERGE_HEAD"), "utf8")).trim()).toBe(base);
+  expect(await readFile(join(checkout, "live-base.txt"), "utf8")).toBe("new base\n");
+});
