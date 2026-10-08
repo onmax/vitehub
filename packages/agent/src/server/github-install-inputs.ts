@@ -58,6 +58,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   const root = await realpath(target);
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
   const packageRoots = new Set([root]);
+  const patchPaths = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
     // Workspace exclusions still contribute crawler roots. File dependencies
     // use literal paths and must keep their leading exclamation marks.
@@ -95,9 +96,36 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     const path = resolve(base, decodeURIComponent(value));
     if (await stat(path).then(info => info.isDirectory(), () => false)) packageRoots.add(await realpath(path));
   }
+  async function selectPatch(value: string, base: string) {
+    await checkPath(value, base);
+    const path = resolve(base, decodeURIComponent(value));
+    if (!(await stat(path)).isFile()) throw new Error("Dependency patches must be regular files.");
+    patchPaths.add(path);
+  }
+  async function inspectYarnPatch(value: string, base: string): Promise<boolean> {
+    const decoded = decodeURIComponent(value);
+    const patch = decoded.match(/(?:^|@)patch:([^#]+)#(.+?)(?:::.*)?$/i);
+    if (!patch) return false;
+    await inspect(patch[1]!, base, true);
+    for (const source of patch[2]!.split("&")) {
+      const path = source.replace(/^(?:optional!|~)/, "");
+      if (/^builtin<compat\/[a-z\d._/-]+>$/i.test(path)) continue;
+      await selectPatch(path, base);
+    }
+    return true;
+  }
+  async function inspectPnpmPatches(value: unknown, base: string) {
+    if (!isRuntimeRecord(value)) throw new Error("Dependency patches must be a path mapping.");
+    for (const entry of Object.values(value)) {
+      const path = hasRuntimeType(entry, "string") ? entry : isRuntimeRecord(entry) ? entry.path : undefined;
+      if (!hasRuntimeType(path, "string")) throw new Error("Dependency patches must reference checkout files.");
+      await selectPatch(path, base);
+    }
+  }
   async function inspect(value: unknown, base: string, dependency = false, field = ""): Promise<void> {
     if (hasRuntimeType(value, "string")) {
       if (field === "workspaces") { await checkPath(value, base, true); return; }
+      if (await inspectYarnPatch(value, base)) return;
       if (dependency || sourceFields.has(field)) checkDownloadSource(value);
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
       const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
@@ -109,7 +137,9 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     if (Array.isArray(value)) { for (const entry of value) await inspect(entry, base, dependency, field); return; }
     if (!isRuntimeRecord(value)) return;
     for (const [key, entry] of Object.entries(value)) {
-      if (key === "importers" && isRuntimeRecord(entry)) {
+      if (key === "patchedDependencies") {
+        await inspectPnpmPatches(entry, base);
+      } else if (key === "importers" && isRuntimeRecord(entry)) {
         for (const [importer, contents] of Object.entries(entry)) {
           await checkPath(importer, base);
           await inspect(contents, resolve(base, importer));
@@ -117,7 +147,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       } else {
         // Lockfile package keys may themselves contain file: sources.
         if (/(?:^|@)(?:file|link|portal):/i.test(key)) await inspect(key, base);
-        if (/(?:^|@)[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(key))) checkDownloadSource(key);
+        if (/(?:^|@)[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(key)) && !(await inspectYarnPatch(key, base))) checkDownloadSource(key);
         await inspect(entry, base, dependency || dependencyFields.has(key), key === "packages" && field === "workspaces" ? "workspaces" : key);
       }
     }
@@ -163,11 +193,13 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
             if (!workspaceFields.has(key) && !supportedSetting(key, value)) throw new Error(`Unsupported project pnpm configuration: ${key}. Host-local configuration paths and package-manager extensions are not allowed.`);
           }
           await selectWorkspaces(data.packages ?? ["**"], directory);
-          await inspect(data.patchedDependencies, directory, true);
         }
       }
     }
   }
   for (const directory of packageRoots) await visit(directory);
+  for (const path of [...patchPaths].sort()) {
+    hash.update(relative(root, path)).update("\0").update(await readFile(path)).update("\0");
+  }
   return hash.digest("hex");
 }
