@@ -83,6 +83,13 @@ useSeoMeta({
       </div>
     </UPageHeader>
 
+    <UContentToc
+      v-if="post.body?.toc?.links?.length"
+      :links="post.body.toc.links"
+      title="On this page"
+      class="mb-8 px-4 sm:px-6 lg:hidden"
+    />
+
     <UPageBody prose class="docs-content blog-content my-0 !max-w-none !px-4 !pb-24 sm:!px-6 lg:!px-8">
       <ContentRenderer :value="post" />
     </UPageBody>
