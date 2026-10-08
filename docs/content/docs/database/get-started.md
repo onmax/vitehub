@@ -107,8 +107,13 @@ Migrations go to a `migrations` directory next to each Database Definition file.
 
 Start Vite and call the route:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl http://localhost:5173/api/notes
 ```
 

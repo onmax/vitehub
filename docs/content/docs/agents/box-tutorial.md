@@ -88,8 +88,13 @@ state when the command fails as well as when it succeeds.
 
 Start the server and call the route:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl http://localhost:5173/api/box-check
 ```
 

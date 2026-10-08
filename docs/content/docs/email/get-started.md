@@ -94,8 +94,13 @@ export default defineEventHandler(async () => {
 
 Nitro serves the `server/api` route. Start the server and send the request:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl -X POST http://localhost:5173/api/welcome
 ```
 

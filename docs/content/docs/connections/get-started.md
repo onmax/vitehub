@@ -24,7 +24,7 @@ Vite server app. The app must have a Database integration and a stable
 Install the ViteHub distribution:
 
 ```bash [commands/install]
-pnpm add vite-hub nitro
+pnpm add vite-hub nitro h3
 ```
 
 Connections need [Database](/docs/database), Env declarations for the Google
@@ -94,8 +94,13 @@ export default defineConnection({
 
 Open the Console, select **Connections**, and select **Connect**. You can also print a single-use connect URL from the CLI while the development server runs:
 
-```bash [commands/connect]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/connect]
 pnpm vitehub connections connect google
 pnpm vitehub connections status google --json
 ```

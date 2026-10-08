@@ -64,8 +64,13 @@ export default defineEventHandler(async (event) => {
 
 Start the dev server and call the route three times from the same client:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl -i -X POST http://localhost:5173/api/image-upload
 curl -i -X POST http://localhost:5173/api/image-upload
 curl -i -X POST http://localhost:5173/api/image-upload

@@ -101,8 +101,13 @@ export default defineEventHandler(async (event) => {
 
 Start Vite and call the read route:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl http://localhost:5173/api/docs
 ```
 

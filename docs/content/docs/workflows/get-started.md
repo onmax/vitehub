@@ -106,8 +106,13 @@ export default defineEventHandler(async (event) => {
 
 Start Vite and call the route:
 
-```bash [commands/run]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/run]
 curl -X POST http://localhost:5173/api/onboard \
   -H 'content-type: application/json' \
   -d '{"email":"ada@example.com"}'
@@ -115,7 +120,8 @@ curl -X POST http://localhost:5173/api/onboard \
 
 The response includes a run id and a provider status. Use
 [`getWorkflowRun()`](/docs/workflows/server-api#inspect-a-run) with that id to
-inspect the two step results after the handler completes. The returned run
-contains one entry for `01.create-user` and one for `02.send-welcome`.
+inspect the final run status, result, or error metadata after the handler
+completes. Local inline execution retains the final result. It does not retain
+step history.
 
 ::

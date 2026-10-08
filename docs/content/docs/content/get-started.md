@@ -102,8 +102,13 @@ await content.search('runtime', { instances: ['docs'] })
 
 Start Vite and read the generated Content route:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl http://localhost:5173/api/guide
 ```
 

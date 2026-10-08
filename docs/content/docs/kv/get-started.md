@@ -70,8 +70,13 @@ before using a value.
 
 Start Vite and send one request:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl -X PUT http://localhost:5173/api/settings \
   -H 'content-type: application/json' \
   -d '{"theme":"system"}'

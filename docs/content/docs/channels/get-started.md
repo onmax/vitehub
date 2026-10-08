@@ -88,8 +88,13 @@ export default defineEventHandler(async () => {
 
 Start the dev server and send one request:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl -X POST http://localhost:5173/api/build-finished
 ```
 
