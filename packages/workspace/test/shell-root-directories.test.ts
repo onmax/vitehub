@@ -25,7 +25,7 @@ describe("Workspace Shell root directories", () => {
     await expect(createReadonlyWorkspaceFs(workspace.fs).exists(path)).resolves.toBe(true)
     await fs.mkdir(path, { recursive: true })
     await expect(fs.mkdir(path)).rejects.toThrow("already exists")
-    const runtime = createShellRuntime({ provider: createJustBashProvider({ commands: ["mkdir"], fs }) })
+    const runtime = createShellRuntime({ provider: createJustBashProvider({ commands: ["mkdir"], cwd: "/workspace", fs }) })
     await expect(runtime.exec(`mkdir -p ${path}`)).resolves.toMatchObject({ exitCode: 0, stderr: "" })
 
     expect(exists).not.toHaveBeenCalled()
