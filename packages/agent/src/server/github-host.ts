@@ -65,7 +65,7 @@ export interface GitHubHostCheckout extends GitHubHostAccess {
   /** Restore source instruction files only before the provider injects its instructions. */
   prepareWorkspace(target: string, options?: { restoreInstructions?: boolean }): Promise<void>
   commitRepair(target: string, input: GitHubRepairCommit, options?: { verifyDependencies?: boolean }): Promise<string>
-  push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void> }): Promise<string>
+  push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }): Promise<string>
   signal: AbortSignal
 }
 
@@ -781,7 +781,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       const prepareWorkspace = async (target: string, options: { restoreInstructions?: boolean } = {}) => await prepareGitHubPullRequestWorkspace(checkout, target, { ...options, signal: operation.signal })
       let pushHead = pullRequest.headSha
       const commitRepair = async (target: string, input: GitHubRepairCommit, commitOptions?: { verifyDependencies?: boolean }) => await commitGitHubPullRequestWorkspace(target, input, { expectedHead: pushHead, signal: operation.signal, identity: env, verifyDependencies: commitOptions?.verifyDependencies })
-      const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void> } = {}) => {
+      const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> } = {}) => {
         const signal = options.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
         signal.throwIfAborted()
         const expectedHead = pushHead
@@ -818,12 +818,11 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
           maxBuffer,
           signal,
         })
-        // Re-check custody immediately after the remote mutation. A lease can
-        // be reclaimed while Git is in flight; surface that loss so callers do
-        // not report the stale operation as successful or continue with merge.
-        signal.throwIfAborted()
-        await options.beforePush?.()
+        // Record the remote receipt before post-push cancellation checks. The
+        // pre-push base fence must not reject an already published repair.
         pushHead = head
+        await options.afterPush?.(head)
+        signal.throwIfAborted()
         return head
       }
       return await checkoutScope.run({ ...baseAuth, path: checkout }, () => run({ ...baseAuth, path: checkout, prepareWorkspace, commitRepair, push, signal: operation.signal }))

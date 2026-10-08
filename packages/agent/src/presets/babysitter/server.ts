@@ -901,13 +901,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 pr: snapshot.pr && { ...snapshot.pr,
                   base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
               }, waitPolicy);
-              const assertLease = async () => {
+              const assertLease = async (pendingWebhookHead?: string) => {
                 abortSignal.throwIfAborted();
                 const current = await pullRequestInbox.get(repository, number);
                 if (current?.lease !== inboxClaim.token || current.leaseUntil <= Date.now()) {
                   throw new DOMException("Pull request lease lost.", "AbortError");
                 }
-                const stopped = claimStopReason(inboxClaim, current, pushedHead);
+                const stopped = claimStopReason(inboxClaim, current, current.pr?.head?.sha === pendingWebhookHead ? undefined : pushedHead);
                 if (stopped) throw new DOMException(stopped, "AbortError");
                 // Merge and feedback mutations require the original generation.
                 // Repair publication may coalesce base and successful-check updates
@@ -1012,21 +1012,22 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     renewing = true;
                     void renewLease().catch(() => passController.abort()).finally(() => { renewing = false; });
                   }, 30_000);
+                  const recordPush = (head: string) => {
+                    // A no-op push creates no synchronize webhook or repair progress.
+                    pushSucceeded = head !== pullRequest.headRefOid;
+                    if (pushSucceeded) {
+                      pushedHead = head;
+                      pushedAt ??= setTimeout(() => passController.abort(new DOMException("Repair pushed; waiting for check and review webhooks.", "TimeoutError")), postPushGraceMs);
+                    }
+                  };
                   try {
                     const result = await prepared.push(providerDirectory, {
                       signal: abortSignal,
                       beforePush: async () => { await assertLease(); await assertRepairBase(); },
+                      // The synchronize webhook may still expose the pre-push head.
+                      afterPush: async head => { recordPush(head); await assertLease(pullRequest.headRefOid); },
                     });
-                    // A no-op push does not advance the remote head and emits
-                    // no synchronize webhook; do not park this generation as
-                    // though a repair created a wake-up event.
-                    pushSucceeded = result !== pullRequest.headRefOid;
-                    if (pushSucceeded) {
-                      pushedHead = result;
-                      // The push starts checks and reviews whose webhooks resume the PR.
-                      // A worker that keeps watching them only holds a slot.
-                      pushedAt ??= setTimeout(() => passController.abort(new DOMException("Repair pushed; waiting for check and review webhooks.", "TimeoutError")), postPushGraceMs);
-                    }
+                    recordPush(result);
                     return result;
                   } finally {
                     clearInterval(renew);
