@@ -76,7 +76,7 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<Babysitt
       .filter(comment => !comment.deleted).map(comment => ({ id: comment.node_id ?? comment.id,
         body: comment.body, user: comment.user ?? comment.author, commit: comment.commit_id ?? comment.commit?.oid })) }))
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  return createHash("sha256").update(JSON.stringify({ head, title: snapshot.pr?.title, body: snapshot.pr?.body,
+  return createHash("sha256").update(JSON.stringify({ head, draft: snapshot.pr?.draft, title: snapshot.pr?.title, body: snapshot.pr?.body,
     base: snapshot.pr?.base, comments: feedback(snapshot.comments, policy), reviews: feedback(snapshot.reviews, policy),
     reviewComments: feedback(snapshot.reviewComments, policy), threads, failures })).digest("hex");
 }

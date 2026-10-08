@@ -154,7 +154,7 @@ it("serializes host installers while cancellation does not hold up later work", 
   await writeFile(join(third, "bin", "corepack"), `#!/bin/sh
 if ! mkdir '${marker}'; then exit 88; fi
 trap 'rmdir "${marker}"' EXIT
-printf '%s\n' "$PWD" >> '${sequence}'
+printf '%s\n' "$HOME" >> '${sequence}'
 sleep 0.15
 mkdir -p node_modules
 `, { mode: 0o755 });
@@ -166,15 +166,15 @@ mkdir -p node_modules
   await expect(cancelled).rejects.toThrow("Cancelled queued checkout");
   await expect(running).resolves.toBeUndefined();
   await expect(last).resolves.toBeUndefined();
-  expect((await readFile(sequence, "utf8")).trim().split("\n")).toEqual([first, third]);
-  await expect(readFile(join(second, "args.txt"))).rejects.toThrow();
+  expect((await readFile(sequence, "utf8")).trim().split("\n")).toEqual([first, third].map(root => join(root, ".git", "vitehub-install-home")));
+  await expect(readFile(join(second, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it("releases the installer slot after a failed predecessor", async () => {
   const first = await fixture();
   const second = await fixture();
   await writeFile(join(second, "bin", "corepack"), `#!/bin/sh
-if [ "$PWD" = '${first}' ]; then exit 7; fi
+if [ "$HOME" = '${join(first, ".git", "vitehub-install-home")}' ]; then exit 7; fi
 mkdir -p node_modules
 `, { mode: 0o755 });
   const failed = installGitHubPullRequestWorkspace(first);
@@ -214,11 +214,11 @@ it("parks a queued installer before waiting can consume the repair pass lifetime
   const started = join(first, "started");
   const release = join(first, "release");
   await writeFile(join(second, "bin", "corepack"), `#!/bin/sh
-if [ "$PWD" = '${first}' ]; then
+if [ "$HOME" = '${join(first, ".git", "vitehub-install-home")}' ]; then
   touch '${started}'
   while [ ! -f '${release}' ]; do sleep 0.02; done
 fi
-printf '%s\n' "$@" > args.txt
+printf '%s\n' "$@" > "$HOME/../args.txt"
 mkdir -p node_modules
 `, { mode: 0o755 });
   const running = installGitHubPullRequestWorkspace(first);
@@ -234,7 +234,7 @@ mkdir -p node_modules
     await vi.advanceTimersByTimeAsync(2 * 60_000 + 1);
     expect(settled).toBe(true);
     expect(await observed).toBeInstanceOf(GitHubWorkspaceInstallError);
-    await expect(readFile(join(second, "args.txt"))).rejects.toThrow();
+    await expect(readFile(join(second, ".git", "args.txt"))).rejects.toThrow();
   } finally {
     vi.useRealTimers();
     await writeFile(release, "");

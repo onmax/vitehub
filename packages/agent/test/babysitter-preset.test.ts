@@ -995,6 +995,7 @@ describe("Babysitter preset runtime", () => {
   it.each([
     ["commitRepair", "title"], ["commitRepair", "body"],
     ["pushRepair", "title"], ["pushRepair", "body"],
+    ["commitRepair", "draft"], ["pushRepair", "draft"],
   ] as const)("fences %s after same-head PR %s requirements change", async (operation, field) => {
     const f = await fixture(true);
     f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
@@ -1005,7 +1006,7 @@ describe("Babysitter preset runtime", () => {
       await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
         repository: { full_name: "acme/app" },
         action: "edited",
-        pull_request: { ...f.pr(), [field]: "Updated validation requirements." },
+        pull_request: { ...f.pr(), [field]: field === "draft" ? true : "Updated validation requirements." },
       });
     });
     try {
@@ -1017,10 +1018,29 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
-  it.each(["successful check", "base advance"] as const)("keeps repair publication available after a same-head %s", async change => {
+  it.each(["successful check", "base advance", "failing check turns green", "failing status turns green"] as const)("keeps repair publication available after a same-head %s", async change => {
     const f = await fixture(true, false, { allowOperationAfterAdmission: true });
     f.choose("pushRepair");
     let changed = false;
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (!changed && change === "failing check turns green" && args.some(arg => arg.includes("/check-runs?"))) {
+        return { ...result, stdout: result.stdout + "\n" + JSON.stringify({ id: 2, name: "repair-test", head_sha: f.pr().head.sha, status: "completed", conclusion: "failure", app: { id: 1 } }) };
+      }
+      if (!changed && change === "failing status turns green" && args.some(arg => arg.includes("/statuses?"))) {
+        return { ...result, stdout: JSON.stringify({ context: "repair-test", sha: f.pr().head.sha, state: "failure" }) };
+      }
+      return result;
+    });
+    if (change === "failing check turns green" || change === "failing status turns green") {
+      await f.runtime.inbox.seed("acme/app", f.pr());
+      await f.runtime.inbox.ingest("initial-failure", change === "failing check turns green" ? "check_run" : "status", {
+        repository: { full_name: "acme/app" }, action: "completed",
+        ...(change === "failing check turns green" ? { check_run: { id: 2, name: "repair-test", head_sha: f.pr().head.sha, status: "completed", conclusion: "failure", app: { id: 1 }, pull_requests: [{ number: 12 }] } }
+          : { context: "repair-test", sha: f.pr().head.sha, state: "failure" }),
+      });
+    }
     f.onAdmission(async () => {
       if (changed) return;
       changed = true;
@@ -1029,10 +1049,14 @@ describe("Babysitter preset runtime", () => {
         await f.runtime.inbox.ingest("base-advanced", "pull_request", {
           repository: { full_name: "acme/app" }, action: "edited", pull_request: f.pr(),
         });
+      } else if (change === "failing status turns green") {
+        await f.runtime.inbox.ingest("status-succeeded", "status", {
+          repository: { full_name: "acme/app" }, context: "repair-test", sha: f.pr().head.sha, state: "success",
+        });
       } else {
         await f.runtime.inbox.ingest("check-succeeded", "check_run", {
           repository: { full_name: "acme/app" }, action: "completed",
-          check_run: { id: 2, name: "test", head_sha: f.pr().head.sha,
+          check_run: { id: 2, name: change === "failing check turns green" ? "repair-test" : "test", head_sha: f.pr().head.sha,
             status: "completed", conclusion: "success", app: { id: 1 }, pull_requests: [{ number: 12 }] },
         });
       }
