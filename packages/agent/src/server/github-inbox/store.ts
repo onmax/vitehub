@@ -885,8 +885,8 @@ export class PullRequestInbox {
     return await this.transaction(async tx => {
       const now = this.clock(), claims: Claim[] = [], t = this.tables
       const repositories = this.repositoryFilter()
-      // Columns select candidates; only these snapshots are parsed.
-      const candidates = await tx.execute(`SELECT repository, number, base_ref FROM ${t.pullRequests}
+      // Indexed columns select candidates; repository identity is retained in each snapshot.
+      const candidates = await tx.execute(`SELECT repository, number, base_ref, COALESCE(json_extract(value, '$.pr.base.repo.full_name'), repository) AS base_repository FROM ${t.pullRequests}
         WHERE scope=? AND ${repositories.sql} AND waiting=0 AND status<>'terminal' AND generation>handled AND next_at<=?
           AND (lease IS NULL OR lease_until<=?) AND (progress_blocked=0 OR ?=1)
         ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now, options.includeBlocked ? 1 : 0])
@@ -895,7 +895,8 @@ export class PullRequestInbox {
         const repository = stringValue(candidate.repository), number = Number(candidate.number)
         // Stack children remain local; a parent merge's base push wakes them.
         if (candidate.base_ref !== null && candidate.base_ref !== undefined && (await tx.execute(`SELECT 1 FROM ${t.pullRequests}
-          WHERE scope=? AND repository=? AND number<>? AND state='open' AND head_ref=? LIMIT 1`, [this.scope, repository, number, candidate.base_ref])).length) continue
+          WHERE scope=? AND repository=? AND number<>? AND state='open' AND head_ref=?
+            AND json_extract(value, '$.pr.head.repo.full_name') = ? COLLATE NOCASE LIMIT 1`, [this.scope, repository, number, candidate.base_ref, candidate.base_repository])).length) continue
         const s = await this.getIn(tx, repository, number)
         if (!s) continue
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
@@ -1096,7 +1097,8 @@ export class PullRequestInbox {
     const repositories = this.repositoryFilter()
     const rows = await this.read(`SELECT p.summary, (SELECT parent.number FROM ${this.tables.pullRequests} parent
       WHERE parent.scope=p.scope AND parent.repository=p.repository AND parent.number<>p.number
-        AND parent.state='open' AND parent.head_ref=p.base_ref ORDER BY parent.number LIMIT 1) AS stack_parent
+        AND parent.state='open' AND parent.head_ref=p.base_ref
+        AND json_extract(parent.value, '$.pr.head.repo.full_name') = COALESCE(json_extract(p.value, '$.pr.base.repo.full_name'), p.repository) COLLATE NOCASE ORDER BY parent.number LIMIT 1) AS stack_parent
       FROM ${this.tables.pullRequests} p WHERE p.scope=? AND p.${repositories.sql} ORDER BY p.repository, p.number`, [this.scope, ...repositories.args])
     return rows.map(row => {
       const summary = parseSummary(JSON.parse(stringValue(row.summary)))

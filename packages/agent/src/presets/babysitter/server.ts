@@ -940,7 +940,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   if (directory !== checkout) await prepared.prepareWorkspace(directory);
                   if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
                     const base = await readRepairBase();
-                    await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base, signal: abortSignal });
+                    await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base, signal: abortSignal, fetch: { url: `https://github.com/${repository}.git`, env: prepared.env } });
                     preparedMergeBase = base;
                   }
                   if (presetOptions.install !== false) {
