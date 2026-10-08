@@ -31,7 +31,7 @@ export { resolveConfigValue } from "./config-value.ts"
 const configFilePattern = /^config\.(?:c|m)?[jt]s$/i
 const viteDatabaseSuffixPattern = /\.database\.(?:c|m)?[jt]s$/i
 
-function readDefinitionObjectBody(file: string) {
+function readDefinitionObjectBody(file: string, exact = false) {
   const source = readFileSync(file, "utf8")
   const calls = findIdentifierCalls(source, "defineDatabase")
   const call = calls.find(item => /(?:^|[;\n])\s*export\s+default\s*$/.test(source.slice(Math.max(0, item.start - 100), item.start)))
@@ -39,7 +39,7 @@ function readDefinitionObjectBody(file: string) {
   const argument = call?.arguments[0]?.trim()
   if (!argument?.startsWith("{")) return
   const closeIndex = findMatching(argument, 0, "{", "}")
-  return closeIndex === undefined ? undefined : argument.slice(1, closeIndex)
+  return closeIndex === undefined || (exact && argument.slice(closeIndex + 1).trim()) ? undefined : argument.slice(1, closeIndex)
 }
 
 function objectLiteralBody(value: string | undefined) {
@@ -180,6 +180,27 @@ function readDefinitionCloudflareConfig(file: string): { configured: boolean, va
     configured: true,
     ...(Object.values(value).some(item => typeof item !== "undefined") ? { value } : {}),
   }
+}
+
+// Partial scanner results cannot prove HTTP stays enabled after runtime spreads.
+export function isStaticD1HttpDefinition(file: string) {
+  if (!existsSync(file)) return false
+  const definitionBody = readDefinitionObjectBody(file, true)
+  if (typeof definitionBody === "undefined") return false
+  const definitionEntries = splitTopLevel(definitionBody).filter(entry => entry.trim())
+  if (definitionEntries.some(entry => !readEntryKey(entry))) return false
+  const cloudflareEntries = definitionEntries.filter(entry => readEntryKey(entry) === "cloudflare")
+  if (cloudflareEntries.length !== 1) return false
+  const expression = readEntryValue(cloudflareEntries[0]!)?.trim()
+  const body = objectLiteralBody(expression)
+  if (typeof body === "undefined" || expression !== `{${body}}`) return false
+  const entries = splitTopLevel(body).filter(entry => entry.trim())
+  if (entries.some(entry => !readEntryKey(entry))) return false
+  const httpEntries = entries.filter(entry => readEntryKey(entry) === "http")
+  if (httpEntries.length !== 1) return false
+  const http = readEntryValue(httpEntries[0]!)?.trim()
+  const httpBody = objectLiteralBody(http)
+  return http === "true" || (typeof httpBody === "string" && http === `{${httpBody}}`)
 }
 
 function readDefinitionConnectionConfig(file: string) {

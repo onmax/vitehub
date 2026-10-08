@@ -8,6 +8,7 @@ import { readProvisionedId, readProvisionStateSync } from "@vite-hub/internal/pr
 import { resolve } from "pathe"
 
 import { resolveConfigValue } from "../config-value.ts"
+import { isStaticD1HttpDefinition } from "../config.ts"
 import { resolveCloudflareD1BindingName, resolveCloudflareD1Bindings } from "./cloudflare.ts"
 import { renderDatabaseRuntimeModule } from "./runtime-module.ts"
 import { renderDatabaseConfigExpression } from "./runtime-config-expression.ts"
@@ -80,6 +81,7 @@ interface CloudflareDBConfig {
 export function usesD1HttpOnly(runtimeConfig: ResolvedDBViteConfig) {
   return runtimeConfig.databaseNames.length > 0
     && runtimeConfig.databaseNames.every(name => Boolean(runtimeConfig.databases[name]?.cloudflare?.http))
+    && runtimeConfig.definitions.every(definition => isStaticD1HttpDefinition(definition.handler))
 }
 
 function renderRuntimeModule(file: string, runtimeConfig: ResolvedDBViteConfig) {
