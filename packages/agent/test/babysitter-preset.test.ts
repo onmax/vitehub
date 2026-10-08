@@ -367,6 +367,29 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
 }
 
 describe("Babysitter preset runtime", () => {
+  it("parks model work until the recorded provider quota cooldown ends", async () => {
+    const f = await fixture(false);
+    const until = Date.now() + 60 * 60_000;
+    try {
+      await f.runtime.inbox.seed("acme/app", f.pr());
+      await f.runtime.inbox.setMeta("provider-quota-blocked-until", until);
+      await f.reconcile();
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.retryAt).toBe(until);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("retargets ordinary stack work while a provider quota cooldown blocks models", async () => {
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const f = await fixture(false, false, { base: "feat/parent", parents });
+    try {
+      await f.runtime.inbox.setMeta("provider-quota-blocked-until", Date.now() + 60 * 60_000);
+      await f.reconcile();
+      expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(true);
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("retargets ordinary stack work while model admission is blocked", async () => {
     const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents, admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });

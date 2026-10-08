@@ -549,10 +549,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
     let modelAdmission = true;
+    let modelRetryAt: number | undefined;
     if (options.admission) {
       const admission = await options.admission();
       if (!admission.accepting) {
         modelAdmission = false;
+        modelRetryAt = admission.retryAt ?? Date.now() + 60_000;
         // SAFETY: This metadata key is only written by this admission branch with the fields below; absent or unrelated values are ignored.
         const previous = await pullRequestInbox.meta("admission-skipped") as { reason?: string; at?: number } | undefined;
         if (previous?.reason !== admission.reason || Date.now() - (previous?.at ?? 0) >= 900_000) {
@@ -564,8 +566,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       }
     }
     const ownerLimit = options.concurrency;
-    // A provider that keeps rate-limiting would fail every claim. Park admission until the block ends.
-    if (((await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0) > Date.now()) return;
+    // Quota cooldowns park model dispatch. Host merges and retargets still run.
+    const providerBlockedUntil = (await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0;
+    if (providerBlockedUntil > Date.now()) {
+      modelAdmission = false;
+      modelRetryAt = Math.max(modelRetryAt ?? 0, providerBlockedUntil);
+    }
     // Event-scoped filters cannot be established from the pull-request REST
     // listing alone.  Seeding those entries would admit PRs that have never
     // produced an allowed event (for example, `action: synchronize`).
@@ -805,8 +811,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await pullRequestInbox.finish(inboxClaim, {
               text: modelAdmission
                 ? "CI reconciliation completed; the same-head repair budget is exhausted."
-                : "CI reconciliation completed; model work is waiting for host admission.",
-              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: modelAdmission ? undefined : Date.now() + 60_000 },
+                : providerBlockedUntil > Date.now()
+                  ? `CI reconciliation completed; provider quota cooldown ends at ${new Date(providerBlockedUntil).toISOString()}.`
+                  : "CI reconciliation completed; model work is waiting for host admission.",
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: modelAdmission ? undefined : modelRetryAt },
             });
             return;
           }
