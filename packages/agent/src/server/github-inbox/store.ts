@@ -21,6 +21,7 @@ export type Snapshot = {
   lease: string | null; leaseUntil: number; attempts: number
   progressBudget?: ProgressBudget
   recoveryHead?: string
+  sourcePushHead?: string
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
@@ -65,6 +66,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
     throw new TypeError('Invalid inbox snapshot')
   }
+  if (input.sourcePushHead !== undefined) v.parse(v.string(), input.sourcePushHead)
   if (input.recoveryHead !== undefined) v.parse(v.string(), input.recoveryHead)
   if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
   if (input.wait !== undefined) parseWait(input.wait)
@@ -867,7 +869,12 @@ export class PullRequestInbox {
         }
         if (check) upsert(s.checks, check, `${event}:${check.id}`)
         if (event === 'status') upsert(s.statuses, payload, payload.context)
-        if (event === 'push') { s.refresh = true; s.feedbackRefresh = true; changed = true }
+        if (event === 'push') {
+          // Preserve source-branch evidence before synchronize updates the PR head.
+          // A same-named branch in the base repository is not a fork's source.
+          if (payload.ref === `refs/heads/${s.pr?.head?.ref}` && (s.pr?.head?.repo?.full_name ?? repository).toLowerCase() === repository.toLowerCase()) s.sourcePushHead = sha ?? 'unknown'
+          s.refresh = true; s.feedbackRefresh = true; changed = true
+        }
         // Pending CI is evidence to retain, not another repair task. Terminal
         // results still wake the PR; revision invalidates in-flight hydration
         // even when this update does not need a new agent generation.
@@ -982,15 +989,20 @@ export class PullRequestInbox {
    * unchanged evidence. A wait with `headSha`, such as the head of a repair push, keeps later events
    * unhandled, so `waitsToEvaluate()` returns the PR and the host decides whether they need work.
    */
-  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
+  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; verifiedPushHeads?: readonly string[]; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token || s.leaseUntil <= this.clock()) return false
       const pinnedHead = result.wait?.headSha
       if (result.wait && pinnedHead) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
-        // The synchronize event for the pinned head may arrive before or after this finish.
-        if (s.status === 'terminal' || (s.pr?.head?.sha !== pinnedHead && s.pr?.head?.sha !== claim.snapshot.pr?.head?.sha)) {
+        if (result.verifiedPushHeads && (result.progress?.kind !== 'verified' || result.progress.evidence !== `push:${pinnedHead}`)) throw new Error('Published ancestry requires a verified push receipt')
+        const published = new Set([claim.snapshot.pr?.head?.sha, pinnedHead, ...result.verifiedPushHeads ?? []])
+        // Synchronize can lag several successful pushes. Accept only this pass's
+        // verified publication chain, and fence a different source push even
+        // while the PR snapshot still exposes its original head.
+        if (s.status === 'terminal' || !published.has(s.pr?.head?.sha)
+          || s.sourcePushHead !== claim.snapshot.sourcePushHead && !published.has(s.sourcePushHead)) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
           await this.put(tx, s)
