@@ -291,14 +291,6 @@ export async function runSchedule(name: string, options: RunScheduleOptions = {}
   }
 }
 
-async function loadRequiredRuntimeSchedule(id: string, store: RuntimeScheduleStore = getRuntimeScheduleStore()): Promise<RuntimeScheduleRecord> {
-  const schedule = await store.get(id)
-  if (!schedule) {
-    throw createScheduleError("SCHEDULE_NOT_FOUND")
-  }
-  return schedule
-}
-
 export async function executeRuntimeSchedule(options: ExecuteRuntimeScheduleOptions | string): Promise<ScheduleRunRecord> {
   const runtimeOptions = typeof options === "string" ? { id: options } : options
   assertRuntimeExecuteOptionsObject(runtimeOptions)
@@ -308,13 +300,17 @@ export async function executeRuntimeSchedule(options: ExecuteRuntimeScheduleOpti
   const runtimeScheduleStore = runtimeOptions.runtimeScheduleStore
   const scheduleRunStore = runtimeOptions.scheduleRunStore
   const existingRun = await (scheduleRunStore ?? getScheduleRunStore()).getRun(toRunId("runtime", id, scheduledAt))
+  const schedule = await (runtimeScheduleStore ?? getRuntimeScheduleStore()).get(id)
+  if (schedule && !schedule.enabled) {
+    throw createScheduleError("SCHEDULE_DISABLED")
+  }
+  // A deleted schedule can still replay its saved run. An existing disabled
+  // schedule must reject manual execution, including the same occurrence.
   if (existingRun) {
     return existingRun
   }
-
-  const schedule = await loadRequiredRuntimeSchedule(id, runtimeScheduleStore)
-  if (!schedule.enabled) {
-    throw createScheduleError("SCHEDULE_DISABLED")
+  if (!schedule) {
+    throw createScheduleError("SCHEDULE_NOT_FOUND")
   }
   if (runtimeOptions.requireDue && !isRuntimeScheduleDue(schedule, scheduledAt)) {
     throw createScheduleError("SCHEDULE_NOT_DUE")

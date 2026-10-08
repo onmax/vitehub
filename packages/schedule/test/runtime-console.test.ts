@@ -248,6 +248,20 @@ describe("Schedule dev request handler", () => {
     expect(JSON.stringify(body)).not.toContain("secret-name")
   })
 
+  it("does not replay a stored handler failure after the schedule is disabled", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(now)
+    installTargets(() => { throw new Error("Handler failed") })
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    const failed = await handleScheduleDevRequest(devRequest({ id: "digest", operation: "run" }))
+    expect(failed.status).toBe(200)
+    expect(await readBody(failed)).toMatchObject({ run: { status: "failed" } })
+    await schedules.disable("digest")
+    const blocked = await handleScheduleDevRequest(devRequest({ id: "digest", operation: "run" }))
+    expect(blocked.status).toBe(409)
+    expect(await readBody(blocked)).toMatchObject({ error: { code: "SCHEDULE_DISABLED" } })
+  })
+
   it("reports missing records and a missing registry", async () => {
     expect(await readBody(await handleScheduleDevRequest(devRequest({ id: "missing", operation: "get" })))).toMatchObject({
       error: { code: "SCHEDULE_NOT_FOUND" },

@@ -395,16 +395,12 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
       return json({ attempts: await listScheduleRunAttempts(id), run: summarizeScheduleRun(run) })
     }
     case "run": {
-      // A manual request must respect current state before replaying a run at
-      // the same timestamp or returning a stored handler failure.
-      const schedule = await getRuntimeScheduleStore().get(id)
-      if (!schedule) return scheduleFailure(createScheduleError("SCHEDULE_NOT_FOUND"))
-      if (!schedule.enabled) return scheduleFailure(createScheduleError("SCHEDULE_DISABLED"))
       const scheduledAt = new Date()
       try {
         return json({ run: summarizeScheduleRun(await schedules.run(id, { scheduledAt })) })
       }
       catch (error) {
+        if (error instanceof ViteHubError && error.code === "SCHEDULE_DISABLED") return scheduleFailure(error)
         // The handler failed after the run started. Return the stored failed run.
         const run = await getScheduleRunStore().getRun(toRunId("runtime", id, scheduledAt))
         return run ? json({ run: summarizeScheduleRun(run) }) : scheduleFailure(error)
