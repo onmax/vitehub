@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -32,6 +32,29 @@ it("commits selected repair files on the exact ancestry without running checkout
   expect(await git(root, "show", `${head}:file.txt`)).toBe("repair");
   expect(await git(root, "show", `${head}:unrelated.txt`)).toBe("keep");
   expect(await readFile(join(root, "unrelated.txt"), "utf8")).toBe("unrelated edit\n");
+});
+
+it.each(["link", "portal"])("commits after a successful refresh with ignored build outputs in a %s dependency", async protocol => {
+  const { root } = await fixture();
+  await mkdir(join(root, "packages/local/src"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "repair", dependencies: { local: `${protocol}:packages/local` } }));
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await writeFile(join(root, "pnpm-workspace.yaml"), "packages: ['packages/*']\n");
+  await writeFile(join(root, ".gitignore"), "dist/\n");
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
+  await writeFile(join(root, "packages/local/src/index.js"), "export const value = 1;\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked workspace");
+  const expectedHead = await git(root, "rev-parse", "HEAD");
+  await mkdir(join(root, "packages/local/dist"));
+  await writeFile(join(root, "packages/local/dist/index.js"), "export const value = 1;\n");
+  // A successful host refresh records the installed working-tree inputs.
+  await writeFile(join(root, ".git/vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await writeFile(join(root, "file.txt"), "repair\n");
+  const head = await commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["file.txt"] }, { expectedHead, verifyDependencies: true });
+  expect(await git(root, "rev-parse", `${head}^`)).toBe(expectedHead);
+  expect(await git(root, "show", `${head}:file.txt`)).toBe("repair");
+  expect(await git(root, "ls-tree", "-r", "--name-only", "HEAD")).not.toContain("dist/index.js");
 });
 
 it.each(["../outside", "/tmp/outside", ".git/config", ".", "./", "a/../../outside"])("rejects unsafe repair path %s", async path => {

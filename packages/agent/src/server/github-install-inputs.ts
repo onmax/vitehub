@@ -100,14 +100,16 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       }
     }
   }
-  async function selectLocalPackage(value: string, base: string) {
+  async function selectLocalPackage(value: string, base: string, copyContents = true) {
     await checkPath(value, base);
     const path = resolve(base, decodeURIComponent(value));
     const info = await stat(path).catch(() => undefined);
     if (info?.isDirectory()) {
       const canonical = await realpath(path);
       packageRoots.add(canonical);
-      dependencyDirectories.add(canonical);
+      // Link and portal dependencies read live source files. Their package
+      // manifests affect installation; builds and source edits do not.
+      if (copyContents) dependencyDirectories.add(canonical);
     }
     else if (info?.isFile()) dependencyFiles.add(path);
   }
@@ -146,8 +148,8 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       if ((dependency || sourceFields.has(field)) && await inspectYarnPatch(value, base)) return;
       if (dependency || sourceFields.has(field)) checkDownloadSource(value);
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
-      const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
-      if (local) await selectLocalPackage(local[1]!, base);
+      const local = value.match(/(?:^|@)(file|link|portal):(.+)/i);
+      if (local) await selectLocalPackage(local[2]!, base, local[1]!.toLowerCase() === "file");
       else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\]|~(?:[^/\\]*[/\\]|$)|[a-z]:[/\\])/i.test(value)) await selectLocalPackage(value, base);
       else if (field === "directory") await selectLocalPackage(value, base);
       return;
