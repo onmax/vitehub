@@ -162,6 +162,12 @@ export function cdp(options: CDPControllerOptions = {}): BrowserController<CDPCl
           }
           return
         }
+        if (message.id < 1 || message.id > nextId) {
+          rejectPending(browserProviderError("cdp", "parse a protocol message", {
+            cause: new TypeError("CDP response id was never sent"),
+          }))
+          return
+        }
         const request = pending.get(message.id)
         if (!request) return
         pending.delete(message.id)
