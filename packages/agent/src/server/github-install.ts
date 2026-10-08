@@ -68,7 +68,7 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
       command = "corepack";
       args = [`pnpm@${version("pnpm", "10.34.6")}`, "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--config.manage-package-manager-versions=false"];
     }
-    else if (await exists(join(target, "package-lock.json"))) {
+    else if (await exists(join(target, "package-lock.json")) || await exists(join(target, "npm-shrinkwrap.json"))) {
       const npmVersion = version("npm", "11.6.3");
       if (Number(npmVersion.split(".")[0]) < 7) throw new Error("Host installation requires npm 7 or newer; older npm can execute repository onload scripts.");
       command = "corepack";

@@ -285,6 +285,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: pending.head, avoided_invocation: true });
           return "merged";
         }
+        const reconcileEnqueued = async (): Promise<"merged" | "blocked"> => {
+          const [owner, name] = repository.split("/");
+          const response = await readGraphql(repository, 1, signal)(`query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid mergeQueueEntry{id}}}}`, { owner, name, number });
+          const queued = v.parse(v.object({ data: v.object({ repository: v.object({ pullRequest: v.object({ state: v.string(), headRefOid: v.string(), mergeQueueEntry: v.nullable(v.object({ id: v.string() })) }) }) }) }), response).data.repository.pullRequest;
+          if (queued.mergeQueueEntry) return await parkMerge("Waiting for queued GitHub merge request.");
+          await pullRequestInbox.hydrate(claim, { refresh: true });
+          await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+          await pullRequestInbox.finish(claim, { text: "Final enqueued result reconciled; pull request left the merge queue.", terminal: queued.state !== "OPEN", retry: queued.state === "OPEN" });
+          return queued.state === "MERGED" ? "merged" : "blocked";
+        };
+        if (pending.enqueued) return await reconcileEnqueued();
         if (pending.requestId) {
           const result = await readAsyncMerge(github, repository, number, pending.requestId, signal).catch(async (error: unknown) => {
             if (!(error instanceof Error) || !/HTTP 404/.test(error.message)) throw error;
@@ -300,14 +311,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           if (!result) return "blocked";
           if (result.status === "pending") return await parkMerge(`Waiting for GitHub merge request ${pending.requestId}.`);
           if (result.status === "enqueued") {
-            const [owner, name] = repository.split("/");
-            const response = await readGraphql(repository, 1, signal)(`query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid mergeQueueEntry{id}}}}`, { owner, name, number });
-            const queued = v.parse(v.object({ data: v.object({ repository: v.object({ pullRequest: v.object({ state: v.string(), headRefOid: v.string(), mergeQueueEntry: v.nullable(v.object({ id: v.string() })) }) }) }) }), response).data.repository.pullRequest;
-            if (queued.mergeQueueEntry) return await parkMerge(`Waiting for queued GitHub merge request ${pending.requestId}.`);
-            await pullRequestInbox.hydrate(claim, { refresh: true });
-            await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
-            await pullRequestInbox.finish(claim, { text: "Final enqueued result reconciled; pull request left the merge queue.", terminal: queued.state !== "OPEN", retry: queued.state === "OPEN" });
-            return queued.state === "MERGED" ? "merged" : "blocked";
+            if (!await pullRequestInbox.recordDirectMergeEnqueued(repository, number, pending.token)) throw new Error("Merge attempt changed before its enqueued result could be recorded.");
+            return await reconcileEnqueued();
           }
           await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
           const merged = result.status === "merged";
@@ -388,6 +393,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return await parkMerge(`Waiting for GitHub merge request ${response.details.uuid}.`);
       }
       if (response.status !== "merged") {
+        if (response.status === "enqueued" && !await pullRequestInbox.recordDirectMergeEnqueued(repository, number, mergeToken)) throw new Error("Merge attempt changed before its enqueued result could be recorded.");
         if (response.status === "failed") await pullRequestInbox.clearDirectMerge(repository, number, mergeToken);
         return await parkMerge(response.status === "failed" ? `GitHub merge failed: ${response.details.message}` : "GitHub enqueued the pull request; waiting for its merge webhook.");
       }

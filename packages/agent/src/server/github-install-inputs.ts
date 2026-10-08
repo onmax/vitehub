@@ -4,8 +4,31 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 
-const inputNames = new Set(["package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock"]);
+const inputNames = new Set([".npmrc", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock"]);
 const dependencyFields = new Set(["dependencies", "devDependencies", "optionalDependencies", "resolutions", "overrides", "catalog", "catalogs", "patchedDependencies"]);
+const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict"]);
+const patternSettings = new Set(["hoist-pattern", "public-hoist-pattern"]);
+const workspaceFields = new Set(["packages", "catalog", "catalogs", "catalogMode", "overrides", "packageExtensions", "patchedDependencies", "onlyBuiltDependencies", "ignoredBuiltDependencies", "neverBuiltDependencies", "allowBuilds"]);
+
+function supportedSetting(key: string, value: unknown): boolean {
+  const normalized = key.replace(/\[\]$/, "").replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+  if (booleanSettings.has(normalized)) return value === true || value === false || value === "true" || value === "false";
+  if (normalized === "node-linker") return value === "isolated" || value === "hoisted" || value === "pnp";
+  if (patternSettings.has(normalized)) return Array.isArray(value)
+    ? value.every(item => hasRuntimeType(item, "string")) : hasRuntimeType(value, "string");
+  return false;
+}
+
+function validateNpmConfig(source: string): void {
+  for (const line of source.split(/\r?\n/)) {
+    const setting = line.trim();
+    if (!setting || /^[;#]/.test(setting)) continue;
+    const separator = setting.indexOf("=");
+    const key = setting.slice(0, separator).trim();
+    const value = setting.slice(separator + 1).trim();
+    if (separator < 1 || !supportedSetting(key, value)) throw new Error(`Unsupported project npm configuration: ${key || setting}. Host-local configuration paths and package-manager extensions are not allowed.`);
+  }
+}
 
 export class GitHubDependencyConflictError extends Error {}
 
@@ -72,9 +95,13 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
         const source = await readFile(path, "utf8");
         if (/^<{7} /m.test(source)) throw new GitHubDependencyConflictError(`Resolve dependency conflicts in ${relative(root, path)} and call refreshDependencies before validation.`);
         hash.update(relative(root, path)).update("\0").update(source).update("\0");
+        if (entry.name === ".npmrc") { validateNpmConfig(source); continue; }
         const data: unknown = entry.name.endsWith(".json") ? JSON.parse(source) : parse(source);
         await inspect(data, directory);
         if (entry.name === "pnpm-workspace.yaml" && isRuntimeRecord(data)) {
+          for (const [key, value] of Object.entries(data)) {
+            if (!workspaceFields.has(key) && !supportedSetting(key, value)) throw new Error(`Unsupported project pnpm configuration: ${key}. Host-local configuration paths and package-manager extensions are not allowed.`);
+          }
           await inspect(data.packages, directory, false, "workspaces");
           await inspect(data.patchedDependencies, directory, true);
         }

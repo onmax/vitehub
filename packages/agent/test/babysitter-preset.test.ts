@@ -562,14 +562,17 @@ describe("Babysitter preset runtime", () => {
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
   });
 
-  it.each([true, false, "unavailable"])("reconciles final enqueued results with queue membership %s", async membership => {
+  it.each([
+    ["polled", true], ["polled", false], ["polled", "unavailable"],
+    ["immediate", true], ["immediate", false], ["immediate", "unavailable"],
+  ] as const)("reconciles %s enqueued results with queue membership %s", async (mode, membership) => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const f = await fixture(false, false, { merge: "direct" });
     const command = f.command.getMockImplementation()!;
     const uuid = "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42";
     f.command.mockImplementation(async (args, request) => {
       if (args.includes(`repos/acme/app/pulls/12/merge-async/${uuid}`)) return { stdout: JSON.stringify({ status: "enqueued", details: {} }), stderr: "" };
-      if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify({ status: "pending", details: { uuid, expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }), stderr: "" };
+      if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify(mode === "immediate" ? { status: "enqueued", details: {} } : { status: "pending", details: { uuid, expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }), stderr: "" };
       if (args.some(arg => arg.includes("mergeQueueEntry"))) {
         if (membership === "unavailable") throw new Error("Queue read unavailable");
         return { stdout: JSON.stringify({ data: { repository: { pullRequest: { state: "OPEN", headRefOid: "a".repeat(40), mergeQueueEntry: membership ? { id: "queued" } : null } } } }), stderr: "" };
@@ -581,7 +584,7 @@ describe("Babysitter preset runtime", () => {
       vi.setSystemTime(Date.now() + 31_000);
       await f.reconcile();
       if (membership === false) expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
-      else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
+      else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ enqueued: true });
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }

@@ -134,13 +134,14 @@ function isSqliteBusy(error: unknown): boolean {
   return false
 }
 
-async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
+async function retrySqliteBusy<T>(operation: () => Promise<T>, timeoutMs?: number): Promise<T> {
+  const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
   for (let attempt = 0; ; attempt++) {
     try {
       return await operation()
     } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= 7) throw error
-      await new Promise((resolve) => setTimeout(resolve, Math.min(50, 2 ** attempt)))
+      if (!isSqliteBusy(error) || (deadline === undefined ? attempt >= 7 : Date.now() >= deadline)) throw error
+      await new Promise((resolve) => setTimeout(resolve, Math.min(deadline === undefined ? 50 : 250, 2 ** attempt)))
     }
   }
 }
@@ -939,8 +940,9 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
         // A retained read snapshot must not block queue and lease commits.
         // Configure only owned persistent files, leaving supplied clients and
         // remote databases under their caller's connection policy.
+        // Give legacy readers a startup window to release the exclusive mode-change lock.
         await retrySqliteBusy(async () => await opened.execute(options.journalMode === "delete"
-          ? "PRAGMA journal_mode = DELETE" : "PRAGMA journal_mode = WAL"))
+          ? "PRAGMA journal_mode = DELETE" : "PRAGMA journal_mode = WAL"), 30_000)
       } catch (error) {
         await opened.close?.()
         throw error

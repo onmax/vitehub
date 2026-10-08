@@ -179,6 +179,36 @@ describe("SQLite Agent State Provider", () => {
     }
   })
 
+  it("waits for a legacy reader before switching to WAL", async () => {
+    const { url } = await createState()
+    const legacy = createLibsqlAgentState({ url, journalMode: "delete", tablePrefix: "test_agent_state_" })
+    await legacy.connect()
+    await legacy.set("snapshot", "before")
+    const client = createClient({ url })
+    const reader = await client.transaction("read")
+    await reader.execute("SELECT value FROM test_agent_state_cache")
+    const upgraded = createLibsqlAgentState({ url, tablePrefix: "test_agent_state_" })
+    // Hold the rollback-journal snapshot beyond the ordinary write retry budget.
+    const release = new Promise<void>((resolve, reject) => setTimeout(() => {
+      void reader.rollback().then(resolve, reject)
+    }, 350))
+    try {
+      await expect(upgraded.connect()).resolves.toBeUndefined()
+      await release
+      const inspection = createClient({ url })
+      try {
+        expect((await inspection.execute("PRAGMA journal_mode")).rows[0]?.journal_mode).toBe("wal")
+      } finally { inspection.close() }
+      await expect(upgraded.get("snapshot")).resolves.toBe("before")
+    } finally {
+      await release
+      reader.close()
+      client.close()
+      await upgraded.disconnect()
+      await legacy.disconnect()
+    }
+  })
+
   it("commits state while another connection retains a read snapshot", async () => {
     const { state, url } = await createState()
     await state.connect()
