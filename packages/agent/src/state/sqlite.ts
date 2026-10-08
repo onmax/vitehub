@@ -944,7 +944,7 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
         const requested = options.journalMode === "delete" ? "delete" : "wal"
         const result = await retrySqliteBusy(async () => await opened.execute(`PRAGMA journal_mode = ${requested.toUpperCase()}`), 30_000)
         const actual = rows(result)[0]?.journal_mode
-        if (actual !== requested) throw new Error(`SQLite journal mode ${requested} was requested, but the VFS retained ${String(actual)}.`)
+        if (actual !== requested) throw agentDiagnostics.AGENT_R0941({ requested, actual: String(actual) })
       } catch (error) {
         await opened.close?.()
         throw error
