@@ -4676,6 +4676,42 @@ cli_auth_credentials_store = "keyring"
     }
   })
 
+  it.each(["codex", "claude-code"] as const)("baselines an ordinary committed root created by a custom $provider launch", async provider => {
+    let root = ""
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout.trim()
+    }
+    const session = {
+      close: vi.fn(async () => undefined), commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })), readFile: vi.fn(async () => new Uint8Array()),
+      exec: vi.fn(async (command: string, args: string[] = []) => {
+        const result = spawnSync(command, args, { cwd: root, encoding: "utf8" })
+        return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+      }),
+    }
+    const workspace = { fs: {}, tools: {}, startSession: vi.fn(async ({ target }: { target: string }) => {
+      root = target
+      await writeFile(join(root, "source.txt"), "plain Workspace source")
+      return session
+    }) }
+    const threadId = `thread-custom-launch-baseline-${provider}`
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn() {
+        expect(git("log", "-1", "--format=%s")).toBe("vitehub provider baseline")
+        expect(git("rev-list", "--count", "HEAD")).toBe("2")
+      },
+    })
+    await createProviderAgentAdapter({ provider, instructions: "generated instructions", launch: ({ command }) => {
+      git("config", "user.name", "Test")
+      git("config", "user.email", "test@localhost")
+      git("add", "-A")
+      git("commit", "-qm", "custom launcher history")
+      return { command }
+    } }).generate(context(threadId, { workspace, workspaceDefinition: { name: "ordinary", mode: "write" }, workspaceMode: "write" }) as never)
+  })
+
   it.each(["codex", "claude-code"] as const)("prepares the %s checkout merge before injecting instructions", async provider => {
     const root = await mkdtemp(join(tmpdir(), "vitehub-instruction-merge-"))
     const threadId = `thread-instruction-merge-${provider}`

@@ -63,7 +63,7 @@ export async function importBoxRepairFiles(session: BoxSession, checkout: string
 /** Refresh uses the Box's current source graph, including new and deleted files. */
 export async function importBoxRepairWorkspace(session: BoxSession, checkout: string, signal: AbortSignal): Promise<void> {
   const remote = await boxCommand(session, "git", ["-c", "core.fsmonitor=false", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], signal);
-  const local = (await exec("git", ["-C", checkout, "-c", "core.fsmonitor=false", "ls-files", "-z"], { signal })).stdout;
+  const local = (await exec("git", ["-C", checkout, "-c", "core.fsmonitor=false", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], { signal })).stdout;
   await importBoxRepairFiles(session, checkout, [...new Set([...remote.split("\0"), ...local.split("\0")].filter(Boolean))], signal);
 }
 
