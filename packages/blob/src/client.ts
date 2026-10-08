@@ -95,11 +95,6 @@ function isSerializedBlobObject(value: unknown): value is SerializedBlobObject {
   return value.size === undefined || typeof value.size === "number" && Number.isFinite(value.size) && value.size >= 0
 }
 
-function parseSerializedBlobObject(value: unknown): SerializedBlobObject {
-  if (!isSerializedBlobObject(value)) throw new Error("Upload request returned malformed JSON.")
-  return value
-}
-
 function parseSerializedBlobObjectArray(value: unknown): SerializedBlobObject[] {
   if (!isDenseArray(value) || value.some(item => !isSerializedBlobObject(item))) {
     throw new Error("Upload request returned malformed JSON.")
