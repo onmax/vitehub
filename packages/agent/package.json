@@ -218,6 +218,7 @@
     "comark": "catalog:markdown",
     "effect": "catalog:effect",
     "esbuild": "catalog:esbuild-v27",
+    "forges": "catalog:",
     "nostics": "catalog:runtime",
     "proper-lockfile": "catalog:",
     "valibot": "catalog:runtime",
@@ -228,7 +229,7 @@
     "advocaat": "catalog:ai",
     "@ai-sdk/mcp": "catalog:ai",
     "@chat-adapter/discord": "catalog:chat",
-    "@github-tools/eve-extension": "0.7.0",
+    "@github-tools/eve-extension": "0.8.0",
     "@types/json-schema": "catalog:ai",
     "@types/mdast": "catalog:markdown",
     "@types/node": "catalog:tooling",
@@ -239,7 +240,7 @@
     "@vite-hub/schedule": "workspace:*",
     "@vite-hub/workflow": "workspace:*",
     "evalite": "catalog:ai",
-    "eve": "0.46.1",
+    "eve": "0.72.1",
     "miniflare": "4.20260730.0",
     "publint": "catalog:tooling",
     "typescript": "catalog:tooling",
@@ -271,6 +272,7 @@
     "vite": "catalog:vite-compat",
     "vitest": "catalog:tooling",
     "vue": "catalog:ui",
+    "eve": "0.46.1 || 0.72.1",
     "evlog": "^2.29.0",
     "posthog-node": "^5.55.0"
   },
@@ -312,6 +314,9 @@
       "optional": true
     },
     "vue": {
+      "optional": true
+    },
+    "eve": {
       "optional": true
     },
     "evlog": {

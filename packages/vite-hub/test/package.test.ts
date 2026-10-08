@@ -117,6 +117,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/database/runtime/agent",
   "@vite-hub/database/runtime/cloudflare-env",
   "@vite-hub/database/runtime/cloudflare-vite",
+  "@vite-hub/database/runtime/d1",
   "@vite-hub/database/runtime/hosted",
   "@vite-hub/database/runtime/state",
   "@vite-hub/database/runtime/vercel-vite",

@@ -123,7 +123,6 @@ describe("@vite-hub/shell just-bash runtime", () => {
     const runtime = createShellRuntime({
       provider: createJustBashProvider({
         commands,
-        cwd: workspaceMountPoint,
         fs: createReadonlyWorkspaceFs(workspace),
         networkGrants: { executeSourceRequest },
       }),
@@ -131,6 +130,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
 
     expect(runtime.boundary.network).toBe(true)
     await expect(runtime.exec("curl -d '{\"region\":\"eu\"}' https://portal.example.com/runtime/inventory-health")).resolves.toMatchObject({
+      cwd: workspaceMountPoint,
       event: "command_finished",
       exitCode: 0,
       stdout: "ok\n",
@@ -154,6 +154,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
 
     expect(runtime.boundary.network).toBe(false)
     await expect(runtime.exec("curl -X POST https://portal.example.com/action")).resolves.toMatchObject({
+      cwd: workspaceMountPoint,
       event: "policy_denied",
       exitCode: 126,
       stderr: expect.stringContaining("not in the permitted commands"),
@@ -451,6 +452,42 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await expect(workspace.exists("copy/opy")).resolves.toBe(false)
   })
 
+  it("preserves existing Workspace content when an append read fails", async () => {
+    const workspace = new MemoryWorkspace({ "notes.md": "saved content\n" })
+    const readFile = workspace.readFile.bind(workspace)
+    const failure = new Error("Remote read failed.")
+    vi.spyOn(workspace, "readFile").mockRejectedValue(failure)
+    const writeFile = vi.spyOn(workspace, "writeFile")
+
+    await expect(createWritableWorkspaceFs(workspace).appendFile("/workspace/notes.md", "new content\n")).rejects.toBe(failure)
+
+    expect(writeFile).not.toHaveBeenCalled()
+    await expect(readFile("notes.md")).resolves.toBe("saved content\n")
+  })
+
+  it("propagates a redirected append read failure without changing Workspace content", async () => {
+    const workspace = new MemoryWorkspace({ "notes.md": "saved content\n" })
+    const readFile = workspace.readFile.bind(workspace)
+    const failure = new Error("EIO: temporary read failure")
+    vi.spyOn(workspace, "readFile").mockRejectedValue(failure)
+    const shell = createShellRuntime({ provider: createJustBashProvider({
+      commands: ["printf"],
+      cwd: "/workspace",
+      fs: createWritableWorkspaceFs(workspace),
+    }) })
+
+    await expect(shell.exec("printf 'new content\\n' >> notes.md")).rejects.toBe(failure)
+    await expect(readFile("notes.md")).resolves.toBe("saved content\n")
+  })
+
+  it("creates an absent Workspace file on append", async () => {
+    const workspace = new MemoryWorkspace({})
+
+    await createWritableWorkspaceFs(workspace).appendFile("/workspace/notes.md", "new content\n")
+
+    await expect(workspace.readFile("notes.md")).resolves.toBe("new content\n")
+  })
+
   it("does not refresh workspace paths when creating a shell filesystem", () => {
     const workspace = new MemoryWorkspace({
       "README.md": "# Docs\n",
@@ -473,6 +510,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
       fs: createReadonlyWorkspaceFs(workspace),
       timeout: 5,
     })).resolves.toMatchObject({
+      cwd: workspaceMountPoint,
       event: "command_timed_out",
       exitCode: null,
       stderr: "[vitehub] Workspace shell command timed out after 5ms.",
