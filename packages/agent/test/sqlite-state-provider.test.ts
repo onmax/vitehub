@@ -164,6 +164,40 @@ describe("SQLite Agent State Provider", () => {
     await restored.disconnect()
   })
 
+  it("keeps rollback journaling available for network-backed volumes", async () => {
+    const { url } = await createState()
+    const state = createLibsqlAgentState({ url, journalMode: "delete" })
+    await state.connect()
+    const client = createClient({ url })
+    try {
+      expect((await client.execute("PRAGMA journal_mode")).rows[0]?.journal_mode).toBe("delete")
+      await state.set("network-volume", "persisted")
+      await expect(state.get("network-volume")).resolves.toBe("persisted")
+    } finally {
+      client.close()
+      await state.disconnect()
+    }
+  })
+
+  it("commits state while another connection retains a read snapshot", async () => {
+    const { state, url } = await createState()
+    await state.connect()
+    await state.set("snapshot", "before")
+    const client = createClient({ url })
+    const reader = await client.transaction("read")
+    try {
+      expect((await reader.execute("SELECT value FROM test_agent_state_cache WHERE key = 'snapshot'")).rows[0]?.value).toBe(JSON.stringify("before"))
+      await expect(state.set("snapshot", "after")).resolves.toBeUndefined()
+      expect((await reader.execute("SELECT value FROM test_agent_state_cache WHERE key = 'snapshot'")).rows[0]?.value).toBe(JSON.stringify("before"))
+      await expect(state.get("snapshot")).resolves.toBe("after")
+    } finally {
+      await reader.rollback()
+      reader.close()
+      client.close()
+      await state.disconnect()
+    }
+  })
+
   it("leases webhook deliveries under global and per-key concurrency", async () => {
     const { state, url } = await createState()
     await state.connect()
