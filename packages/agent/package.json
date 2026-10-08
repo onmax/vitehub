@@ -67,6 +67,10 @@
       "types": "./dist/cloudflare/state.d.ts",
       "import": "./dist/cloudflare/state.js"
     },
+    "./env-identity": {
+      "types": "./dist/env-identity.d.ts",
+      "import": "./dist/env-identity.js"
+    },
     "./eval": {
       "types": "./dist/eval.d.ts",
       "import": "./dist/eval.js"
@@ -203,6 +207,7 @@
     "@vercel/connect": "2.4.0",
     "@vercel/nft": "catalog:vercel",
     "@vite-hub/box": "workspace:*",
+    "@vite-hub/env": "workspace:*",
     "@vite-hub/markdown-template": "workspace:*",
     "@vite-hub/rate-limit": "workspace:*",
     "@vite-hub/runtime": "workspace:*",
@@ -212,6 +217,7 @@
     "comark": "catalog:markdown",
     "effect": "catalog:effect",
     "esbuild": "catalog:esbuild-v27",
+    "forges": "catalog:",
     "nostics": "catalog:runtime",
     "proper-lockfile": "catalog:",
     "valibot": "catalog:runtime"
@@ -221,17 +227,18 @@
     "advocaat": "catalog:ai",
     "@ai-sdk/mcp": "catalog:ai",
     "@chat-adapter/discord": "catalog:chat",
-    "@github-tools/eve-extension": "0.7.0",
+    "@github-tools/eve-extension": "0.8.0",
     "@types/json-schema": "catalog:ai",
     "@types/mdast": "catalog:markdown",
     "@types/node": "catalog:tooling",
     "@types/proper-lockfile": "catalog:",
     "@vercel/functions": "catalog:vercel",
+    "@vite-hub/connections": "workspace:*",
     "@vite-hub/internal": "workspace:*",
     "@vite-hub/schedule": "workspace:*",
     "@vite-hub/workflow": "workspace:*",
     "evalite": "catalog:ai",
-    "eve": "0.46.1",
+    "eve": "0.72.1",
     "miniflare": "4.20260730.0",
     "publint": "catalog:tooling",
     "typescript": "catalog:tooling",
@@ -263,6 +270,7 @@
     "vite": "catalog:vite-compat",
     "vitest": "catalog:tooling",
     "vue": "catalog:ui",
+    "eve": "0.46.1 || 0.72.1",
     "evlog": "^2.29.0",
     "posthog-node": "^5.55.0"
   },
@@ -304,6 +312,9 @@
       "optional": true
     },
     "vue": {
+      "optional": true
+    },
+    "eve": {
       "optional": true
     },
     "evlog": {

@@ -2,8 +2,8 @@
 title: Agents
 description: Define a server-side Agent, choose how it runs, and connect it to your application.
 navigation.title: Overview
-navigation.order: 20
-navigation.group: Core
+navigation.order: 1
+navigation.group: Start
 icon: i-lucide-bot
 ---
 

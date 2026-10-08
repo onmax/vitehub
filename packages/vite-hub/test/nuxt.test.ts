@@ -3549,6 +3549,23 @@ describe("ViteHub Nuxt integration", () => {
     ])
   })
 
+  it("prebundles the Agent Vue client and preserves configured optimizer entries", async () => {
+    const enabled = createNuxt(true)
+    enabled.nuxt.options.vite.optimizeDeps = { include: ["consumer-client"] }
+    await viteHubNuxtModule({ agent: true, preset: "node" }, enabled.nuxt)
+    expect(enabled.nuxt.options.vite.optimizeDeps.include).toEqual(["consumer-client", "vite-hub/agent/vue"])
+
+    const existing = createNuxt(true)
+    existing.nuxt.options.vite.optimizeDeps = { include: ["vite-hub/agent/vue"] }
+    await viteHubNuxtModule({ agent: true, preset: "node" }, existing.nuxt)
+    expect(existing.nuxt.options.vite.optimizeDeps.include).toEqual(["vite-hub/agent/vue"])
+
+    const disabled = createNuxt(true)
+    disabled.nuxt.options.vite.optimizeDeps = { include: ["consumer-client"] }
+    await viteHubNuxtModule({ preset: "node" }, disabled.nuxt)
+    expect(disabled.nuxt.options.vite.optimizeDeps.include).toEqual(["consumer-client"])
+  })
+
   it("auto-imports the Blob upload composables only when Blob is enabled", async () => {
     const withBlob = createNuxt()
     const withoutBlob = createNuxt()

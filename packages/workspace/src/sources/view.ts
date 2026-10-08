@@ -37,6 +37,7 @@ import type {
   WorkspaceSearchHit,
   WorkspaceSearchQuery,
   WorkspaceMaterializeSourcesResult,
+  WorkspaceRebaseOptions,
   WorkspaceSourceItem,
   WorkspaceStat,
   WorkspaceStore,
@@ -80,6 +81,11 @@ export interface WorkspaceSourceView {
    * The wrapped write receives the normalized path from the grant.
    */
   requireWriteGrant<Args extends unknown[], Result>(write: (path: string, ...args: Args) => Promise<Result>): (grant: WorkspaceSourceWriteGrant, path: string, ...args: Args) => Promise<Result>
+  /**
+   * Wraps a history rebase. Each `takeRemote` path replaces local content, so it needs a grant from this view.
+   * Pass the grants in the order of `takeRemote`. The wrapped rebase receives the normalized paths from the grants.
+   */
+  requireRebaseGrants(rebase: (options?: WorkspaceRebaseOptions) => Promise<void>): (grants: readonly WorkspaceSourceWriteGrant[], options?: WorkspaceRebaseOptions) => Promise<void>
   list(path?: string, options?: ListOptions): Promise<WorkspaceEntry[]>
   glob(pattern: string | string[], options?: GlobOptions): Promise<WorkspaceEntry[]>
   search(query: WorkspaceSearchQuery): Promise<WorkspaceSearchHit[]>
@@ -630,7 +636,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   async function isSyncedStatePath(path: string) {
     if (!store.getMeta) return false
     for (const source of syncSources) {
-      const state = readWorkspaceSourceSyncState(await store.getMeta(sourceSyncMetaKey(source.key)))
+      const state = readWorkspaceSourceSyncState(await store.getMeta(sourceSyncMetaKey(source.key, definition.name)))
       if (!state) continue
       if (state.paths[path]) return true
       if (Object.keys(state.paths).some(item => item.startsWith(`${path}/`))) return true
@@ -666,7 +672,9 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
     }
     const resolution = resolveWorkspacePath(definition, path)
-    if (isDescriptorPath(resolution.workspacePath)) {
+    if (isDescriptorPath(resolution.workspacePath)
+      || allSources.some(source => (source.materialize === "lazy" || source.materialize === "startup")
+        && sourceMountContainsPath(source, resolution.workspacePath))) {
       throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
     }
     await assertWritableResolvedStorePath(path, resolution.workspacePath, resolution.type)
@@ -702,6 +710,30 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     }
   }
 
+  function requireRebaseGrants(rebase: (options?: WorkspaceRebaseOptions) => Promise<void>) {
+    return async (grants: readonly WorkspaceSourceWriteGrant[], options?: WorkspaceRebaseOptions): Promise<void> => {
+      const takeRemote = options?.takeRemote ?? []
+      if (!Array.isArray(grants) || grants.length !== takeRemote.length) {
+        throw workspaceError("[vitehub] Workspace rebase requires one Source write grant for each takeRemote path.")
+      }
+      for (const [index, path] of takeRemote.entries()) {
+        const grant = grants[index]
+        const normalizedPath = normalizeWorkspacePath(path)
+        if (!grant || writeGrants.get(grant) !== normalizedPath) {
+          throw workspaceError(`[vitehub] Workspace rebase to take remote ${path} requires a Source write grant for that path.`)
+        }
+        if (allSources.some(source => (source.materialize === "lazy" || source.materialize === "startup")
+          && sourceMountIntersectsPath(source, normalizedPath))) {
+          throw workspaceError(`[vitehub] Source-backed workspace paths are read-only: ${path}.`)
+        }
+      }
+      await withWorkspaceStoreMutation(store, async () => {
+        for (const grant of grants) await assertWritableCurrentPath(grant.path)
+        await rebase(options?.takeRemote ? { ...options, takeRemote: grants.map(grant => grant.path) } : options)
+      })
+    }
+  }
+
   const grantedStore = {
     mkdir: requireWriteGrant(async (path, options?: MkdirOptions) => await store.mkdir(path, options)),
     rm: requireWriteGrant(async (path, options?: RmOptions) => await store.rm(path, options)),
@@ -717,6 +749,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
       return await grantWritablePath(path)
     },
     requireWriteGrant,
+    requireRebaseGrants,
     async readFile(path, options) {
       const descriptorSource = descriptorSourceForPath(normalizeWorkspacePath(path))
       if (descriptorSource) return decodeFile(descriptorContent(descriptorSource), options)

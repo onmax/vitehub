@@ -42,9 +42,10 @@ export default defineAppConfig({
     },
     pageAside: {
       slots: {
-        root: "hidden overflow-y-auto lg:block lg:max-h-[calc(100vh-var(--ui-header-height))] lg:sticky lg:top-(--ui-header-height) py-0 lg:ms-0 lg:ps-0 lg:pe-0",
+        root: "hidden h-[calc(100dvh-var(--ui-header-height))] overflow-hidden lg:block lg:sticky lg:top-(--ui-header-height) py-0 lg:ms-0 lg:ps-0 lg:pe-0",
+        container: "relative flex h-full min-h-0 flex-col",
         topHeader: "hidden",
-        topBody: "bg-default relative pointer-events-auto flex flex-col mx-0 px-0",
+        topBody: "bg-default relative pointer-events-auto flex h-full min-h-0 flex-col mx-0 px-0",
         topFooter: "hidden",
       },
     },
@@ -140,6 +141,9 @@ export default defineAppConfig({
     },
     // SAFETY: Nuxt UI's prose variants accept these custom slot classes.
     prose: {
+      codeIcon: {
+        txt: "i-vscode-icons-file-type-text",
+      },
       a: {
         base: "font-medium underline underline-offset-4 text-default hover:text-primary transition-colors",
       },

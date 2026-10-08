@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { createAuthClient } from "@vite-hub/auth/vue";
 import { defineShortcuts } from "@nuxt/ui/composables";
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import type { DropdownMenuItem } from "@nuxt/ui";
 import type { ConsoleNavigation } from "../client/sections";
 import type { ConsoleSectionId } from "../sections";
+import { consoleAppearanceKey, consoleAppearanceOptions, consoleAppearances } from "../client/appearance";
 import { loadConsoleNavigation, resolveConsoleSectionDetails, subscribeConsoleNavigation } from "../client/sections";
 import { decodeAgentRouteParam, resolveConsoleRouteName } from "../console-route";
 import { consoleGoToKey, consoleOverviewShortcut, consoleSectionShortcut, groupConsoleSections } from "../sections";
@@ -38,6 +40,20 @@ const sections = computed(() =>
     return details ? [{ id: section, ...details, shortcut: consoleSectionShortcut(section) }] : [];
   }),
 );
+// The standalone Console provides its appearance. A Nuxt host owns color mode, so the rail hides the control there.
+const appearance = inject(consoleAppearanceKey, undefined);
+const currentAppearance = computed(() => consoleAppearanceOptions[appearance?.preference.value ?? "system"]);
+const appearanceLabel = computed(() => `Appearance: ${currentAppearance.value.label}`);
+const appearanceItems = computed<DropdownMenuItem[]>(() => [
+  { type: "label", label: "Appearance" },
+  ...consoleAppearances.map((option): DropdownMenuItem => ({
+    type: "checkbox",
+    icon: consoleAppearanceOptions[option].icon,
+    label: consoleAppearanceOptions[option].label,
+    checked: appearance?.preference.value === option,
+    onSelect: () => appearance?.select(option),
+  })),
+]);
 const groups = computed(() => groupConsoleSections(sections.value));
 const signOutLabel = computed(() => (accessIdentity.value?.label ? `Sign out ${accessIdentity.value.label}` : "Sign out"));
 
@@ -228,6 +244,18 @@ onBeforeUnmount(() => {
         :tooltip="{ content: { side: 'right' } }"
         label="Search"
       />
+      <UDropdownMenu
+        v-if="appearance"
+        :items="appearanceItems"
+        :content="{ side: 'right', align: 'end', sideOffset: 8 }"
+        :ui="{ content: 'min-w-40' }"
+      >
+        <UTooltip :text="appearanceLabel" :content="{ side: 'right' }">
+          <button type="button" class="vitehub-console__rail-item" :aria-label="appearanceLabel">
+            <UIcon :name="currentAppearance.icon" class="size-4" />
+          </button>
+        </UTooltip>
+      </UDropdownMenu>
       <UTooltip v-if="signedIn" :text="signOutFailed ? 'Could not sign out. Try again.' : signOutLabel" :content="{ side: 'right' }">
         <button
           type="button"

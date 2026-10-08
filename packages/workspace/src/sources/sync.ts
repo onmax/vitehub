@@ -2,6 +2,7 @@ import { workspaceError } from "../core/errors.ts"
 import { contentStreamToBytes, sha256 } from "../core/path.ts"
 import { createSourceContext, normalizeWorkspaceSources, sourceMountContainsPath, type ResolvedWorkspaceSource } from "./config.ts"
 import { normalizeMetadataValue, normalizeSourceFileMetadata } from "./file-metadata.ts"
+import { createWorkspaceSourceMountAuthority, sourceMountOwnsPath } from "./mount-grants.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { normalizeSourceItemPath } from "./source-items.ts"
 import { withWorkspaceStoreMutation } from "../storage/mutation.ts"
@@ -33,10 +34,13 @@ interface SourceSyncPlan {
   paths: WorkspaceSourceSyncPathResult[]
   removals: WorkspaceSourceSyncPathResult[]
   source: ResolvedWorkspaceSource
+  definitionName: string
   stateChanged: boolean
 }
 
 const sourceSyncLocks = new Map<string, Promise<WorkspaceSourceSyncResult>>()
+// Only Source Sync creates these grants. Each grant limits file changes to one Source mount.
+const sourceSyncGrants = createWorkspaceSourceMountAuthority("Source Sync")
 
 function zeroCounts(): WorkspaceSourceSyncCounts {
   return {
@@ -127,7 +131,7 @@ async function planSourceSync(
 ): Promise<SourceSyncPlan> {
   const ctx = createSourceContext(definition, source)
   const [previousState, configHash, items] = await Promise.all([
-    store.getMeta?.(sourceSyncMetaKey(source.key)).then(readWorkspaceSourceSyncState),
+    store.getMeta?.(sourceSyncMetaKey(source.key, definition.name)).then(readWorkspaceSourceSyncState),
     sourceConfigHash(source),
     getSourceItems(source, ctx),
   ])
@@ -173,6 +177,8 @@ async function planSourceSync(
   if (source.sync && source.sync.stale === "remove" && previousState) {
     for (const [path, metadata] of Object.entries(previousState.paths)) {
       if (nextPaths[path]) continue
+      // The sync state key is shared by Workspaces on one Store. Remove only paths in this Source mount.
+      if (!sourceMountOwnsPath(source, path)) continue
       if (!await shouldRemoveStalePath(store, path, metadata)) continue
       const removal = { path, sourcePath: metadata.sourcePath, status: "removed" as const }
       removals.push(removal)
@@ -195,20 +201,22 @@ async function planSourceSync(
     paths,
     removals,
     source,
+    definitionName: definition.name,
     stateChanged: !workspaceSourceSyncStateEquals(previousState, nextState),
   }
 }
 
 async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) {
-  if (plan.source.mountPath) await store.mkdir(plan.source.mountPath, { recursive: true })
+  const sourceStore = sourceSyncGrants.store(sourceSyncGrants.grant(plan.source), store)
+  if (plan.source.mountPath) await sourceStore.mkdir(plan.source.mountPath, { recursive: true })
   for (const file of plan.files) {
-    await store.writeFile(file.path, file)
+    await sourceStore.writeFile(file.path, file)
   }
   for (const removal of plan.removals) {
-    await store.rm(removal.path, { force: true })
+    await sourceStore.rm(removal.path, { force: true })
   }
-  await pruneEmptySourceDirectories(store, plan.source, plan.removals)
-  if (plan.stateChanged) await store.setMeta?.(sourceSyncMetaKey(plan.source.key), plan.nextState)
+  await pruneEmptySourceDirectories(sourceStore, plan.source, plan.removals)
+  if (plan.stateChanged) await store.setMeta?.(sourceSyncMetaKey(plan.source.key, plan.definitionName), plan.nextState)
 }
 
 async function pruneEmptySourceDirectories(store: WorkspaceStore, source: ResolvedWorkspaceSource, removals: WorkspaceSourceSyncPathResult[]) {

@@ -36,7 +36,8 @@ it("gives the Connections bridge no standing administrator access", async () => 
     await expect(store.bridge.read({ env: {}, keys: ["connection/mail"] })).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" })
     // @ts-expect-error Only Env creates administrator contexts.
     await expect(store.bridge.activity({ actor, admin: true }, "connection/mail")).rejects.toMatchObject({ code: "ENV_BRIDGE_UNTRUSTED" })
-    await expect(store.bridge.activity({ actor }, "connection/mail")).rejects.toMatchObject({ code: "ENV_BRIDGE_DENIED" })
+    // @ts-expect-error Only Env creates actor contexts.
+    await expect(store.bridge.activity({ actor }, "connection/mail")).rejects.toMatchObject({ code: "ENV_BRIDGE_UNTRUSTED" })
   }
   finally {
     client.close()

@@ -148,7 +148,7 @@ export function createDatabaseConnectionStore(options: { db: EnvDatabase, encryp
   const bridge = createEnvBridge({
     ...envStore,
     // Connections never resolves tokens as an Env provider. Each call gets a narrow context from Env.
-    runtimeContext: () => ({ actor: { id: "connections", kind: "service" } }),
+    runtimeActor: { id: "connections", kind: "service" },
   })
   const db = options.db
   let ready: Promise<void> | undefined

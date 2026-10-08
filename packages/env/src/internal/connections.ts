@@ -1,5 +1,6 @@
-import { grantEnvAccess } from "./access.ts";
-import type { EnvActor, EnvBridge, EnvGrantedAccessContext } from "../bridge.ts";
+import { envAccessAuthority, grantEnvAccess } from "./access.ts";
+import { envBridgeError } from "../bridge-error.ts";
+import type { EnvAccessContext, EnvActor, EnvBridge } from "../bridge.ts";
 
 /**
  * Internal to `@vite-hub/connections`. Call it only after the Connection access policy allows the call.
@@ -14,10 +15,18 @@ export function connectionEnvAccess(
     traceId?: string;
     invocationId?: string;
   },
-): EnvGrantedAccessContext {
+): EnvAccessContext {
   return grantEnvAccess(input, {
+    kind: "key",
     bridge,
     key: `connection/${input.name}`,
     permissions: [input.permission],
   });
+}
+
+/** Return the actor of a context that Env created. Other values fail with `ENV_BRIDGE_UNTRUSTED`. */
+export function envAccessActor(context: EnvAccessContext): EnvActor {
+  const authority = envAccessAuthority(context);
+  if (authority.kind !== "agent") throw envBridgeError("untrusted");
+  return { id: context.actor.id, kind: context.actor.kind };
 }

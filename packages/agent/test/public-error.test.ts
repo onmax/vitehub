@@ -19,6 +19,17 @@ describe("Agent public error seams", () => {
     })
   })
 
+  it("tells chat users whether a host restart is retried", () => {
+    expect(toAgentPublicError(new ViteHubError("HOST_RESTARTED", "private restart detail", { details: { retry: "pending" } }), "invocation")).toEqual({
+      code: "HOST_RESTARTED",
+      error: "The server restarted while I was working on this. I'll retry it automatically.",
+    })
+    expect(toAgentPublicError(new ViteHubError("HOST_RESTARTED", "private restart detail", { details: { retry: "exhausted" } }), "invocation")).toEqual({
+      code: "HOST_RESTARTED",
+      error: "The server restarted twice while I was working on this. Please send your message again.",
+    })
+  })
+
   it("preserves the stable authentication failure contract", () => {
     expect(toAgentPublicError(new ViteHubError("AUTHENTICATION_REQUIRED", "Authentication required."), "http")).toEqual({
       code: "AUTHENTICATION_REQUIRED",

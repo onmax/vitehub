@@ -6,7 +6,7 @@ import { createWorkspaceStoreFromProvider } from "../storage/provider.ts"
 import { forwardWorkspaceRevisionMaterializer } from "../storage/materialization.ts"
 import { forwardWorkspaceStoreTarget } from "../storage/target.ts"
 import { createWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { getCachedWorkspaceStore } from "./workspace-cache.ts"
 import type {
   Workspace,
@@ -29,6 +29,7 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
   const files = createWorkspaceSourceView(definition, store, options)
 
   const metadata = createWorkspaceMetadataTarget(store, definition.name)
+  const rebaseStore = files.requireRebaseGrants(async options => await store.rebase?.(options))
   const workspace: Workspace & { [workspaceMetadataTarget]: () => WorkspaceMetadataTarget } = {
     [workspaceMetadataTarget]: () => metadata,
     name: definition.name,
@@ -87,7 +88,10 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
     },
     async rebase(options) {
       if (!store.rebase) throw workspaceErrorDiagnostics.WORKSPACE_R0026({ message: "[vitehub] Workspace Store does not support rebasing." })
-      await store.rebase(options)
+      // A takeRemote path replaces local content, so Source-backed paths are rejected.
+      const grants = []
+      for (const path of options?.takeRemote ?? []) grants.push(await files.assertWritable(path))
+      await rebaseStore(grants, options)
     },
     async diff(options) {
       return await store.diff(options)

@@ -104,7 +104,7 @@ export async function sweepBabysitterWorkspaces(root = tmpdir(), startedAt = per
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
 export async function createBabysitterProcessHost(context: AgentProcessHostContext): Promise<AgentProcessHostInstance> {
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
-  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
+  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; capacity?: import("../babysitter.ts").BabysitterOptions["capacity"] } };
   const repositories = babysitterRepositories(agent.options.filter);
   await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
@@ -126,6 +126,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     // durable wait. Keep transient provider pressure in this host queue rather
     // than failing the claim, while bounding how long a checkout can be held.
     capacity: {
+      ...agent.options.capacity,
       concurrency: agent.options.concurrency,
       queue: {
         maxPending: agent.options.concurrency,

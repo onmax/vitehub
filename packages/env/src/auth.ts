@@ -1,5 +1,5 @@
 import { grantEnvAccess } from "./internal/access.ts";
-import type { EnvAccessContext, EnvPermission } from "./bridge.ts";
+import type { EnvAccessContext, EnvAccessScope, EnvPermission } from "./bridge.ts";
 
 export interface EnvHumanSession {
   user: { id: string };
@@ -7,7 +7,7 @@ export interface EnvHumanSession {
 export interface EnvAgentSession {
   agent: { id: string };
 }
-export type EnvAgentScope = NonNullable<EnvAccessContext["scope"]>;
+export type EnvAgentScope = EnvAccessScope;
 
 export interface EnvAuthenticatorOptions<
   Human extends EnvHumanSession,
@@ -65,17 +65,13 @@ export function createEnvAuthenticator<
           )
         )
           return null;
-        return {
-          actor: { kind: "agent", id: session.agent.id },
-          scope: scope.map((grant) => ({ key: grant.key, permissions: [...grant.permissions] })),
-        };
+        return grantEnvAccess({ actor: { kind: "agent", id: session.agent.id } }, { kind: "actor", scope });
       }
       const session = await options.getSession({ headers: request.headers });
       if (!session || !identifier(session.user.id)) return null;
       const actor = { kind: "user" as const, id: session.user.id };
       // Only this check creates an administrator context. The bridge rejects copies.
-      if ((await options.isAdmin(session)) === true) return grantEnvAccess({ actor }, { admin: true });
-      return { actor, admin: false };
+      return grantEnvAccess({ actor }, (await options.isAdmin(session)) === true ? { kind: "admin" } : { kind: "actor" });
     } catch {
       return null;
     }

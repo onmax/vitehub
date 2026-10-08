@@ -3,6 +3,7 @@ interface ExampleBase {
   name: string;
   description: string;
   builtWith: readonly string[];
+  website?: string;
 }
 
 interface PendingProject extends ExampleBase {
@@ -54,8 +55,9 @@ export const examples: readonly Example[] = [
     slug: "drop",
     name: "Drop",
     description:
-      "Permanent URLs for agent-uploaded files and temporary rendered code images, built with ViteHub primitives.",
-    builtWith: ["Blob", "Queue", "Rate Limit", "Sandbox", "Schedule"],
+      "Review what your agents plan. Agents drop docs and small apps; people comment on the exact spot, share links, and send the feedback back for the next version.",
+    builtWith: ["Auth", "Database", "Blob", "KV", "Rate Limit", "Browser", "Schedule"],
+    website: "https://drop.vitehub.dev",
     kind: "project",
     status: "published",
     action: {

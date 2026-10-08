@@ -120,6 +120,14 @@ describe("@vite-hub/ui package contract", () => {
     expect(stylesheet).toContain(`@media (max-width: 600px) {\n${compactInvocationRules}\n}`);
   });
 
+  it("ships flat console surfaces that fill their containers", () => {
+    for (const block of [".vh-chat", ".vh-session", ".vh-invocation-session", ".vh-invocation-inspector", ".vh-invocation-list", ".vh-capability-inspector"]) {
+      expect(stylesheet, block).toMatch(new RegExp(`\\n${block.replace(".", "\\.")}\\s*\\{[^}]*height: 100%;[^}]*min-height: 0;`));
+    }
+    expect(stylesheet).not.toMatch(/backdrop-filter|mask-image|linear-gradient/);
+    expect(stylesheet).not.toContain("--vh-ui-text-muted");
+  });
+
   it("keeps the Pierre renderer behind an on-demand chunk", () => {
     const dist = new URL("../dist/", import.meta.url);
     const sources = ["index.js", ...readdirSync(dist).filter((name) => /^agent-code-view-[^/]+\.js$/.test(name))]

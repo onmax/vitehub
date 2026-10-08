@@ -8,7 +8,7 @@ import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
 import { createMessage, defineAgent, runAgent } from "../../index.ts";
 import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";
-import type { AgentCapabilitiesResolver, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
+import type { AgentCapabilitiesResolver, AgentInput, AgentProviderCredentialContext, AgentProviderLaunchContext, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
   createGitHubPullRequestRun,
   createGitHubPullRequestOperations,
@@ -35,6 +35,8 @@ import { createHash } from "node:crypto";
 import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
+import { importBoxCommit } from "./box-commit.ts";
+import { activeProviderBox } from "../../internal/provider-box.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, feedbackFingerprints, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
@@ -866,7 +868,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // its GitHub Channel. Extending the base Agent would preserve
               // the host identity, but dropping the whole map loses other
               // channel-scoped capabilities needed by repair passes.
-              const { channels: _baseChannels, github: _baseGitHub, ...workerSettings } = baseSettings;
+              const { channels: _baseChannels, github: _baseGitHub, workspace: configuredWorkspace, ...workerSettings } = baseSettings;
+              if (workerSettings.box) providerDirectory = checkout;
               const baseChannels = isRuntimeRecord(_baseChannels) ? _baseChannels : {};
               const workerBaseChannels = Object.fromEntries(Object.entries(baseChannels).map(([name, channel]) => {
                 if (!isRuntimeRecord(channel) || channel.kind !== "github") return [name, channel];
@@ -876,7 +879,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return [name, sanitized];
               }));
               const baseCapabilities = workerSettings.capabilities;
-              const repair = repairCapability(operations, merge.mode === "auto");
+              const repair = repairCapability(operations, merge.mode === "auto", async (context) => {
+                if (!workerSettings.box) return;
+                const session = activeProviderBox(context);
+                if (!session) throw new Error("The repair Box is not prepared.");
+                await assertLease();
+                if (!session.localWorkspace) await importBoxCommit(session.session, checkout, pullRequest.headRefOid, abortSignal);
+              });
               // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
               const workerCapabilities = typeof baseCapabilities === "function"
                 ? async (context: Parameters<AgentCapabilitiesResolver>[0]) => [
@@ -897,7 +906,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               Reflect.deleteProperty(workerChannel, Symbol.for("vitehub.githubChannelIdentity"));
               // Keep the base Agent's configured Workspace sources, loaders, and
               // instruction bindings while replacing the checkout-owned fields.
-              const configuredWorkspace = workerSettings.workspace;
               let baseWorkspace: Record<string, unknown> = {};
               if (hasRuntimeType(configuredWorkspace, "string")) {
                 baseWorkspace = { ...await resolveRegisteredWorkspaceDefinition(configuredWorkspace) };
@@ -915,7 +923,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Named Workspace references cannot be combined with owned fields.
               // The checkout below replaces the reference with its prepared workspace.
               Reflect.deleteProperty(baseWorkspace, "name");
-              const agent = defineAgent({
+              const workerOptions = {
                 ...workerSettings,
                 name: workerName,
                 // GitHub authority stays in the broker operations above;
@@ -928,15 +936,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 capabilities: workerCapabilities as never,
                 driver: {
                   ...workerDriver,
-                  permissions: "allow-edits",
-                  env: async (context) => {
+                  // Match the preset: unattended passes cannot escalate native
+                  // permissions. Repair tools remain authorized by the host.
+                  permissions: "allow-edits-unattended" as const,
+                  env: async (context: AgentProviderCredentialContext) => {
                     const environment =
                       workerDriver.env === undefined
                         ? undefined
                         : await resolveRuntimeValue(workerDriver.env, context);
                     return repairEnvironment(environment, join(checkout, ".vitehub-github-auth"), prepared.env);
                   },
-                  launch: async (context) => {
+                  ...(workerSettings.box ? undefined : { launch: async (context: AgentProviderLaunchContext) => {
                     if (context.purpose !== "inspection") {
                       if (!preparedDirectories.has(context.cwd)) {
                         await prepared.prepareWorkspace(context.cwd);
@@ -949,15 +959,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     return workerDriver.launch
                       ? await resolveRuntimeValue(workerDriver.launch, context)
                       : { command: context.command };
-                  },
+                  } }),
                 },
-                workspace: {
-                  ...baseWorkspace,
-                  commit: false,
-                  mode: "write" as const,
-                  store: { provider: "local" as const, root: checkout },
-                },
-              });
+              };
+              const agent = workerSettings.box
+                ? defineAgent({ ...workerOptions, box: { ...workerSettings.box, checkout: undefined, cwd: checkout, requires: [...(workerSettings.box.requires ?? []), "git"] } })
+                : defineAgent({ ...workerOptions, workspace: {
+                    ...baseWorkspace,
+                    commit: false,
+                    mode: "write",
+                    store: { provider: "local", root: checkout },
+                  } });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
               const snapshotContext = snapshotPrompt(webhookSnapshot);
               const userMessage = `${prompt}\n\n${snapshotContext}`;

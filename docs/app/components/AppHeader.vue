@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { docsManifest } from "~~/modules/vitehub-docs/runtime/utils/docs";
-import { isDocsLandingPath } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+import { normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
 
 const route = useRoute();
 // On docs routes the brand opens the product catalog, like a docs site logo. Elsewhere it opens the home page.
 const isDocsRoute = computed(() => route.path.startsWith("/docs"));
-// Landing pages center their content, so the header container matches that width and the brand aligns with the hero.
-const isLanding = computed(() => isDocsLandingPath(docsManifest.sections, route.path));
+// The catalog centers its content. Product pages keep the header aligned with the full-width sidebar.
+const isLanding = computed(() => normalizeDocsPath(route.path) === "/docs");
 const isSupportMatrix = computed(
   () => route.path.replace(/\/+$/, "") === "/docs/frameworks-hosts/support-matrix",
 );
@@ -15,7 +14,7 @@ const isSupportMatrix = computed(
 const navLinks = [
   { label: "Docs", to: "/docs" },
   { label: "Examples", to: "/examples" },
-  { label: "Blog", to: "/blog" },
+  { label: "Get started", to: "/docs/getting-started" },
 ];
 
 const mobileLinks = [

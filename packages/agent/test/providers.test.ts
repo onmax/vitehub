@@ -819,6 +819,9 @@ describe("agent Vite plugin", () => {
       expect(providerRegistry).toBe(registry)
       expect(windowsProviderRegistry).toBe(registry)
       expect(nitroRegistry).toBe(registry)
+      if (!registry || !providerRegistry) throw new Error("Expected generated workflow registries")
+      expect(await transform(providerRegistry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(registry)
+      expect(plugin.vitehub?.agent?.transformWorkflowRegistry(registry, join(root, ".vitehub", "workflow", "registry.mjs"))).toBe(registry)
     } finally {
       await rm(root, { force: true, recursive: true })
     }
@@ -854,6 +857,8 @@ describe("agent Vite plugin", () => {
       expect(registry).toContain('import { setAgentChannelDeliveryWorkflowStateResolver } from "@vite-hub/agent/server/internal"')
       expect(registry).toContain('const viteHubChatStateOptions = {"url":"libsql://state.example.test"}')
       expect(registry).toContain("setAgentChannelDeliveryWorkflowStateResolver(() => ({ state: viteHubChatStateResolver }))")
+      if (!registry) throw new Error("Expected a libSQL workflow registry")
+      expect(await transform(registry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(registry)
 
       const cloudflarePlugin = hubAgent()
       const cloudflareConfigResolvedHook: unknown = cloudflarePlugin.configResolved
@@ -874,6 +879,8 @@ describe("agent Vite plugin", () => {
       expect(cloudflareRegistry).toContain('import { createCloudflareAgentState, getActiveCloudflareEnv } from "@vite-hub/agent/cloudflare"')
       expect(cloudflareRegistry).toContain("(context.cloudflare?.env || getActiveCloudflareEnv())?.CHAT_STATE")
       expect(cloudflareRegistry).toContain("setAgentChannelDeliveryWorkflowStateResolver(context =>")
+      if (!cloudflareRegistry) throw new Error("Expected a Cloudflare workflow registry")
+      expect(await cloudflareTransform(cloudflareRegistry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(cloudflareRegistry)
 
       await cloudflareConfigResolved({
         command: "build",
@@ -9461,6 +9468,248 @@ describe("server helpers", () => {
     }
   })
 
+  it.each([204, 302, 400, 403])("settles handled webhook rehydration with status %s without Invocation evidence", async status => {
+    const { github } = await import("../src/channels.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-response-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const enqueue = vi.spyOn(state, "enqueueWebhookDelivery")
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const deferredWork = vi.fn()
+    let releaseDeferredWork!: () => void
+    const deferred = new Promise<void>((resolve) => {
+      releaseDeferredWork = resolve
+    }).then(deferredWork)
+    const run = vi.fn(() => "unexpected saved invocation")
+    const rehydrate = vi.fn((context: { waitUntil: (task: Promise<unknown>) => void }) => {
+      context.waitUntil(deferred)
+      return new Response(null, { status })
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              invoke: context => ({
+                input: { prompt: "saved source data" },
+                webhook: {
+                  concurrencyLimit: 1,
+                  deliveryId: "delivery-rehydrate-response",
+                  rehydrate: () => rehydrate(context),
+                },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    await state.connect()
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const options = { agentName: "review", webhookState: state }
+    const stop = handler.resume(options)
+
+    try {
+      const response = await handler(new Request("https://example.com/api/github/webhook", {
+        body: "{}",
+        headers: {
+          "content-type": "application/json",
+          "x-github-delivery": "delivery-rehydrate-response",
+          "x-github-event": "pull_request",
+        },
+        method: "POST",
+      }), "github", options)
+
+      expect(response.status).toBe(200)
+      expect(enqueue.mock.calls[0]?.[0]).toMatchObject({
+        invocation: { input: { prompt: "saved source data" } },
+        rehydrate: true,
+      })
+      await vi.waitFor(() => expect(rehydrate).toHaveBeenCalledOnce())
+      expect(complete).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+      releaseDeferredWork()
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce())
+      await Promise.all(complete.mock.results.map(result => result.value))
+      expect(rehydrate).toHaveBeenCalledOnce()
+      expect(deferredWork).toHaveBeenCalledOnce()
+      expect(retry).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+      const deliveries = await handler.deliveries(new Request("https://example.com/api/github/webhook"), "github", options)
+      const delivery = deliveries.find(item => item.sourceId === "delivery-rehydrate-response")
+      expect(delivery?.status).toBe(status === 204 ? "completed" : "rejected")
+      expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
+    } finally {
+      releaseDeferredWork()
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["stream", "503", "body error", "exhausted", "timeout", "recovery"] as const)("observes handled webhook rehydration %s within durable custody", async kind => {
+    const { github } = await import("../src/channels.ts")
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-outcome-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    if (kind === "recovery") complete.mockRejectedValueOnce(new Error("completion outage"))
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const failed = vi.fn()
+    const run = vi.fn(() => "unexpected saved invocation")
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const cancelBody = vi.fn()
+    const streamingResponse = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+      cancel: cancelBody,
+    }))
+    const rehydrate = vi.fn((): Response => {
+      if (kind === "stream" || kind === "timeout") return streamingResponse
+      if (kind === "exhausted" || kind === "recovery" || (kind === "503" && rehydrate.mock.calls.length === 1)) return new Response(null, { status: 503 })
+      if (kind === "body error" && rehydrate.mock.calls.length === 1) return new Response(new ReadableStream({
+        start(controller) { controller.error(new Error("handled response body failed")) },
+      }))
+      return new Response(null, { status: 204 })
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              failed,
+              invoke: () => ({
+                input: { prompt: "saved source data", ...(kind === "timeout" ? { timeout: 500 } : {}) },
+                run: { runId: "saved-rehydration-run" },
+                webhook: { concurrencyLimit: 1, deliveryId: "delivery-rehydrate-outcome", rehydrate },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    await state.connect()
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const options = { agentName: "review", webhookState: state }
+    const stop = handler.resume(options)
+    let stopRecovery: (() => Promise<void>) | undefined
+    let recoveryState: ReturnType<typeof createLibsqlAgentState> | undefined
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    const request = () => new Request("https://example.com/api/github/webhook", {
+      body: "{}",
+      headers: {
+        "content-type": "application/json",
+        "x-github-delivery": "delivery-rehydrate-outcome",
+        "x-github-event": "pull_request",
+      },
+      method: "POST",
+    })
+    try {
+      expect((await handler(request(), "github", options)).status).toBe(200)
+      await vi.waitFor(() => expect(rehydrate).toHaveBeenCalled())
+      if (kind === "stream") {
+        await vi.waitFor(() => expect(streamingResponse.body?.locked).toBe(true))
+        expect(complete).not.toHaveBeenCalled()
+        streamController.enqueue(new TextEncoder().encode("handled"))
+        streamController.close()
+      }
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 5_000 })
+      if (kind === "recovery") {
+        await expect(complete.mock.results[0]?.value).rejects.toThrow("completion outage")
+        expect(failed).toHaveBeenCalledOnce()
+        await stop()
+        const [scope] = await state.webhookDeliveryScopes()
+        const [pending] = await state.webhookDeliveries(scope!)
+        expect(pending?.failure).toMatchObject({ invocationStarted: false, notificationStarted: true })
+        clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + pending!.leaseTtlMs + 1)
+        recoveryState = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+        await recoveryState.connect()
+        stopRecovery = handler.resume({ ...options, webhookState: recoveryState })
+        await vi.waitFor(async () => expect(await recoveryState!.webhookDeliveries(scope!)).toEqual([]), { timeout: 5_000 })
+      } else await Promise.all(complete.mock.results.map(result => result.value))
+      const expectedAttempts = kind === "exhausted" || kind === "recovery" ? 3 : kind === "503" || kind === "body error" ? 2 : 1
+      expect(rehydrate).toHaveBeenCalledTimes(expectedAttempts)
+      expect(retry).toHaveBeenCalledTimes(kind === "timeout" ? 0 : expectedAttempts - 1)
+      expect(failed).toHaveBeenCalledTimes(kind === "exhausted" || kind === "timeout" || kind === "recovery" ? 1 : 0)
+      if (failed.mock.calls.length) {
+        expect(failed.mock.calls[0]?.[0]).not.toHaveProperty("invocation")
+        expect(failed.mock.calls[0]?.[0]).not.toHaveProperty("run")
+      }
+      if (kind === "timeout") expect(cancelBody).toHaveBeenCalledOnce()
+      expect(run).not.toHaveBeenCalled()
+      const delivery = (await handler.deliveries(request(), "github", options)).find(item => item.sourceId === "delivery-rehydrate-outcome")
+      expect(delivery?.status).toBe(kind === "exhausted" || kind === "timeout" || kind === "recovery" ? "failed" : "completed")
+      expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
+      expect(delivery?.events.filter(event => event.type === "retrying").every(event => event.runId === undefined)).toBe(true)
+    } finally {
+      if (kind === "timeout" && !cancelBody.mock.calls.length) streamController.close()
+      clock?.mockRestore()
+      await stopRecovery?.()
+      await stop()
+      await recoveryState?.disconnect()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+    }
+  }, 10_000)
+
+  it("recovers handled webhook rehydration failure without adding Invocation evidence", async () => {
+    const { github } = await import("../src/channels.ts")
+    const { openAgentChannelDelivery } = await import("../src/internal/channel-delivery.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-failure-recovery-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const failed = vi.fn()
+    const run = vi.fn()
+    const agent = defineAgent({
+      channels: { github: github({ triggers: { webhook: { failed, invoke: () => new Response(null, { status: 204 }) } }, webhooks: { secretToken: false } }) },
+      driver: { run },
+    })
+    await state.connect()
+    const scope = "webhook:review:github:github:"
+    const sourceId = "delivery-rehydrate-failure-recovery"
+    const channelDelivery = await openAgentChannelDelivery(state, { agentName: "review", channelId: "github", provider: "github", scope, sourceId })
+    const request = () => new Request("https://example.com/api/github/webhook", {
+      body: "{}",
+      headers: { "content-type": "application/json", "x-github-delivery": sourceId, "x-github-event": "pull_request" },
+      method: "POST",
+    })
+    const persistedFailure = { attempts: 3, error: "handled response failed", invocationStarted: false as const, notificationStarted: true as const }
+    await state.enqueueWebhookDelivery({
+      channelDeliveryId: channelDelivery.delivery.id,
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: sourceId,
+      enqueuedAt: Date.now(),
+      failure: persistedFailure,
+      invocation: { input: { prompt: "saved" }, run: { runId: "never-started" } },
+      leaseTtlMs: 30_000,
+      rehydrate: true,
+      request: { body: "{}", headers: Object.fromEntries(request().headers), method: "POST", url: request().url },
+      scope,
+      webhookId: "github",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const options = { agentName: "review", webhookState: state }
+    const stop = handler.resume(options)
+    try {
+      await vi.waitFor(async () => expect(await state.webhookDeliveries(scope)).toEqual([]), { timeout: 5_000 })
+      const delivery = (await handler.deliveries(request(), "github", options)).find(item => item.sourceId === sourceId)
+      expect(delivery?.status).toBe("failed")
+      expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
+      expect(failed).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+    } finally {
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it.each(["foreign abort", "foreign canceled", "dom abort", "plain abort", "tagged abort", "hostile tag", "unrelated", "unrequested foreign abort", "remote abort", "remote canceled", "remote dom abort"] as const)("settles queued webhook cancellation from its journal for %s", async failureKind => {
     const { defineAgent, defineCapability } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")
@@ -13136,6 +13385,45 @@ describe("server helpers", () => {
     expect(adapter.stream).toHaveBeenCalledOnce()
   })
 
+  it.each([
+    ...[false, true].flatMap(native => ["text", "array", "resolver"].flatMap(form => (native ? ["fallback"] : ["loading", "fallback"]).map(option => ({ native, form, option })))),
+  ])("formats citation-bearing loading text, native=$native form=$form option=$option", async ({ native, form, option }) => {
+    const adapter = createTestChatAdapter()
+    if (native) adapter.stream = vi.fn(async (threadId: string, chunks: AsyncIterable<string | StreamChunk>) => {
+      for await (const _chunk of chunks) { /* consume the final reply */ }
+      return { id: "streamed", threadId, raw: {} }
+    })
+    const started = deferred<void>()
+    const finish = deferred<void>()
+    const text = "Working. citeturn0view0"
+    const configuredText = form === "array" ? [text] : form === "resolver" ? () => text : text
+    const agent = defineAgent({
+      channels: { telegram: testTelegram(telegram, {
+        // SAFETY: The fixture supplies the Chat SDK adapter used by placeholder delivery.
+        adapter: () => adapter as never,
+        messages: {
+          ...(native ? { stream: true } : { delivery: "manual", stream: false }),
+          ...(option === "loading" ? { loading: { text: configuredText } } : { fallbackStreamingPlaceholderText: configuredText }),
+        },
+      }) },
+      driver: { run: async () => { started.resolve(); await finish.promise; return "Done" } },
+      hooks: native ? {} : { "agent:finish": event => event.reply(event.text!) },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = handler(chatWebhookRequest(91_400 + Number(native) * 10 + ["text", "array", "resolver"].indexOf(form) * 2 + Number(option === "fallback")), "telegram")
+    try {
+      await started.promise
+      await vi.waitFor(() => expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", "Working. [source link unavailable]"))
+      expect(JSON.stringify(adapter.postMessage.mock.calls)).not.toContain("cite")
+      finish.resolve()
+      expect((await response).status).toBe(200)
+    } finally {
+      finish.resolve()
+      await response.catch(() => undefined)
+    }
+  })
+
   it("hands the configured fallback back to Chat SDK when native streaming declines", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13494,6 +13782,248 @@ describe("server helpers", () => {
       consoleError.mockRestore()
     }
   })
+
+  it.each(["normal", "citation notice", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "expired recovery lease", "claim lease loss", "cleanup lease loss", "replacement recovery owner", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const { defineAgent } = await import("../src/index.ts")
+    const { defineChatCapability } = await import("../src/chat-trigger.ts")
+    const { drainInlineChatInvocations } = await import("../src/server.ts")
+    const { createChannelWebhookRouteHandler } = await import("../src/server/internal.ts")
+    const { createLibsqlAgentState } = await import("../src/state/sqlite.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-inline-chat-restart-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const persistenceGate = deferred<void>()
+    const originalMutate = state.mutateWithLock.bind(state)
+    let delayedWrite = false
+    let expireMutation = false
+    let observeMutation: (() => void) | undefined
+    const setSpy = vi.spyOn(state, "mutateWithLock").mockImplementation(async (lock, mutations) => {
+      if (scenario === "slow persistence" && mutations.some(mutation => mutation.key.endsWith("vitehub:interrupted-chat")) && !delayedWrite) {
+        delayedWrite = true
+        await persistenceGate.promise
+      }
+      if (expireMutation && mutations.some(mutation => mutation.key.endsWith("vitehub:interrupted-chat") && (scenario === "claim lease loss" || mutation.type === "delete"))) {
+        expireMutation = false
+        await state.forceReleaseLock(lock.threadId)
+      }
+      const committed = await originalMutate(lock, mutations)
+      observeMutation?.()
+      return committed
+    })
+    const processStartedAt = Date.now()
+    const prompts: string[] = []
+    const createAgent = (adapter: ReturnType<typeof createTestChatAdapter>) => defineAgent({
+      name: "support",
+      ...(scenario === "citation notice" ? { channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture supplies the Chat SDK adapter used by restart recovery.
+          adapter: () => adapter as never,
+          messages: {
+            errorFallbackText: ({ publicError, defaultText }) => publicError.code === "HOST_RESTARTED"
+              ? "Restarted. citeturn0view0"
+              : defaultText,
+          },
+        }),
+      } } : { capabilities: [
+        defineChatCapability({
+          // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+          platforms: { telegram: () => adapter as never },
+          webhooks: { telegram: {} },
+        }),
+      ] }),
+      driver: {
+        run: async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
+          prompts.push(JSON.stringify(input))
+          // The first attempt runs until the host restarts.
+          if (prompts.length === 1 || (scenario === "second restart" && prompts.length === 2)) {
+            await new Promise<never>((_resolve, reject) => {
+              input.abortSignal?.addEventListener("abort", () => reject(input.abortSignal?.reason), { once: true })
+            })
+          }
+          return "done"
+        },
+      },
+    })
+    const firstAdapter = createTestChatAdapter({ deferMessageProcessing: true })
+    const waitUntilTasks: Promise<unknown>[] = []
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const firstHandler = createChannelWebhookRouteHandler(createAgent(firstAdapter) as never)
+    let stop: (() => Promise<void>) | undefined
+
+    try {
+      await state.connect()
+      const response = await firstHandler(
+        new Request("https://example.com/api/_vitehub/agents/support/webhooks/telegram", {
+          body: JSON.stringify({
+            update_id: 2001,
+            message: {
+              chat: { id: 2001456, type: "private" },
+              date: 1781092800,
+              from: { first_name: "Maxi", id: 123, username: "maxi" },
+              message_id: 2001,
+              text: "review the pull request",
+            },
+          }),
+          method: "POST",
+        }),
+        "telegram",
+        { agentIdentity: { name: "support" }, state, waitUntil: task => waitUntilTasks.push(task) },
+      )
+      expect(response.status).toBe(200)
+      await vi.waitFor(() => expect(prompts).toHaveLength(1), { timeout: 10_000 })
+
+      if (scenario === "cutoff") {
+        // Work admitted by this process must not be recovered at its startup cutoff.
+        stop = firstHandler.resume({ agentIdentity: { name: "support" }, recoverInterruptedBefore: processStartedAt, state, webhookState: state })
+        await new Promise(resolveWait => setTimeout(resolveWait, 250))
+        expect(prompts).toHaveLength(1)
+        await stop()
+      }
+      const drain = drainInlineChatInvocations({ timeoutMs: 0 })
+      if (scenario === "slow persistence") {
+        let settled = false
+        void drain.then(() => { settled = true })
+        await Promise.allSettled(waitUntilTasks)
+        await new Promise(resolveWait => setTimeout(resolveWait, 50))
+        expect(delayedWrite).toBe(true)
+        expect(settled).toBe(false)
+        persistenceGate.resolve()
+      }
+      await expect(drain).resolves.toEqual({ active: 1, interrupted: 1, unsettled: 0 })
+      await Promise.allSettled(waitUntilTasks)
+      const restartNotice = scenario === "citation notice" ? "Restarted. [source link unavailable]" : "The server restarted while I was working on this. I'll retry it automatically."
+      expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
+
+      if (scenario === "concurrent recovery" || scenario === "expired recovery lease" || scenario === "claim lease loss" || scenario === "cleanup lease loss" || scenario === "replacement recovery owner" || scenario === "index contention") {
+        const indexKey = setSpy.mock.calls.flatMap(([, mutations]) => mutations).find(mutation => mutation.key.endsWith("vitehub:interrupted-chat"))!.key
+        const originalRecord = await state.get(indexKey)
+        expireMutation = scenario === "claim lease loss" || scenario === "cleanup lease loss"
+        const replayGate = deferred<void>()
+        const dispatch = vi.spyOn(Chat.prototype, "processMessage").mockImplementation(() => replayGate.promise)
+        const initialize = vi.spyOn(Chat.prototype, "initialize")
+        const acquire = state.acquireLock.bind(state)
+        let replacement: unknown
+        const acquireSpy = vi.spyOn(state, "acquireLock").mockImplementation(async (key, ttl) => {
+          if (scenario === "index contention" && key === `${indexKey}:lock`) return null
+          const lock = await acquire(key, ttl)
+          if (lock && scenario === "replacement recovery owner" && key === `${indexKey}:lock` && dispatch.mock.calls.length) {
+            const current = await state.get<Record<string, Record<string, unknown>>>(indexKey)
+            replacement = Object.fromEntries(Object.entries(current ?? {}).map(([id, record]) => [id, { ...record, recoveryToken: "replacement" }]))
+            await state.set(indexKey, replacement)
+          }
+          return lock
+        })
+        const stops: (() => Promise<void>)[] = []
+        try {
+          for (let index = 0; index < (scenario === "concurrent recovery" ? 2 : 1); index++) {
+            // SAFETY: The test Agent supplies the route contract through defineAgent.
+            stops.push(createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+              agentIdentity: { name: "support" }, recoverInterruptedBefore: Date.now(), state, webhookState: state,
+            }))
+          }
+          await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(stops.length))
+          if (scenario !== "index contention" && scenario !== "claim lease loss") await vi.waitFor(() => expect(dispatch).toHaveBeenCalled())
+          await new Promise(resolveWait => setTimeout(resolveWait, 250))
+          expect(dispatch).toHaveBeenCalledTimes(scenario === "index contention" || scenario === "claim lease loss" ? 0 : 1)
+          if (scenario === "expired recovery lease") {
+            const records = await state.get<Record<string, { runId: string }>>(indexKey)
+            for (const record of Object.values(records ?? {})) await state.forceReleaseLock(`${indexKey}:recovery:${record.runId}`)
+            // A different startup arrives while the original dispatch is still running.
+            // SAFETY: The test Agent supplies the route contract through defineAgent.
+            stops.push(createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+              agentIdentity: { name: "support" }, recoverInterruptedBefore: Date.now() + 1, state, webhookState: state,
+            }))
+            await vi.waitFor(() => expect(initialize).toHaveBeenCalledTimes(2))
+            await new Promise(resolveWait => setTimeout(resolveWait, 250))
+            expect(dispatch).toHaveBeenCalledTimes(1)
+          }
+          const beforeCleanup = await state.get(indexKey)
+          const cleanupCommitted = deferred<void>()
+          if (scenario === "replacement recovery owner") observeMutation = () => cleanupCommitted.resolve()
+          replayGate.resolve()
+          if (scenario === "replacement recovery owner") {
+            await cleanupCommitted.promise
+            expect(replacement).toBeDefined()
+            expect(await state.get(indexKey)).toEqual(replacement)
+            return
+          }
+          if (scenario === "claim lease loss" || scenario === "cleanup lease loss") {
+            await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.some(value => value instanceof Error && value.message.includes("Lost the interrupted chat index lock")))).toBe(true))
+            expect(await state.get(indexKey)).toEqual(scenario === "claim lease loss" ? originalRecord : beforeCleanup)
+            return
+          }
+          if (scenario === "index contention") {
+            await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.some(value => value instanceof Error && value.message.includes("interrupted chat index lock")))).toBe(true), { timeout: 8_000 })
+            expect(await state.get(indexKey)).toEqual(originalRecord)
+          }
+          else {
+            await vi.waitFor(async () => expect(await state.get(indexKey)).toBeNull())
+            return
+          }
+        }
+        finally {
+          replayGate.resolve()
+          await Promise.all(stops.map(stop => stop()))
+          acquireSpy.mockRestore()
+          initialize.mockRestore()
+          dispatch.mockRestore()
+        }
+      }
+      if (scenario === "initialize failure" || scenario === "retry failure") {
+        const failure = new Error("temporary recovery failure")
+        const method = scenario === "initialize failure" ? "initialize" : "processMessage"
+        const failing = vi.spyOn(Chat.prototype, method).mockRejectedValueOnce(failure)
+        // SAFETY: The test Agent supplies the route contract through defineAgent.
+        stop = createChannelWebhookRouteHandler(createAgent(createTestChatAdapter({ deferMessageProcessing: true })) as never).resume({
+          agentIdentity: { name: "support" }, recoverInterruptedBefore: Date.now(), state, webhookState: state,
+        })
+        await vi.waitFor(() => expect(consoleError.mock.calls.some(call => call.includes(failure))).toBe(true))
+        await stop()
+        failing.mockRestore()
+        expect(prompts).toHaveLength(1)
+      }
+      const secondAdapter = createTestChatAdapter({ deferMessageProcessing: true })
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      stop = createChannelWebhookRouteHandler(createAgent(secondAdapter) as never).resume({
+        agentIdentity: { name: "support" },
+        recoverInterruptedBefore: Date.now(),
+        state,
+        webhookState: state,
+      })
+
+      await vi.waitFor(() => expect(prompts).toHaveLength(2), { timeout: 10_000 })
+      expect(prompts[1]).toContain("[Retry after interruption]")
+      expect(prompts[1]).toContain("review the pull request")
+      expect([...secondAdapter.postMessage.mock.calls, ...secondAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
+      if (scenario === "second restart") {
+        await drainInlineChatInvocations({ timeoutMs: 0 })
+      }
+      // A completed retry clears recovery; an interrupted retry only posts the exhausted notice.
+      await stop()
+      const thirdAdapter = createTestChatAdapter({ deferMessageProcessing: true })
+      // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+      stop = createChannelWebhookRouteHandler(createAgent(thirdAdapter) as never).resume({
+        agentIdentity: { name: "support" },
+        recoverInterruptedBefore: Date.now(),
+        state,
+        webhookState: state,
+      })
+      await new Promise(resolveWait => setTimeout(resolveWait, 500))
+      expect(prompts).toHaveLength(2)
+      if (scenario === "second restart") {
+        expect([...thirdAdapter.postMessage.mock.calls, ...thirdAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining("The server restarted twice"))
+      }
+    } finally {
+      // Release a run that a failed assertion left blocked, so it cannot hold the thread lock for later tests.
+      persistenceGate.resolve()
+      setSpy.mockRestore()
+      await drainInlineChatInvocations({ timeoutMs: 0 })
+      await stop?.()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+    }
+  }, 30_000)
 
   it("posts the sanitized rate-limit message to chat", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
@@ -17404,12 +17934,12 @@ describe("server helpers", () => {
       await blocked
       return "internal output"
     })
-    const createBatch = vi.fn(async ([{ params }]: Array<{ params: { input?: AgentRunInput } }>) => {
+    const createBatch = vi.fn(async ([{ id, params }]: Array<{ id: string; params: { input?: AgentRunInput } }>) => {
       workflowPayloads.push(params)
       if (createBatch.mock.calls.length === 3) {
         recoveredRetryStarted.resolve()
         await recoveredRetryBlocked
-        return [{ id: "recovered-retry", status: async () => ({ status: "queued" }) }]
+        return [{ id, status: async () => ({ status: "queued" }) }]
       }
       throw new Error("provider response was lost")
     })
@@ -18373,13 +18903,17 @@ describe("server helpers", () => {
     }
     try {
       await state.connect()
+      vi.useFakeTimers()
       pending.push(ownerHandler(request(91_120), "telegram", context))
       await vi.waitFor(() => expect(runs).toBe(1))
       pending.push(handler(request(91_121), "telegram", context))
       await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(1))
+      // Expire the 1ms delivery dedupe window before the duplicate starts.
+      await vi.advanceTimersByTimeAsync(2)
       pending.push(handler(request(91_121), "telegram", context))
       await vi.waitFor(() => expect(admitted).toHaveBeenCalledTimes(3))
       expect(sendInput).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(500)
       await Promise.all(pending.slice(1))
       expect(runs).toBe(1)
       acceptance.resolve()
@@ -18397,6 +18931,7 @@ describe("server helpers", () => {
       released.resolve()
       await Promise.allSettled(pending)
       await Promise.allSettled(reconciliation)
+      vi.useRealTimers()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }
@@ -19969,6 +20504,40 @@ describe("server helpers", () => {
     expect(adapter.postMessage.mock.invocationCallOrder[1]).toBeLessThan(adapter.deleteMessage.mock.invocationCallOrder[0]!)
   })
 
+  it.each(["final", "loading", "manual", "stream"] as const)("delivers readable citations through the %s webhook path", async (delivery) => {
+    const adapter = createTestChatAdapter()
+    const text = "Answer. citeturn228505view0turn395856view0 See [the PR](https://github.com/acme/portal/pull/1188)."
+    const expected = "Answer. [source link unavailable] See [the PR](https://github.com/acme/portal/pull/1188)."
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture supplies the Chat SDK adapter used by the webhook handler.
+          adapter: () => adapter as never,
+          messages: delivery === "loading" ? { loading: { text: "Loading…" } }
+            : delivery === "manual" ? { delivery: "manual" }
+              : { stream: delivery === "stream", fallbackStreamingPlaceholderText: null },
+        }),
+      },
+      driver: { run: () => delivery === "stream" ? {
+        fullStream: (async function* () {
+          for (const character of text) yield { text: character, type: "text-delta" }
+          yield { type: "finish", finishReason: "stop" }
+        })(),
+      } : text },
+      hooks: {
+        "agent:finish": event => event.reply(event.text!),
+      },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = await handler(chatWebhookRequest(91_300 + ["final", "loading", "manual", "stream"].indexOf(delivery)), "telegram")
+    expect(response.status).toBe(200)
+    const sent = [...adapter.postMessage.mock.calls, ...adapter.editMessage.mock.calls]
+    expect(JSON.stringify(sent)).not.toContain("")
+    const answers = sent.filter(call => JSON.stringify(call).includes(expected))
+    expect(answers).toHaveLength(1)
+  })
+
   it("does not repeat the final text when a finish hook replies with it after streaming", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")
@@ -20354,6 +20923,35 @@ describe("server helpers", () => {
         },
       ])
       expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", "Your meal was saved, but the final reply failed.")
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it.each([false, true])("formats citations in error fallback delivery, manual=%s", async (manual) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture implements the Chat SDK adapter used by the webhook handler.
+          adapter: () => adapter as never,
+          messages: {
+            stream: false,
+            errorFallbackText: "Read [the source](https://example.com). citeturn0view0",
+            ...(manual ? { delivery: "manual", loading: { text: "Loading…" } } : {}),
+          },
+        }),
+      },
+      driver: { run: () => { throw new Error("model timeout") } },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    try {
+      await expect(handler(chatWebhookRequest(manual ? 91_311 : 91_310), "telegram")).rejects.toThrow("model timeout")
+      const delivered = [...adapter.postMessage.mock.calls, ...adapter.editMessage.mock.calls].flat()
+      expect(delivered).toContainEqual("Read [the source](https://example.com). [source link unavailable]")
+      expect(JSON.stringify(delivered)).not.toContain("cite")
     } finally {
       consoleError.mockRestore()
     }
