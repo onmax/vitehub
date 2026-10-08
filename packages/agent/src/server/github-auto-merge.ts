@@ -155,16 +155,15 @@ async function githubMentionTokens(body: string): Promise<string[]> {
     } satisfies ComarkPlugin],
     autoClose: false,
     autoUnwrap: false,
-    linkify: false,
+    linkify: true,
   })
   const mentions: string[] = []
   function collectMentions(node: MarkdownNode): void {
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark has already parsed the body into its string-or-element node contract.
     if (typeof node === "string") {
-      // Remove complete URL and email contexts rather than exempting punctuation
-      // that can also precede a live mention (for example, -@login).
+      // The Markdown parser bounds automatic URL links. Remove email text
+      // while keeping punctuation that can precede a live mention.
       const text = node
-        .replace(/\b(?:https?:\/\/|www\.)[^\s<>]+/gi, " ")
         .replace(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, " ")
       for (const match of text.matchAll(githubMentionPattern)) mentions.push(match[2]!.toLowerCase())
       return
@@ -172,7 +171,12 @@ async function githubMentionTokens(body: string): Promise<string[]> {
     const [tag, attributes, ...children] = node
     if (tag === "code" || tag === "pre" || tag === null) return
     // Autolinks expose their destination as a label, unlike authored link text.
-    if (tag === "a" && children.length === 1 && children[0] === attributes.href && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(attributes.href))) return
+    if (tag === "a" && children.length === 1 && children[0] === attributes.href && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(attributes.href))) {
+      const label = String(children[0])
+      const boundary = label.search(/["']|&(?:quot|apos|#0*34|#x0*22|#0*39|#x0*27);/i)
+      if (boundary >= 0) collectMentions(label.slice(boundary))
+      return
+    }
     children.forEach(collectMentions)
   }
   document.nodes.forEach(collectMentions)

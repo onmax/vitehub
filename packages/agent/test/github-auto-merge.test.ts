@@ -159,6 +159,10 @@ describe("native auto-merge", () => {
 
   it.each([
     "-@other-user", "+@other-user", ".@other-user", "/@other-user",
+    'See https://example.com/"@other-user',
+    "See https://example.com/'@other-user",
+    'See www.example.com/"@other-user',
+    'See https://example.com/&quot;@other-user',
     "@acme/ent:platform-sre",
     '<span title="ignored @example">@other-user</span>',
     "<!-- @example --> @other-user",
@@ -353,6 +357,11 @@ describe("native auto-merge", () => {
 })
 
 describe("host-owned repair operations", () => {
+  it("rejects a body mention after a URL quote delimiter", async () => {
+    const f = fixture({ restrictCommentMentions: true })
+    await expect(f.operations.updateMetadata({ body: 'See https://example.com/"@other-user' })).rejects.toThrow(/cannot add GitHub mentions/)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
+  })
   it("binds comments and metadata to the selected PR, treating content as literal fields", async () => {
     const f = fixture()
     await f.operations.comment("$(touch /tmp/never) @secret-file")
