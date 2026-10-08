@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
+import { createHash } from "node:crypto";
+import * as v from "valibot";
 
 const exec = promisify(execFile);
 
@@ -29,6 +31,32 @@ export async function commitGitHubPullRequestWorkspace(
     if (entry?.isDirectory()) throw new Error("Repair paths must name individual files.");
   }
   if (!(await lstat(join(target, ".git"))).isDirectory()) throw new Error("Repair requires an independent prepared Git directory.");
+  const git = repairGit(target, options);
+  if (await realpath(await git("rev-parse", "--show-toplevel")) !== await realpath(target)) throw new Error("Repair target must be its checkout root.");
+  await git("merge-base", "--is-ancestor", options.expectedHead, "HEAD");
+  const recordPath = join(target, ".git", "vitehub-merge.json");
+  const rawRecord = await readFile(recordPath, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; });
+  const mergeRecord = rawRecord === undefined ? undefined : v.parse(mergeRecordSchema, JSON.parse(rawRecord));
+  if (mergeRecord) {
+    if (mergeRecord.head !== options.expectedHead || await git("rev-parse", "HEAD") !== mergeRecord.head
+      || (await readFile(join(target, ".git", "MERGE_HEAD"), "utf8")).trim() !== mergeRecord.base
+      || digest(await git("ls-files", "--stage", "-z")) !== mergeRecord.index) throw new Error("Prepared merge metadata or index changed outside the host repair tools.");
+  } else if (await git("diff", "--cached", "--name-only")) throw new Error("Repair checkout contains unrelated staged changes.");
+  await git("add", "--", ...input.paths);
+  if (mergeRecord) {
+    await writeFile(recordPath, JSON.stringify({ ...mergeRecord, index: digest(await git("ls-files", "--stage", "-z")) }));
+    const unresolved = await git("diff", "--name-only", "--diff-filter=U");
+    if (unresolved) throw new Error(`Resolve the remaining merge conflicts and call commitRepair with their file paths: ${unresolved}`);
+  }
+  if (mergeRecord || await git("diff", "--cached", "--name-only")) await git("commit", "-m", input.message);
+  if (mergeRecord) await rm(recordPath);
+  options.signal?.throwIfAborted();
+  return await git("rev-parse", "HEAD");
+}
+
+const mergeRecordSchema = v.object({ head: v.string(), base: v.string(), index: v.string() });
+const digest = (index: string) => createHash("sha256").update(index).digest("hex");
+function repairGit(target: string, options: { signal?: AbortSignal; identity?: Record<string, string | undefined> }) {
   // No shell credentials, ambient Git bindings, global configuration, hooks,
   // signing programs or filesystem monitors may run during a host commit.
   const env: NodeJS.ProcessEnv = {
@@ -41,12 +69,23 @@ export async function commitGitHubPullRequestWorkspace(
     GIT_COMMITTER_NAME: options.identity?.GIT_COMMITTER_NAME ?? "ViteHub Babysitter",
     GIT_COMMITTER_EMAIL: options.identity?.GIT_COMMITTER_EMAIL ?? "babysitter@vitehub.dev",
   };
-  const git = async (...args: string[]) => (await exec("git", ["--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", ...args], { cwd: target, env, signal: options.signal, maxBuffer: 16 * 1024 * 1024 })).stdout.trim();
-  if (await realpath(await git("rev-parse", "--show-toplevel")) !== await realpath(target)) throw new Error("Repair target must be its checkout root.");
-  await git("merge-base", "--is-ancestor", options.expectedHead, "HEAD");
-  if (await git("diff", "--cached", "--name-only")) throw new Error("Repair checkout contains unrelated staged changes.");
-  await git("add", "--", ...input.paths);
-  if (await git("diff", "--cached", "--name-only")) await git("commit", "-m", input.message);
-  options.signal?.throwIfAborted();
-  return await git("rev-parse", "HEAD");
+  return async (...args: string[]) => (await exec("git", ["--literal-pathspecs", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", ...args], { cwd: target, env, signal: options.signal, maxBuffer: 16 * 1024 * 1024 })).stdout.trim();
+
+}
+
+/** Prepare an exact-base merge on the host before Git metadata becomes read-only. */
+export async function prepareGitHubRepairBase(target: string, options: { expectedHead: string; base: string; signal?: AbortSignal }): Promise<void> {
+  if (!/^[a-f\d]{40}$/i.test(options.base)) throw new Error("Repair base must be an exact commit SHA.");
+  const git = repairGit(target, options);
+  if (await realpath(await git("rev-parse", "--show-toplevel")) !== await realpath(target) || !(await lstat(join(target, ".git"))).isDirectory()) throw new Error("Base merge requires an independent prepared checkout.");
+  if (await git("rev-parse", "HEAD") !== options.expectedHead || await git("status", "--porcelain")) throw new Error("Base merge requires the clean assigned PR head.");
+  try {
+    await git("merge", "--no-commit", "--no-ff", "--no-verify", "--", options.base);
+  } catch (error) {
+    if (!await git("diff", "--name-only", "--diff-filter=U")) throw error;
+  }
+  const mergeHead = await readFile(join(target, ".git", "MERGE_HEAD"), "utf8").catch(() => undefined);
+  if (!mergeHead) return;
+  if (mergeHead.trim() !== options.base) throw new Error("Prepared merge selected a different base.");
+  await writeFile(join(target, ".git", "vitehub-merge.json"), JSON.stringify({ head: options.expectedHead, base: options.base, index: digest(await git("ls-files", "--stage", "-z")) }));
 }

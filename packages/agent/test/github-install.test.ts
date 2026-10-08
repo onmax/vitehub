@@ -19,7 +19,7 @@ async function fixture() {
 it("installs on the host with a frozen lockfile and no host secrets or lifecycle scripts", async () => {
   const root = await fixture();
   await installGitHubPullRequestWorkspace(root);
-  expect(await readFile(join(root, "args.txt"), "utf8")).toBe("pnpm\ninstall\n--frozen-lockfile\n--ignore-scripts\n");
+  expect(await readFile(join(root, "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false });
 });
 it("records a reproduced installation failure for durable retry", async () => {
@@ -27,4 +27,27 @@ it("records a reproduced installation failure for durable retry", async () => {
   await writeFile(join(root, "bin", "corepack"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toBeInstanceOf(GitHubWorkspaceInstallError);
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "failed" });
+});
+
+it("rejects checkout-selected package-manager executables before running Corepack", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@https://example.com/untrusted.tgz" }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/official matching/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+it.each(["1.22.22", "4.9.2"])("suppresses Yarn %s delegation, plugins and workspace scripts", async version => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: `yarn@${version}` }));
+  await writeFile(join(root, "yarn.lock"), "");
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > args.txt\nprintf "%s\\n" "$YARN_RC_FILENAME" "$COREPACK_ENABLE_PROJECT_SPEC" "$YARN_IGNORE_PATH" > env.txt\n', { mode: 0o755 });
+  await installGitHubPullRequestWorkspace(root);
+  const args = await readFile(join(root, "args.txt"), "utf8");
+  if (version.startsWith("1.")) expect(args).toContain("--ignore-scripts\n--ignore-path\n--no-default-rc");
+  else {
+    expect(args).toContain("--immutable\n--mode=skip-build");
+    const [config] = (await readFile(join(root, "env.txt"), "utf8")).split("\n");
+    expect(config).toMatch(/^\.vitehub-install-[a-f\d-]+\.yml$/);
+    await expect(readFile(join(root, config!))).rejects.toThrow();
+  }
 });

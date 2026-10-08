@@ -402,6 +402,30 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it("retains permission fallback when new check evidence prevents recording the pass", async () => {
+    const f = await fixture(false, false, { actionsDenied: true, result: { waitForChecksHead: "a".repeat(40) } });
+    const key = `ci-permission-fallback:v1:acme/app:${f.pr().head.sha}`;
+    const finish = f.runtime.inbox.finish.bind(f.runtime.inbox);
+    let changed = false;
+    vi.spyOn(f.runtime.inbox, "finish").mockImplementation(async (claim, result) => {
+      if (!changed && f.passes.length) {
+        changed = true;
+        await f.runtime.inbox.ingest("pending-check-during-pass", "check_run", {
+          repository: { full_name: "acme/app" }, action: "created",
+          check_run: { id: 88, head_sha: f.pr().head.sha, name: "other", status: "in_progress", pull_requests: [{ number: 12 }] },
+        });
+      }
+      return await finish(claim, result);
+    });
+    try {
+      await f.reconcile();
+      expect(changed).toBe(true);
+      expect(f.passes).toHaveLength(1);
+      expect(await f.runtime.inbox.meta(key)).not.toHaveProperty("consumedAt");
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("processes new feedback after a same-head permission fallback was consumed", async () => {
     const f = await fixture(false, false, { actionsDenied: true });
     try {
@@ -483,6 +507,34 @@ describe("Babysitter preset runtime", () => {
       expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
       expect(createProviderRuntime).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
+  });
+
+  it.each([404, 502])("reconciles an unavailable asynchronous result with HTTP %s", async status => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    const uuid = "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42";
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes(`repos/acme/app/pulls/12/merge-async/${uuid}`)) throw new Error(`gh: Merge result unavailable (HTTP ${status})`);
+      if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify({ status: "pending", details: { uuid, expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }), stderr: "" };
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
+      vi.setSystemTime(Date.now() + 31_000);
+      await f.reconcile();
+      if (status === 404) expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).not.toBe("terminal");
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
+  });
+
+  it("preserves the dependency installation opt-out in the configured preset", () => {
+    const agent = defineAgent({ extends: babysitter, options: { install: false } });
+    expect(agent.install).toBe(false);
+    expect(agent.options.install).toBe(false);
   });
 
   it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("releases the claim when branch safety read %s fails", async (path) => {

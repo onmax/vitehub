@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { readAsyncMerge, requestAsyncMerge } from "./async-merge.ts";
+import { prepareGitHubRepairBase } from "../../server/github-repair.ts";
 import { GitHubWorkspaceInstallError, installGitHubPullRequestWorkspace } from "../../server/github-install.ts";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
@@ -282,7 +283,18 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           return "merged";
         }
         if (pending.requestId) {
-          const result = await readAsyncMerge(github, repository, number, pending.requestId, signal);
+          const result = await readAsyncMerge(github, repository, number, pending.requestId, signal).catch(async (error: unknown) => {
+            if (!(error instanceof Error) || !/HTTP 404/.test(error.message)) throw error;
+            // Result UUIDs expire after 24 hours. A successful live PR read above
+            // proves this repository is accessible; an expired UUID must not
+            // strand a closed PR or bypass the current head's normal merge gates.
+            const liveHead = isRuntimeRecord(live) && isRuntimeRecord(live.head) ? live.head.sha : undefined;
+            if ((state?.toLowerCase() !== "open" && state?.toLowerCase() !== "closed") || !hasRuntimeType(liveHead, "string") || !/^[a-f\d]{40}$/i.test(liveHead)) throw error;
+            await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+            await pullRequestInbox.finish(claim, { text: `Expired GitHub merge result reconciled at head ${liveHead}; rechecking normal gates.`, retry: state.toLowerCase() === "open", terminal: state.toLowerCase() === "closed" });
+            return undefined;
+          });
+          if (!result) return "blocked";
           if (result.status === "pending" || result.status === "enqueued") return await parkMerge(`Waiting for GitHub merge request ${pending.requestId}.`);
           await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
           const merged = result.status === "merged";
@@ -384,7 +396,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const postPushGraceMs = options.postPushGraceMs ?? 3 * 60_000;
 
   async function parkOnPushedHead(claim: Claim, text: string, head: string) {
-    await pullRequestInbox.finish(claim, { text, progress: { kind: "verified", evidence: `push:${head}` },
+    return await pullRequestInbox.finish(claim, { text, progress: { kind: "verified", evidence: `push:${head}` },
       wait: { ...createCheckWait(claim.snapshot, waitPolicy), headSha: head } });
   }
 
@@ -975,6 +987,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                       if (!preparedDirectories.has(context.cwd)) {
                         await prepared.prepareWorkspace(context.cwd);
                         if (presetOptions.install !== false) await installGitHubPullRequestWorkspace(context.cwd, abortSignal);
+                        if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
+                          if (!pullRequest.baseRefOid) throw new Error("Conflict repair requires the exact base commit.");
+                          await prepareGitHubRepairBase(context.cwd, { expectedHead: pullRequest.headRefOid, base: pullRequest.baseRefOid, signal: abortSignal });
+                        }
                         preparedDirectories.add(context.cwd);
                       }
                       providerDirectory = context.cwd;
@@ -1042,33 +1058,34 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
           if (assessed) await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
+          let recorded = false;
           const terminal = current?.status === "terminal";
           if (terminal) {
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });
           } else if (pushedHead) {
             outcome = "waiting";
-            await parkOnPushedHead(inboxClaim, resultText, pushedHead);
+            recorded = await parkOnPushedHead(inboxClaim, resultText, pushedHead);
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && passResult?.wait?.kind === "external") {
             outcome = "waiting";
             await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, null);
-            await pullRequestInbox.finish(inboxClaim, { text: resultText,
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText,
               wait: await externalWait(inboxClaim.snapshot, passResult.wait.wake, passResult.wait.reason) });
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && (passResult?.wait?.kind === "checks" && passResult.wait.headSha === pullRequest.headRefOid
             || passResult?.waitForChecksHead === pullRequest.headRefOid || hasPendingChecks(inboxClaim.snapshot, waitPolicy))) {
             // A reproduced external gate waits on this head until its evidence changes.
             outcome = "waiting";
             // Evidence that changed during the pass makes this wait stale, and the PR stays claimable.
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, progress: { kind: "no-progress" },
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, progress: { kind: "no-progress" },
               wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else if (assessed) {
             outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else {
             // A park that names no external gate still consumed a pass without progress.
             outcome = "retry";
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, retry: true, progress: { kind: "no-progress" } });
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, retry: true, progress: { kind: "no-progress" } });
           }
-          if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
+          if (recorded && ciRecovery?.state === "blocked" && ciRecovery.permission) {
             await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now(), evidenceKey: fallbackEvidenceKey });
           }
         } catch (error) {

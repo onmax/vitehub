@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import * as v from "valibot";
 
@@ -18,15 +19,43 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");
   await mkdir(home, { recursive: true });
-  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, YARN_ENABLE_SCRIPTS: "false", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" };
+  const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, YARN_ENABLE_SCRIPTS: "false", YARN_IGNORE_PATH: "1", COREPACK_ENABLE_PROJECT_SPEC: "0", COREPACK_DEFAULT_TO_LATEST: "0", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" };
   const record = join(target, ".git", "vitehub-install.json");
   let command: string | undefined;
   let args: string[] = [];
+  let yarnConfig: string | undefined;
   try {
     const { packageManager } = v.parse(manifest, JSON.parse(await readFile(join(target, "package.json"), "utf8")));
-    if (await exists(join(target, "pnpm-lock.yaml"))) { command = "corepack"; args = ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"]; }
-    else if (await exists(join(target, "package-lock.json"))) { command = "npm"; args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"]; }
-    else if (await exists(join(target, "yarn.lock"))) { command = "corepack"; args = ["yarn", "install", packageManager?.startsWith("yarn@1.") ? "--frozen-lockfile" : "--immutable"]; }
+    // Corepack must not execute a PR-supplied URL, devEngines override or yarnPath.
+    // Select an official package-manager version and disable repository extensions.
+    const version = (name: string, fallback: string) => {
+      if (!packageManager) return fallback;
+      const match = packageManager.match(/^(pnpm|npm|yarn)@(\d+\.\d+\.\d+)(?:\+sha(?:224|256|384|512)\.[a-f\d]+)?$/);
+      if (!match || match[1] !== name) throw new Error("packageManager must select an official matching package-manager version.");
+      return match[2]!;
+    };
+    if (await exists(join(target, "pnpm-lock.yaml"))) {
+      command = "corepack";
+      args = [`pnpm@${version("pnpm", "10.34.6")}`, "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--config.manage-package-manager-versions=false"];
+    }
+    else if (await exists(join(target, "package-lock.json"))) {
+      if (packageManager) version("npm", "");
+      command = "npm"; args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
+    }
+    else if (await exists(join(target, "yarn.lock"))) {
+      command = "corepack";
+      const yarnVersion = version("yarn", "1.22.22");
+      args = [`yarn@${yarnVersion}`, "install"];
+      if (yarnVersion.startsWith("1.")) args.push("--frozen-lockfile", "--ignore-scripts", "--ignore-path", "--no-default-rc");
+      else {
+        // A fresh rc filename ignores every checkout/ancestor plugin and yarnPath.
+        // skip-build also suppresses workspace scripts, unlike enableScripts alone.
+        env.YARN_RC_FILENAME = `.vitehub-install-${randomUUID()}.yml`;
+        yarnConfig = join(target, env.YARN_RC_FILENAME);
+        await writeFile(yarnConfig, "enableScripts: false\nignorePath: true\n", { flag: "wx" });
+        args.push("--immutable", "--mode=skip-build");
+      }
+    }
     else throw new Error("Frozen dependency installation requires a supported lockfile.");
     await exec(command, args, { cwd: target, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
     await writeFile(record, JSON.stringify({ status: "installed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: false }));
@@ -35,5 +64,7 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
     await writeFile(record, JSON.stringify({ status: "failed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), reason })).catch(() => undefined);
     if (signal?.aborted) throw error;
     throw new GitHubWorkspaceInstallError(error);
+  } finally {
+    if (yarnConfig) await rm(yarnConfig, { force: true });
   }
 }

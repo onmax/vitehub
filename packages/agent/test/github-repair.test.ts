@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
-import { commitGitHubPullRequestWorkspace } from "../src/server/github-repair.ts";
+import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -48,4 +48,27 @@ it("rejects changed ancestry and pre-existing staged changes", async () => {
   await git(root, "add", ".");
   await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "orphan");
   await expect(commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["file.txt"] }, { expectedHead })).rejects.toThrow();
+});
+
+it("prepares and commits a conflicting exact-base merge through host tools", async () => {
+  const { root } = await fixture();
+  await git(root, "checkout", "-b", "main");
+  await writeFile(join(root, "file.txt"), "base edit\n");
+  await writeFile(join(root, "base-only.txt"), "base addition\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "base change");
+  const base = await git(root, "rev-parse", "HEAD");
+  await git(root, "checkout", "repair");
+  await writeFile(join(root, "file.txt"), "PR edit\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "PR change");
+  const expectedHead = await git(root, "rev-parse", "HEAD");
+  await prepareGitHubRepairBase(root, { expectedHead, base });
+  expect(await readFile(join(root, "file.txt"), "utf8")).toContain("<<<<<<<");
+  await writeFile(join(root, "file.txt"), "combined edit\n");
+  const head = await commitGitHubPullRequestWorkspace(root, { message: "merge base and resolve conflict", paths: ["file.txt"] }, { expectedHead });
+  expect(await git(root, "rev-parse", `${head}^1`)).toBe(expectedHead);
+  expect(await git(root, "rev-parse", `${head}^2`)).toBe(base);
+  expect(await git(root, "show", `${head}:base-only.txt`)).toBe("base addition");
+  expect(await git(root, "status", "--porcelain")).toBe("");
 });
