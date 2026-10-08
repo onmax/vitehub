@@ -25,9 +25,12 @@ export function hasRuntimeType<TType extends keyof RuntimeTypeMap>(
     case "object":
     case "string":
     case "symbol":
-    case "undefined":
+    case "undefined": {
       // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This shared guard classifies opaque JavaScript inputs without coercion or exceptions.
-      return typeof value === expected
+      const representation = typeof value
+      // Callable HTMLDDA browser values report undefined without being undefined.
+      return (representation === "undefined" && value !== undefined ? "function" : representation) === expected
+    }
   }
   throw runtimeErrorDiagnostics.RUNTIME_R0008({ message: `Unsupported runtime type: ${expected}` })
 }
