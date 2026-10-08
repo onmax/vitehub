@@ -74,6 +74,8 @@ export async function searchDocs() {
 
 Shell policy can bound calls, processes, output size, and timeouts. A declared boundary describes the provider contract; it is not proof of operating-system isolation. Use [Sandbox](https://vitehub.dev/docs/sandbox) when work needs provider-managed isolation.
 
+Custom providers can return Shell Observations as class instances. Sessions preserve every declared observation field, including fields exposed through getters.
+
 The Just Bash `commands` list also applies to controlled `curl` requests. A Source network grant permits access to its declared target, but `curl` must still be included when you configure a command list.
 
 The provider copies the command list at creation. Later changes to the supplied list do not change its permissions or network boundary.

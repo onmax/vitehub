@@ -22,6 +22,8 @@ Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Wo
 
 Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
 
+Custom providers can return Shell Observations as class instances. Sessions preserve every declared observation field, including fields exposed through getters.
+
 ## Use Shell sessions
 
 A Shell Session keeps policy across repeated commands: call budget, output size, timeouts, and process budget.
