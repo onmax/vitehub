@@ -52,8 +52,10 @@ export function resolveRuntimeCloudflareConfig(
   const value = mergeCloudflareConfig(defaults, definition)
   if (!value) return
   const inheritsResource = definition?.databaseId === undefined && definition?.databaseName === undefined
-  const binding = definition?.binding?.trim() || options.binding
-    || (inheritsResource || !defaults ? resolveCloudflareD1BindingName(options.name, defaults?.binding) : undefined)
+  const binding = options.resource === "opaque" && !inheritsResource
+    ? undefined
+    : definition?.binding?.trim() || options.binding
+      || (inheritsResource || !defaults ? resolveCloudflareD1BindingName(options.name, defaults?.binding) : undefined)
   const config: CloudflareD1BindingConfig & { migrationsDir?: string } = { ...value, binding }
   if (inheritsResource || options.resource !== "opaque") config.databaseId = withConfigValueFallback(config.databaseId, options.provisionedId)
   if (options.migrationsDir) config.migrationsDir = options.migrationsDir

@@ -309,11 +309,15 @@ afterAll(async () => {
 
 describe("Vite db provider outputs", () => {
   it.each([
-    { form: "identifier", resource: "application" },
-    { form: "spread", resource: "application" },
-    { form: "identifier", resource: "inherited" },
-    { form: "spread", resource: "inherited" },
-  ])("uses the evaluated $resource resource for an opaque $form D1 configuration in prepared and Vite outputs", { timeout: 60_000 }, async ({ form, resource }) => {
+    { access: "http", binding: undefined, form: "identifier", resource: "application" },
+    { access: "http", binding: undefined, form: "spread", resource: "application" },
+    { access: "http", binding: undefined, form: "identifier", resource: "inherited" },
+    { access: "http", binding: undefined, form: "spread", resource: "inherited" },
+    { access: "http", binding: "HOST_DB", form: "identifier", resource: "application" },
+    { access: "http", binding: "HOST_DB", form: "spread", resource: "application" },
+    { access: "libsql", binding: "HOST_DB", form: "identifier", resource: "application" },
+    { access: "libsql", binding: "HOST_DB", form: "spread", resource: "application" },
+  ])("uses the evaluated $resource resource for an opaque $form D1 configuration through $access with binding $binding in prepared and Vite outputs", { timeout: 60_000 }, async ({ access, binding, form, resource }) => {
     const rootDir = await createDbBuildProject("vitehub-db-vite-opaque-resource-")
     await rm(join(rootDir, "server/databases"), { recursive: true })
     await mkdir(join(rootDir, "server/databases"), { recursive: true })
@@ -321,14 +325,14 @@ describe("Vite db provider outputs", () => {
       "import { defineDatabase } from '@vite-hub/database'",
       "import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'",
       "const notes = sqliteTable('notes', { id: integer('id'), title: text('title') })",
-      `const cloudflare = ${resource === "application" ? "{ databaseId: 'application-id', http: true }" : "{ http: true }"}`,
+      `const cloudflare = { ${resource === "application" ? "databaseId: 'application-id'," : ""} ${binding ? `binding: '${binding}',` : ""} ${access === "http" ? "http: true," : ""} }`,
       "const settings = { cloudflare, schema: { notes } }",
-      `export default defineDatabase(${form === "identifier" ? "{ cloudflare, schema: { notes } }" : "{ ...settings }"})`,
+      `export default defineDatabase({ ${form === "identifier" ? "cloudflare, schema: { notes }," : "...settings,"} ${access === "libsql" ? "connection: { url: 'https://application.example' }," : ""} })`,
       "",
     ].join("\n"))
     const runtimeConfig = resolveDBViteConfig({
       binding: "HOST_DB",
-      cloudflare: { http: true },
+      cloudflare: access === "http" ? { http: true } : undefined,
       databaseId: "host-id",
       databaseName: "host-db",
       driver: "d1",
@@ -378,10 +382,17 @@ describe("Vite db provider outputs", () => {
         "process.env.CLOUDFLARE_ACCOUNT_ID = 'test-account'",
         "process.env.CLOUDFLARE_API_TOKEN = 'test-token'",
         "const requestApp = globalThis.fetch",
-        "globalThis.fetch = async (url) => {",
+        "globalThis.fetch = async (input) => {",
+        "  const url = input.url ?? String(input)",
         "  requests.push(String(url))",
-        "  const rows = String(url).includes('/application-id/') ? [[1, 'application']] : [[0, 'host']]",
-        "  return Response.json({ success: true, result: [{ success: true, results: { rows } }] })",
+        ...(access === "libsql" ? [
+          "  const request = await input.json()",
+          "  const result = { cols: [{ name: 'id', decltype: 'INTEGER' }, { name: 'title', decltype: 'TEXT' }], rows: [[{ type: 'integer', value: '1' }, { type: 'text', value: 'application' }]], affected_row_count: 0, last_insert_rowid: null }",
+          "  return Response.json({ baton: null, base_url: null, results: request.requests.map(entry => ({ type: 'ok', response: entry.type === 'execute' ? { type: 'execute', result } : { type: entry.type } })) })",
+        ] : [
+          "  const rows = String(url).includes('/application-id/') ? [[1, 'application']] : [[0, 'host']]",
+          "  return Response.json({ success: true, result: [{ success: true, results: { rows } }] })",
+        ]),
         "}",
         ...(provider === "cloudflare" ? [
           "const response = await worker.fetch(new Request('https://example.com'), { HOST_DB: binding }, {})",
@@ -401,10 +412,11 @@ describe("Vite db provider outputs", () => {
       const result = JSON.parse(stdout)
       const expectedRows = resource === "application" ? [{ id: 1, title: "application" }] : [{ id: 0, title: "host" }]
       expect(result.rows).toEqual({ definition: expectedRows, registry: expectedRows })
-      const usesHttp = resource === "application" || provider === "vercel"
+      const usesRemote = resource === "application" || provider === "vercel"
       const databaseId = resource === "application" ? "application-id" : "host-id"
-      expect(result.requests).toEqual(usesHttp ? Array(2).fill(`https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/${databaseId}/raw`) : [])
-      expect(result.nativeQueries).toHaveLength(usesHttp ? 0 : 2)
+      const expectedRequest = access === "libsql" ? expect.stringMatching(/^https:\/\/application\.example\/v\d\/pipeline$/) : `https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/${databaseId}/raw`
+      expect(result.requests).toEqual(usesRemote ? Array(2).fill(expectedRequest) : [])
+      expect(result.nativeQueries).toHaveLength(usesRemote ? 0 : 2)
     }
     await assertOutput(workerFile, "cloudflare")
 
@@ -415,7 +427,7 @@ describe("Vite db provider outputs", () => {
       "export default defineConfig({",
       "  appType: 'custom',",
       "  build: { outDir: 'dist/client', rolldownOptions: { input: resolve(import.meta.dirname, 'src/server.ts') }, ssr: true },",
-      "  plugins: [hubDb({ binding: 'HOST_DB', cloudflare: { http: true }, databaseId: 'host-id', databaseName: 'host-db', driver: 'd1' })],",
+      `  plugins: [hubDb({ binding: 'HOST_DB', ${access === "http" ? "cloudflare: { http: true }," : ""} databaseId: 'host-id', databaseName: 'host-db', driver: 'd1' })],`,
       "})",
       "",
     ].join("\n"))

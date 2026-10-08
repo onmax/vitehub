@@ -84,6 +84,8 @@ A Definition inherits the integration resource when it omits both `databaseId` a
 
 Native D1 output requires a Cloudflare block that ViteHub can read as a literal. An identifier, top-level spread, or other opaque resource expression fails the provider build when no D1 HTTP or remote libSQL connection is known. This rule also applies when the evaluated block would inherit the integration resource. Use a literal block for native output, or configure HTTP or libSQL access.
 
+An opaque Definition that selects its own resource uses remote HTTP or libSQL access. It does not use a native binding, including an explicit binding that matches the integration resource.
+
 Provisioned IDs remain fallbacks for runtime Env values in direct Vite and Nuxt output. A value supplied at runtime takes precedence. An opaque Definition that selects its own resource does not receive the integration resource's provisioned ID.
 
 When a libSQL connection URL or auth token changes at runtime, the next database
