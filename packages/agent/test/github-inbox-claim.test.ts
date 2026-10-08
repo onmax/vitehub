@@ -76,7 +76,7 @@ test('own repair head proven from provider Git survives cleanup; external head s
   assert.equal(reads, 1)
   current.pr!.head!.sha = 'external'
   assert.equal(await check(), 'Pull request head changed.')
-  assert.equal(reads, 1)
+  assert.equal(reads, 2)
  } finally { await inbox.close() }
 })
 
@@ -148,4 +148,25 @@ test('a verified repair head rejects rollback even if the provider also rolls ba
   current.pr!.head!.sha = claim.snapshot.pr!.head!.sha
   assert.equal(await check(), 'Pull request head changed.')
  } finally { await inbox.close() }
+})
+
+
+test('each successive worker repair head is verified while unrelated heads still cancel', async () => {
+  const inbox = await fixture()
+  try {
+    const claim = (await inbox.claim(1))[0]!, current = structuredClone(claim.snapshot)
+    let providerHead = 'repair-first', reads = 0
+    const check = createClaimStopCheck(claim, async () => current, async () => { reads++; return providerHead })
+    current.pr!.head!.sha = providerHead
+    assert.equal(await check(), undefined)
+    assert.equal(reads, 1)
+    providerHead = 'repair-second'; current.pr!.head!.sha = providerHead
+    assert.equal(await check(), undefined)
+    assert.equal(reads, 2)
+    assert.equal(await check(), undefined)
+    assert.equal(reads, 2, 'an already proven head survives cleanup without repeated Git reads')
+    current.pr!.head!.sha = 'external'
+    assert.equal(await check(), 'Pull request head changed.')
+    assert.equal(reads, 3)
+  } finally { await inbox.close() }
 })
