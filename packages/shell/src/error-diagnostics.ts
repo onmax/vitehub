@@ -30,5 +30,6 @@ export const shellErrorDiagnostics = /*#__PURE__*/ defineDiagnostics({
     SHELL_R0020: dynamicError,
     SHELL_R0021: dynamicError,
     SHELL_R0022: dynamicError,
+    SHELL_R0023: dynamicError,
   },
 })
