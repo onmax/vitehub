@@ -79,3 +79,7 @@ Analysis is not sandbox enforcement. The Execution Provider and caller policy co
 | `outputTruncated` | `boolean` | Whether `maxOutputLength` truncated output. |
 | `timedOut` | `boolean` | Whether timeout ended command execution. |
 | `workspaceGuardrail` | `object` | Workspace inspection feedback: `broad_search`, `missing_path`, `no_match`, or `timeout`. |
+
+## Workspace filesystem
+
+The Workspace filesystem has a virtual root at `/workspace`. Root existence checks return true. On a writable filesystem, recursive directory creation at the root succeeds without changing the Workspace. Creating the root without `recursive` fails because it already exists.
