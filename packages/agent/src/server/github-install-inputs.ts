@@ -146,7 +146,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
       const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
       if (local) await selectLocalPackage(local[1]!, base);
-      else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\~]|[a-z]:[/\\])/i.test(value)) await selectLocalPackage(value, base);
+      else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\]|~(?:[^/\\]*[/\\]|$)|[a-z]:[/\\])/i.test(value)) await selectLocalPackage(value, base);
       else if (field === "directory") await selectLocalPackage(value, base);
       return;
     }

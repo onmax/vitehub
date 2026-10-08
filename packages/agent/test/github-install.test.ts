@@ -654,3 +654,18 @@ it("removes obsolete workspace output when the next install omits that workspace
   await expect(readFile(join(root, "packages", "old", "node_modules", "stale.txt"))).rejects.toThrow();
   await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
 });
+
+it.each(['~1.2.1', '~2.2.10 || ^3.0.0', '~1.2', '~1'])("accepts the registry semver range %s without treating it as a home path", async source => {
+  const root = await fixture();
+  await writeFile(join(root, 'package.json'), JSON.stringify({ packageManager: 'pnpm@10.34.6', peerDependencies: { safe: source } }));
+  await writeFile(join(root, 'pnpm-lock.yaml'), `lockfileVersion: '9.0'\npackages:\n  safe@1.2.1:\n    peerDependencies:\n      peer: ${JSON.stringify(source)}\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+  expect(await readFile(join(root, '.git', 'args.txt'), 'utf8')).toContain('pnpm@10.34.6');
+});
+
+it.each(['~/private', '~other/private', 'file:~/private', 'file:~1.2.1'])("continues rejecting the host home source %s", async source => {
+  const root = await fixture();
+  await writeFile(join(root, 'package.json'), JSON.stringify({ dependencies: { unsafe: source } }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local|Git dependencies/);
+  await expect(readFile(join(root, '.git', 'args.txt'))).rejects.toThrow();
+});
