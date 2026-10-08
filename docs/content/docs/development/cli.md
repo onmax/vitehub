@@ -65,7 +65,7 @@ Available namespaces:
 | `vitehub blob del` | Available | Blob Package | Delete one blob and print what changed. |
 | `vitehub channels history` | Available | Agent Package | Download one deployed conversation and its attachments. |
 | `vitehub channels sync` | Available | Agent Package | Inspect or apply provider-owned webhook registrations for a deployed stage. |
-| `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent from a development server. |
+| `vitehub channels replay` | Available | Agent Package | Replay stored Channel history through an Agent from a development server or authenticated Console. |
 | `vitehub console dev` | Available | Console integration | Start the app's development command with deterministic Console fixture data. |
 | `vitehub connections` | Available | Connections Package | Connect OAuth accounts, set API keys, list Connections, read activity, and approve or deny writes. |
 | `vitehub env inspect` | Available | Env Package | List declared Server Env variables and their status without values. |
@@ -290,6 +290,12 @@ Use `--webhook-path <path>` to export through a different path on the confirmed 
 A custom Channel export contains the items returned by its history Collection. With `--invocations`, each item includes `invocations` with `id`, `status`, `createdAt`, `updatedAt`, `dryRun`, `label`, `deliveries: [{ channel, text }]`, and optional retained final `text`. Delivery text is the validated reply before application formatting, including dry-run writes. Retaining this text requires Invocation content storage or `metadataContent` containing `channel.effect.content`.
 
 A Chat SDK export can only contain history available through the adapter or its configured State Adapter. Telegram's Bot API cannot backfill arbitrary old messages, so its durable fallback uses the configured `threadHistory` window, which defaults to 100 messages retained for seven days. Export before that window expires when the archive is intended for recovery.
+
+## Replay Channel history
+
+`vitehub channels replay --agent support --channel mailbox --dry-run --label round-one --query folder=inbox` records each run with `triggeredBy: 'round-one'` and `vitehub.channel.key`. Repeat `--query key=value` to send multiple values, as with `--filter`. Labels are separate from the history query, non-empty, and limited to 512 characters. Query fields named `label` use `--query label=value`.
+
+Replay requires the development project token or deployed Console authentication. It validates saved items through the Channel trigger without rechecking historical provider signatures. Public webhooks retain signature verification. The Vite development loop uses the host's configured Console journal, so local dry-run runs do not need app-side Invocation configuration.
 
 ## Manage Database migrations
 

@@ -188,6 +188,12 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
+Use `--label <label>` to group replayed Invocations by the `triggeredBy` annotation. Labels must be non-empty and at most 512 characters. Repeatable `--query key=value` is an alias for `--filter key=value`. The label stays outside the Collection query; to filter a query field named `label`, use `--query label=value`. The programmatic option is `replayChannel(agent, channel, { label })`. Forced rounds get separate Invocation IDs and labels, while unlabeled replay keeps its existing behavior.
+
+With the Console enabled, the Vite development loop inherits its configured Invocation journal, including definitions authored with `@vite-hub/agent`. Local dry-run replays need no app-side Invocation configuration.
+
+Authenticated replay uses the saved history item without requiring the provider webhook signature again. Live webhooks still verify their signatures and replayed input still passes trigger schema validation.
+
 `replayChannel()` validates `query` with the Collection's query schema, then reads pages until it reaches `limit` or the end of the history. It returns `processed`, `skipped`, and `failed` counts, one entry per item, and `nextCursor`. Pass `nextCursor` as `cursor` to continue. It is `null` when no history remains.
 
 An unconfirmed pending Invocation held by another claim reports a retryable failure. Workflow dispatch records its attempt before calling the provider. If recovery cannot observe that run, the Invocation stays pending and reports a retryable failure; a later replay checks the provider again. A provider status of `unknown` does not prove that an attempted dispatch was rejected. A reservation that records no dispatch attempt can be recovered after its claim expires. Older journals without this marker remain pending while provider status is unknown. Use `force` only when you intend to start a separate Invocation with a fresh ID. Running Invocations and confirmed Workflow dispatches are skipped. Replay also checks journals created with the earlier `channel-replay:<channel>:<key>` IDs before starting a new Invocation.
