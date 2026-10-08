@@ -17,7 +17,7 @@ Queue has hosted providers only. This tutorial uses Cloudflare Queues. Use Verce
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add @vite-hub/queue h3
+pnpm add @vite-hub/queue h3 nitro
 pnpm add -D @vite-hub/cli vite
 ```
 
@@ -26,9 +26,11 @@ Register the integration in `vite.config.ts`:
 ```ts [vite.config.ts]
 import { hubQueue } from '@vite-hub/queue/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubQueue({ provider: 'cloudflare' })],
+  nitro: { preset: 'cloudflare_module' },
+  plugins: [hubQueue({ provider: 'cloudflare' }), nitro() as never],
 })
 ```
 
@@ -85,9 +87,30 @@ Build the app and inspect the generated definition before deploying:
 ```bash [commands/inspect]
 pnpm vite build
 pnpm vitehub inspect definitions --kind queue
+pnpm vitehub inspect provider-output
 ```
 
-You should see `welcome-email` with its source file and payload registry. Send a request, then look for the handler log in the provider consumer.
+You should see `welcome-email` and the generated Cloudflare producer and consumer output. Nitro writes the Worker configuration to `.output/server/wrangler.json`. This build proves discovery and output. Queue has no local provider.
+
+Provision the queue and deploy the generated Worker with Cloudflare credentials:
+
+```bash [commands/deploy]
+export CLOUDFLARE_ACCOUNT_ID=...
+export CLOUDFLARE_API_TOKEN=...
+pnpm vitehub provision run --provider cloudflare
+pnpm exec nitro deploy --prebuilt
+```
+
+Set `QUEUE_URL` to the deployed Worker URL, then send a request:
+
+```bash [commands/request]
+QUEUE_URL=https://your-worker.workers.dev
+curl -X POST "$QUEUE_URL/api/welcome" \
+  -H 'content-type: application/json' \
+  -d '{"email":"dev@example.com"}'
+```
+
+The response confirms provider acceptance. Look for the handler log in the provider consumer to confirm delivery.
 
 ::
 

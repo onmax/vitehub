@@ -81,10 +81,15 @@ export default defineEventHandler(async (event) => {
 
 Start Vite and send one request:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
-curl -X POST http://localhost:5173/api/greeting \\
-  -H 'content-type: application/json' \\
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
+curl -X POST http://localhost:5173/api/greeting \
+  -H 'content-type: application/json' \
   -d '{"prompt":"Ada"}'
 ```
 

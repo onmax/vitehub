@@ -62,8 +62,13 @@ ViteHub discovers the definition and mounts Better Auth at `/api/auth/**`.
 Start the dev server. Sign up with an email and password, saving the session
 cookie for the second request:
 
-```bash [commands/sign-up]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/sign-up]
 curl -i -c cookies.txt -X POST http://localhost:5173/api/auth/sign-up/email \
   -H 'content-type: application/json' \
   -d '{"name":"Ada Lovelace","email":"ada@example.com","password":"correct-horse-battery-staple"}'

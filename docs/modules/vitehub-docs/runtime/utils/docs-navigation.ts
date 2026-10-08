@@ -87,7 +87,7 @@ function primitivePageGroup(section: DocsSection, page: DocsPage) {
 
   switch (page.id) {
     case "get-started": return "Tutorial";
-    case "configure":
+    case "configure": return "Guides";
     case "server-api": return "Reference";
     case "agent-capability": return "Guides";
     case "hosts": return "Deploy";

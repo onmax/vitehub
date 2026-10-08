@@ -98,8 +98,13 @@ the mounted filesystem even though the route owns a writable Workspace.
 
 Start Vite and call the route:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl http://localhost:5173/api/search-docs
 ```
 

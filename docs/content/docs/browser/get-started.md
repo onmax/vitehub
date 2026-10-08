@@ -22,7 +22,7 @@ Node process, use the local provider in [Hosts](/docs/browser/hosts).
 
 ```bash [commands/install]
 pnpm add vite-hub nitro h3
-pnpm add -D vite
+pnpm add -D vite wrangler
 ```
 
 ::
@@ -39,7 +39,7 @@ import { vitehub } from 'vite-hub'
 export default {
   plugins: [vitehub({
     preset: 'cloudflare',
-    browser: true,
+    browser: { remote: true },
   }), nitro() as never],
 }
 ```
@@ -85,11 +85,20 @@ The generated Browser registry infers each Definition's input type. `runBrowser(
 ::tutorial-step{title="Verify the response"}
 ## Verify the response
 
-Start Vite and send a URL to the route:
+Build the Cloudflare Worker, then start Wrangler with the generated binding.
+Remote mode calls Cloudflare Browser Run and requires account access. Sign in
+to the account that has Browser Run enabled:
 
 ```bash [commands/request]
-pnpm vite dev
-curl -X POST http://localhost:5173/api/page-html \
+pnpm wrangler login
+pnpm vite build
+pnpm wrangler dev --config .output/server/wrangler.json
+```
+
+Keep Wrangler running and send the request from another terminal:
+
+```bash [commands/request-browser]
+curl -X POST http://localhost:8787/api/page-html \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.com"}'
 ```

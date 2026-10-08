@@ -4,7 +4,7 @@ import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 
 const docsRoot = resolve(import.meta.dirname, "..")
-const fixturesRoot = resolve(import.meta.dirname, "../../fixtures/tutorials")
+const fixturesRoot = resolve(docsRoot, "../fixtures/tutorials")
 
 function normalize(source: string) {
   return source.trim().replaceAll("\r\n", "\n")
@@ -72,7 +72,7 @@ describe("documentation tutorials", () => {
     ]) {
       const source = await readFile(resolve(docsRoot, page), "utf8")
       expect(source, page).toContain("layout: tutorial")
-      expect(source, page).toContain("navigation.title: Tutorial")
+      expect(source, page).toContain(page.endsWith("agents/box-tutorial.md") ? "navigation.title: Box tutorial" : "navigation.title: Tutorial")
       expect(source, page).toContain("::tutorial-step")
       expect(source.match(/```[^\n]*\[[^\]]+\]/g)?.length || 0, page).toBeGreaterThan(0)
     }
@@ -84,7 +84,7 @@ describe("documentation tutorials", () => {
     expect(source).toContain("if (!entry.isIntersecting) continue")
     expect(source).toContain("records.value")
     expect(source).toContain("while (labels.has(label))")
-    expect(source).toContain("marker.dataset.vhTutorialCodeIndex")
+    expect(source).toContain("dataset.vhTutorialCodeIndex")
     expect(source).toContain("block.before(marker)")
     expect(source).toContain("new IntersectionObserver")
     expect(source).not.toContain("const registered = ref(false)")
@@ -99,11 +99,17 @@ describe("documentation tutorials", () => {
     expect(tutorial).toContain("xl:!w-full")
     expect(tutorial).toContain("aria-labelledby=\"tutorial-code-heading\"")
     expect(tutorial).toContain("watch(() => props.page.path")
+    expect(tutorial).toContain("selectedPath")
     expect(tutorial).toContain(":model-value=\"activePath\"")
     expect(tutorial).toContain("@update:model-value=\"selectCodePath\"")
     expect(step).toContain("@media (min-width: 80rem)")
     expect(step).toContain("@media (max-width: 79.99rem)")
     expect(step).toContain(":deep(div:has(> pre))")
+  })
+
+  it("remounts the tutorial rail when navigating between packages", async () => {
+    const source = await readFile(resolve(docsRoot, "app/pages/docs/[...slug].vue"), "utf8")
+    expect(source).toContain('<DocsTutorial v-else-if="page && isTutorialPage" :key="page.path" :page="page" />')
   })
 
   it("keeps the Agents editorial tutorial cold-rendered", async () => {

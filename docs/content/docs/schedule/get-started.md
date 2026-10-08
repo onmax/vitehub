@@ -13,16 +13,17 @@ A Static Schedule is part of your build. The host triggers it at the declared cr
 ## Install and configure
 
 ```bash [commands/install]
-pnpm add @vite-hub/schedule
+pnpm add @vite-hub/schedule nitro
 pnpm add -D @vite-hub/cli vite
 ```
 
 ```ts [vite.config.ts]
 import { hubSchedule } from '@vite-hub/schedule/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubSchedule()],
+  plugins: [hubSchedule(), nitro() as never],
 })
 ```
 
@@ -59,11 +60,13 @@ pnpm vitehub inspect definitions --kind schedule
 
 The generated output contains the schedule name and provider wiring. Because `manual: true` is set, run the definition without waiting for 08:00:
 
-```bash [commands/dev]
-# Terminal 1
+```bash [commands/start]
 pnpm vite dev
+```
 
-# Terminal 2
+Keep the server running. In another terminal, run:
+
+```bash [commands/run]
 pnpm vitehub schedule run daily-report --server http://localhost:5173 --json
 ```
 

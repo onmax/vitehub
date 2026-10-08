@@ -62,7 +62,7 @@ export default defineEventHandler(async () => {
   const session = await box.open();
   try {
     await session.files.write(
-      ".vitehub/box-check.txt",
+      "workspace/.vitehub/box-check.txt",
       new TextEncoder().encode("Box is ready\n"),
     );
     const result = await session.exec(
@@ -88,8 +88,13 @@ state when the command fails as well as when it succeeds.
 
 Start the server and call the route:
 
-```bash [commands/request]
+```bash [commands/start]
 pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
 curl http://localhost:5173/api/box-check
 ```
 

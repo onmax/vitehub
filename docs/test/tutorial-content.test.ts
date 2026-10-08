@@ -64,4 +64,37 @@ describe("multi-file tutorial examples", () => {
       expect(new Set(virtualLabels).size, path).toBe(virtualLabels.length)
     }
   })
+
+  it("keeps code-tree labels unique within each tutorial", async () => {
+    const tutorials = await markdownFiles(resolve(docsRoot, "content/docs"))
+
+    for (const path of tutorials) {
+      const source = await readFile(path, "utf8")
+      if (!source.includes("layout: tutorial")) continue
+
+      const tutorialLabels = labels(source)
+      expect(new Set(tutorialLabels).size, path).toBe(tutorialLabels.length)
+    }
+  })
+
+  it("keeps UI installation examples in separate project folders", async () => {
+    const source = await readFile(resolve(docsRoot, "content/docs/ui/installation.md"), "utf8")
+    const files = labels(source)
+
+    expect(files).toEqual(expect.arrayContaining([
+      "nuxt/nuxt.config.ts",
+      "nuxt/app.vue",
+      "vite/vite.config.ts",
+      "vite/src/main.ts",
+      "vite/src/assets/main.css",
+      "vite/src/components/Example.vue",
+      "nuxt/defaults/nuxt.config.ts",
+      "vite/defaults/src/main.ts",
+      "vite/theme/src/assets/main.css",
+    ]))
+    expect(files).not.toContain("nuxt.config.ts")
+    expect(files).not.toContain("src/main.ts")
+    expect(files).not.toContain("src/assets/main.css")
+    expect(files).not.toContain("src/components/Example.vue")
+  })
 })

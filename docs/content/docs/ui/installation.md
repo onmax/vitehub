@@ -35,7 +35,7 @@ pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue @iconify-json/lucide @iconify-
 
 Register the module:
 
-```ts [nuxt.config.ts]
+```ts [nuxt/nuxt.config.ts]
 export default defineNuxtConfig({
   modules: ["@vite-hub/ui/nuxt"],
 });
@@ -60,7 +60,7 @@ pnpm add -D vite @vitejs/plugin-vue
 
 Add the Vite plugin after the Vue plugin:
 
-```ts [vite.config.ts]
+```ts [vite/vite.config.ts]
 import vue from "@vitejs/plugin-vue";
 import viteHubUI from "@vite-hub/ui/vite";
 import { defineConfig } from "vite";
@@ -72,7 +72,7 @@ export default defineConfig({
 
 Register the Nuxt UI and ViteHub UI Vue plugins:
 
-```ts [src/main.ts]
+```ts [vite/src/main.ts]
 import NuxtUI from "@nuxt/ui/vue-plugin";
 import { createViteHubUI } from "@vite-hub/ui";
 import { createApp } from "vue";
@@ -84,7 +84,7 @@ createApp(App).use(NuxtUI).use(createViteHubUI()).mount("#app");
 
 Load Tailwind CSS, Nuxt UI, and the package styles in this order:
 
-```css [src/assets/main.css]
+```css [vite/src/assets/main.css]
 @import "tailwindcss";
 @import "@nuxt/ui";
 @import "@vite-hub/ui/styles.css";
@@ -92,7 +92,7 @@ Load Tailwind CSS, Nuxt UI, and the package styles in this order:
 
 The Vite plugin does not register ViteHub UI components. Import them where you use them:
 
-```vue [src/components/Example.vue]
+```vue [vite/src/components/Example.vue]
 <script setup lang="ts">
 import { AgentChat } from "@vite-hub/ui";
 </script>
@@ -115,7 +115,7 @@ The examples in these pages use Nuxt auto-imports. In Vue with Vite, add the imp
 
 Render one component:
 
-```vue [app.vue]
+```vue [nuxt/app.vue]
 <template>
   <AgentMarkdown value="**ViteHub UI is ready.**" />
 </template>
@@ -131,7 +131,7 @@ The page shows **ViteHub UI is ready.** in bold. This proves that the component 
 
 The package defaults are designed for a Console. Keep them until your product has a reason to change them. If you do need a package-wide override, use the same option in the Nuxt module or the Vite plugin.
 
-```ts [nuxt.config.ts]
+```ts [nuxt/defaults/nuxt.config.ts]
 export default defineNuxtConfig({
   modules: ["@vite-hub/ui/nuxt"],
   viteHubUI: {
@@ -143,7 +143,7 @@ export default defineNuxtConfig({
 });
 ```
 
-```ts [src/main.ts]
+```ts [vite/defaults/src/main.ts]
 app.use(
   createViteHubUI({
     defaults: {
@@ -170,7 +170,7 @@ Read the resolved defaults in your own components with `useViteHubUI()`.
 
 The stylesheet maps its CSS variables to Nuxt UI tokens. Override them on any element to change one view:
 
-```css [src/assets/main.css]
+```css [vite/theme/src/assets/main.css]
 .support-chat {
   --vh-ui-border: var(--ui-border-accented);
   --vh-ui-bg-elevated: var(--ui-bg-muted);

@@ -21,7 +21,8 @@ can check. The final request sends a real message.
 ## Install the email dependencies
 
 ```bash [commands/install]
-pnpm add vite-hub
+pnpm add vite-hub nitro h3
+pnpm add -D vite
 ```
 
 `vite-hub` includes the Email runtime plus built-in Resend and Cloudflare Email drivers.
@@ -35,6 +36,7 @@ pnpm add vite-hub
 import { vitehub } from 'vite-hub'
 import { env } from 'vite-hub/env'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
   plugins: [vitehub({
@@ -45,7 +47,7 @@ export default defineConfig({
         apiKey: env({ secret: true, source: env.source('RESEND_API_KEY') }),
       },
     },
-  })],
+  }), nitro() as never],
 })
 ```
 
@@ -90,7 +92,19 @@ export default defineEventHandler(async () => {
 ::tutorial-step{title="Verify the result"}
 ## Verify the result
 
-Start the application with its normal development command and send a `POST` request to `/api/welcome`. A successful response has this shape:
+Nitro serves the `server/api` route. Start the server and send the request:
+
+```bash [commands/start]
+pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
+curl -X POST http://localhost:5173/api/welcome
+```
+
+A successful response has this shape:
 
 ```json [output/response.json]
 {

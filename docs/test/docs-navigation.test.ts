@@ -133,7 +133,7 @@ describe("docs product navigation", () => {
     expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null, "Tutorial", "Guides", "Reference", "Deploy"]);
   });
 
-  it("gives execution primitives a Concepts lane before configuration reference", () => {
+  it("gives execution primitives a Concepts lane before configuration guides", () => {
     for (const sectionId of ["sandbox", "queue", "workflows"]) {
       const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
       const groups = getDocsSidebarGroups(section!);
@@ -141,7 +141,7 @@ describe("docs product navigation", () => {
       expect(groups.map(group => group.label), sectionId).toContain("Concepts");
       expect(groups.find(group => group.label === "Concepts")?.pages.map(page => page.title), sectionId)
         .toEqual(["Concepts"]);
-      expect(groups.find(group => group.label === "Reference")?.pages.map(page => page.title), sectionId)
+      expect(groups.find(group => group.label === "Guides")?.pages.map(page => page.title), sectionId)
         .toContain("Configure");
     }
   });
@@ -183,6 +183,9 @@ describe("docs product navigation", () => {
 
   it("redirects each removed page, its trailing-slash form, and its raw Markdown copy to a published page", () => {
     const routeRules = createDocsRedirectRouteRules();
+
+    expect(routeRules["/databases"]).toEqual({ redirect: { statusCode: 301, to: "/database" } });
+    expect(routeRules["/rate-limits/"]).toEqual({ redirect: { statusCode: 301, to: "/rate-limit" } });
 
     expect(docsPageRedirects["/docs/server-primitives/kv"]).toBe("/docs/kv");
     expect(docsPageRedirects["/blog/server-primitives"]).toBe("/docs/getting-started/server-primitives");
