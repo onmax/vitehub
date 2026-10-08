@@ -384,6 +384,16 @@ function isAssertionTypeArguments(source: string, index: number, assertionSuffix
   // operator), for example `T extends Types.Promise<A, B>`. Keep the fast
   // path broad enough to mask its generic arguments before call splitting.
   const prefix = source.slice(0, index).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ")
+  // A generic call signature has no name before its type parameters. Confirm
+  // the parameter list and arrow before masking it as an assertion type.
+  if (assertionSuffix && /\b(?:as|satisfies)\s+(?:\(\s*)*(?:new\s+)?$/.test(prefix)) {
+    const typeParametersEnd = findMatching(source, index, "<", ">")
+    if (typeParametersEnd !== undefined) {
+      const parameters = skipWhitespaceAndComments(source, typeParametersEnd + 1)
+      const parametersEnd = source[parameters] === "(" ? findMatching(source, parameters, "(", ")") : undefined
+      if (parametersEnd !== undefined && source.startsWith("=>", skipWhitespaceAndComments(source, parametersEnd + 1))) return true
+    }
+  }
   // Once a return type continues past a completed generic, the preceding
   // arguments are masked before checking the next union/intersection member.
   // Check only the return after the last arrow so parameter annotations
