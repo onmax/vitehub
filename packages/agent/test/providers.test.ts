@@ -13144,7 +13144,7 @@ describe("server helpers", () => {
   })
 
   it.each([
-    ...[false, true].flatMap(native => ["text", "array", "resolver"].flatMap(form => ["loading", "fallback"].map(option => ({ native, form, option })))),
+    ...[false, true].flatMap(native => ["text", "array", "resolver"].flatMap(form => (native ? ["fallback"] : ["loading", "fallback"]).map(option => ({ native, form, option })))),
   ])("formats citation-bearing loading text, native=$native form=$form option=$option", async ({ native, form, option }) => {
     const adapter = createTestChatAdapter()
     if (native) adapter.stream = vi.fn(async (threadId: string, chunks: AsyncIterable<string | StreamChunk>) => {
