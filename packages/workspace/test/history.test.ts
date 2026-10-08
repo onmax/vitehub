@@ -389,7 +389,11 @@ describe("history policy and capabilities", () => {
 
   it("syncs build Sources before the first history operation and protects ownership", async () => {
     const { store } = await setup("libsql")
-    registerWorkspace("build-owned", defineWorkspace({ store, sources: { locked: file({ workspacePath: "locked.txt", content: "owned", materialize: "build" }) } }))
+    registerWorkspace("build-owned", defineWorkspace({ store, sources: { locked: {
+      materialize: "build", mount: "",
+      async getKeys() { return ["locked.txt"] },
+      async getItem(key: string) { return { key, content: "owned" } },
+    } } }))
     const workspace = useWorkspace("build-owned", { mode: "write" })
     await expect(workspace.history.commit({ ifHead: null, files: { "locked.txt": "unauthorized" } })).rejects.toMatchObject({ code: "WORKSPACE_CONFLICT" })
     const synced = await store.history.head()
