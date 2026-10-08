@@ -4,6 +4,10 @@ interface NamedConnectorOptions {
   destination: string
 }
 
+interface DynamicConnectorOptions extends NamedConnectorOptions {
+  connector: string
+}
+
 declare global {
   interface ViteHubChannelDefinitionModules {
     alerts: { default: typeof definition }
@@ -52,6 +56,15 @@ defineOutboundChannel({
   },
 })
 
+defineOutboundChannel({
+  connectors: {
+    // @ts-expect-error Connector options must be objects because send passes an options object.
+    primitiveOptions: {
+      send: (_text: string, _options: string) => ({ status: "accepted" }),
+    },
+  },
+})
+
 async function checkSendTuple() {
   const [error, receipt] = await channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
   if (error) {
@@ -80,6 +93,17 @@ const runtimeName: string = "runtime-channel"
 const dynamic = useChannel(runtimeName)
 dynamic.send("Build finished.", { connector: "runtime", destination: "room-1" })
 dynamic.send("Build finished.", {})
+const dynamicOptions: DynamicConnectorOptions = { connector: "runtime", destination: "room-1" }
+dynamic.send("Build finished.", dynamicOptions)
+const dynamicDefaultOptions: NamedConnectorOptions = { destination: "room-1" }
+dynamic.send("Build finished.", dynamicDefaultOptions)
+dynamic.send("Build finished.", { destination: "room-1" })
+
+// @ts-expect-error Dynamic connector selectors must be strings when present.
+dynamic.send("Build finished.", { connector: 42 })
+
+// @ts-expect-error Dynamic channel options must be objects.
+dynamic.send("Build finished.", "room-1")
 
 // @ts-expect-error Discovered Channel names retain connector-specific options.
 discovered.send("Build finished.", { connector: "telegram", channelId: "channel-1" })

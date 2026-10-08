@@ -11,17 +11,25 @@ export interface ChannelSendResult extends ChannelConnectorResult {
 
 export type ChannelSendOutcome = [error: Error, receipt: null] | [error: null, receipt: ChannelSendResult]
 
-export interface ChannelConnector<TOptions = Record<string, unknown>, TResult extends object = ChannelConnectorResult> {
+export interface ChannelConnector<TOptions extends object = Record<string, unknown>, TResult extends object = ChannelConnectorResult> {
   send: (text: string, options: TOptions) => Promise<TResult> | TResult
 }
 
 export type ChannelConnectorMap = Record<string, ChannelConnector<never, object>>
 
+type ValidatedChannelConnectors<TConnectors extends ChannelConnectorMap> = string extends keyof TConnectors
+  ? TConnectors
+  : {
+      [TName in keyof TConnectors]: TConnectors[TName] extends ChannelConnector<infer _TOptions, infer _TResult>
+        ? TConnectors[TName]
+        : never
+    }
+
 export interface ChannelDefinition<
   TConnectors extends ChannelConnectorMap = ChannelConnectorMap,
   TDefault extends keyof TConnectors & string = never,
 > {
-  connectors: TConnectors
+  connectors: TConnectors & ValidatedChannelConnectors<TConnectors>
   defaultConnector?: TDefault
 }
 
@@ -45,7 +53,7 @@ type ExplicitChannelSendOptions<TConnectors extends ChannelConnectorMap> = {
 
 type DynamicChannelSendOptions = {
   connector?: string
-} & Record<string, unknown>
+}
 
 type DefaultChannelSendOptions<
   TConnectors extends ChannelConnectorMap,
@@ -67,5 +75,5 @@ export interface ChannelClient<
   TDefault extends keyof TConnectors & string = never,
 > {
   readonly name: string
-  send: (text: string, options: ChannelSendOptions<TConnectors, TDefault>) => Promise<ChannelSendOutcome>
+  send: <TOptions extends object>(text: string, options: TOptions & ChannelSendOptions<TConnectors, TDefault>) => Promise<ChannelSendOutcome>
 }
