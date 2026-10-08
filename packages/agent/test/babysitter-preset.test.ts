@@ -459,6 +459,13 @@ describe("Babysitter preset runtime", () => {
       expect(f.passes).toHaveLength(1);
       expect(f.commit).not.toHaveBeenCalled();
       expect(f.push).not.toHaveBeenCalled();
+      const retry = await f.runtime.inbox.get("acme/app", 12);
+      expect(retry?.status).toBe("ready");
+      expect(retry?.refresh).toBe(true);
+      f.choose(undefined);
+      const now = vi.spyOn(Date, "now").mockReturnValue(retry!.nextAt + 1);
+      try { await f.reconcile(); } finally { now.mockRestore(); }
+      expect((await f.runtime.inbox.get("acme/app", 12))?.pr?.base?.sha).toBe("d".repeat(40));
     } finally { await f.runtime.inbox.close(); }
   });
 

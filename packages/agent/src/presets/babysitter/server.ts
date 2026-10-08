@@ -836,6 +836,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 if (!preparedMergeBase) return;
                 const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", abortSignal);
                 if (!isRuntimeRecord(live) || !isRuntimeRecord(live.base) || live.base.sha !== preparedMergeBase) {
+                  await pullRequestInbox.hydrate(inboxClaim, { refresh: true });
                   const changed = new DOMException("Pull request base changed; retry the conflict repair against current GitHub state.", "AbortError");
                   passController.abort(changed);
                   throw changed;
