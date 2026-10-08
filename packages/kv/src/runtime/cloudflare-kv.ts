@@ -17,6 +17,11 @@ interface CloudflareKVListPage {
   list_complete: boolean
 }
 
+function isCloudflareKVString(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Cloudflare list fields cross an untyped provider boundary.
+  return typeof value === "string"
+}
+
 function isCloudflareKVListPage(value: unknown): value is CloudflareKVListPage {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Cloudflare bindings return unknown JavaScript values at this provider boundary.
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
@@ -27,10 +32,9 @@ function isCloudflareKVListPage(value: unknown): value is CloudflareKVListPage {
   if (!page.keys.every(key => {
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Each provider key is untyped JavaScript data at the Cloudflare binding boundary.
     if (!key || typeof key !== "object" || Array.isArray(key)) return false
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The validated provider key still carries an unknown name field.
-    return typeof (key as { name?: unknown }).name === "string"
+    return isCloudflareKVString(Reflect.get(key, "name"))
   })) return false
-  return page.list_complete || (typeof page.cursor === "string" && page.cursor.length > 0)
+  return page.list_complete || (isCloudflareKVString(page.cursor) && page.cursor.length > 0)
 }
 
 function createCloudflareDriver(options: Record<string, unknown>): KVRuntimeDriver {
