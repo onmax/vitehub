@@ -14,6 +14,8 @@ const downloadHosts = new Set(["registry.npmjs.org", "registry.yarnpkg.com", "pk
 function checkDownloadSource(value: string): void {
   // Yarn's nested protocols can percent-encode their underlying source URL.
   const decoded = decodeURIComponent(value);
+  if (decoded.includes("\\") && /(?:^|[@:(])https:/i.test(decoded)
+    || /(?:^|[@:(])https:(?!\/\/)/i.test(decoded)) throw new Error("Dependency downloads require a trusted HTTPS URL with forward slashes.");
   for (const match of decoded.matchAll(/(?:^|[@:(])([a-z][a-z\d+.-]*):/gi)) {
     if (!["npm", "workspace", "catalog", "file", "link", "portal", "https"].includes(match[1]!.toLowerCase())) throw new Error("Unsupported dependency source protocol; downloads require a trusted HTTPS registry or code host.");
   }
