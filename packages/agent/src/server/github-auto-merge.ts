@@ -125,7 +125,7 @@ function nonempty(value: string, name: string): string {
 const githubLoginPattern = /^[A-Za-z0-9](?:[A-Za-z0-9_-]{0,38})$/
 // GitHub renders mentions in Markdown, blockquotes, and quoted text. Keep
 // URL paths, email-like text, and adjacent at-signs out of the token stream.
-const githubMentionPattern = /(^|[^A-Za-z0-9@])@([A-Za-z0-9][A-Za-z0-9_-]{0,38}\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9_-]{0,38})?)(?=$|[^A-Za-z0-9_-])/g
+const githubMentionPattern = /(^|[^A-Za-z0-9@])@([A-Za-z0-9][A-Za-z0-9_-]{0,38}\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|\/ent:[A-Za-z0-9][A-Za-z0-9_-]*|[A-Za-z0-9][A-Za-z0-9_-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)?)(?=$|[^A-Za-z0-9_-])/g
 
 export function normalizeGitHubMentionAllowlist(logins: readonly string[] = []): string[] {
   const normalized = new Set<string>()

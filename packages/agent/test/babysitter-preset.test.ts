@@ -37,7 +37,6 @@ import { boundedMergeReady, createBabysitterRuntime } from "../src/presets/babys
 import { getAgentLayerOptions } from "../src/agent-layers.ts";
 import { github as githubChannel, githubChannelIdentity } from "../src/channels.ts";
 import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
-import { repairCapability } from "../src/presets/babysitter/repair.ts";
 import * as githubRuns from "../src/server/github-pull-requests.ts";
 import { agentInvocationId } from "../src/invocations.ts";
 import type { GitHubHost } from "../src/server/github.ts";
@@ -539,8 +538,6 @@ describe("Babysitter preset runtime", () => {
       expect(configured.passes[0]?.schemas.mentionOnPullRequest).toMatchObject({
         properties: { login: { enum: ["stefina", "other-user"] } },
       });
-      const withoutRecipients = repairCapability({} as never, false, []);
-      expect(withoutRecipients.tools).not.toHaveProperty("mentionOnPullRequest");
     } finally {
       await configured.runtime.inbox.close();
     }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { createGitHubPullRequestOperations, type GitHubPullRequestOperationsOptions } from "../src/server/github-auto-merge.ts"
 
 import { repairCapability } from "../src/presets/babysitter/repair.ts"
+import { resolveAgentCapabilities } from "../src/capability-runtime.ts"
 
 const head = "a".repeat(40)
 const page = () => ({ hasNextPage: false, endCursor: null as string | null })
@@ -73,16 +74,20 @@ describe("native auto-merge", () => {
   it("exposes accepted mention logins and omits unconfigured mentions", async () => {
     const f = fixture({ mentionAllowlist: [" stefina ", "MAXI"] })
     const capability = repairCapability(f.operations, false, [" stefina ", "MAXI"])
-    const mention = capability.tools.mentionOnPullRequest
-    expect(mention?.inputSchema.properties.login).toEqual({ type: "string", enum: ["stefina", "maxi"] })
-    if (!mention) throw new Error("Missing configured mention tool.")
+    const resolveTools = async (definition: ReturnType<typeof repairCapability>) =>
+      (await resolveAgentCapabilities({ capabilities: [definition] }, {
+        capabilities: {}, memo: vi.fn(), runtime: "unknown", runtimeConfig: {}, waitUntil: vi.fn(),
+      }, {})).tools
+    const mention = (await resolveTools(capability))?.mentionOnPullRequest
+    expect(mention?.inputSchema).toMatchObject({ properties: { login: { type: "string", enum: ["stefina", "maxi"] } } })
+    if (!mention?.execute) throw new Error("Missing configured mention tool.")
     await mention.execute({ login: "stefina", body: "Please restore the service." })
     expect(f.command).toHaveBeenCalledWith(
       ["api", "/repos/acme/app/issues/12/comments", "--method", "POST", "-f", "body=@stefina\n\nPlease restore the service."],
       expect.anything(),
     )
-    expect(repairCapability(f.operations, false).tools).not.toHaveProperty("mentionOnPullRequest")
-    expect(repairCapability(f.operations, false, [" "]).tools).not.toHaveProperty("mentionOnPullRequest")
+    expect(await resolveTools(repairCapability(f.operations, false))).not.toHaveProperty("mentionOnPullRequest")
+    expect(await resolveTools(repairCapability(f.operations, false, [" "]))).not.toHaveProperty("mentionOnPullRequest")
   })
 
   it("marks both comments and mentions as host-authored repair activity", async () => {
@@ -375,6 +380,16 @@ describe("host-owned repair operations", () => {
     await expect(f.operations.updateMetadata({ body: "Contact @acme/ent:security." })).rejects.toThrow(/cannot add GitHub mentions/)
     expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
     await f.operations.updateMetadata({ body: "Updated details for @acme/ent:platform-sre." })
+  })
+
+  it("does not conflate long regular team mentions", async () => {
+    const f = fixture({ restrictCommentMentions: true })
+    const original = `@acme/${"platform".repeat(8)}`
+    const replacement = `@acme/${"security".repeat(8)}`
+    f.pullRequest.body = `Contact ${original}.`
+    await expect(f.operations.updateMetadata({ body: `Contact ${replacement}.` })).rejects.toThrow(/cannot add GitHub mentions/)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
+    await f.operations.updateMetadata({ body: `Updated details for ${original}.` })
   })
 
   it("rejects body updates when a concurrent edit removes a validated mention", async () => {
