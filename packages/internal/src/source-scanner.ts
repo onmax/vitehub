@@ -472,7 +472,7 @@ function isNamedAssertionComparison(source: string, index: number, genericEnd: n
   const prefix = source.slice(0, index)
   if (!/\b(?:as|satisfies)\s+[\p{ID_Start}_$][\p{ID_Continue}$]*(?:\s*\.\s*[\p{ID_Start}_$][\p{ID_Continue}$]*)*\s*$/u.test(prefix)) return false
   const suffix = source.slice(genericEnd + 1).replace(/^(?:\s|\/\*[\s\S]*?\*\/|\/\/[^\n]*\n)*/, "")
-  return /^[\p{ID_Start}_$\d"'`]/u.test(suffix)
+  return !/^(?:as|satisfies)\s+\S/u.test(suffix) && /^[\p{ID_Start}_$\d"'`]/u.test(suffix)
 }
 
 function hasAssertionTypePrefix(source: string) {
@@ -490,7 +490,11 @@ function maskAssertionTypeArguments(source: string) {
       // Template-literal types can contain commas in `${...}` expressions.
       // Mask them only when they begin at a type delimiter; a template after
       // a complete assertion remains a runtime suffix and must stay visible.
-      if (source[index] === "`" && /(?:\b(?:as|satisfies)|=>|[?:|&])\s*$/.test(source.slice(0, index))) output.fill(" ", index, end)
+      if (source[index] === "`" && /(?:\b(?:as|satisfies|keyof|readonly)|=>|[?:|&])\s*$/.test(output.slice(0, index).join(""))) {
+        output.fill(" ", index, end)
+        // Keep a completed operand visible to runtime-suffix validation.
+        output[index] = "T"
+      }
       index = end - 1
       continue
     }
@@ -674,6 +678,40 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
   return calls
 }
 
+function hasAssertionSubtraction(source: string) {
+  if (!source.includes("-")) return false
+  let expectsOperand = true
+  for (let index = 0; index < source.length; index++) {
+    if (isQuote(source[index])) {
+      index = skipQuoted(source, index) - 1
+      expectsOperand = false
+      continue
+    }
+    const number = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?/.exec(source.slice(index))
+    if (number) {
+      index += number[0].length - 1
+      expectsOperand = false
+      continue
+    }
+    const identifier = /^(?:(?:\\u\{[\da-f]{1,6}\}|\\u[\da-f]{4})|[\p{ID_Start}_$])(?:(?:\\u\{[\da-f]{1,6}\}|\\u[\da-f]{4})|[\p{ID_Continue}$])*/iu.exec(source.slice(index))
+    if (identifier) {
+      const word = decodeIdentifier(identifier[0])
+      if ((index === 0 || !expectsOperand) && /^(?:as|satisfies|extends|is)$/.test(word)) expectsOperand = true
+      else if (!expectsOperand || !/^(?:keyof|readonly|typeof|new|infer|asserts)$/.test(word)) expectsOperand = false
+      index += identifier[0].length - 1
+      continue
+    }
+    if (source[index] === "-") {
+      // Only negative numeric literal types use a unary minus. Contextual
+      // keywords also act as type names once an operand is expected.
+      if (!expectsOperand || !/^\d/.test(source.slice(index + 1).trimStart())) return true
+    }
+    else if (/[([|&?:]/.test(source[index] || "")) expectsOperand = true
+    else if (/[)\]}]/.test(source[index] || "")) expectsOperand = false
+  }
+  return false
+}
+
 export function findDefaultExportCall(source: string, names: string[], options: { positionalOptionsIndex?: number } = {}): DefaultExportCall | undefined {
   const masked = maskSourceLiterals(source)
   const calls = names
@@ -770,17 +808,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // Operators and call syntax after an assertion change the runtime value;
       // reject them while retaining union/intersection punctuation in types.
       if (/(?:&&|\|\||\?\?|\?\.|[+*/;%=^]|,)/.test(value)) return false
-      // A spaced subtraction after an assertion is runtime syntax. Hyphens
-      // inside template-literal types remain allowed because they are not
-      // surrounded by operator whitespace.
-      if (/\s-\s/.test(value)) return false
-      // Identifier operands may omit operator whitespace; this is still
-      // runtime subtraction rather than punctuation in a TypeScript type.
-      // A subtraction may also use a numeric or otherwise literal operand;
-      // reject the operator whenever it follows an identifier in the
-      // assertion suffix. Hyphens embedded in template-literal types do not
-      // have an identifier directly before the operator boundary.
-      if (/\b(?!(?:as|satisfies|extends|is|keyof|readonly|typeof)\b)[A-Za-z_$][\w$]*\s*-\s*(?:[A-Za-z_$\d"'`])/.test(value)) return false
+      if (hasAssertionSubtraction(value)) return false
       if (/\b(?:instanceof|in)\b/.test(value)) return false
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.
