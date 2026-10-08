@@ -59,6 +59,7 @@ function parseBlobListResponse(value: unknown): BlobListResult {
     return {
       key: pathname,
       lastModified: uploadedAt instanceof Date ? uploadedAt.getTime() : undefined,
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- List item fields cross the Vercel Blob provider boundary.
       size: typeof size === "number" ? size : undefined,
     }
   })
