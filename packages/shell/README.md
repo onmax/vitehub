@@ -74,7 +74,7 @@ For writable access, pass `useWorkspace(name, { mode: "write" }).fs` directly to
 - `@vite-hub/shell/providers/cloudflare` adapts a Cloudflare execution client and reports the boundary that client can prove.
 - A custom `ShellExecutionProvider` declares its boundary and implements execution for another host.
 
-Custom providers can return Shell Processes as class instances. Sessions read the process ID, command, and working directory from the provider handle when inspected. A failed metadata read does not prevent process cleanup.
+Custom providers can return Shell Processes as class instances. Sessions read the process ID, command, and working directory from the provider handle when inspected. These public metadata fields are readonly. A failed metadata read does not prevent process cleanup.
 
 Shell policy can bound calls, processes, output size, and timeouts. A declared boundary describes the provider contract; it is not proof of operating-system isolation. Use [Sandbox](https://vitehub.dev/docs/sandbox) when work needs provider-managed isolation.
 
