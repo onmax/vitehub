@@ -287,6 +287,19 @@ function normalizeCloudflareConfig(
   }
 }
 
+function cloudflareOptions(
+  options: DBModulePublicOptions | undefined,
+  definitionConfigured: boolean,
+): CloudflareD1BindingConfig | undefined {
+  if (definitionConfigured || options?.driver !== "d1") return
+  const value: CloudflareD1BindingConfig = {}
+  if (options.binding !== undefined) value.binding = options.binding
+  if (options.databaseId !== undefined) value.databaseId = options.databaseId
+  if (options.databaseName !== undefined) value.databaseName = options.databaseName
+  if (options.cloudflare?.http !== undefined) value.http = options.cloudflare.http
+  return Object.keys(value).length ? value : undefined
+}
+
 function getDefaultConnection(name: string) {
   return {
     authToken: undefined,
@@ -349,15 +362,10 @@ export function resolveDBViteConfig(
     const generatedSchemaFile = createGeneratedSchemaFile(rootDir, definition.name)
     generatedDrizzleConfigFilesByDatabase[definition.name] = createGeneratedDrizzleConfigFile(rootDir, definition.name)
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
-    const optionCloudflare = options?.driver === "d1"
-      ? {
-          ...(typeof options.binding !== "undefined" ? { binding: options.binding } : {}),
-          ...(typeof options.databaseId !== "undefined" ? { databaseId: options.databaseId } : {}),
-          ...(typeof options.databaseName !== "undefined" ? { databaseName: options.databaseName } : {}),
-          ...(typeof options.cloudflare?.http !== "undefined" ? { http: options.cloudflare.http } : {}),
-        }
-      : undefined
-    const cloudflare = optionCloudflare ? { ...definitionCloudflare.value, ...optionCloudflare } : definitionCloudflare.value
+    const optionCloudflare = cloudflareOptions(options, definitionCloudflare.configured)
+    const cloudflare = optionCloudflare
+      ? { ...optionCloudflare, ...definitionCloudflare.value }
+      : definitionCloudflare.value
     databases[definition.name] = {
       cloudflare: normalizeCloudflareConfig(cloudflare, definition.name, migrationsDir),
       connection: resolveDefinitionConnection(definition.handler, definition.name, options?.connection),
