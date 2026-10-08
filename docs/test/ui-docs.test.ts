@@ -20,7 +20,7 @@ const pages = markdownFiles(uiDocsRoot).map((path) => ({
   source: readFileSync(path, "utf8"),
 }));
 const componentPages = pages.filter(
-  (page) => !["index.md", "installation.md"].includes(page.name) && !page.name.startsWith("blocks/"),
+  (page) => !["index.md", "installation.md", "get-started.md"].includes(page.name) && !page.name.startsWith("blocks/"),
 );
 const blockPages = pages.filter((page) => page.name.startsWith("blocks/"));
 const previewNames = (source: string) => Array.from(source.matchAll(previewPattern), (match) => match[1]!);
@@ -68,7 +68,7 @@ describe("UI documentation", () => {
     expect(blockPages.length).toBeGreaterThanOrEqual(3);
     for (const page of blockPages) {
       expect(page.source, page.name).toMatch(/::component-preview\{name="[A-Za-z]+Block" flush reset\}/);
-      expect(page.source, page.name).toContain("navigation.group: Blocks");
+      expect(page.source, page.name).toContain("navigation.group: Console");
     }
   });
 
@@ -91,7 +91,7 @@ describe("UI documentation", () => {
     }
   });
 
-  it("renders previews with Preview and Code tabs that show the running file", () => {
+  it("renders previews with a live stage and the running source", () => {
     const preview = readFileSync(
       resolve(docsRoot, "app/components/content/ComponentPreview.vue"),
       "utf8",
@@ -100,10 +100,10 @@ describe("UI documentation", () => {
     expect(preview).toContain('import highlighter from "#mdc-highlighter"');
     expect(preview).toContain('import.meta.glob("./examples/*.vue")');
     expect(preview).toContain('query: "?raw"');
-    expect(preview).toContain('role="tablist"');
-    expect(preview).toContain('role="tab"');
-    expect(preview).toContain(':aria-selected="activeTab === tab.id"');
-    expect(preview).toContain('role="tabpanel"');
+    expect(preview).toContain("Live example");
+    expect(preview).toContain('class="component-preview-source border-t border-default"');
+    expect(preview).not.toContain('role="tablist"');
+    expect(preview).not.toContain('role="tab"');
     expect(preview).toContain('<MDC :value="sourceBlock"');
     expect(preview).toContain(':parser-options="sourceParserOptions"');
     expect(preview).toContain('@click="copy(source)"');
@@ -125,7 +125,14 @@ describe("UI documentation", () => {
 
     expect(page).toContain('path.startsWith("/docs/ui/")');
     expect(page).toContain('root: "lg:!grid-cols-1 lg:!gap-0"');
-    expect(page).toContain('<DocsAsideRight v-if="!isUiPage"');
+    expect(page).not.toContain("DocsAsideRight");
+    expect(page).not.toContain("UContentToc");
+    expect(page).toContain("<DocsTutorial v-else-if=\"page && isTutorialPage\"");
+    const tutorial = readFileSync(resolve(docsRoot, "app/components/DocsTutorial.vue"), "utf8");
+    expect(tutorial).toContain("grid-cols-[minmax(0,1fr)_minmax(20rem,42%)]");
+    expect(tutorial).toContain("grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]");
+    expect(tutorial).not.toContain("minmax(0,48rem)");
+    expect(readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8")).toContain("max-width: none");
     expect(styles).toContain(".docs-ui-page-shell");
     expect(styles).toContain("max-width: 68rem");
   });
@@ -141,5 +148,35 @@ describe("UI documentation", () => {
     expect(invocation).toContain('class="h-full"');
     expect(inspector).toContain('<div class="mx-auto h-[36rem]');
     expect(inspector).toContain('class="h-full border-x border-default"');
+  });
+
+  it("keeps the package selector next to search", () => {
+    const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
+
+    expect(sidebarTop).toContain("vh-docs-context");
+    expect(sidebarTop).toContain("vh-docs-product-picker");
+    expect(sidebarTop).toContain("All documentation");
+    expect(sidebarTop).not.toContain("USelectMenu");
+    expect(sidebarTop).not.toContain("getDocsSectionSelectItems");
+  });
+
+  it("keeps the docs sidebar visible while the package picker can disclose products", () => {
+    const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
+    const sidebar = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftBody.vue"), "utf8");
+    const layout = readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8");
+
+    expect(sidebar).toContain("flex: 1 1 0");
+    expect(sidebar).toContain("min-height: 0");
+    expect(sidebarTop, "package selector should be a native accessible disclosure").toContain("<details");
+    expect(layout).toContain("height: calc(100dvh - var(--ui-header-height));");
+    expect(layout).toContain("overflow: hidden;");
+  });
+
+  it("lists the Vue ecosystem perspective in the getting started sidebar", () => {
+    const page = readFileSync(resolve(docsRoot, "content/docs/getting-started/built-for-vue.md"), "utf8");
+
+    expect(page).not.toContain("navigation: false");
+    expect(page).toContain("navigation.title: Built for the Vue ecosystem");
+    expect(page).toContain("I am Maxi");
   });
 });

@@ -2,6 +2,7 @@
 title: First Agent
 navigation.title: First Agent
 description: Define a server-side Agent, call it from H3, and see the response.
+layout: tutorial
 navigation.order: 4
 icon: i-lucide-bot
 ---
@@ -18,11 +19,12 @@ offline and needs no credentials.
 You need Node.js 24.15 or newer and `pnpm`. This project runs completely offline.
 ::
 
+::tutorial-step{title="Create the project"}
 ## Create the project
 
 Create an empty ESM project, then install ViteHub with Vite and H3.
 
-```bash [Terminal]
+```bash [commands/setup]
 mkdir vitehub-agent-start
 cd vitehub-agent-start
 pnpm init
@@ -30,6 +32,9 @@ pnpm pkg set type=module
 pnpm add vite-hub h3 vite
 ```
 
+::
+
+::tutorial-step{title="Configure the server build"}
 ## Configure the server build
 
 Add `vitehub()` with the `node` preset and `agent: true`. Vite builds
@@ -64,6 +69,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Define the greeting Agent"}
 ## Define the greeting Agent
 
 Create `server/agents/greeting.ts`. Its required `driver.run` function reads the
@@ -85,6 +93,9 @@ export default defineAgent({
 })
 ```
 
+::
+
+::tutorial-step{title="Call the Agent from H3"}
 ## Call the Agent from H3
 
 `runAgent()` takes the Definition, runtime values for the current request, and
@@ -130,19 +141,22 @@ createServer(toNodeHandler(app)).listen(port, () => {
 The route imports the Definition directly, so the greeting returns in the same
 request.
 
+::
+
+::tutorial-step{title="Run the Agent and see the response"}
 ## Run the Agent and see the response
 
 Build the project and start the generated Node.js server. The server listens on
 port `5173` unless you set `PORT`.
 
-```bash [Terminal]
+```bash [commands/build]
 pnpm vite build
 node dist/server.js
 ```
 
 From another terminal, send a name to the H3 route.
 
-```bash [Terminal]
+```bash [commands/request]
 curl -X POST http://localhost:5173/greet \
   -H 'content-type: application/json' \
   -d '{"name":"Ada"}'
@@ -150,9 +164,11 @@ curl -X POST http://localhost:5173/greet \
 
 The Agent returns the greeting:
 
-```json [Response]
+```json [output/response.json]
 {"text":"Hello, Ada. This result came from an Agent Invocation."}
 ```
+
+::
 
 ## Next steps
 

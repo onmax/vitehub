@@ -1,6 +1,8 @@
+import { formatChannelCitationStream, formatChannelCitationText } from "./internal/channel-citations.ts"
 import { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
 export { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
-import { createHash, createSign } from "node:crypto"
+import { createHash } from "node:crypto"
+import { CodeHostResponseError, codeHostErrorStatus, githubAppCredentials, readGitHubAppPrivateKey } from "./internal/code-host.ts"
 import { AgentHttpError } from "./http-error.ts"
 import { CHAT_FINISH_EXTENSION_CONTEXT_KEY } from "./chat-trigger.ts"
 import { defineCapability, trustGitHubPullRequestWorkspaceCapability } from "./capability-runtime.ts"
@@ -1448,34 +1450,16 @@ async function githubAppPrivateKey<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentCallbackContext<TRuntimeConfig> | AgentChannelDeliveryEffectContext<TRuntimeConfig>,
 ) {
   const inline = cleanSecret(await githubAppSetting(options, env, "privateKey", "appPrivateKey", context))
-  if (inline) return inline.replace(/\\n/g, "\n")
   const path = cleanSecret(await githubAppSetting(options, env, "privateKeyPath", "appPrivateKeyPath", context))
-  if (path) {
-    try {
-      const { readFileSync } = await import(/* @vite-ignore */ "node:fs")
-      const file = readFileSync(path, "utf8").trim()
-      if (file) return file.replace(/\\n/g, "\n")
-    }
-    catch (error) {
-      throw agentDiagnostics.AGENT_R0347({ message: `[vitehub] Failed to read GitHub App privateKeyPath: ${path}`, cause: error })
-    }
+  try {
+    const privateKey = await readGitHubAppPrivateKey(inline, path)
+    if (privateKey) return privateKey
+  }
+  catch (error) {
+    throw agentDiagnostics.AGENT_R0347({ message: `[vitehub] Failed to read GitHub App privateKeyPath: ${path}`, cause: error })
   }
   throw agentDiagnostics.AGENT_R0348({ message: "[vitehub] Missing GitHub App privateKey. github.app.privateKey, github.app.privateKeyPath, GITHUB_APP_PRIVATE_KEY, or GITHUB_APP_PRIVATE_KEY_PATH is required." })
 }
-
-function base64url(value: string | Buffer) {
-  return Buffer.from(value).toString("base64url")
-}
-
-function githubAppJwt(appId: string, privateKey: string) {
-  const now = Math.floor(Date.now() / 1000)
-  const header = base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))
-  const payload = base64url(JSON.stringify({ exp: now + 540, iat: now - 60, iss: appId }))
-  const data = `${header}.${payload}`
-  return `${data}.${createSign("RSA-SHA256").update(data).sign(privateKey).toString("base64url")}`
-}
-
-const githubAppTokenCache = new Map<string, { expiresAt: number, token: string }>()
 
 async function githubAppInstallationToken<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig>,
@@ -1497,21 +1481,22 @@ async function githubAppInstallationToken<TRuntimeConfig extends AgentRuntimeCon
     // SAFETY: Presence of the effect discriminator establishes the delivery-effect context variant.
     ?? ("effect" in context ? githubCommandFromEffect(context as AgentChannelDeliveryEffectContext<TRuntimeConfig>)?.installationId : undefined)
     ?? requiredNumber(await githubAppSetting(options, env, "installationId", "appInstallationId", context), "installationId")
-  const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
-  const cacheKey = `${apiBaseUrl}:${appId}:${installationId}`
-  const cached = githubAppTokenCache.get(cacheKey)
-  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token
-
-  const response = await githubApi(options.fetch || fetch, `${apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
-    headers: githubApiHeaders(githubAppJwt(appId, await githubAppPrivateKey(options, env, context)), options.userAgent),
-    method: "POST",
+  const credentials = githubAppCredentials({
+    appId,
+    privateKey: await githubAppPrivateKey(options, env, context),
+    baseUrl: options.apiBaseUrl,
+    fetch: options.fetch,
+    userAgent: options.userAgent,
   })
-  const body = await response.json().catch(() => undefined)
-  const token = isRecord(body) && hasRuntimeType(body.token, "string") ? body.token : undefined
-  if (!token) throw agentDiagnostics.AGENT_R0349({ message: "[vitehub] GitHub App installation token response did not include token." })
-  const expiresAt = isRecord(body) && hasRuntimeType(body.expires_at, "string") ? Date.parse(body.expires_at) : Date.now() + 9 * 60_000
-  githubAppTokenCache.set(cacheKey, { expiresAt, token })
-  return token
+  try {
+    return (await credentials.installationToken(installationId)).token
+  }
+  catch (error) {
+    const status = codeHostErrorStatus(error)
+    if (status !== undefined) throw agentDiagnostics.AGENT_R0350({ message: `[vitehub] GitHub delivery effect failed with ${status}.`, cause: error })
+    if (error instanceof CodeHostResponseError) throw agentDiagnostics.AGENT_R0349({ message: "[vitehub] GitHub App installation token response did not include token.", cause: error })
+    throw error
+  }
 }
 
 async function githubPullRequestMetadataToken<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -1670,11 +1655,22 @@ async function githubAppIdentity<TRuntimeConfig extends AgentRuntimeConfig>(
   if (options.identity) return options.identity
   const env = await githubEnv(context)
   const appId = requiredString(await githubAppSetting(options, env, "appId", "appId", context), "appId")
-  const headers = githubApiHeaders(githubAppJwt(appId, await githubAppPrivateKey(options, env, context)), options.userAgent)
-  const appMetadata = await githubApiJson(options.fetch || fetch, `${options.apiBaseUrl || "https://api.github.com"}/app`, headers)
-  const resolvedAppId = isRecord(appMetadata) ? maybeNumber(appMetadata.id) : undefined
-  if (!resolvedAppId) throw agentDiagnostics.AGENT_R0355({ message: "[vitehub] GitHub App metadata did not include an ID." })
-  return { appId: resolvedAppId }
+  const credentials = githubAppCredentials({
+    appId,
+    privateKey: await githubAppPrivateKey(options, env, context),
+    baseUrl: options.apiBaseUrl,
+    fetch: options.fetch,
+    userAgent: options.userAgent,
+  })
+  try {
+    return { appId: (await credentials.app()).id }
+  }
+  catch (error) {
+    const status = codeHostErrorStatus(error)
+    if (status !== undefined) throw agentDiagnostics.AGENT_R0351({ message: `[vitehub] GitHub metadata request failed with ${status}.`, cause: error })
+    if (error instanceof CodeHostResponseError) throw agentDiagnostics.AGENT_R0355({ message: "[vitehub] GitHub App metadata did not include an ID.", cause: error })
+    throw error
+  }
 }
 
 async function githubActivityIdentity<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -2164,7 +2160,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
   // SAFETY: The async-iterable guard establishes the reply-stream contract.
   const stream = isAsyncIterable(context.effect.payload)
     // SAFETY: The async-iterable guard establishes the reply-stream contract.
-    ? context.effect.payload as AgentChannelDeliveryReplyStream
+    ? formatChannelCitationStream(context.effect.payload as AgentChannelDeliveryReplyStream)
     : undefined
   if (stream && !artifacts.length) {
     const chat = context.finish
@@ -2185,7 +2181,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
       ? await resolveEffectOption(context.channel.adapter as MaybeResolvable<Adapter, AgentChannelDeliveryEffectContext<TRuntimeConfig>>, context)
       : undefined
     if (adapter && context.run?.threadId) {
-      const threadId = adapter.channelIdFromThreadId(context.run.threadId)
+      const threadId = context.run.threadId
       if (adapter.stream && await adapter.stream(threadId, stream) !== null) return
       let body = ""
       for await (const chunk of stream) body += chunk
@@ -2194,8 +2190,10 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  if (body !== undefined) body = formatChannelCitationText(body)
   // ViteHub posts the final text once. A finish hook reply with the same text is skipped.
-  const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const originalFinalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const finalText = originalFinalText === undefined ? undefined : formatChannelCitationText(originalFinalText)
   const payload = context.effect.payload
   const textOnly = !artifacts.length && (!isRecord(payload) || (payload.attachments === undefined && payload.files === undefined))
   if (!stream && textOnly && finalText !== undefined && body?.trim() === finalText) {
@@ -2209,6 +2207,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
   if (stream) {
     for await (const chunk of stream) body = `${body || ""}${chunk}`
   }
+  if (body !== undefined) body = formatChannelCitationText(body)
   body = rewriteDeliveryArtifactMarkdown(replyBodyWithLinkArtifacts(body, artifacts), artifacts)
   setMessageChannelDeliveredReplyBody(context, body)
   if (!body && !attachments.length && !files.length) return
@@ -2232,7 +2231,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
       }, {
         continueOnError: context.effect.intent === chatFinalReplyIntent,
         onError: context.effect.intent === chatFinalReplyIntent ? () => clearChatFinalReplyText(context.context) : undefined,
-        shouldSkip: () => !stream && context.effect.intent !== chatFinalReplyIntent && textOnly && body?.trim() === chatFinalReplyText(context.context),
+        shouldSkip: () => !stream && context.effect.intent !== chatFinalReplyIntent && textOnly && body?.trim() === formatChannelCitationText(chatFinalReplyText(context.context) ?? ""),
       }) ?? false)
     }
     return
@@ -2243,7 +2242,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     : undefined
   if (adapter && context.run?.threadId) {
     try {
-      await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
+      await adapter.postMessage(context.run.threadId, message)
     }
     catch (error) {
       if (context.effect.intent === chatFinalReplyIntent) clearChatFinalReplyText(context.context)
@@ -3618,7 +3617,7 @@ export function slack<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
 export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
 export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem>): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
 export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> = {}): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods> {
-  return defineMessageChannelInstructions(defineChannel("teams", options), "Write formulas for Microsoft Teams as readable plain text, using words, Unicode symbols, or inline code. Teams does not render LaTeX math delimiters or Mermaid diagrams. Explain variables in short bullets; use a numbered flow instead of diagram syntax.")
+  return defineMessageChannelInstructions(defineChannel("teams", options), "Write formulas for Microsoft Teams as readable plain text, using words, Unicode symbols, or inline code. Teams does not render LaTeX math delimiters or Mermaid diagrams. Explain variables in short bullets; use a numbered flow instead of diagram syntax. Cite sources with descriptive Markdown links to verified URLs. Never emit native citation markers or internal source IDs. If a source URL is unavailable, name the source without inventing a link.")
 }
 
 export function telegram<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods>

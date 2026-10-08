@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { normalizeWorkspacePath } from "../core/path.ts"
 
 export interface WorkspaceSourceSyncStatePath {

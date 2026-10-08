@@ -1,6 +1,6 @@
 import { workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath } from "../core/path.ts"
-import { hasRuntimeType } from "../internal/runtime-type.ts"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 // Workspace internals own these metadata keys:
 // - `source:`: Source Sync state and legacy Source snapshots.
