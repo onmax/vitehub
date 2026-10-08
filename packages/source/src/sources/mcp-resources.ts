@@ -1,4 +1,5 @@
 import { createEffectBoundary } from "@vite-hub/internal/effect"
+import { AnnotationsSchema, BlobResourceContentsSchema } from "@modelcontextprotocol/sdk/types.js"
 import { Effect } from "effect"
 
 import { sourceError } from "../core/errors.ts"
@@ -348,7 +349,10 @@ function hasOptionalMcpString(value: McpRecord, key: PropertyKey): boolean {
 }
 
 function hasOptionalMcpField(value: McpRecord, key: PropertyKey, validate: (field: unknown) => boolean): boolean {
-  return !Reflect.has(value, key) || (Object.hasOwn(value, key) && validate(Reflect.get(value, key)))
+  if (!Reflect.has(value, key)) return true
+  if (!Object.hasOwn(value, key)) return false
+  const field = Reflect.get(value, key)
+  return field === undefined || validate(field)
 }
 
 function isMcpNumber(value: unknown): value is number {
@@ -365,6 +369,7 @@ function isResourceAnnotations(value: unknown): boolean {
     && hasOptionalMcpField(value, "audience", audience => isMcpArrayOf(audience, role => role === "assistant" || role === "user"))
     && hasOptionalMcpString(value, "lastModified")
     && hasOptionalMcpField(value, "priority", isMcpNumber)
+    && AnnotationsSchema.safeParse(value).success
 }
 
 function isResourceIcon(value: unknown): boolean {
@@ -396,7 +401,7 @@ function isResourceContent(value: unknown): value is McpResourceContent {
   const hasTextKey = Object.hasOwn(value, "text")
   const hasBlobKey = Object.hasOwn(value, "blob")
   const hasText = hasTextKey && isMcpString(Reflect.get(value, "text"))
-  const hasBlob = hasBlobKey && isMcpString(Reflect.get(value, "blob"))
+  const hasBlob = hasBlobKey && BlobResourceContentsSchema.safeParse(value).success
   return hasText !== hasBlob && (!hasTextKey || hasText) && (!hasBlobKey || hasBlob)
 }
 

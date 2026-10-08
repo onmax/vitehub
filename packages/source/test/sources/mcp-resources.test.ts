@@ -300,7 +300,7 @@ describe("mcpResources", () => {
       },
     })
 
-    await expect(source.getItem("example/payload.bin", { rootDir: "/tmp" })).rejects.toThrow(/invalid base64/i)
+    await expect(source.getItem("example/payload.bin", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
   })
 
   it("rejects a server that repeats a pagination cursor", async () => {
@@ -345,6 +345,11 @@ describe("mcpResources", () => {
     { annotations: { audience: sparseArray() } },
     { annotations: { lastModified: 42 } },
     { annotations: { priority: "high" } },
+    { annotations: { priority: -1 } },
+    { annotations: { priority: 2 } },
+    { annotations: { lastModified: "yesterday" } },
+    { annotations: { lastModified: "2026-02-30T00:00:00Z" } },
+    { annotations: { lastModified: "2026-10-08T00:00:00" } },
     { icons: {} },
     { icons: sparseArray() },
     { icons: [null] },
@@ -380,6 +385,64 @@ describe("mcpResources", () => {
 
     await expect(source.getKeys({ rootDir: "/tmp" })).resolves.toEqual(["item.txt"])
     expect(path).toHaveBeenCalledWith(resource)
+  })
+
+  it.each([
+    { lastModified: "2026-10-08T00:00:00Z", priority: 0 },
+    { lastModified: "2026-10-08T02:00:00+02:00", priority: 1 },
+  ])("preserves valid annotation limits and timestamps", async annotations => {
+    const resource = { annotations, name: "item.txt", uri: "resource://example/item.txt" }
+    const path = vi.fn((resource: McpResourceDescriptor) => resource.name)
+    const source = mcpResources({ path, server: malformedListClient({ resources: [resource] }) })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).resolves.toEqual(["item.txt"])
+    expect(path).toHaveBeenCalledWith(resource)
+  })
+
+  it("accepts own undefined optional descriptor metadata", async () => {
+    const resource = {
+      _meta: undefined,
+      annotations: { audience: undefined, lastModified: undefined, priority: undefined },
+      description: undefined,
+      icons: [{ mimeType: undefined, sizes: undefined, src: "icon.svg", theme: undefined }],
+      mimeType: undefined,
+      name: "item.txt",
+      size: undefined,
+      title: undefined,
+      uri: "resource://example/item.txt",
+    }
+    const path = vi.fn((resource: McpResourceDescriptor) => resource.name)
+    const source = mcpResources({ path, server: malformedListClient({ resources: [resource], nextCursor: undefined }) })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).resolves.toEqual(["item.txt"])
+    expect(path).toHaveBeenCalledWith(resource)
+  })
+
+  it("accepts own undefined optional content metadata", async () => {
+    const source = mcpResources({ server: malformedReadClient({
+      contents: [{ _meta: undefined, mimeType: undefined, text: "valid", uri: "resource://example/item.txt" }],
+    }) })
+
+    await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).resolves.toMatchObject({ content: "valid" })
+  })
+
+  it.each(["not-base64", "A", "YWJj==="])("rejects invalid base64 before multi-content serialization: %s", async blob => {
+    const source = mcpResources({ server: malformedReadClient({ contents: [
+      { blob, uri: "resource://example/item.txt" },
+      { text: "second", uri: "resource://example/item.txt" },
+    ] }) })
+
+    await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
+  })
+
+  it("preserves valid base64 in multi-content serialization", async () => {
+    const contents = [
+      { blob: "YWJj", uri: "resource://example/item.txt" },
+      { text: "second", uri: "resource://example/item.txt" },
+    ]
+    const source = mcpResources({ server: malformedReadClient({ contents }) })
+
+    await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).resolves.toMatchObject({ content: JSON.stringify(contents, null, 2) })
   })
 
   it.each([
