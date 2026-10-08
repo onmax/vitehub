@@ -252,12 +252,11 @@ describe("agent channels", () => {
     let entered!: () => void
     const blocked = new Promise<void>(resolve => { release = resolve })
     const started = new Promise<void>(resolve => { entered = resolve })
-    let storedBody = ""
+    let storedBody = "", identityReads = 0
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(hasRuntimeType(input, "string") || input instanceof URL ? input : input.url)
       if (url.pathname === "/user") {
-        entered()
-        await blocked
+        if (++identityReads === 1) { entered(); await blocked }
         return Response.json({ login: "deadline-worker" })
       }
       if (!init?.method || init.method === "GET") return Response.json(storedBody
@@ -281,13 +280,15 @@ describe("agent channels", () => {
         runtime: "unknown", target: { repository: "acme/deadline", issue: 999 }, waitUntil: vi.fn(),
       })
       // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
-      const first = update(context("queued", new AbortController().signal) as never)
+      let firstError: unknown
+      const first = Promise.resolve(update(context("queued", new AbortController().signal) as never)).catch(error => { firstError = error })
       await started
       // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
       const second = update(context("running") as never)
       await new Promise(resolve => setTimeout(resolve, 120))
       release()
       await Promise.all([first, second])
+      expect(firstError).toBeInstanceOf(DOMException)
       expect(storedBody).toContain("| Running |")
     } finally { release(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals() }
   })
@@ -342,6 +343,53 @@ describe("agent channels", () => {
     finally { release(); await Promise.all([first, second]) }
     expect(tokens).toBe(credentialKind === "App" ? 1 : 2)
     expect(maxActiveWrites).toBe(1)
+    expect(storedBody).toContain("| Completed |")
+  })
+
+  it.each(["credentials", "comment lookup"])("releases the PR queue when independent %s ignore cancellation", async phase => {
+    const { github } = await import("../src/channels.ts")
+    let release!: () => void, entered!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    let storedBody = "", writes = 0
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => timeout(ms === 30_000 ? 50 : ms))
+    const makeChannel = (stalled: boolean) => github({ activity: true, app: {
+      token: async () => {
+        if (stalled && phase === "credentials") { entered(); await barrier }
+        return stalled ? "stalled-token" : "healthy-token"
+      },
+      identity: { login: "bounded-queue-bot" },
+      fetch: async (_input, init) => {
+        if (!init?.method || init.method === "GET") {
+          if (stalled && phase === "comment lookup") { entered(); await barrier }
+          return Response.json(storedBody ? [{ id: 7, body: storedBody, user: { login: "bounded-queue-bot" } }] : [])
+        }
+        writes++
+        const payload: unknown = JSON.parse(String(init.body))
+        if (!isRuntimeRecord(payload) || !hasRuntimeType(payload.body, "string")) throw new Error("Invalid comment body")
+        storedBody = payload.body
+        return Response.json({ id: 7 })
+      },
+    } })
+    const firstChannel = makeChannel(true), nextChannel = makeChannel(false)
+    const context = (channel: ReturnType<typeof github>, status: "running" | "completed") => ({
+      activity: { agentName: "bounded-queue", links: [], runId: "bounded-run", status, tasks: [] },
+      abortSignal: new AbortController().signal, channel, memo: vi.fn(), run: { runId: "bounded-run" },
+      runtime: "unknown", target: { repository: `acme/bounded-${phase.replaceAll(" ", "-")}`, issue: 431 }, waitUntil: vi.fn(),
+    })
+    let failure: unknown
+    // SAFETY: These fixtures supply all activity callback fields consumed by GitHub.
+    const first = Promise.resolve(firstChannel.activity!.update(context(firstChannel, "running") as never)).catch(error => { failure = error })
+    await started
+    // SAFETY: These fixtures supply all activity callback fields consumed by GitHub.
+    const next = Promise.resolve(nextChannel.activity!.update(context(nextChannel, "completed") as never))
+    let published = false
+    try { published = await Promise.race([next.then(() => true), new Promise<boolean>(resolve => setTimeout(() => resolve(false), 250))]) }
+    finally { release(); await Promise.all([first, next]); vi.restoreAllMocks() }
+    expect(published).toBe(true)
+    expect(failure).toBeInstanceOf(DOMException)
+    expect(writes).toBe(1)
     expect(storedBody).toContain("| Completed |")
   })
 

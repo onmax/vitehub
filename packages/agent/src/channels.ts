@@ -1554,6 +1554,23 @@ const githubActivityPreviousRunLimit = 100
 const githubActivityTaskLimit = 25
 const githubActivityActiveRuns = new Map<string, Set<string>>()
 const githubActivityUpdates = new Map<string, Promise<void>>()
+
+function githubActivityDeadline(parent?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(30_000)
+  return parent ? AbortSignal.any([parent, timeout]) : timeout
+}
+
+async function githubActivityAwait<T>(value: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { void value.catch(() => {}); signal.throwIfAborted() }
+  let abort!: () => void
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason)
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
+  })
+  try { return await Promise.race([value, cancelled]) }
+  finally { signal.removeEventListener("abort", abort) }
+}
 interface GitHubActivityTarget {
   deliveryId?: string
   installationId?: number
@@ -1838,12 +1855,13 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
     async update(context) {
       const trackActiveRuns = mode === "lifecycle" && context.run !== undefined
       const target = githubActivityTarget(context.target)
-      let deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
+      let deadline = githubActivityDeadline(context.abortSignal)
       deadline.throwIfAborted()
       const request = options.fetch || fetch
       const fetcher: typeof fetch = (input, init) => {
         deadline.throwIfAborted()
-        return request(input, { ...init, signal: init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline })
+        const signal = init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline
+        return githubActivityAwait(request(input, { ...init, signal }), signal)
       }
       const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
@@ -1856,94 +1874,97 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
         // Authentication and the serialized publication each get a request budget.
-        deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
+        deadline = githubActivityDeadline(context.abortSignal)
         deadline.throwIfAborted()
-        const token = await githubPullRequestMetadataToken(app, context, target.installationId, target.repository, deadline)
+        const token = await githubActivityAwait(githubPullRequestMetadataToken(app, context, target.installationId, target.repository, deadline), deadline)
         if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
-        deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
+        deadline = githubActivityDeadline(context.abortSignal)
         deadline.throwIfAborted()
-        const provider = await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(fetcher), userAgent: options.userAgent })
-        const identity = await githubActivityIdentity(provider, token, app, context, deadline)
-        const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
-        const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
-        const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
-        const knownActiveRun = trackActiveRuns && activeRuns.has(runId)
-        const terminal = ["cancelled", "completed", "failed"].includes(context.activity.status)
-        const knownCommentId = commentIds.get(activityKey)
-        const activityComments = codeHostActivityComments(provider, { host: "github", instance: provider.instance, repository: target.repository, number: target.issue },
-          knownCommentId ? githubActivityCommentLookupLimit : githubActivityRestartLookupLimit)
-        const comments = (await activityComments.list()).map(comment => comment.raw)
-        const owned = comments.filter(comment => maybeNumber(isRecord(comment) ? comment.id : undefined)
-          && isOwnedGithubActivityComment(comment, identity))
-        let existing = owned.find(comment => maybeNumber(isRecord(comment) ? comment.id : undefined) === knownCommentId)
-        if (knownCommentId && !existing) {
-          const known = await activityComments.get(knownCommentId)
-          if (known && isOwnedGithubActivityComment(known.raw, identity)) existing = known.raw
-        }
-        existing ||= owned[0]
-        if (knownCommentId && !existing) commentIds.delete(activityKey)
-        if (mode === "initialize" && existing) return
-        const previous = decodeGithubActivityState(isRecord(existing) ? existing.body : undefined)
-        const sameRun = previous.current?.runId === runId ? previous.current : undefined
-        const current: GitHubActivityHistoryEntry = {
-          links: githubActivityLinksState(context.activity.links),
-          runId,
-          status: context.activity.status,
-          startedAt: githubActivityDate(context.activity.startedAt) ?? sameRun?.startedAt
-            ?? (context.activity.status === "running" ? new Date().toISOString() : undefined),
-          updatedAt: githubActivityDate(context.activity.updatedAt) ?? new Date().toISOString(),
-          summary: terminal || context.activity.status === "waiting" ? context.activity.summary?.replace(/<!--[^]*?-->/g, "").trim().slice(0, 2_000) : undefined,
-        }
-        const reconcileDuplicates = async () => {
-          for (const duplicate of owned.filter(comment => comment !== existing)) {
-            const duplicateId = isRecord(duplicate) ? maybeNumber(duplicate.id) : undefined
-            if (!duplicateId) continue
-            await activityComments.edit(duplicateId, "This Agent activity was superseded by a newer managed comment.")
+        const publication = async () => {
+          const provider = await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(fetcher), userAgent: options.userAgent })
+          const identity = await githubActivityIdentity(provider, token, app, context, deadline)
+          const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
+          const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
+          const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
+          const knownActiveRun = trackActiveRuns && activeRuns.has(runId)
+          const terminal = ["cancelled", "completed", "failed"].includes(context.activity.status)
+          const knownCommentId = commentIds.get(activityKey)
+          const activityComments = codeHostActivityComments(provider, { host: "github", instance: provider.instance, repository: target.repository, number: target.issue },
+            knownCommentId ? githubActivityCommentLookupLimit : githubActivityRestartLookupLimit)
+          const comments = (await activityComments.list()).map(comment => comment.raw)
+          const owned = comments.filter(comment => maybeNumber(isRecord(comment) ? comment.id : undefined)
+            && isOwnedGithubActivityComment(comment, identity))
+          let existing = owned.find(comment => maybeNumber(isRecord(comment) ? comment.id : undefined) === knownCommentId)
+          if (knownCommentId && !existing) {
+            const known = await activityComments.get(knownCommentId)
+            if (known && isOwnedGithubActivityComment(known.raw, identity)) existing = known.raw
           }
-        }
-        const staleRun = previous.current?.runId !== current.runId
-          && (knownActiveRun
-            || previous.previousRunIds.includes(current.runId)
-            || owned.filter(comment => comment !== existing).some(comment => {
-              const state = decodeGithubActivityState(isRecord(comment) ? comment.body : undefined)
-              return state.current?.runId === current.runId || state.previousRunIds.includes(current.runId)
-            }))
-        if (staleRun) {
+          existing ||= owned[0]
+          if (knownCommentId && !existing) commentIds.delete(activityKey)
+          if (mode === "initialize" && existing) return
+          const previous = decodeGithubActivityState(isRecord(existing) ? existing.body : undefined)
+          const sameRun = previous.current?.runId === runId ? previous.current : undefined
+          const current: GitHubActivityHistoryEntry = {
+            links: githubActivityLinksState(context.activity.links),
+            runId,
+            status: context.activity.status,
+            startedAt: githubActivityDate(context.activity.startedAt) ?? sameRun?.startedAt
+              ?? (context.activity.status === "running" ? new Date().toISOString() : undefined),
+            updatedAt: githubActivityDate(context.activity.updatedAt) ?? new Date().toISOString(),
+            summary: terminal || context.activity.status === "waiting" ? context.activity.summary?.replace(/<!--[^]*?-->/g, "").trim().slice(0, 2_000) : undefined,
+          }
+          const reconcileDuplicates = async () => {
+            for (const duplicate of owned.filter(comment => comment !== existing)) {
+              const duplicateId = isRecord(duplicate) ? maybeNumber(duplicate.id) : undefined
+              if (!duplicateId) continue
+              await activityComments.edit(duplicateId, "This Agent activity was superseded by a newer managed comment.")
+            }
+          }
+          const staleRun = previous.current?.runId !== current.runId
+            && (knownActiveRun
+              || previous.previousRunIds.includes(current.runId)
+              || owned.filter(comment => comment !== existing).some(comment => {
+                const state = decodeGithubActivityState(isRecord(comment) ? comment.body : undefined)
+                return state.current?.runId === current.runId || state.previousRunIds.includes(current.runId)
+              }))
+          if (staleRun) {
+            await reconcileDuplicates()
+            if (terminal) activeRuns.delete(runId)
+            if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
+            return
+          }
+          if (previous.current?.runId === current.runId
+            && previous.current.status && ["cancelled", "completed", "failed"].includes(previous.current.status)
+            && !terminal) {
+            activeRuns.delete(runId)
+            if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
+            return
+          }
+          const state: GitHubActivityCommentState = previous.current?.runId === current.runId
+            ? { current, history: previous.history, previousRunIds: previous.previousRunIds }
+            : {
+                current,
+                history: [previous.current, ...previous.history]
+                  .filter((entry): entry is GitHubActivityHistoryEntry => entry !== undefined && entry.runId !== current.runId && (entry.links.length > 0 || entry.status !== "queued"))
+                  .slice(0, githubActivityHistoryLimit),
+                previousRunIds: [previous.current?.runId, ...previous.previousRunIds]
+                  .filter((runId): runId is string => runId !== undefined && runId !== current.runId)
+                  .slice(0, githubActivityPreviousRunLimit),
+              }
+          const body = renderGithubActivity(context.activity, state)
+          const commentId = isRecord(existing) ? maybeNumber(existing.id) : undefined
+          const written = (commentId ? await activityComments.edit(commentId, body) : await activityComments.create(body)).raw
+          const writtenCommentId = commentId || maybeNumber(isRecord(written) ? written.id : undefined)
+          if (writtenCommentId) commentIds.set(activityKey, writtenCommentId)
+          if (!terminal && trackActiveRuns && (current.links.length > 0 || current.status !== "queued")) {
+            activeRuns.add(runId)
+            githubActivityActiveRuns.set(activityKey, activeRuns)
+          }
           await reconcileDuplicates()
           if (terminal) activeRuns.delete(runId)
           if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
-          return
         }
-        if (previous.current?.runId === current.runId
-          && previous.current.status && ["cancelled", "completed", "failed"].includes(previous.current.status)
-          && !terminal) {
-          activeRuns.delete(runId)
-          if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
-          return
-        }
-        const state: GitHubActivityCommentState = previous.current?.runId === current.runId
-          ? { current, history: previous.history, previousRunIds: previous.previousRunIds }
-          : {
-              current,
-              history: [previous.current, ...previous.history]
-                .filter((entry): entry is GitHubActivityHistoryEntry => entry !== undefined && entry.runId !== current.runId && (entry.links.length > 0 || entry.status !== "queued"))
-                .slice(0, githubActivityHistoryLimit),
-              previousRunIds: [previous.current?.runId, ...previous.previousRunIds]
-                .filter((runId): runId is string => runId !== undefined && runId !== current.runId)
-                .slice(0, githubActivityPreviousRunLimit),
-            }
-        const body = renderGithubActivity(context.activity, state)
-        const commentId = isRecord(existing) ? maybeNumber(existing.id) : undefined
-        const written = (commentId ? await activityComments.edit(commentId, body) : await activityComments.create(body)).raw
-        const writtenCommentId = commentId || maybeNumber(isRecord(written) ? written.id : undefined)
-        if (writtenCommentId) commentIds.set(activityKey, writtenCommentId)
-        if (!terminal && trackActiveRuns && (current.links.length > 0 || current.status !== "queued")) {
-          activeRuns.add(runId)
-          githubActivityActiveRuns.set(activityKey, activeRuns)
-        }
-        await reconcileDuplicates()
-        if (terminal) activeRuns.delete(runId)
-        if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
+        await githubActivityAwait(publication(), deadline)
       })
       githubActivityUpdates.set(updateKey, update)
       try {
