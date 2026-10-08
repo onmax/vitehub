@@ -93,12 +93,6 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
           : undefined,
       root,
     })
-    const viteOptions = resolveDatabaseViteOptions({ ...resolvedOptions, projectRoot: root })
-    if (viteOptions) {
-      viteConfig.database = { ...(isRecord(viteConfig.database) ? viteConfig.database : {}), ...viteOptions }
-    }
-    installVitePlugin(viteConfig, { ...resolvedOptions, projectRoot: root })
-
     const serverDirs = resolvedOptions.projectRoot
       ? [resolve(root, "server")]
       : nuxtOptions.serverDir ? [nuxtOptions.serverDir] : undefined
@@ -117,6 +111,20 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
         resolvedOptions.databaseName,
       ),
     )
+    const runtimeOptions = d1?.d1Database
+      ? {
+          ...resolvedOptions,
+          databaseId: typeof resolvedOptions.databaseId === "object"
+            ? { ...resolvedOptions.databaseId, default: resolvedOptions.databaseId.default ?? d1.d1Database.database_id }
+            : resolvedOptions.databaseId ?? d1.d1Database.database_id,
+        }
+      : resolvedOptions
+    const viteOptions = resolveDatabaseViteOptions({ ...runtimeOptions, projectRoot: root })
+    if (viteOptions) {
+      viteConfig.database = { ...(isRecord(viteConfig.database) ? viteConfig.database : {}), ...viteOptions }
+    }
+    installVitePlugin(viteConfig, { ...runtimeOptions, projectRoot: root })
+
     const hook = (nuxt as NuxtLike).hook
     if (typeof hook === "function") {
       hook("nitro:config", async (config) => {
@@ -133,16 +141,13 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
             config,
             root,
             generatedRoot,
-            resolvedOptions,
+            runtimeOptions,
             serverDirs,
           )
         }
         if (!nuxtOptions.dev) {
           const runtimeProvider = provider ?? (d1 ? "cloudflare" : undefined)
           if (runtimeProvider === "cloudflare" || runtimeProvider === "vercel") {
-            const runtimeOptions = d1?.d1Database
-              ? { ...resolvedOptions, databaseId: resolvedOptions.databaseId ?? d1.d1Database.database_id }
-              : resolvedOptions
             const runtime = resolveDBViteConfig(runtimeOptions, root, { serverDirs })
             if (runtime) {
               await writeGeneratedDatabaseArtifacts(runtime)

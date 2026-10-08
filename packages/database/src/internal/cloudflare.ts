@@ -1,6 +1,36 @@
 import { resolveConfigValue } from "../config-value.ts"
 
-import type { DatabaseConfigValue, ResolvedDBViteConfig } from "../types.ts"
+import type { CloudflareD1BindingConfig, DatabaseConfigValue, DBModulePublicOptions, ResolvedDBViteConfig } from "../types.ts"
+
+export function cloudflareOptions(
+  options: DBModulePublicOptions | undefined,
+): CloudflareD1BindingConfig | undefined {
+  if (options === false || !options || options.driver !== "d1") return
+  const value: CloudflareD1BindingConfig = {}
+  if (options.binding !== undefined) value.binding = options.binding
+  if (options.databaseId !== undefined) value.databaseId = options.databaseId
+  if (options.databaseName !== undefined) value.databaseName = options.databaseName
+  if (options.cloudflare?.http !== undefined) value.http = options.cloudflare.http
+  if (options.migrationsTable !== undefined) value.migrationsTable = options.migrationsTable
+  if (options.previewDatabaseId !== undefined) value.previewDatabaseId = options.previewDatabaseId
+  return Object.keys(value).length ? value : undefined
+}
+
+export function mergeCloudflareConfig(
+  defaults: CloudflareD1BindingConfig | undefined,
+  definition: CloudflareD1BindingConfig | undefined,
+): CloudflareD1BindingConfig | undefined {
+  if (!defaults) return definition
+  if (!definition) return defaults
+  const value: CloudflareD1BindingConfig = { ...defaults }
+  if (definition.binding !== undefined) value.binding = definition.binding
+  if (definition.databaseId !== undefined) value.databaseId = definition.databaseId
+  if (definition.databaseName !== undefined) value.databaseName = definition.databaseName
+  if (definition.http !== undefined) value.http = definition.http
+  if (definition.migrationsTable !== undefined) value.migrationsTable = definition.migrationsTable
+  if (definition.previewDatabaseId !== undefined) value.previewDatabaseId = definition.previewDatabaseId
+  return value
+}
 
 interface CloudflareD1ProvisionState {
   cloudflare?: {

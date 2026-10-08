@@ -1,4 +1,5 @@
 import definitionDefaults from "#vitehub/database/definition-defaults"
+import { mergeCloudflareConfig } from "../internal/cloudflare.ts"
 
 import type { DatabaseDefinition, RuntimeDrizzleDatabaseConfig } from "../types.ts"
 
@@ -22,7 +23,7 @@ export function runtimeConfig(
   definition: DatabaseDefinition,
   defaults: DatabaseDefinitionDefaults = definitionDefaults,
 ): RuntimeDrizzleDatabaseConfig {
-  const cloudflare = definition.cloudflare ?? defaults.cloudflare
+  const cloudflare = mergeCloudflareConfig(defaults.cloudflare, definition.cloudflare)
   return {
     ...(cloudflare
       ? { cloudflare: { ...cloudflare, binding: cloudflare.binding || defaultBinding(definition.name) } }
