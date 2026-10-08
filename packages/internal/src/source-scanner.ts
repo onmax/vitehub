@@ -478,8 +478,8 @@ function isNamedAssertionComparison(source: string, index: number, genericEnd: n
 function hasAssertionTypePrefix(source: string) {
   // Mask completed type regions, including import arguments and comments,
   // before recognizing the continuation of a union or intersection.
-  const prefix = maskAssertionTypeArguments(source)
-  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?|[.\s()[\]{}&|?:])+$/u.test(prefix)
+  const prefix = decodeIdentifier(maskAssertionTypeArguments(source))
+  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?(?:0[xX][\da-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|\d[\d_]*n|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d[\d_]*)?)|[.\s()[\]{}&|?:])+$/u.test(prefix)
 }
 
 function maskAssertionTypeArguments(source: string) {
@@ -490,7 +490,7 @@ function maskAssertionTypeArguments(source: string) {
       // Template-literal types can contain commas in `${...}` expressions.
       // Mask them only when they begin at a type delimiter; a template after
       // a complete assertion remains a runtime suffix and must stay visible.
-      if (source[index] === "`" && /(?:\b(?:as|satisfies|keyof|readonly)|=>|[?:|&])\s*$/.test(output.slice(0, index).join(""))) {
+      if (source[index] === "`" && /(?:\b(?:as|satisfies|extends|keyof|readonly)|=>|[?:|&])\s*$/.test(output.slice(0, index).join(""))) {
         output.fill(" ", index, end)
         // Keep a completed operand visible to runtime-suffix validation.
         output[index] = "T"
@@ -687,7 +687,7 @@ function hasAssertionSubtraction(source: string) {
       expectsOperand = false
       continue
     }
-    const number = /^\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?/.exec(source.slice(index))
+    const number = /^(?:0[xX][\da-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|\d[\d_]*n|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d[\d_]*)?)/.exec(source.slice(index))
     if (number) {
       index += number[0].length - 1
       expectsOperand = false
@@ -704,7 +704,7 @@ function hasAssertionSubtraction(source: string) {
     if (source[index] === "-") {
       // Only negative numeric literal types use a unary minus. Contextual
       // keywords also act as type names once an operand is expected.
-      if (!expectsOperand || !/^\d/.test(source.slice(index + 1).trimStart())) return true
+      if (!expectsOperand || !/^(?:\d|\.\d)/.test(source.slice(index + 1).trimStart())) return true
     }
     else if (/[([|&?:]/.test(source[index] || "")) expectsOperand = true
     else if (/[)\]}]/.test(source[index] || "")) expectsOperand = false
