@@ -70,6 +70,37 @@ it("rejects legacy npm versions with repository onload scripts before execution"
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
 
+it.each(["cache", "cafile"])("rejects project npm %s paths before execution", async setting => {
+  const root = await fixture();
+  await writeFile(join(root, ".npmrc"), `${setting}=/srv/outside\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local|Unsupported project/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it.each(["modulesDir", "storeDir", "cacheDir"])("rejects project pnpm %s paths before execution", async setting => {
+  const root = await fixture();
+  await writeFile(join(root, "pnpm-workspace.yaml"), `${setting}: /srv/outside\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local|Unsupported project/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it("fingerprints supported project npm settings for dependency refresh", async () => {
+  const root = await fixture();
+  await writeFile(join(root, ".npmrc"), "node-linker=isolated\nhoist=false\npublic-hoist-pattern[]=\n");
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(join(root, ".npmrc"), "node-linker=isolated\nhoist=true\n");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+
+it("installs npm shrinkwrap-only projects", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.1.0" }));
+  await writeFile(join(root, "npm-shrinkwrap.json"), "{}");
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+  expect(await readFile(join(root, "args.txt"), "utf8")).toContain("npm@11.1.0\nci\n");
+});
+
 it.each(["file:/srv/app", "file:../../outside.tgz", "/srv/app", "file:%2fetc"])("rejects host dependency %s before execution", async source => {
   const root = await fixture();
   await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { unsafe: source } }));
