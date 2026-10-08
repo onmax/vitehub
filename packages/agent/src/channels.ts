@@ -1883,11 +1883,11 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   mode: "initialize" | "lifecycle" = "lifecycle",
 ): NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]> {
-  const trackActiveRuns = mode === "lifecycle"
   const options = githubAppOptions(app) || {}
   const commentIds = new Map<string, number>()
   return {
     async update(context) {
+      const trackActiveRuns = mode === "lifecycle" && context.run !== undefined
       const target = githubActivityTarget(context.target)
       const deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
       deadline.throwIfAborted()

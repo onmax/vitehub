@@ -38,6 +38,8 @@ export interface GitHubInboxSummary {
 export type Claim = { token: string; generation: number; snapshot: Snapshot; runId?: string; startedAt?: number; activity?: AgentRunActivity }
 export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string; enqueued?: boolean }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+const statusContentKey = (snapshot: Snapshot, head = snapshot.wait?.headSha ?? snapshot.pr?.head?.sha) =>
+  digest([head, snapshot.generation, snapshot.status, snapshot.lastResult])
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
 /** Normalize REST and discovery records once, before they enter the inbox. */
 export const normalizePullRequest: typeof parsePullRequest = parsePullRequest
@@ -285,7 +287,7 @@ export class PullRequestInbox {
     const head = resultHead ?? snapshot.pr?.head?.sha
     if (!head || claim && !resultHead && claim.snapshot.pr?.head?.sha !== head) return
     const key = statusTargetKey(snapshot)
-    const contentKey = digest([head, snapshot.generation, snapshot.status, snapshot.lastResult])
+    const contentKey = statusContentKey(snapshot, head)
     const statusRunId = `saved:${key}:${contentKey}`
     const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${key}`))
     const pending = await this.metaIn(tx, `${statusOutboxPrefix}${key}`)
@@ -396,8 +398,16 @@ export class PullRequestInbox {
       const target = statusTargetKey(observed)
       const key = `${statusOutboxPrefix}${target}`
       const current = await this.getIn(tx, observed.repository, observed.number)
-      if (!current || current.lease || current.generation !== current.handled || !current.lastResult?.trim()) return false
+      if (!current || current.lease || !current.lastResult?.trim()) return false
       const surviving = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (current.generation !== current.handled) {
+        // A retry remains ready and unhandled. Its current publication or saved
+        // acknowledgement must prove this result, rather than older feedback.
+        const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
+        const contentKey = statusContentKey(current)
+        if (current.status !== 'ready' || !(surviving.success && surviving.output.contentKey === contentKey
+          || sent.success && sent.output.contentKey === contentKey)) return false
+      }
       if (surviving.success) {
         // Its side effect may already have happened while its response is still
         // pending. Preserve ownership, but fence that acknowledgement and replay.
@@ -907,7 +917,7 @@ export class PullRequestInbox {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
       await this.put(tx, s)
-      await this.enqueueStatusResult(tx, s, claim)
+      if (s.generation === claim.generation) await this.enqueueStatusResult(tx, s, claim)
       return true
     })
   }
@@ -942,6 +952,7 @@ export class PullRequestInbox {
         || (s.revision ?? 0) !== (observed.revision ?? 0)) return false
       s.handled = s.generation; s.reasons = []
       await this.put(tx, s)
+      await this.enqueueStatusResult(tx, s, undefined, s.wait.headSha)
       return true
     })
   }

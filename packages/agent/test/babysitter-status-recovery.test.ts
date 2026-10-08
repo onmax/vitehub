@@ -598,3 +598,91 @@ test('a confirmed terminal result survives the PR closure webhook', async t => {
   await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } }).flush()
   assert.deepEqual(published, ['Merged the verified repair.'])
 })
+
+test('a writer that settles after lease replacement requeues a newer saved retry status', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void
+  let started!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const began = new Promise<void>(resolve => { started = resolve })
+  let projection = ''
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    started()
+    await barrier
+    projection = pending.text
+  } }).flush()
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: async pending => { projection = pending.text } })
+  try {
+    await began
+    const entry = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, { text: 'New result', retry: true })
+    setClock(entry.leaseUntil + 1)
+    await next.flush()
+    assert.equal(projection, 'New result')
+  } finally { release(); await first }
+  await next.flush()
+  assert.equal(projection, 'New result', 'the latest result must be corrected after an expired owner settles')
+})
+
+test('superseded retry results never publish under the newer generation', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.ingest('new-feedback', 'issue_comment', { repository: { full_name: repository }, action: 'created',
+    issue: { number: pr.number, pull_request: {} }, comment: { id: 89, body: 'New repair requirements', user: { login: 'reviewer' } } })
+  await inbox.finish(claim, { text: 'Old failure', retry: true })
+  assert.equal((await inbox.get(repository, pr.number))?.status, 'ready')
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { published.push(pending.text) } }).flush()
+  assert.deepEqual(published, [])
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
+})
+
+test('acknowledging an unchanged wait preserves its pending publication', async t => {
+  const { inbox, claim } = await fixture(t)
+  const published: string[] = []
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { published.push(pending.text) } })
+  await recovery.recover()
+  await inbox.finish(claim, { text: 'Waiting for remaining checks', wait: { kind: 'checks', headSha: head, reason: 'One check remains pending', evidenceKey: 'checks' } })
+  await inbox.ingest('partial-check', 'check_run', { repository: { full_name: repository }, action: 'completed',
+    check_run: { id: 1, name: 'finished', head_sha: head, status: 'completed', conclusion: 'success', pull_requests: [{ number: pr.number }] } })
+  const current = (await inbox.get(repository, pr.number))!
+  assert.ok(current.generation > current.handled)
+  assert.equal(await inbox.acknowledgeWait(current), true)
+  await recovery.flush()
+  assert.deepEqual(published, ['Waiting for remaining checks'])
+})
+
+test('a writer that settles after lease replacement does not relabel a retry result after newer feedback', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void
+  let started!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const began = new Promise<void>(resolve => { started = resolve })
+  let projection = ''
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    started()
+    await barrier
+    projection = pending.text
+  } }).flush()
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: async pending => { projection = pending.text } })
+  try {
+    await began
+    const entry = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, { text: 'New result', retry: true })
+    setClock(entry.leaseUntil + 1)
+    await next.flush()
+    assert.equal(projection, 'New result')
+    await inbox.ingest('later-feedback', 'issue_comment', { repository: { full_name: repository }, action: 'created', issue: { number: pr.number, pull_request: {} }, comment: { id: 90, body: 'New requirements after the retry result', user: { login: 'reviewer' } } })
+  } finally { release(); await first }
+  await next.flush()
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [], 'a result from an earlier generation must not become current feedback')
+  const current = (await inbox.get(repository, pr.number))!
+  assert.ok(current.generation > current.handled)
+})
