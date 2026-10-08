@@ -175,7 +175,7 @@ export interface BlobStorage {
   handleMultipartUpload(event: BlobMultipartEvent, options?: BlobMultipartHandlerOptions): Promise<BlobResult<BlobMultipartHandlerResult>>
   /** Store the files of a `multipart/form-data` request. */
   handleUpload(event: BlobUploadEvent, options?: BlobUploadOptions): Promise<BlobResult<BlobObject[]>>
-  head(pathname: string): Promise<BlobResult<BlobObject>>
+  head(pathname: string): Promise<BlobResult<BlobObject | null>>
   list(options?: BlobListOptions): Promise<BlobResult<BlobListResult>>
   put(pathname: string, body: BlobPutBody, options?: BlobPutOptions): Promise<BlobResult<BlobObject>>
   /** Continue a multipart upload in a later request. */

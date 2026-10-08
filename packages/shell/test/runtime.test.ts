@@ -16,6 +16,7 @@ import { createCloudflareShellProvider } from "../src/providers/cloudflare.ts"
 
 import type {
   ShellExecutionProvider,
+  ShellObservation,
   ShellProcess,
 } from "../src/index.ts"
 import type {
@@ -115,6 +116,51 @@ describe("@vite-hub/shell just-bash runtime", () => {
     })
     await expect(session.startProcess("sleep 10")).rejects.toThrow("does not support long-running processes")
     await expect(session.dispose()).resolves.toMatchObject({ event: "session_disposed" })
+  })
+
+  it.each([undefined, 4])("retains class-based observations with max output length %s", async (maxOutputLength) => {
+    class ProviderObservation implements ShellObservation {
+      get command() { return "report" }
+      get cwd() { return "/workspace" }
+      get durationMs() { return 12 }
+      get event() { return "command_finished" as const }
+      get exitCode() { return 3 }
+      get stderr() { return "error-message" }
+      get stdout() { return "output-message" }
+      get timedOut() { return false }
+      get maxOutputLength() { return 100 }
+      get outputTruncated() { return true }
+      get workspaceGuardrail() { return { kind: "no_match" as const, path: "docs" } }
+    }
+    const runtime = createShellRuntime({
+      policy: { maxOutputLength },
+      provider: {
+        boundary: {
+          cwd: true,
+          env: true,
+          filesystem: { writable: false },
+          network: false,
+          processes: { background: false, interactive: false },
+          streaming: false,
+          timeout: { enforcedBy: "runtime", supported: true },
+        },
+        async exec() { return new ProviderObservation() },
+      },
+    })
+
+    await expect(runtime.exec("run-report")).resolves.toMatchObject({
+      command: "report",
+      cwd: "/workspace",
+      durationMs: 12,
+      event: "command_finished",
+      exitCode: 3,
+      stderr: maxOutputLength ? "erro\n[output truncated to 4 characters]\n" : "error-message",
+      stdout: maxOutputLength ? "outp\n[output truncated to 4 characters]\n" : "output-message",
+      timedOut: false,
+      maxOutputLength: maxOutputLength ?? 100,
+      outputTruncated: true,
+      workspaceGuardrail: { kind: "no_match", path: "docs" },
+    })
   })
 
   it("retains class-based background process metadata for inspection", async () => {

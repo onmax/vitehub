@@ -75,7 +75,7 @@ Every async method returns `[error, value]`. Expected provider and storage failu
 | --- | --- |
 | `blob.put(pathname, body, options?)` | Stores text, bytes, streams, ArrayBuffers, or `Blob` objects. |
 | `blob.get(pathname)` | Reads a `Blob` or returns `null`. |
-| `blob.head(pathname)` | Reads object metadata. |
+| `blob.head(pathname)` | Reads object metadata or returns `null`. |
 | `blob.list(options?)` | Lists objects with optional `prefix`, `limit`, `cursor`, and folded folders. |
 | `blob.del(pathnames)` | Deletes one or more objects. |
 | `blob.sign(pathname, options)` | Signs a short-lived `GET` or `PUT` request for one object. |
