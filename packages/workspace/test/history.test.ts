@@ -375,6 +375,24 @@ class ViteHubBlobFailure extends ViteHubError<"BLOB_OPERATION_FAILED", { operati
 }
 
 describe("history policy and capabilities", () => {
+  it("keeps configured limits when validators replace the write input", async () => {
+    for (const policy of [
+      { rule: { maxBytes: 3 }, content: "too-large", mediaType: undefined, error: "limits writes" },
+      { rule: { mediaType: "text/plain" }, content: "ok", mediaType: "application/octet-stream", error: "does not allow media type" },
+    ]) {
+      const { store, uploads } = await setup("libsql")
+      const workspace = useWorkspace("replacement", { mode: "write", definition: { name: "replacement", store, rules: { "**": {
+        ...policy.rule,
+        validate: input => ({ operation: input.operation, path: input.path, workspace: input.workspace, content: policy.content, mediaType: policy.mediaType }),
+      } } } })
+      await expect(workspace.fs.writeFile("a.txt", "ok")).rejects.toThrow(policy.error)
+      await expect(workspace.history.commit({ ifHead: null, files: { "a.txt": "ok" } })).rejects.toThrow(policy.error)
+      expect(uploads).not.toHaveBeenCalled()
+      expect(await store.readFile("a.txt")).toBeUndefined()
+      expect(await store.history.head()).toBeNull()
+    }
+  })
+
   it("applies resolved policies and hooks to complete history commits", async () => {
     const { store, facade, uploads } = await setup("libsql")
     const after = vi.fn()

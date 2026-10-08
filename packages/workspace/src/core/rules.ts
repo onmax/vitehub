@@ -151,14 +151,14 @@ export function createWorkspaceWritePolicy(definition: WorkspaceDefinition): Wor
 
   return {
     async before(input) {
-      let current: WorkspaceWriteInput = {
-        ...input,
-        rule: matchRule(policy, input.path),
-      }
+      const rule = matchRule(policy, input.path)
+      let current: WorkspaceWriteInput = { ...input, rule }
       await runHooks(policy.hooks, "write:before", current)
+      current = { ...current, rule }
       assertRuleAllows(current)
       if (current.rule?.validate.length) current = await runValidators(current.rule.validate, current)
       await runHooks(policy.hooks, "write:validate", current)
+      current = { ...current, rule }
       assertRuleAllows(current)
       return current
     },
