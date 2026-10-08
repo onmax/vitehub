@@ -419,6 +419,22 @@ async function fixture(autoMerge = false, discovered = false, preset: { allowOpe
 }
 
 describe("Babysitter preset runtime", () => {
+  it.each(["commitRepair", "pushRepair"] as const)("allows %s across an unrelated repository push", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    f.onRepair(async () => {
+      await f.runtime.inbox.ingest("other-branch-pushed", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40), repo: { ...f.pr().base.repo, pushed_at: "2026-10-08T20:00:00Z", size: 12345, open_issues_count: 20 } } },
+      });
+    });
+    try {
+      await f.reconcile();
+      if (operation === "commitRepair") expect(f.commit).toHaveBeenCalledOnce();
+      else expect(f.push).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("parks model work until the recorded provider quota cooldown ends", async () => {
     const f = await fixture(false);
     const until = Date.now() + 60 * 60_000;
