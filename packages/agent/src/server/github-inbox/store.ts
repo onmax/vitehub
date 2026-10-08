@@ -6,6 +6,8 @@ import * as v from 'valibot'
 import { isRuntimeNumber, isRuntimeString } from '../../internal/runtime-value.ts'
 import { isRuntimeRecord } from '../../internal/runtime-type.ts'
 import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
+import type { AgentRunActivity } from '../../types.ts'
+import { statusDeliverySchema, statusOutboxPrefix, statusSentPrefix, statusTargetKey, workerBlockerPrefix, type StatusDelivery } from './status-delivery.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
 import { matchesGitHubPullRequestFilter } from '../../internal/github-pull-request-filter.ts'
@@ -33,7 +35,7 @@ export interface GitHubInboxSummary {
   dirty: boolean; attempts: number; nextAt: number; lastResult?: string; progressBudget?: ProgressBudget
   stackBlocked?: boolean; stackParent?: { number: number; state: string }
 }
-export type Claim = { token: string; generation: number; snapshot: Snapshot }
+export type Claim = { token: string; generation: number; snapshot: Snapshot; runId?: string; startedAt?: number; activity?: AgentRunActivity }
 export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string; enqueued?: boolean }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
@@ -278,6 +280,98 @@ export class PullRequestInbox {
     await this.transaction(async tx => { await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key]) })
   }
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
+  private async enqueueStatusResult(tx: PullRequestInboxExecutor, snapshot: Snapshot, claim?: Claim, resultHead?: string): Promise<void> {
+    if (!this.activityAuthors.size || !snapshot.lastResult?.trim()) return
+    const head = resultHead ?? snapshot.pr?.head?.sha
+    if (!head || claim && !resultHead && claim.snapshot.pr?.head?.sha !== head) return
+    const key = statusTargetKey(snapshot)
+    const contentKey = digest([head, snapshot.generation, snapshot.status, snapshot.lastResult])
+    const sent = await this.metaIn(tx, `${statusSentPrefix}${key}`)
+    const pending = await this.metaIn(tx, `${statusOutboxPrefix}${key}`)
+    if (isRuntimeRecord(sent) && sent.contentKey === contentKey || isRuntimeRecord(pending) && pending.contentKey === contentKey) return
+    const now = this.clock()
+    const delivery: StatusDelivery = {
+      version: randomUUID(), contentKey, repository: snapshot.repository, number: snapshot.number,
+      head, generation: snapshot.generation, text: snapshot.lastResult, attempts: 0, nextAt: now,
+      activity: {
+        runId: claim?.runId ?? `saved:${key}:${snapshot.generation}:${head}`,
+        status: snapshot.status === 'waiting' ? 'waiting' : snapshot.status === 'ready' ? 'failed' : 'completed',
+        updatedAt: new Date(now).toISOString(), links: [...claim?.activity?.links ?? []], tasks: [], summary: snapshot.lastResult,
+      },
+    }
+    if (head !== snapshot.pr?.head?.sha) delivery.precedingHead = snapshot.pr?.head?.sha
+    if (claim?.startedAt !== undefined) delivery.activity.startedAt = new Date(claim.startedAt).toISOString()
+    await this.setMetaIn(tx, `${statusOutboxPrefix}${key}`, delivery)
+  }
+  /** A bounded batch of due deliveries. Invalid metadata never reaches the publisher. */
+  async pendingStatusDeliveries(limit = 5): Promise<StatusDelivery[]> {
+    if (!Number.isInteger(limit) || limit < 1) throw new Error('Status delivery limit must be a positive integer')
+    const now = this.clock()
+    return (await this.metaEntries(statusOutboxPrefix)).flatMap(([, value]) => {
+      const parsed = v.safeParse(statusDeliverySchema, value)
+      return parsed.success && parsed.output.nextAt <= now && this.repositories.includes(parsed.output.repository) ? [parsed.output] : []
+    }).sort((a, b) => a.nextAt - b.nextAt).slice(0, limit)
+  }
+  /** Version comparison prevents an older publication from deleting a newer result. */
+  async finishStatusDelivery(observed: StatusDelivery, outcome: 'delivered' | 'discarded'): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
+      const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!parsed.success || parsed.output.version !== observed.version) return false
+      if (outcome === 'delivered') {
+        await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, head: observed.head, deliveredAt: this.clock() })
+      }
+      await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
+      return true
+    })
+  }
+  async retryStatusDelivery(observed: StatusDelivery, failure: unknown): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
+      const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!parsed.success || parsed.output.version !== observed.version) return false
+      const attempts = parsed.output.attempts + 1
+      await this.setMetaIn(tx, key, { ...parsed.output, attempts, nextAt: this.clock() + Math.min(900_000, 60_000 * 2 ** Math.min(attempts - 1, 4)), lastError: String(failure).slice(0, 1000) })
+      return true
+    })
+  }
+  /** Upgrade historical waiting results without synthetic webhooks or model passes. */
+  async backfillStatusDeliveries(): Promise<void> {
+    for (const observed of await this.waitsToEvaluate(true, true)) {
+      await this.transaction(async tx => {
+        const current = await this.getIn(tx, observed.repository, observed.number)
+        if (!current || current.lease || current.status !== 'waiting' || current.generation !== observed.generation
+          || (current.revision ?? 0) !== (observed.revision ?? 0)) return
+        await this.enqueueStatusResult(tx, current, undefined, current.wait?.headSha)
+      })
+    }
+  }
+  async recordWorkerBlocker(observed: Snapshot, revision: string): Promise<void> {
+    await this.transaction(async tx => {
+      const current = await this.getIn(tx, observed.repository, observed.number)
+      if (!current || current.pr?.head?.sha !== observed.pr?.head?.sha) return
+      await this.setMetaIn(tx, `${workerBlockerPrefix}${statusTargetKey(observed)}`, { revision, head: observed.pr?.head?.sha })
+    })
+  }
+  /** Wake and persist its release marker atomically, so restart cannot repeat the wake. */
+  async wakeForWorkerRelease(observed: Snapshot, revision: string, evidenceKey: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
+      if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
+        || (s.revision ?? 0) !== (observed.revision ?? 0) || s.pr?.head?.sha !== observed.pr?.head?.sha) return false
+      const key = `${workerBlockerPrefix}${statusTargetKey(s)}`
+      const marker = await this.metaIn(tx, key)
+      if (isRuntimeRecord(marker) && marker.revision === revision && marker.head === s.pr?.head?.sha) return false
+      parseWait({ ...s.wait, evidenceKey })
+      if (s.wait.evidenceKey === evidenceKey) return false
+      s.recoveryHead = s.pr?.head?.sha; s.refresh = true
+      delete s.wait
+      this.dirty(s, 'wait:worker-release-changed')
+      await this.put(tx, s)
+      await this.setMetaIn(tx, key, { revision, head: s.pr?.head?.sha })
+      return true
+    })
+  }
   private directMergeKey(repository: string, number: number): string { return `direct-merge:${repository}:${number}` }
   /** Atomically records that a claim has started an irreversible merge request. */
   async beginDirectMerge(claim: Claim, head: string, asynchronous = false): Promise<boolean> {
@@ -696,7 +790,9 @@ export class PullRequestInbox {
         this.recordProgress(s, claim, result.progress)
         s.status = 'waiting'; s.handled = Math.max(s.handled, claim.generation); s.reasons = s.generation > claim.generation ? s.reasons : []
         s.revision = (s.revision ?? 0) + 1
-        await this.put(tx, s); return true
+        await this.put(tx, s)
+        await this.enqueueStatusResult(tx, s, claim, pinnedHead)
+        return true
       }
       if (result.wait) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
@@ -726,7 +822,9 @@ export class PullRequestInbox {
       if (s.status !== 'terminal' && s.progressBudget?.exhausted && s.progressBudget.head === head) {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
-      await this.put(tx, s); return true
+      await this.put(tx, s)
+      await this.enqueueStatusResult(tx, s, claim)
+      return true
     })
   }
   private recordProgress(s: Snapshot, claim: Claim, progress: ProgressOutcome | undefined): void {

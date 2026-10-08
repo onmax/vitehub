@@ -154,6 +154,10 @@ export interface GitHubAppEnvironment {
   privateKey: string
   /** Fixed installation. Without it, each repository resolves its own installation. */
   installationId?: number
+  /** Owner authorized by the fixed installation; other owners are discovered. */
+  owner?: string
+  /** Explicit installation IDs by repository owner. */
+  installations?: Record<string, number>
   /** Fallback token for repositories without an App installation. */
   token?: string
   userAgent?: string
@@ -192,7 +196,9 @@ export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
   return {
     async credentials(context: GitHubHostCredentialContext): Promise<GitHubHostCredentials> {
       if (!context.repository) return { token: app.token }
-      const installationId = app.installationId ?? await installation(context.repository, context.signal)
+      const repositoryOwner = owner(context.repository)
+      const configured = app.installations?.[repositoryOwner] ?? (!app.owner || app.owner.toLowerCase() === repositoryOwner ? app.installationId : undefined)
+      const installationId = configured ?? await installation(context.repository, context.signal)
       return { appId: app.appId, installationId, owner: owner(context.repository), privateKey: app.privateKey, token: app.token }
     },
     /** The App bot's login and noreply email, used as the commit author. */

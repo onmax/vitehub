@@ -1851,8 +1851,8 @@ function renderGithubActivity(
     }),
   ].join("\n"))
   if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
-  if (current?.summary && ["completed", "failed", "cancelled"].includes(activity.status)) {
-    sections.push(`Latest result\n\n${githubActivityText(current.summary, 2_000)}`)
+  if (current?.summary && ["completed", "failed", "cancelled", "waiting"].includes(activity.status)) {
+    sections.push(`${activity.status === "waiting" ? "Waiting" : "Latest result"}\n\n${githubActivityText(current.summary, 2_000)}`)
   }
   if (activity.error) sections.push(`Agent stopped: ${githubActivityText(activity.error, 1_000)}`)
   if (state.history.length) {
@@ -1934,7 +1934,7 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
           startedAt: githubActivityDate(context.activity.startedAt) ?? sameRun?.startedAt
             ?? (context.activity.status === "running" ? new Date().toISOString() : undefined),
           updatedAt: githubActivityDate(context.activity.updatedAt) ?? new Date().toISOString(),
-          summary: terminal ? context.activity.summary?.replace(/<!--[^]*?-->/g, "").trim().slice(0, 2_000) : undefined,
+          summary: terminal || context.activity.status === "waiting" ? context.activity.summary?.replace(/<!--[^]*?-->/g, "").trim().slice(0, 2_000) : undefined,
         }
         const reconcileDuplicates = async () => {
           for (const duplicate of owned.filter(comment => comment !== existing)) {

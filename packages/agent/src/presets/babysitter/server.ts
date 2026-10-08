@@ -10,7 +10,7 @@ import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
-import { createMessage, defineAgent, runAgent } from "../../index.ts";
+import { createMessage, defineAgent, runAgent, publishAgentActivity } from "../../index.ts";
 import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";
 import type { AgentCapabilitiesResolver, AgentInput, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
@@ -46,6 +46,7 @@ import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReason
 import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admission.ts";
+import { createBabysitterStatusRecovery } from "./status-recovery.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -142,6 +143,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     options.event?.(name, properties);
   const schedulerError = (name: string, error: unknown, properties: Record<string, unknown> = {}) =>
     options.error?.(name, error, properties);
+  const statusChannel = verifiedHostIdentity ? github.channel({ activity: true, pullRequest: { workspace: false } }) : undefined;
+  const statusRecovery = createBabysitterStatusRecovery({
+    inbox: pullRequestInbox,
+    revision: baseAgent.version ?? "durable-status-v1",
+    publish: statusChannel ? pending => publishAgentActivity({ name: `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`, channels: { github: statusChannel } }, {
+      channelId: "github", target: { repository: pending.repository, issue: pending.number }, activity: pending.activity,
+    }) : undefined,
+    event: schedulerEvent,
+    error: schedulerError,
+  });
   const active = new Set<string>();
   const execFileAsync = promisify(execFile);
   async function readRest(path: string, projection = ".[]", signal?: AbortSignal) {
@@ -461,6 +472,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return checksDependencyEvidence(wake, readRest);
   }
   async function externalWait(observed: Snapshot, wake: PullRequestWake | undefined, reason: string) {
+    if (!wake) await statusRecovery.recordWorkerBlocker(observed, reason);
     if (!wake) return { ...createCheckWait(observed, waitPolicy), kind: "external" as const, reason };
     if (!options.repositories.includes(wake.repository.toLowerCase())) throw new Error("External wake repository is outside the configured repositories.");
     const evidence = await dependencyEvidence(wake);
@@ -549,6 +561,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     };
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
+    await statusRecovery.recover();
+    await statusRecovery.flush();
     let modelAdmission = true;
     if (options.admission) {
       const admission = await options.admission();
@@ -671,6 +685,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         const runId = `${schedule.runId}:${repository}:pr-${number}:generation-${inboxClaim.generation}`;
         const owner = { pullRequest: number, repository, runId };
         const startedAt = Date.now();
+        inboxClaim.runId = runId;
+        inboxClaim.startedAt = startedAt;
         let outcome = "completed";
         let disposition: BabysitterPassResult["disposition"] | undefined;
         let resultText = "";
@@ -1083,6 +1099,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // provider session to this pass so a new checkout never
               // resumes a Codex process whose temporary cwd was deleted.
               githubRun.threadId = `${githubRun.threadId}:${runId}`;
+              inboxClaim.activity = githubRun.activity;
               const result = await runWithProviderRetry(() => runAgent(
                 agent,
                 {
