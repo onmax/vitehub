@@ -321,13 +321,19 @@ export class PullRequestInbox {
     if (claim?.startedAt !== undefined) delivery.activity.startedAt = new Date(claim.startedAt).toISOString()
     await this.setMetaIn(tx, `${statusOutboxPrefix}${key}`, delivery)
   }
-  private async statusWritersIn(tx: PullRequestInboxExecutor, target: string): Promise<string[]> {
-    const parsed = v.safeParse(v.array(v.string()), await this.metaIn(tx, `${statusWriterPrefix}${target}`))
-    return parsed.success ? parsed.output : []
+  private async statusWritersIn(tx: PullRequestInboxExecutor, target: string): Promise<Array<{ lease: string; expiresAt: number }>> {
+    const parsed = v.safeParse(v.array(v.union([v.string(), v.object({ lease: v.string(), expiresAt: v.number() })])), await this.metaIn(tx, `${statusWriterPrefix}${target}`))
+    const now = this.clock()
+    // A replaced request may still reach GitHub after lease expiry. Retain it
+    // for fifteen more minutes, then retire it after the corrective publication.
+    // Renewal extends this horizon for live writers. Legacy records receive a
+    // bounded migration horizon on their first persisted correction.
+    return parsed.success ? parsed.output.map(value => v.is(v.string(), value) ? { lease: value, expiresAt: now + 900_000 } : value)
+      .filter(value => Number.isFinite(value.expiresAt) && value.expiresAt > now) : []
   }
-  private async settleStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<string[]> {
+  private async settleStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<Array<{ lease: string; expiresAt: number }>> {
     const target = statusTargetKey(observed)
-    const remaining = (await this.statusWritersIn(tx, target)).filter(lease => lease !== observed.lease)
+    const remaining = (await this.statusWritersIn(tx, target)).filter(writer => writer.lease !== observed.lease)
     if (remaining.length) await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, remaining)
     else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusWriterPrefix}${target}`])
     return remaining
@@ -384,13 +390,16 @@ export class PullRequestInbox {
         const statusRunId = `saved:${statusTargetKey(pending)}:${pending.contentKey}`
         const runId = pending.activity.runId.startsWith(`${statusRunId}:`) ? pending.activity.runId : statusRunId
         const delivery = { ...pending, activity: { ...pending.activity, runId }, lease: randomUUID(), leaseUntil: now + leaseMs }
-        // Expiry releases delivery ownership, not the external HTTP writer.
-        // Keep replaced writers durable until their actual publication settles.
+        // Expiry releases delivery ownership. A bounded writer horizon keeps
+        // corrections durable without a crashed publisher forcing endless writes.
         const target = statusTargetKey(pending)
-        const writers = new Set(await this.statusWritersIn(tx, target))
-        if (pending.lease) writers.add(pending.lease)
-        writers.add(delivery.lease)
-        await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, [...writers])
+        const writers = await this.statusWritersIn(tx, target)
+        if (pending.lease && !writers.some(writer => writer.lease === pending.lease)
+          && (pending.leaseUntil ?? 0) + 900_000 > now) {
+          writers.push({ lease: pending.lease, expiresAt: pending.leaseUntil! + 900_000 })
+        }
+        writers.push({ lease: delivery.lease, expiresAt: delivery.leaseUntil + 900_000 })
+        await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, writers)
         await this.setMetaIn(tx, `${statusOutboxPrefix}${target}`, delivery)
         claimed.push(delivery)
         if (claimed.length === limit) break
@@ -405,7 +414,12 @@ export class PullRequestInbox {
       const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
       const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
       if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
-      await this.setMetaIn(tx, key, { ...parsed.output, leaseUntil: this.clock() + leaseMs })
+      const leaseUntil = this.clock() + leaseMs
+      await this.setMetaIn(tx, key, { ...parsed.output, leaseUntil })
+      const target = statusTargetKey(observed)
+      const writers = (await this.statusWritersIn(tx, target)).filter(writer => writer.lease !== observed.lease)
+      writers.push({ lease: observed.lease, expiresAt: leaseUntil + 900_000 })
+      await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, writers)
       return true
     })
   }

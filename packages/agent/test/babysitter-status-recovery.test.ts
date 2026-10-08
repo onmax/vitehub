@@ -826,3 +826,46 @@ test('keeps a durable correction after acknowledgement while a replaced writer c
   await recovery.flush()
   assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
 })
+
+for (const legacy of [false, true]) test(`retires an orphaned status writer after a bounded corrective replay, legacy=${legacy}`, async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const [orphan] = await inbox.claimStatusDeliveries()
+  assert.ok(orphan?.leaseUntil)
+  if (legacy) await inbox.setMeta('status-writers:v1:acme/app#239', [orphan.lease])
+  await inbox.ingest('closed-after-crash', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  setClock(orphan.leaseUntil + 1)
+  await inbox.close()
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  const published: string[] = []
+  const recovery = createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async delivery => { published.push(delivery.text) } })
+  await recovery.flush()
+  assert.deepEqual(published, ['Pull request closed.'])
+  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 1, 'keep the correction while an accepted old HTTP request can still settle')
+  setClock(orphan.leaseUntil + 60 * 60_000)
+  await recovery.flush()
+  assert.deepEqual(published, ['Pull request closed.', 'Pull request closed.'])
+  assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [], 'a final corrective publication must retire a crashed writer')
+  assert.deepEqual(await restored.metaEntries('status-writers:v1:'), [])
+  setClock(orphan.leaseUntil + 2 * 60 * 60_000)
+  await recovery.flush()
+  assert.equal(published.length, 2, 'a crashed process must not cause permanent GitHub writes')
+})
+
+test('a status writer heartbeat preserves its marker beyond the original retirement deadline', async t => {
+  const { inbox, claim, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  const [writer] = await inbox.claimStatusDeliveries(1, 60_000)
+  assert.ok(writer?.leaseUntil)
+  const originalLeaseUntil = writer.leaseUntil
+  for (let minute = 1; minute < 20; minute++) {
+    setClock(writer.leaseUntil + (minute - 1) * 60_000 - 1)
+    assert.equal(await inbox.renewStatusDelivery(writer, 60_000), true)
+  }
+  const stored = await inbox.meta('status-writers:v1:acme/app#239')
+  assert.ok(Array.isArray(stored))
+  assert.ok(stored.some(entry => entry.lease === writer.lease && entry.expiresAt > originalLeaseUntil + 20 * 60_000), 'live renewal must extend durable writer retirement')
+  assert.equal(await inbox.finishStatusDelivery(writer, 'delivered'), true)
+  assert.deepEqual(await inbox.metaEntries('status-writers:v1:'), [])
+})

@@ -46,7 +46,7 @@ export const statusDeliverySchema: v.GenericSchema<unknown, StatusDelivery> = v.
   }),
 });
 
-export const statusAcknowledgementSchema = v.object({ contentKey: v.string(), runId: v.string(), status: v.optional(v.picklist(["queued", "failed", "completed", "waiting"])) });
+export const statusAcknowledgementSchema: v.GenericSchema<unknown, { contentKey: string; runId: string; status?: StatusDelivery["activity"]["status"] }> = v.object({ contentKey: v.string(), runId: v.string(), status: v.optional(v.picklist(["queued", "failed", "completed", "waiting"])) });
 
 /** Describe current work without replacing the saved result or handling evidence. */
 export function statusProjectionText(snapshot: Snapshot): string {
