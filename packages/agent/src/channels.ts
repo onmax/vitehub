@@ -1622,6 +1622,26 @@ const githubActivityPreviousRunLimit = 100
 const githubActivityTaskLimit = 25
 const githubActivityActiveRuns = new Map<string, Set<string>>()
 const githubActivityUpdates = new Map<string, Promise<void>>()
+const githubActivityTokenResolverIds = new WeakMap<object, number>()
+let githubActivityNextTokenResolverId = 0
+
+async function githubActivityCredentialKey<TRuntimeConfig extends AgentRuntimeConfig>(
+  app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
+  options: GitHubAppOptions<TRuntimeConfig>,
+  context: GitHubAppContext<TRuntimeConfig>,
+): Promise<string> {
+  if (hasRuntimeType(options.token, "function")) {
+    let id = githubActivityTokenResolverIds.get(options.token)
+    if (id === undefined) githubActivityTokenResolverIds.set(options.token, id = ++githubActivityNextTokenResolverId)
+    return `resolver:${id}`
+  }
+  if (options.token) return `token:${options.token}`
+  const env = await githubEnv(context)
+  const appId = app ? await githubAppSetting(options, env, "appId", "appId", context) : undefined
+  const normalizedAppId = hasRuntimeType(appId, "number") ? String(appId) : cleanSecret(appId)
+  if (normalizedAppId) return `app:${normalizedAppId}`
+  return `token:${cleanSecret(env.token) ?? ""}`
+}
 
 interface GitHubActivityTarget {
   deliveryId?: string
@@ -1899,12 +1919,16 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
       const scopedApp = app ? { ...options, fetch: fetcher } : undefined
       const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
-      const token = await githubPullRequestMetadataToken(scopedApp, context, target.installationId, target.repository, deadline)
-      if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
-      const updateKey = `${token}\0${commentsTarget}`
+      // Token rotation must not let writes to the same comment run concurrently.
+      // Reserve the target before authentication to preserve lifecycle ordering.
+      const updateKey = `${await githubActivityCredentialKey(app, options, context)}\0${commentsTarget}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
         // Authentication and the serialized publication each get a request budget.
+        deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
+        deadline.throwIfAborted()
+        const token = await githubPullRequestMetadataToken(scopedApp, context, target.installationId, target.repository, deadline)
+        if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
         deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
         deadline.throwIfAborted()
         const headers = githubApiHeaders(token, options.userAgent)

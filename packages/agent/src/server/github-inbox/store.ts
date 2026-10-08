@@ -392,7 +392,7 @@ export class PullRequestInbox {
       const claimed: StatusDelivery[] = []
       for (const pending of candidates) {
         const snapshot = await this.getIn(tx, pending.repository, pending.number)
-        if (pending.projection && snapshot?.lease) continue
+        if (pending.projection && snapshot?.lease && snapshot.status !== 'terminal') continue
         if (snapshot?.generation === pending.generation && pending.precedingHead && snapshot.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
         // Upgrade saved entries from releases that reused the invocation run ID.
         const statusRunId = `saved:${statusTargetKey(pending)}:${pending.contentKey}`

@@ -5,7 +5,7 @@ import { isStatusDeliveryCurrent, type StatusDelivery } from "../../server/githu
 export function isWorkerBlocker(snapshot: Pick<Snapshot, "wait" | "lastResult">): boolean {
   if (snapshot.wait?.kind !== "external" || snapshot.wait.wake || snapshot.wait.retryAt !== undefined) return false;
   const text = `${snapshot.wait.reason}\n${snapshot.lastResult ?? ""}`;
-  return /MCP tool call requires approval|approval policy is never|read.only[^\n]{0,80}\.git|\.git[^\n]{0,80}read.only|writable (?:\.git|Git (?:metadata|checkout))|restore frozen-lockfile dependency installation|host must prepare (?:the )?exact.base merge/i.test(text);
+  return /MCP tool call requires approval|approval policy is never|read.only[^\n]{0,80}\.git|\.git[^\n]{0,80}read.only|writable (?:\.git|Git (?:metadata|checkout))|restore frozen-lockfile dependency installation|host must prepare (?:the )?exact.base merge|host must restore (?:the )?prepared merge metadata\/index|prepared merge metadata or index changed outside the host repair tools/i.test(text);
 }
 
 export interface BabysitterStatusRecovery {
@@ -31,7 +31,6 @@ export function createBabysitterStatusRecovery(options: {
   if (!Number.isFinite(deliveryLeaseMs) || deliveryLeaseMs < 3 || deliveryLeaseMs > 2_147_483_647) throw new Error("Status delivery lease must be between 3 and 2,147,483,647 milliseconds.");
   let selecting = Promise.resolve();
   const active = new Set<Promise<void>>();
-  let initialized = false;
 
   async function deliver(pending: StatusDelivery): Promise<void> {
     const controller = new AbortController();
@@ -104,10 +103,9 @@ export function createBabysitterStatusRecovery(options: {
       }
     },
     async recover(): Promise<void> {
-      if (!initialized) {
-        await inbox.backfillStatusDeliveries();
-        initialized = true;
-      }
+      // A legacy host can finish its claim after this host's first scan.
+      // The durable acknowledgement prevents repeat publication.
+      await inbox.backfillStatusDeliveries();
       for (const snapshot of await inbox.waitsToEvaluate(true, true)) {
         if (!isWorkerBlocker(snapshot)) continue;
         const head = snapshot.pr?.head?.sha;

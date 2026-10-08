@@ -148,6 +148,28 @@ test('release recovery persists the queued projection while worker admission is 
   assert.equal((await inbox.pendingStatusDeliveries())[0]?.text, 'New pull request evidence is queued.')
 })
 
+for (const reason of [
+  'Host must restore the prepared merge metadata/index for PR HEAD, retaining repair files.',
+  'commitRepair reproduced: Prepared merge metadata or index changed outside the host repair tools.',
+]) test(`a corrected release retries the prepared merge worker blocker once: ${reason}`, async t => {
+  const { inbox, claim, open } = await fixture(t)
+  const result = { text: reason, wait: { kind: 'external' as const, headSha: head, reason, evidenceKey: 'merge-metadata' } }
+  await inbox.finish(claim, result)
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'merge-fix-1' })
+  await recovery.recover()
+  assert.equal((await inbox.get(repository, 239))?.status, 'ready')
+  const [retry] = await inbox.claim(1)
+  await recovery.recordWorkerBlocker(retry!.snapshot, reason)
+  await inbox.finish(retry!, result)
+  await inbox.close()
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  await createBabysitterStatusRecovery({ inbox: restored, revision: 'merge-fix-1' }).recover()
+  assert.equal((await restored.get(repository, 239))?.status, 'waiting', 'the same release must retain the blocker after restart')
+  await createBabysitterStatusRecovery({ inbox: restored, revision: 'merge-fix-2' }).recover()
+  assert.equal((await restored.get(repository, 239))?.status, 'ready')
+})
+
 test('closure of a live claim persists terminal status before the worker finishes', async t => {
   const { inbox, open, claim, setClock } = await fixture(t)
   assert.equal((await inbox.get(repository, 239))?.status, 'working')
@@ -162,6 +184,36 @@ test('closure of a live claim persists terminal status before the worker finishe
   const published: string[] = []
   await createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async pending => { published.push(pending.text) } }).flush()
   assert.deepEqual(published, ['Pull request closed.'])
+})
+
+test('terminal status survives restart before an orphaned worker claim expires', async t => {
+  const { inbox, open } = await fixture(t)
+  await inbox.ingest('closed-orphaned-worker', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  await inbox.close()
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  assert.ok((await restored.get(repository, 239))?.lease, 'simulate a worker that crashed before releasing its claim')
+  const delivered: string[] = []
+  await createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async pending => { delivered.push(pending.text) } }).flush()
+  assert.deepEqual(delivered, ['Pull request closed.'])
+  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 0)
+})
+
+test('recovery backfills a legacy blocker completed after its first scan', async t => {
+  const { inbox, claim } = await fixture(t)
+  const delivered: string[] = []
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'rolling-release', publish: async pending => { delivered.push(pending.text) } })
+  await recovery.recover()
+  const result = { text: 'Waiting for maintainer credentials.', wait: { kind: 'external' as const, headSha: head, reason: 'Authorize external credentials.', evidenceKey: 'credentials' } }
+  await inbox.finish(claim, result)
+  // A pre-outbox host can finish its claim without saving a delivery.
+  await inbox.deleteMeta('status-outbox:v1:acme/app#239')
+  await recovery.recover()
+  await recovery.flush()
+  assert.deepEqual(delivered, [result.text])
+  await recovery.recover()
+  await recovery.flush()
+  assert.deepEqual(delivered, [result.text], 'reconciliation must not republish an acknowledged result')
 })
 
 test('historical results are backfilled once and worker recovery survives restart', async t => {

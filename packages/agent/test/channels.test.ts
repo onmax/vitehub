@@ -280,6 +280,57 @@ describe("agent channels", () => {
     } finally { release(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals() }
   })
 
+  it.each(["App", "resolver"] as const)("serializes GitHub %s activity even when authentication mints different tokens", async credentialKind => {
+    const { github } = await import("../src/channels.ts")
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
+    let release!: () => void
+    let entered!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    let tokens = 0
+    let writes = 0
+    let activeWrites = 0
+    let maxActiveWrites = 0
+    let storedBody = "<!-- vitehub-agent-activity:e30 -->"
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(hasRuntimeType(input, "string") || input instanceof URL ? input : input.url)
+      if (url.pathname.endsWith("/access_tokens")) return Response.json({ expires_at: new Date(Date.now() + 600_000).toISOString(), token: `rotating-activity-token-${++tokens}` })
+      if (url.pathname === "/user") return Response.json({ login: "activity-app-bot" })
+      if (!init?.method || init.method === "GET") return Response.json([{ id: 7, body: storedBody, user: { login: "activity-app-bot" } }])
+      activeWrites++
+      maxActiveWrites = Math.max(maxActiveWrites, activeWrites)
+      try {
+        if (++writes === 1) { entered(); await blocked }
+        const payload: unknown = JSON.parse(String(init.body))
+        if (!isRuntimeRecord(payload) || !hasRuntimeType(payload.body, "string")) throw new Error("Invalid comment body")
+        storedBody = payload.body
+        return Response.json({ id: 7 })
+      } finally { activeWrites-- }
+    }
+    const channel = github({ activity: true, app: {
+      appId: "rotating-activity-app", installationId: 987, fetch: fetcher,
+      privateKey: privateKey.export({ format: "pem", type: "pkcs1" }).toString(),
+      token: credentialKind === "resolver" ? () => `rotating-resolver-token-${++tokens}` : undefined,
+    } })
+    const update = channel.activity?.update
+    if (!update) throw new Error("Missing activity updater")
+    const context = (status: "running" | "completed") => ({
+      activity: { agentName: "app-reviewer", links: [], runId: "app-run", status, tasks: [] },
+      channel, memo: vi.fn(), run: { runId: "app-run" }, runtime: "unknown",
+      target: { repository: "acme/rotating-activity", issue: 42 }, waitUntil: vi.fn(),
+    })
+    // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
+    const first = update(context("running") as never)
+    await started
+    // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
+    const second = update(context("completed") as never)
+    try { await new Promise(resolve => setTimeout(resolve, 50)) }
+    finally { release(); await Promise.all([first, second]) }
+    expect(tokens).toBe(2)
+    expect(maxActiveWrites).toBe(1)
+    expect(storedBody).toContain("| Completed |")
+  })
+
   it("creates queued GitHub activity when a pull request opens", async () => {
     const { github } = await import("../src/channels.ts")
     let storedBody = ""

@@ -57,7 +57,8 @@ export function statusProjectionText(snapshot: Snapshot): string {
 
 /** The publisher and acknowledgement transaction use the same snapshot fence. */
 export function isStatusDeliveryCurrent(pending: StatusDelivery, snapshot: Snapshot | undefined): boolean {
-  if (!snapshot || snapshot.pr?.head?.sha !== pending.head || snapshot.lease) return false;
+  if (!snapshot || snapshot.pr?.head?.sha !== pending.head
+    || snapshot.lease && (!pending.projection || snapshot.status !== "terminal")) return false;
   if (pending.projection) return snapshot.generation === pending.generation && pending.text === statusProjectionText(snapshot);
   if (snapshot.status === "terminal" && pending.activity.status !== "completed") return false;
   const repairHeadObserved = pending.precedingHead
