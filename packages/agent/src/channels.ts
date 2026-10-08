@@ -1561,7 +1561,7 @@ async function githubActivityCredentialKey<TRuntimeConfig extends AgentRuntimeCo
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   options: GitHubAppOptions<TRuntimeConfig>,
   context: GitHubAppContext<TRuntimeConfig>,
-  authority?: object,
+  authority?: AgentGitHub,
 ): Promise<string> {
   if (authority) {
     let id = githubActivityTokenResolverIds.get(authority)
@@ -1858,7 +1858,7 @@ function renderGithubActivity(
 function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   mode: "initialize" | "lifecycle" = "lifecycle",
-  authority?: object,
+  authority?: AgentGitHub,
 ): NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]> {
   const options = githubAppOptions(app) || {}
   const commentIds = new Map<string, number>()
