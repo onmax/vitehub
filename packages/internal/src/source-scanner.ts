@@ -519,7 +519,7 @@ function readJsxElement(source: string, index: number, controlFlowRegexes: Contr
       current = end + 1
     }
   }
-  if (!name && source[current] !== ">") return
+  if (!name && source[skipWhitespaceAndComments(source, current)] !== ">") return
   while (current < source.length && source[current] !== ">") {
     current = skipWhitespaceAndComments(source, current)
     if (source[current] === ">") break
@@ -538,7 +538,13 @@ function readJsxElement(source: string, index: number, controlFlowRegexes: Contr
       const end = skipWhitespaceAndComments(source, current + 1)
       return source[end] === ">" ? { end: end + 1, expressions } : undefined
     }
-    else if (source[current] === "<") return
+    else if (source[current] === "<") {
+      const end = skipJsxElement(source, current, controlFlowRegexes)
+      if (end === undefined) return
+      const child = jsxElements.get(controlFlowRegexes)
+      if (child?.source === source) expressions.push(...child.results.get(current)?.expressions ?? [])
+      current = end
+    }
     else current += 1
   }
   if (source[current] !== ">") return

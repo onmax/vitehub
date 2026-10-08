@@ -1472,6 +1472,9 @@ it.each([
   ["Email<string>", "import(fake)", false],
   ['Email /* " */ value={import(target)}', "import(fake)", true],
   ["Email", '<Email value={import(target)} / /* " */ > import(fake)', true],
+  ["Email child=<Button value={import(target)} />", "import(fake)", true],
+  ["Email child=<><Button value={import(target)} /></>", "import(fake)", true],
+  ["Email", "< /* comment */>raw import(fake) {import(target)}</>", true],
 ])("traces computed imports in JSX expressions: %s %s", async (tag, body, executable) => {
   const rootDir = await mkdtemp(join(tmpdir(), "vitehub-provider-jsx-computed-repository-"))
   tempDirs.push(rootDir)
