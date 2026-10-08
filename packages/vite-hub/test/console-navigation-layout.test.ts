@@ -29,9 +29,9 @@ describe("shared Console navigation layout", () => {
       expect(component(name)).not.toContain("ConsoleSectionNav")
     }
     const rail = component("console-rail")
-    expect(rail).toContain('aria-label="Console"')
     expect(rail).toContain("groupConsoleSections(")
-    expect(rail).toContain(":aria-current=\"section.id === active ? 'page' : undefined\"")
+    expect(rail).toContain('<PrimitiveRail class="vitehub-console__rail" label="Console">')
+    expect(rail).toContain(':current="section.id === active"')
     expect(rail).toContain("<UDashboardSearchButton")
   })
 

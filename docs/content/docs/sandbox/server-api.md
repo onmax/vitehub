@@ -2,7 +2,7 @@
 title: Sandbox server API
 description: Run Sandbox Definitions from server code and read their results.
 navigation.title: Server API
-navigation.order: 4
+navigation.order: 5
 icon: i-lucide-code-2
 ---
 
