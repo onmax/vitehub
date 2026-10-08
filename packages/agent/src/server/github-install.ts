@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { validateGitHubInstallInputs } from "./github-install-inputs.ts";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import * as v from "valibot";
@@ -53,6 +54,7 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
   let args: string[] = [];
   let yarnConfig: string | undefined;
   try {
+    const fingerprint = await validateGitHubInstallInputs(target);
     const { packageManager } = v.parse(manifest, JSON.parse(await readFile(join(target, "package.json"), "utf8")));
     // Corepack must not execute a PR-supplied URL, devEngines override or yarnPath.
     // Select an official package-manager version and disable repository extensions.
@@ -88,7 +90,7 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
     }
     else throw new Error("Frozen dependency installation requires a supported lockfile.");
     await exec(command, args, { cwd: target, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
-    await writeFile(record, JSON.stringify({ status: "installed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: false }));
+    await writeFile(record, JSON.stringify({ status: "installed", fingerprint, command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: false }));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     await writeFile(record, JSON.stringify({ status: "failed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), reason })).catch(() => undefined);
@@ -97,4 +99,12 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
   } finally {
     if (yarnConfig) await rm(yarnConfig, { force: true });
   }
+}
+
+/** Require validation to use the same dependency inputs that the host installed. */
+export async function assertGitHubDependenciesCurrent(target: string): Promise<void> {
+  if (!(await exists(join(target, "package.json")))) return;
+  const fingerprint = await validateGitHubInstallInputs(target);
+  const record = v.parse(v.object({ status: v.string(), fingerprint: v.optional(v.string()) }), JSON.parse(await readFile(join(target, ".git", "vitehub-install.json"), "utf8")));
+  if (record.status !== "installed" || record.fingerprint !== fingerprint) throw new Error("Dependency inputs changed or installation failed. Call refreshDependencies and rerun validation before committing.");
 }

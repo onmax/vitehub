@@ -1,9 +1,11 @@
+import { GitHubDependencyConflictError } from "../../server/github-install-inputs.ts";
+import * as v from "valibot";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { readAsyncMerge, requestAsyncMerge } from "./async-merge.ts";
 import { prepareGitHubRepairBase } from "../../server/github-repair.ts";
-import { GitHubWorkspaceInstallError, installGitHubPullRequestWorkspace } from "../../server/github-install.ts";
+import { assertGitHubDependenciesCurrent, GitHubWorkspaceInstallError, installGitHubPullRequestWorkspace } from "../../server/github-install.ts";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
@@ -295,7 +297,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             return undefined;
           });
           if (!result) return "blocked";
-          if (result.status === "pending" || result.status === "enqueued") return await parkMerge(`Waiting for GitHub merge request ${pending.requestId}.`);
+          if (result.status === "pending") return await parkMerge(`Waiting for GitHub merge request ${pending.requestId}.`);
+          if (result.status === "enqueued") {
+            const [owner, name] = repository.split("/");
+            const response = await readGraphql(repository, 1, signal)(`query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid mergeQueueEntry{id}}}}`, { owner, name, number });
+            const queued = v.parse(v.object({ data: v.object({ repository: v.object({ pullRequest: v.object({ state: v.string(), headRefOid: v.string(), mergeQueueEntry: v.nullable(v.object({ id: v.string() })) }) }) }) }), response).data.repository.pullRequest;
+            if (queued.mergeQueueEntry) return await parkMerge(`Waiting for queued GitHub merge request ${pending.requestId}.`);
+            await pullRequestInbox.hydrate(claim, { refresh: true });
+            await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+            await pullRequestInbox.finish(claim, { text: "Final enqueued result reconciled; pull request left the merge queue.", terminal: queued.state !== "OPEN", retry: queued.state === "OPEN" });
+            return queued.state === "MERGED" ? "merged" : "blocked";
+          }
           await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
           const merged = result.status === "merged";
           await pullRequestInbox.finish(claim, { text: merged ? "Asynchronous merge confirmed by GitHub." : `GitHub merge failed: ${result.details.message}`, terminal: merged, retry: !merged });
@@ -347,14 +359,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       const current = liveMergeReadiness(live, decision.head);
       if (!current.ready) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
-        return "not-ready";
+        return pending?.asynchronous ? await parkMerge(`Unconfirmed merge is waiting for ${current.reason}.`) : "not-ready";
       }
       const [repositorySettings] = await readRest(`repos/${repository}`, ".", signal);
       const children = await readRest(`repos/${repository}/pulls?state=open&base=${encodeURIComponent(snapshot.pr?.head?.ref ?? "")}&per_page=100`, ".[]", signal);
       const branchSafety = directMergeBranchSafety(repositorySettings, live, children);
       if (branchSafety !== true) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: branchSafety });
-        return "not-ready";
+        return pending?.asynchronous ? await parkMerge(`Unconfirmed merge is waiting for ${branchSafety}.`) : "not-ready";
       }
       // Revalidate the durable lease and revision after the live provider read and
       // immediately before the irreversible merge request. A webhook or another
@@ -739,7 +751,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           );
           if (inboxClaim.snapshot.recoveryHead && inboxClaim.snapshot.recoveryHead === inboxClaim.snapshot.pr?.head?.sha && !hasFailedActions(inboxClaim.snapshot)) {
             outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, { text: "Recovered CI is healthy; waiting for merge gate evaluation.", wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: Date.now() + 120_000 } });
+            const wait = createCheckWait(inboxClaim.snapshot, waitPolicy);
+            if (merge.mode === "direct") wait.retryAt = Date.now() + 120_000;
+            await pullRequestInbox.finish(inboxClaim, { text: "Recovered CI is healthy; waiting for merge gate evaluation.", wait });
             return;
           }
           if (ciRecovery?.state === "rerun") {
@@ -861,10 +875,18 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 autoMerge: merge.mode === "auto",
                 eligible: (current) =>
                   pullRequestInbox.eligible(repository, normalizePullRequest(current)),
+                refreshDependencies: async () => {
+                  if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
+                  await assertLease();
+                  await assertRepairBase();
+                  if (presetOptions.install !== false) await installGitHubPullRequestWorkspace(providerDirectory, abortSignal);
+                  await assertLease();
+                },
                 commitRepair: async (input) => {
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
                   await assertRepairBase();
+                  if (presetOptions.install !== false) await assertGitHubDependenciesCurrent(providerDirectory);
                   const head = await prepared.commitRepair(providerDirectory, input);
                   await assertLease();
                   return head;
@@ -999,11 +1021,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     if (context.purpose !== "inspection") {
                       if (!preparedDirectories.has(context.cwd)) {
                         await prepared.prepareWorkspace(context.cwd);
-                        if (presetOptions.install !== false) await installGitHubPullRequestWorkspace(context.cwd, abortSignal);
                         if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
                           if (!pullRequest.baseRefOid) throw new Error("Conflict repair requires the exact base commit.");
                           await prepareGitHubRepairBase(context.cwd, { expectedHead: pullRequest.headRefOid, base: pullRequest.baseRefOid, signal: abortSignal });
                           preparedMergeBase = pullRequest.baseRefOid;
+                        }
+                        if (presetOptions.install !== false) {
+                          // Dependency conflicts must be resolved before the explicit refresh tool can install.
+                          try { await installGitHubPullRequestWorkspace(context.cwd, abortSignal); }
+                          catch (error) { if (!preparedMergeBase || abortSignal.aborted || !(error instanceof GitHubWorkspaceInstallError) || !(error.cause instanceof GitHubDependencyConflictError)) throw error; }
                         }
                         preparedDirectories.add(context.cwd);
                       }
