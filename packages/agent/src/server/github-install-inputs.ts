@@ -62,6 +62,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
   const packageRoots = new Set([root]);
   const dependencyFiles = new Set<string>();
+  const dependencyDirectories = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
     // Workspace exclusions still contribute crawler roots. File dependencies
     // use literal paths and must keep their leading exclamation marks.
@@ -98,7 +99,11 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     await checkPath(value, base);
     const path = resolve(base, decodeURIComponent(value));
     const info = await stat(path).catch(() => undefined);
-    if (info?.isDirectory()) packageRoots.add(await realpath(path));
+    if (info?.isDirectory()) {
+      const canonical = await realpath(path);
+      packageRoots.add(canonical);
+      dependencyDirectories.add(canonical);
+    }
     else if (info?.isFile()) dependencyFiles.add(path);
   }
   async function selectPatch(value: string, base: string) {
@@ -112,9 +117,13 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     if (!patch) return false;
     await inspect(decodeURIComponent(patch[1]!), base, true);
     for (const source of patch[2]!.split("&")) {
-      const path = source.replace(/^optional!/, "");
-      if (/^builtin<compat\/[a-z\d._/-]+>$/i.test(decodeURIComponent(path))) continue;
-      await selectPatch(path.startsWith("~/") ? path.slice(2) : path, path.startsWith("~/") ? root : base);
+      const path = decodeURIComponent(source).replace(/^optional!/, "");
+      if (/^~?builtin<compat\/[a-z\d._/-]+>$/i.test(path)) continue;
+      if (!path.startsWith("~/")) {
+        await checkPath(encodeURIComponent(path), base);
+        throw new Error("Yarn dependency patches must use project-relative ~/ selectors; parent package filesystems cannot be fingerprinted by the host.");
+      }
+      await selectPatch(encodeURIComponent(path.slice(2)), root);
     }
     return true;
   }
@@ -208,6 +217,20 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
   }
   for (const directory of packageRoots) await visit(directory);
+  const fingerprintedDirectories = new Set<string>();
+  async function collectDependencyFiles(directory: string): Promise<void> {
+    if (fingerprintedDirectories.has(directory)) return;
+    fingerprintedDirectories.add(directory);
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      // Installed modules and Git metadata are not local package source inputs.
+      if (entry.name === "node_modules" || entry.name === ".git") continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await collectDependencyFiles(path);
+      else if (entry.isFile()) dependencyFiles.add(path);
+      else throw new Error("Local dependency contents must be regular files and directories.");
+    }
+  }
+  for (const directory of dependencyDirectories) await collectDependencyFiles(directory);
   for (const path of [...dependencyFiles].sort()) {
     hash.update(relative(root, path)).update("\0");
     for await (const chunk of createReadStream(path)) hash.update(chunk);

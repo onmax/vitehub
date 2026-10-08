@@ -407,7 +407,7 @@ it.each(["/srv/unsafe.patch", "../../unsafe.patch", "patches/external/unsafe.pat
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
 
-it.each(["optional!builtin<compat/typescript>", "./patches/safe.patch", "~/patches/safe.patch"])("accepts safe Yarn patch locator %s", async patchPath => {
+it.each(["optional!builtin<compat/typescript>", "~/patches/safe.patch", "%7E%2Fpatches%2Fsafe.patch"])("accepts safe Yarn patch locator %s", async patchPath => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
   await mkdir(join(root, "patches"));
@@ -474,4 +474,46 @@ it.each([
   await writeFile(join(root, "yarn.lock"), "__metadata:\n  version: 8\n");
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Unsupported|Host-local/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it("fingerprints the source contents of local file directory dependencies", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "vendor", "pkg"), { recursive: true });
+  await writeFile(join(root, "vendor", "pkg", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
+  await writeFile(join(root, "vendor", "pkg", "index.js"), "export const value = 1;");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:./vendor/pkg" } }));
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(join(root, "vendor", "pkg", "index.js"), "export const value = 2;");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+
+it("decodes an encoded Yarn project-root patch selector before resolving it", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await mkdir(join(root, "patches"));
+  await writeFile(join(root, "patches", "safe.patch"), "safe patch");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  const locator = "safe@patch:safe@npm%3A1.0.0#%7E%2Fpatches%2Fsafe.patch::version=1.0.0&hash=abc";
+  await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n${JSON.stringify(locator)}:\n  version: 1.0.0\n  resolution: ${JSON.stringify(locator)}\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it("rejects a Yarn patch relative to an unvalidated parent package filesystem", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await mkdir(join(root, "patches"));
+  await writeFile(join(root, "patches", "safe.patch"), "checkout decoy");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  const locator = "safe@patch:safe@npm%3A1.0.0#./patches/safe.patch::locator=parent%40npm%3A1.0.0";
+  await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n${JSON.stringify(locator)}:\n  version: 1.0.0\n  resolution: ${JSON.stringify(locator)}\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/project.relative/);
+});
+
+it("rejects symlinks inside copied local dependency contents", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "vendor", "pkg"), { recursive: true });
+  await writeFile(join(root, "vendor", "pkg", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
+  await symlink(tmpdir(), join(root, "vendor", "pkg", "external"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:./vendor/pkg" } }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/regular files and directories/);
 });

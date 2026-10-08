@@ -776,8 +776,8 @@ default rather than an ambient executable. Installation failures are recorded in
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
 Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
 Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:`, Git dependencies that prepare remote projects, and unsupported source protocols are rejected before Corepack runs. Use registry packages or HTTPS archives instead, or set `install: false` when dependencies must be prepared in the provider sandbox.
-Local archives and patch files contribute their contents to the dependency fingerprint.
-Yarn `~/` patch selectors resolve from the project root, and each grouped lockfile
+Local package source files, archives, and patch files contribute their contents to the dependency fingerprint. Local package source trees require regular files and directories; installed modules and Git metadata are excluded.
+Yarn `~/` patch selectors resolve from the project root after decoding. Other local patch selectors are rejected because Yarn can resolve them inside a parent package filesystem. Each grouped lockfile
 descriptor is checked. Workspace glob matches must stay inside the checkout after
 symlink resolution. Trusted GitHub release archives use the HTTPS archive path.
 Workers call `commitRepair` with a message and explicit repair paths, then
