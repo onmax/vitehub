@@ -3,6 +3,7 @@ import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/
 import { ViteHubError } from "@vite-hub/runtime"
 
 import { isScheduleDevOperation, scheduleDevHeader, scheduleDevHeaderValue } from "../dev.ts"
+import { createScheduleError } from "../errors.ts"
 import { schedules } from "./client.ts"
 import { nextRuntimeScheduleRunAt } from "./due.ts"
 import { toRunId } from "./execute.ts"
@@ -394,6 +395,11 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
       return json({ attempts: await listScheduleRunAttempts(id), run: summarizeScheduleRun(run) })
     }
     case "run": {
+      // A manual request must respect current state before replaying a run at
+      // the same timestamp or returning a stored handler failure.
+      const schedule = await getRuntimeScheduleStore().get(id)
+      if (!schedule) return scheduleFailure(createScheduleError("SCHEDULE_NOT_FOUND"))
+      if (!schedule.enabled) return scheduleFailure(createScheduleError("SCHEDULE_DISABLED"))
       const scheduledAt = new Date()
       try {
         return json({ run: summarizeScheduleRun(await schedules.run(id, { scheduledAt })) })

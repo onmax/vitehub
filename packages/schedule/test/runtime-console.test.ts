@@ -55,6 +55,7 @@ function installTargets(handler: (input: unknown) => void = () => {}): void {
 
 afterEach(() => {
   resetScheduleRuntime()
+  vi.useRealTimers()
 })
 
 describe("Runtime Schedule inspection", () => {
@@ -204,6 +205,8 @@ describe("Schedule dev request handler", () => {
   })
 
   it("runs, disables, and enables a Runtime Schedule", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(now)
     installTargets()
     await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
 
