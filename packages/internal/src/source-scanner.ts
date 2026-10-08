@@ -479,7 +479,7 @@ function hasAssertionTypePrefix(source: string) {
   // Mask completed type regions, including import arguments and comments,
   // before recognizing the continuation of a union or intersection.
   const prefix = decodeIdentifier(maskAssertionTypeArguments(source))
-  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?(?:0[xX][\da-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|\d[\d_]*n|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d[\d_]*)?)|[.\s()[\]{}&|?:])+$/u.test(prefix)
+  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(?:-\s*)?(?:0[xX][\da-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|\d[\d_]*n|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?\d[\d_]*)?)|[.\s()[\]{}&|?:])+$/u.test(prefix)
 }
 
 function maskAssertionTypeArguments(source: string) {
@@ -758,7 +758,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
           // validation instead of treating it as a template-literal type.
           if (value[index] === "`") {
             const previous = previousCodeIndex(value, index - 1, controlFlowRegexes)
-            if (/[A-Za-z0-9_$>\])]/.test(value[previous] || "")) return false
+            if (isIdentifierCharAt(value, previous) || isQuote(value[previous]) || /[>\])}]/.test(value[previous] || "")) return false
           }
           index = skipQuoted(value, index) - 1
           continue
