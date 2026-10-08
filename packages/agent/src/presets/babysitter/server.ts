@@ -40,6 +40,7 @@ import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
 import { importBoxCommit } from "./box-commit.ts";
+import { createProviderHeadReader } from "./checkout-watch.ts";
 import { importBoxRepairFiles, importBoxRepairWorkspace, publishBoxDependencies } from "./box-repair.ts";
 import { activeProviderBox } from "../../internal/provider-box.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
@@ -202,19 +203,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const check = createClaimStopCheck(
       claim,
       () => pullRequestInbox.get(claim.snapshot.repository, claim.snapshot.number),
-      async () => {
-        const verifiedPush = pushedHead();
-        if (verifiedPush) return verifiedPush;
-        const cwd = providerDirectory();
-        if (!cwd) return undefined;
-        const result = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
-          cwd,
-          encoding: "utf8",
-          timeout: 3000,
-          maxBuffer: 1024,
-        });
-        return result.stdout.trim();
-      },
+      createProviderHeadReader(providerDirectory, pushedHead),
     );
     const poll = async () => {
       if (stopped || polling || controller.signal.aborted) return;
