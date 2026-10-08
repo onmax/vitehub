@@ -907,13 +907,22 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
                   await assertRepairBase();
+                  const renewLease = async () => {
+                    let current = await assertLease();
+                    for (;;) {
+                      if (await pullRequestInbox.renew({ ...inboxClaim, generation: current.generation, snapshot: current }, Date.now() + 2 * 60 * 60_000)) return;
+                      // A generation can advance between validation and CAS.
+                      // Recheck ownership, head and feedback before adopting it.
+                      const latest = await assertLease();
+                      if (latest.generation === current.generation) throw new DOMException("Pull request lease renewal failed.", "AbortError");
+                      current = latest;
+                    }
+                  };
+                  let renewing = false;
                   const renew = setInterval(() => {
-                    // Revalidate before adopting a newer same-head generation.
-                    // renew() atomically rejects evidence arriving after this read.
-                    void assertLease().then(current => pullRequestInbox.renew({
-                      ...inboxClaim, generation: current.generation, snapshot: current,
-                    }, Date.now() + 2 * 60 * 60_000))
-                      .then((renewed) => { if (!renewed) passController.abort(); }, () => passController.abort());
+                    if (renewing) return;
+                    renewing = true;
+                    void renewLease().catch(() => passController.abort()).finally(() => { renewing = false; });
                   }, 30_000);
                   try {
                     const result = await prepared.push(providerDirectory, {

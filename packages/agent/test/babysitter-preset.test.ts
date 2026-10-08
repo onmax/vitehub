@@ -979,6 +979,32 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it.each(["commitRepair", "pushRepair"] as const)("fences %s when an existing review thread is reopened", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => args.some(arg => arg.includes("reviewThreads"))
+      ? { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        nodes: [{ id: "PRRT_1", isResolved: true, comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } } }), stderr: "" } : await command(args, request));
+    let reopened = false;
+    f.onAdmission(async () => {
+      if (reopened) return;
+      reopened = true;
+      await f.runtime.inbox.ingest("thread-reopened", "pull_request_review_thread", {
+        repository: { full_name: "acme/app" }, action: "unresolved", pull_request: f.pr(),
+        thread: { node_id: "PRRT_1", comments: [] },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(reopened).toBe(true);
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("still fences merge authorization after same-head metadata changes", async () => {
     const f = await fixture(true);
     f.choose("requestAutoMerge");
@@ -1026,6 +1052,41 @@ describe("Babysitter preset runtime", () => {
     try {
       await f.reconcile();
       expect(f.push).toHaveBeenCalledOnce();
+    } finally {
+      timers.mockRestore();
+      renew.mockRestore();
+      await f.runtime.inbox.close();
+    }
+  });
+
+  it("revalidates an equivalent generation arriving between renewal read and CAS", async () => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const originalRenew = f.runtime.inbox.renew.bind(f.runtime.inbox);
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    renew.mockImplementationOnce(async (...args) => {
+      await f.runtime.inbox.ingest("renewal-metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), body: "Validation details arrived during renewal." },
+      });
+      return await originalRenew(...args);
+    });
+    const originalPush = f.push.getMockImplementation()!;
+    let completed = false;
+    f.push.mockImplementationOnce(async (...args) => {
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => expect(renew).toHaveBeenCalledTimes(2));
+      expect(await renew.mock.results[1]?.value).toBe(true);
+      args[1]?.signal?.throwIfAborted();
+      completed = true;
+      return await originalPush(...args);
+    });
+    try {
+      await f.reconcile();
+      expect(completed).toBe(true);
     } finally {
       timers.mockRestore();
       renew.mockRestore();
