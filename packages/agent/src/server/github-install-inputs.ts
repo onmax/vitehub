@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { glob, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
@@ -23,7 +24,9 @@ function checkDownloadSource(value: string): void {
   if (source && !/^file:/i.test(source)) {
     const url = new URL(source.replace(/^git\+/i, ""));
     if (url.protocol !== "https:" || !downloadHosts.has(url.hostname) || url.port || url.username || url.password) throw new Error("Dependency downloads require a trusted HTTPS registry or code host.");
-    if (/\.git\/?$/i.test(url.pathname) || url.hostname === "github.com" && !/^\/[^/]+\/[^/]+\/archive\/.+\.(?:tar\.gz|zip)$/i.test(url.pathname)) throw new Error("Git dependencies require preparation inside the provider sandbox.");
+    const githubArchive = /^\/[^/]+\/[^/]+\/archive\/.+\.(?:tar\.gz|zip)$/i.test(url.pathname)
+      || /^\/[^/]+\/[^/]+\/releases\/download\/[^/]+\/.+\.(?:tgz|tar\.gz)$/i.test(url.pathname);
+    if (/\.git\/?$/i.test(url.pathname) || url.hostname === "github.com" && !githubArchive) throw new Error("Git dependencies require preparation inside the provider sandbox.");
   } else if (/(?:^|@)git@/i.test(decoded)) throw new Error("Dependency downloads require a trusted HTTPS registry or code host.");
 }
 const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict"]);
@@ -58,7 +61,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   const root = await realpath(target);
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
   const packageRoots = new Set([root]);
-  const patchPaths = new Set<string>();
+  const dependencyFiles = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
     // Workspace exclusions still contribute crawler roots. File dependencies
     // use literal paths and must keep their leading exclamation marks.
@@ -94,23 +97,24 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   async function selectLocalPackage(value: string, base: string) {
     await checkPath(value, base);
     const path = resolve(base, decodeURIComponent(value));
-    if (await stat(path).then(info => info.isDirectory(), () => false)) packageRoots.add(await realpath(path));
+    const info = await stat(path).catch(() => undefined);
+    if (info?.isDirectory()) packageRoots.add(await realpath(path));
+    else if (info?.isFile()) dependencyFiles.add(path);
   }
   async function selectPatch(value: string, base: string) {
     await checkPath(value, base);
     const path = resolve(base, decodeURIComponent(value));
     if (!(await stat(path)).isFile()) throw new Error("Dependency patches must be regular files.");
-    patchPaths.add(path);
+    dependencyFiles.add(path);
   }
   async function inspectYarnPatch(value: string, base: string): Promise<boolean> {
-    const decoded = decodeURIComponent(value);
-    const patch = decoded.match(/(?:^|@)patch:([^#]+)#(.+?)(?:::.*)?$/i);
+    const patch = value.match(/(?:^|@)patch:([^#]+)#(.+?)(?:::.*)?$/i);
     if (!patch) return false;
-    await inspect(patch[1]!, base, true);
+    await inspect(decodeURIComponent(patch[1]!), base, true);
     for (const source of patch[2]!.split("&")) {
-      const path = source.replace(/^(?:optional!|~)/, "");
-      if (/^builtin<compat\/[a-z\d._/-]+>$/i.test(path)) continue;
-      await selectPatch(path, base);
+      const path = source.replace(/^optional!/, "");
+      if (/^builtin<compat\/[a-z\d._/-]+>$/i.test(decodeURIComponent(path))) continue;
+      await selectPatch(path.startsWith("~/") ? path.slice(2) : path, path.startsWith("~/") ? root : base);
     }
     return true;
   }
@@ -125,7 +129,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   async function inspect(value: unknown, base: string, dependency = false, field = ""): Promise<void> {
     if (hasRuntimeType(value, "string")) {
       if (field === "workspaces") { await checkPath(value, base, true); return; }
-      if (await inspectYarnPatch(value, base)) return;
+      if ((dependency || sourceFields.has(field)) && await inspectYarnPatch(value, base)) return;
       if (dependency || sourceFields.has(field)) checkDownloadSource(value);
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
       const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
@@ -145,9 +149,13 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
           await inspect(contents, resolve(base, importer));
         }
       } else {
-        // Lockfile package keys may themselves contain file: sources.
-        if (/(?:^|@)(?:file|link|portal):/i.test(key)) await inspect(key, base);
-        if (/(?:^|@)[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(key)) && !(await inspectYarnPatch(key, base))) checkDownloadSource(key);
+        // Yarn lock keys can group descriptors. Each source is validated separately.
+        if (dependency || ["yarn.lock", "packages", "snapshots"].includes(field)) {
+          for (const descriptor of key.split(/,\s+/)) {
+            if (/(?:^|@)(?:file|link|portal):/i.test(descriptor)) await inspect(descriptor, base, true);
+            if (/(?:^|@)[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(descriptor)) && !(await inspectYarnPatch(descriptor, base))) checkDownloadSource(descriptor);
+          }
+        }
         await inspect(entry, base, dependency || dependencyFields.has(key), key === "packages" && field === "workspaces" ? "workspaces" : key);
       }
     }
@@ -160,7 +168,9 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     for (const pattern of values.filter(value => !value.startsWith("!"))) {
       for await (const match of glob(pattern, { cwd: directory, exclude })) {
         const path = resolve(directory, match);
-        if (await stat(path).then(info => info.isDirectory(), () => false)) packageRoots.add(await realpath(path));
+        const canonical = await realpath(path);
+        if (!inside(canonical)) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
+        if (await stat(path).then(info => info.isDirectory(), () => false)) packageRoots.add(canonical);
       }
     }
   }
@@ -184,7 +194,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
           data = parseSyml(/^__metadata:/m.test(source) ? source : `# yarn lockfile v1\n${source}`);
           if (!isRuntimeRecord(data) || Object.values(data).some(value => !isRuntimeRecord(value))) throw new Error("Invalid Yarn lockfile stanza; dependency fields must be structured.");
         } else data = entry.name.endsWith(".json") ? JSON.parse(source) : parse(source);
-        await inspect(data, directory);
+        await inspect(data, directory, false, entry.name);
         if (entry.name === "package.json" && isRuntimeRecord(data)) {
           await selectWorkspaces(Array.isArray(data.workspaces) ? data.workspaces : isRuntimeRecord(data.workspaces) ? data.workspaces.packages : undefined, directory);
         }
@@ -198,8 +208,10 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
   }
   for (const directory of packageRoots) await visit(directory);
-  for (const path of [...patchPaths].sort()) {
-    hash.update(relative(root, path)).update("\0").update(await readFile(path)).update("\0");
+  for (const path of [...dependencyFiles].sort()) {
+    hash.update(relative(root, path)).update("\0");
+    for await (const chunk of createReadStream(path)) hash.update(chunk);
+    hash.update("\0");
   }
   return hash.digest("hex");
 }

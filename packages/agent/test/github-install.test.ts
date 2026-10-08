@@ -311,7 +311,7 @@ it.each(["/srv/unsafe.patch", "../../unsafe.patch", "patches/external/unsafe.pat
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
 
-it.each(["optional!builtin<compat/typescript>", "./patches/safe.patch"])("accepts safe Yarn patch locator %s", async patchPath => {
+it.each(["optional!builtin<compat/typescript>", "./patches/safe.patch", "~/patches/safe.patch"])("accepts safe Yarn patch locator %s", async patchPath => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
   await mkdir(join(root, "patches"));
@@ -324,6 +324,47 @@ it.each(["optional!builtin<compat/typescript>", "./patches/safe.patch"])("accept
     await writeFile(join(root, "patches", "safe.patch"), "second patch\n");
     await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
   }
+});
+
+it("fingerprints checkout-relative archive dependencies", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "vendor"));
+  const archive = join(root, "vendor", "pkg.tgz");
+  await writeFile(archive, "first archive");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:./vendor/pkg.tgz" } }));
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(archive, "second archive");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+
+it("rejects workspace extglobs that select an external symlink", async () => {
+  const root = await fixture();
+  const outside = await mkdtemp(join(tmpdir(), "vitehub-external-package-"));
+  roots.push(outside);
+  await writeFile(join(outside, "package.json"), JSON.stringify({ name: "outside" }));
+  await mkdir(join(root, "packages", "local"), { recursive: true });
+  await symlink(outside, join(root, "packages", "external"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: ["packages/@(local|external)"] }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it("accepts a trusted GitHub release archive instead of preparing a Git repository", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { safe: "https://github.com/acme/pkg/releases/download/v1/pkg.tgz" } }));
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it("decodes a Yarn patch filename once and accepts grouped descriptors", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await mkdir(join(root, "patches"));
+  await writeFile(join(root, "patches", "percent%25.patch"), "patch contents");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", description: "Not a dependency: patch:metadata#does-not-exist" }));
+  const first = "safe@patch:safe@npm%3A1.0.0#~/patches/percent%2525.patch";
+  const second = "safe@patch:safe@npm%3A1.0.0#optional!~/patches/percent%2525.patch";
+  await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n${JSON.stringify(`${first}, ${second}`)}:\n  version: 1.0.0\n  resolution: ${JSON.stringify(first)}\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
 });
 
 it.each([
