@@ -221,7 +221,24 @@ export class PullRequestInbox {
     const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
     return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
   }
+  private compactTerminal(s: Snapshot): void {
+    if (s.status !== 'terminal') return
+    // Closed or filtered PRs can be reopened from a webhook or the open-PR
+    // sweep. Keep their identity and durable result, but discard historical
+    // feedback and CI payloads so terminal history cannot starve the scheduler.
+    s.comments = {}
+    s.reviews = {}
+    s.reviewComments = {}
+    s.checks = {}
+    s.statuses = {}
+    s.threads = []
+    delete s.ciEvidence
+    s.hydrated = false
+    s.refresh = true
+    s.feedbackRefresh = true
+  }
   private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
+    this.compactTerminal(s)
     const head = s.pr?.head?.sha
     await tx.execute(`INSERT OR REPLACE INTO ${this.tables.pullRequests} (scope, repository, number, value, summary, status, generation, handled,
       dirty_at, next_at, lease, lease_until, waiting, progress_blocked, state, head_sha, head_ref, base_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
@@ -825,14 +842,15 @@ export class PullRequestInbox {
     }
   }
   /** Drops delivery payloads after `payloadMs` and delivery IDs after `idMs`. Recent IDs still deduplicate redeliveries. */
-  async pruneDeliveries({ payloadMs = 7 * 24 * 60 * 60_000, idMs = 30 * 24 * 60 * 60_000 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
+  async pruneDeliveries({ payloadMs = 864e5, idMs = 6048e5 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
     const now = this.clock()
     // CI metadata and full logs share the delivery payload retention window.
     // Entries written before timestamps were introduced are expired too.
-    for (const [key, value] of await this.metaEntries('ci-evidence:v1:')) {
-      if (!isRuntimeRecord(value) || !isRuntimeNumber(value.fetchedAt) || value.fetchedAt < now - payloadMs) await this.deleteMeta(key)
-    }
+    const staleEvidence = (await this.metaEntries('ci-evidence:v1:'))
+      .filter(([, value]) => !isRuntimeRecord(value) || !isRuntimeNumber(value.fetchedAt) || value.fetchedAt < now - payloadMs)
+      .map(([key]) => key)
     await this.transaction(async tx => {
+      for (const key of staleEvidence) await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
       await tx.execute(`DELETE FROM ${this.tables.deliveries} WHERE scope=? AND received<?`, [this.scope, now - idMs])
       await tx.execute(`UPDATE ${this.tables.deliveries} SET payload=NULL WHERE scope=? AND received<? AND payload IS NOT NULL`, [this.scope, now - payloadMs])
     })
