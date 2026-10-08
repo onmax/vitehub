@@ -9,14 +9,18 @@ const timestamp = "2026-10-06T12:00:00.000Z"
 const item = (id: string, thread = "t1") => ({ data: { message: { id }, thread: { id: thread } } })
 
 describe("Collection history Invocation joins", () => {
-  it("joins recorded-shape legacy Invocations through history key/thread and scans the journal once per page", async () => {
+  it.each([
+    { deliveryChannel: "teams", expectedChannel: "teams" },
+    { deliveryChannel: undefined, expectedChannel: "unknown" },
+    { deliveryChannel: 42, expectedChannel: "unknown" },
+  ])("joins legacy Invocations and reports $expectedChannel for delivery identity $deliveryChannel", async ({ deliveryChannel, expectedChannel }) => {
     const store = createMemoryAgentInvocationStore()
     const record = (id: string, annotations?: AgentInvocationRecord["annotations"], channelId = "productlane") => ({
       id, agentName: "bot-dev", channelId, annotations: { "productlane.thread": "t1", ...annotations },
       createdAt: timestamp, updatedAt: timestamp, status: "completed" as const, traceId: id,
       observations: [
         { name: "agent.invocation.start", type: "run" as const, sequence: 1, timestamp, attributes: { "agent.run.id": `productlane:${id}`, "input.hasContext": true, "input.hasDryRun": true, "input.prompt": "Synthetic customer prompt" } },
-        { name: "agent.channel.delivery.effect", type: "lifecycle" as const, sequence: 2, timestamp, attributes: { "channel.effect.kind": "reply", "channel.effect.channel": "teams", "channel.effect.content": "Synthetic unformatted draft" } },
+        { name: "agent.channel.delivery.effect", type: "lifecycle" as const, sequence: 2, timestamp, attributes: { "channel.effect.kind": "reply", ...(deliveryChannel === undefined ? {} : { "channel.effect.channel": deliveryChannel }), "channel.effect.content": "Synthetic unformatted draft" } },
         { name: "agent.invocation.finish", type: "run" as const, sequence: 3, timestamp, attributes: { "result.text": "Synthetic final text" } },
       ],
     })
@@ -46,7 +50,7 @@ describe("Collection history Invocation joins", () => {
     // SAFETY: The response is produced by the real history handler under test.
     const body = await response.json() as { items: Array<{ invocations: Array<{ id: string }> }> }
     expect(body.items[0].invocations).toEqual([{ id: "m1", status: "completed", createdAt: timestamp, updatedAt: timestamp, dryRun: true, label: null,
-      deliveries: [{ channel: "teams", text: "Synthetic unformatted draft" }], text: "Synthetic final text" }])
+      deliveries: [{ channel: expectedChannel, text: "Synthetic unformatted draft" }], text: "Synthetic final text" }])
     expect(body.items[1].invocations.map((r: { id: string }) => r.id)).toEqual(["m2"])
     expect(list).toHaveBeenCalledOnce()
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ agentName: "bot-dev" }))

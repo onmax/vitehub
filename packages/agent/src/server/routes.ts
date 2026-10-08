@@ -7201,7 +7201,7 @@ function channelHistoryInvocationText(record: { observations: readonly { name: s
 }
 
 function channelHistoryInvocationDeliveries(
-  record: { channelId?: string, observations: readonly { name: string, attributes?: Record<string, unknown> }[] },
+  record: { observations: readonly { name: string, attributes?: Record<string, unknown> }[] },
 ): Array<{ channel: string, text: string }> {
   return record.observations.flatMap(observation => {
     if (observation.name !== "agent.channel.delivery.effect" || observation.attributes?.["channel.effect.kind"] !== "reply") return []
@@ -7209,7 +7209,7 @@ function channelHistoryInvocationDeliveries(
     if (!isRuntimeString(text) || !text) return []
     const channel = isRuntimeString(observation.attributes?.["channel.effect.channel"])
       ? observation.attributes["channel.effect.channel"]
-      : record.channelId || "unknown"
+      : "unknown"
     return [{ channel, text }]
   })
 }
