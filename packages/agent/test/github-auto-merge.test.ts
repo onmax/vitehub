@@ -170,6 +170,32 @@ describe("native auto-merge", () => {
     expect(bodies).toEqual([`body=${body}`, `body=@stefina\n\n${body}`])
   })
 
+  it.each([
+    "foo+@bar_baz.example",
+    "foo+@bar.example_test",
+    "foo+@bar_.example",
+    "foo+@bar-.example",
+    "foo+@bar.example.",
+  ])("allows GFM email domain %s across comment and metadata operations", async (email) => {
+    const body = `Contact ${email} for details.`
+    const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
+    await f.operations.comment(body)
+    await f.operations.mention("stefina", body)
+    await f.operations.updateMetadata({ body })
+    expect(f.command.mock.calls.filter(([args]) => args.includes("POST"))).toHaveLength(2)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH") && args.includes(`body=${body}`))).toBe(true)
+  })
+
+  it.each(["foo+@onmax.example-", "foo+@onmax.example_", "foo+@onmax.example-.", "foo+@onmax.example_."])("guards invalid email domain %s across comment and metadata operations", async (email) => {
+    const body = `Contact ${email} for details.`
+    const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
+    await expect(f.operations.comment(body)).rejects.toThrow(/guarded mention capability/)
+    await expect(f.operations.mention("stefina", body)).rejects.toThrow(/another mention/)
+    expect(f.command).not.toHaveBeenCalled()
+    await expect(f.operations.updateMetadata({ body })).rejects.toThrow(/cannot add GitHub mentions/)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
+  })
+
   it.each(["!", "#", "$", "%", "&", "=", "?", "/"])("guards email-like text with %s before a live mention", async (punctuation) => {
     const body = `Contact foo${punctuation}@unapproved.com`
     const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
