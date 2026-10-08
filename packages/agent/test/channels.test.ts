@@ -115,7 +115,7 @@ describe("agent channels", () => {
       const channel = github({ activity: true })
       const update = channel.activity?.update
       if (!update) throw new Error("Missing GitHub Agent activity updater.")
-      const context = (runId: string, status: "completed" | "running", agentName = "reviewer") => ({
+      const context = (runId: string, status: "completed" | "running", agentName = "reviewer", summary = "Review complete.") => ({
         activity: {
           agentName,
           links: [{ label: "Session", url: `https://console.test/invocations/${runId}` }, { label: "Logs | Raw\n[report]", url: "https://console.test/logs|raw" }, { label: "[".repeat(100), url: "https://console.test/boundary" }],
@@ -123,7 +123,7 @@ describe("agent channels", () => {
           startedAt: "2026-09-05T12:00:00.000Z",
           updatedAt: "2026-09-05T12:02:35.000Z",
           status,
-          ...(status === "completed" ? { summary: "Review complete." } : {}),
+          ...(status === "completed" ? { summary } : {}),
           tasks: [
             { status: status === "completed" ? "completed" : "in-progress", title: "Review changes" },
             { status: "pending", title: "Untrusted\n# [link](https://example.com) *text*" },
@@ -157,11 +157,23 @@ describe("agent channels", () => {
       expect(stored?.body).toContain("- [ ] Untrusted \\# \\[link\\]\\(https://example.com\\) \\*text\\*")
       expect(stored?.body).not.toContain("\n# [link]")
       expect(stored?.body).toContain("https://console.test/invocations/run-2")
-      expect(stored?.body).toContain("<summary>Previous results</summary>")
+      expect(stored?.body).toContain("<summary>Final answers</summary>")
       expect(stored?.body).toContain("Review complete.")
+      expect(stored?.body.match(/Latest answer/g)).toHaveLength(1)
       expect(stored?.body).toContain("<relative-time datetime=")
       expect(stored?.body).toContain("https://console.test/invocations/run-1")
+      expect(stored?.body).toContain("[View session](<https://console.test/invocations/run-1>)")
       expect(stored?.body.match(/vitehub-agent-activity:/g)).toHaveLength(1)
+
+      // A large answer archive must not hide the newest answer while a run is active.
+      const longAnswer = "Previous answer. ".repeat(140)
+      for (let index = 0; index < 40; index++) {
+        // SAFETY: This fixture supplies the complete callback fields consumed by the activity updater.
+        await update(context(`history-${index}`, "completed", "reviewer", longAnswer) as never)
+      }
+      // SAFETY: This fixture supplies the complete callback fields consumed by the activity updater.
+      await update(context("history-running", "running") as never)
+      expect(stored?.body).toContain("Previous answer.")
 
       // Agent identity keeps equal provider run IDs as separate activity sessions.
       // SAFETY: This fixture supplies the complete callback fields consumed by the activity updater.

@@ -701,6 +701,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 number,
                 expectedHeadOid: pullRequest.headRefOid,
                 expectedBaseOid: pullRequest.baseRefOid,
+                mentionAllowlist: presetOptions.mentionAllowlist,
+                restrictCommentMentions: true,
+                // Mark every repair comment, including mentions, so its webhook cannot revoke this pass.
+                commentPrefix: "<!-- vitehub-babysitter-repair:repair -->\n",
                 signal: abortSignal,
                 autoMerge: merge.mode === "auto",
                 eligible: (current) =>
@@ -769,7 +773,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return [name, sanitized];
               }));
               const baseCapabilities = workerSettings.capabilities;
-              const repair = repairCapability(operations, merge.mode === "auto", async (context) => {
+              const repair = repairCapability(operations, merge.mode === "auto", presetOptions.mentionAllowlist, async (context) => {
                 if (!workerSettings.box) return;
                 const session = activeProviderBox(context);
                 if (!session) throw new Error("The repair Box is not prepared.");
