@@ -19,18 +19,34 @@ export type RealtimeStatus = "connected" | "connecting" | "disconnected"
 const workspaceChangeFlushIntervalMs = 11
 
 function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check the untrusted checkpoint JSON representation before reading fields.
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function isRealtimeCheckpoint(value: unknown): value is RealtimeCheckpoint {
-  if (!isRecord(value) || typeof value.content !== "string" || !isRecord(value.snapshot)) return false
+  if (!isRecord(value) || !isRecord(value.snapshot)) return false
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check the untrusted checkpoint content before returning it.
+  if (typeof value.content !== "string") return false
   const snapshot = value.snapshot
-  if (typeof snapshot.id !== "string" || typeof snapshot.createdAt !== "string" || (snapshot.name !== undefined && typeof snapshot.name !== "string") || !isRecord(snapshot.entries)) return false
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Snapshot identifiers and timestamps cross the JSON boundary as unknown values.
+  if (typeof snapshot.id !== "string" || typeof snapshot.createdAt !== "string") return false
+  if (snapshot.name !== undefined) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Optional snapshot names are untrusted JSON values.
+    if (typeof snapshot.name !== "string") return false
+  }
+  if (!isRecord(snapshot.entries)) return false
   return Object.values(snapshot.entries).every((entry) => {
     if (!isRecord(entry) || (entry.type !== "file" && entry.type !== "directory")) return false
-    if (entry.digest !== undefined && typeof entry.digest !== "string") return false
+    if (entry.digest !== undefined) {
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Optional entry digests are untrusted JSON values.
+      if (typeof entry.digest !== "string") return false
+    }
     if (entry.metadata !== undefined && !isRecord(entry.metadata)) return false
-    return entry.size === undefined || (typeof entry.size === "number" && Number.isFinite(entry.size))
+    if (entry.size !== undefined) {
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Optional entry sizes are untrusted JSON values.
+      if (typeof entry.size !== "number" || !Number.isFinite(entry.size)) return false
+    }
+    return true
   })
 }
 
