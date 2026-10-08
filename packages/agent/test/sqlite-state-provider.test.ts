@@ -164,6 +164,21 @@ describe("SQLite Agent State Provider", () => {
     await restored.disconnect()
   })
 
+  it("keeps rollback journaling available for network-backed volumes", async () => {
+    const { url } = await createState()
+    const state = createLibsqlAgentState({ url, journalMode: "delete" })
+    await state.connect()
+    const client = createClient({ url })
+    try {
+      expect((await client.execute("PRAGMA journal_mode")).rows[0]?.journal_mode).toBe("delete")
+      await state.set("network-volume", "persisted")
+      await expect(state.get("network-volume")).resolves.toBe("persisted")
+    } finally {
+      client.close()
+      await state.disconnect()
+    }
+  })
+
   it("commits state while another connection retains a read snapshot", async () => {
     const { state, url } = await createState()
     await state.connect()

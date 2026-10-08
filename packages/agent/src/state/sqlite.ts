@@ -70,6 +70,8 @@ export interface LibsqlAgentStateClient {
 export interface LibsqlAgentStateOptions extends Omit<SqliteAgentStateOptions, "driver"> {
   authToken?: string
   client?: LibsqlAgentStateClient
+  /** Owned file databases default to WAL. Use delete on volumes without shared-memory support. */
+  journalMode?: "wal" | "delete"
   url?: string
 }
 
@@ -937,7 +939,8 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
         // A retained read snapshot must not block queue and lease commits.
         // Configure only owned persistent files, leaving supplied clients and
         // remote databases under their caller's connection policy.
-        await retrySqliteBusy(async () => await opened.execute("PRAGMA journal_mode = WAL"))
+        await retrySqliteBusy(async () => await opened.execute(options.journalMode === "delete"
+          ? "PRAGMA journal_mode = DELETE" : "PRAGMA journal_mode = WAL"))
       } catch (error) {
         await opened.close?.()
         throw error
