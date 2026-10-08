@@ -325,9 +325,7 @@ describe("hubDb", () => {
       if (!changedModule) throw new Error("Expected Vite to track the Database Definition.")
       // Vite invalidates the edited file before it invokes the plugin's hot-update hook.
       server.moduleGraph.invalidateModule(changedModule)
-      // SAFETY: The hook receives the real Vite server and the Definition file loaded above.
-      const handleHotUpdate = plugin.handleHotUpdate as (context: unknown) => Promise<void>
-      await handleHotUpdate({ file: definition, server })
+      await resolveHotUpdate(plugin)({ file: definition, server })
 
       await expect(query()).resolves.toEqual({ definition: [{ title: "application note" }], registry: [{ title: "application note" }] })
       expect(nativeQueries).toEqual([])
