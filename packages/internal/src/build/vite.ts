@@ -125,11 +125,6 @@ export function generatedViteHubWatchIgnoredAddition(ignored: WatchIgnoredValue)
   return values.includes(generatedViteHubFilesPattern) ? undefined : [generatedViteHubFilesPattern]
 }
 
-/** Compatibility name used by Vite config hooks. Vite concatenates array values while merging config hooks. */
-export function mergeGeneratedViteHubWatchIgnored(ignored: WatchIgnoredValue): string[] | undefined {
-  return generatedViteHubWatchIgnoredAddition(ignored)
-}
-
 export function resolveViteHubProjectRoot(root: string, options: { projectRoot?: string } = {}): string {
   const resolvedRoot = resolve(root)
   const temporaryRoot = resolve(tmpdir())
