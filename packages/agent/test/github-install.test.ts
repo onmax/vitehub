@@ -132,6 +132,23 @@ it.each([
   }
 });
 
+it("accepts Yarn virtual peer locators with a supported nested source", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), '__metadata:\n  version: 8\n"safe@npm:^1.0.0":\n  version: 1.0.0\n  resolution: "safe@virtual:abc123#npm:1.0.0"\n');
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it.each(["exec:./script.js", "http://registry.npmjs.org/unsafe.tgz", "file:/srv/outside.tgz"])("rejects Yarn virtual locators wrapping %s", async source => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: ${JSON.stringify(`unsafe@virtual:abc123#${source}`)}\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol|Host-local/);
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
+});
+
 it.each(["registry.npmjs.org", "registry.yarnpkg.com", "pkg.pr.new"])("accepts dependency downloads from %s", async host => {
   const root = await fixture();
   await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { safe: `https://${host}/safe.tgz` } }));

@@ -531,6 +531,36 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it.each(["closed", "base", "head", "lease"])("does not retarget a child whose %s changes during parent lookup", async change => {
+    const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
+    const f = await fixture(false, false, { base: "feat/parent", parents });
+    const command = f.command.getMockImplementation()!;
+    let changed = false;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.some(arg => arg.includes("pulls?state=all&head="))) {
+        changed = true;
+        if (change === "lease") {
+          const snapshot = (await f.runtime.inbox.get("acme/app", 12))!;
+          await f.runtime.inbox.release({ snapshot, token: snapshot.lease!, generation: snapshot.generation });
+        }
+      }
+      if (changed && args.includes("repos/acme/app/pulls/12") && !args.includes("PATCH")) {
+        const pr = f.pr();
+        const current = change === "closed" ? { ...pr, state: "closed" }
+          : change === "base" ? { ...pr, base: { ...pr.base, ref: "maintainer-target" } }
+          : change === "head" ? { ...pr, head: { ...pr.head, sha: "d".repeat(40) } } : pr;
+        return { stdout: JSON.stringify(current), stderr: "" };
+      }
+      return await command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect(changed).toBe(true);
+      expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false);
+      expect(f.passes).toHaveLength(0);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("keeps a recovery claim parked when admission permits only host work", async () => {
     const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {

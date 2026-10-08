@@ -11,9 +11,13 @@ const dependencyFields = new Set(["dependencies", "devDependencies", "optionalDe
 const sourceFields = new Set(["resolved", "tarball", "resolution", "version", "specifier", "repo"]);
 const downloadHosts = new Set(["registry.npmjs.org", "registry.yarnpkg.com", "pkg.pr.new", "github.com", "codeload.github.com"]);
 
+function unwrapYarnVirtualSource(value: string): string {
+  return value.replace(/(^|@)(?:virtual:[^#]+#)+/g, "$1");
+}
+
 function checkDownloadSource(value: string): void {
   // Yarn's nested protocols can percent-encode their underlying source URL.
-  const decoded = decodeURIComponent(value);
+  const decoded = unwrapYarnVirtualSource(decodeURIComponent(value));
   if (decoded.includes("\\") && /(?:^|[@:(])https:/i.test(decoded)
     || /(?:^|[@:(])https:(?!\/\/)/i.test(decoded)) throw new Error("Dependency downloads require a trusted HTTPS URL with forward slashes.");
   for (const match of decoded.matchAll(/(?:^|[@:(])([a-z][a-z\d+.-]*):/gi)) {
@@ -147,6 +151,8 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
   }
   async function inspect(value: unknown, base: string, dependency = false, field = ""): Promise<void> {
     if (hasRuntimeType(value, "string")) {
+      const source = unwrapYarnVirtualSource(value);
+      if (source !== value) return await inspect(source, base, dependency, field);
       if (field === "workspaces") { await checkPath(value, base, true); return; }
       if ((dependency || sourceFields.has(field)) && await inspectYarnPatch(value, base)) return;
       if (dependency || sourceFields.has(field)) checkDownloadSource(value);
