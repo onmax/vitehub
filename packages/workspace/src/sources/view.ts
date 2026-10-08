@@ -1,4 +1,4 @@
-import { workspaceError } from "../core/errors.ts"
+import { workspaceConflict, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
 import { createWorkspaceGlobMatcher } from "../core/glob.ts"
 import { contentStreamToBytes, decodeFile, isExcludedWorkspacePath, normalizeWorkspacePath, sha256 } from "../core/path.ts"
@@ -41,6 +41,7 @@ import type {
   WorkspaceSourceItem,
   WorkspaceStat,
   WorkspaceStore,
+  WorkspaceStoreHistory,
   WriteFileOptions,
 } from "../core/types.ts"
 
@@ -72,6 +73,7 @@ class WorkspaceSourceWriteGrant {
 export type { WorkspaceSourceWriteGrant }
 
 export interface WorkspaceSourceView {
+  requireHistoryGrants(history: WorkspaceStoreHistory): (grants: readonly WorkspaceSourceWriteGrant[], options: Parameters<WorkspaceStoreHistory["commit"]>[0]) => ReturnType<WorkspaceStoreHistory["commit"]>
   readFile<TOptions extends ReadFileOptions | undefined = undefined>(path: string, options?: TOptions): Promise<ReadFileResult<TOptions>>
   writeFile(path: string, content: WorkspaceContent, options?: WriteFileOptions): Promise<string>
   /** Rejects Source-backed paths. Returns a write grant bound to the normalized path. */
@@ -615,6 +617,7 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   }
 
   async function isSourceBackedStorePath(path: string) {
+    if (!allSources.length) return false
     // A missing sidecar must not release ownership recorded by the current Source.
     for (const source of allSources) {
       const snapshot = await readCurrentSourceSnapshot(store, definition.name, source)
@@ -745,6 +748,29 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
   }
 
   return {
+    requireHistoryGrants(history) {
+      return async (grants, options) => {
+        return await withWorkspaceStoreMutation(store, async () => {
+          const head = await history.head()
+          if ((head?.id ?? null) !== options.ifHead) throw workspaceConflict("[vitehub] Workspace head changed before the history commit.", { details: { expected: options.ifHead, actual: head?.id ?? null } })
+          const previous = head ? await history.open(head.id) : undefined
+          const entries = previous ? (await previous.list("", { recursive: true })).filter(entry => entry.type === "file") : []
+          const paths: string[] = []
+          for (const path of new Set([...Object.keys(options.files), ...entries.map(entry => entry.path)])) {
+            const file = options.files[path]
+            const before = entries.find(entry => entry.path === path)
+            const digest = before?.digest ?? (previous && before ? await sha256(await previous.readFile(path, { encoding: "binary" })) : undefined)
+            if (!file || !before || digest !== await sha256(file.content) || before.mediaType !== file.mediaType || JSON.stringify(before.metadata) !== JSON.stringify(file.metadata)) paths.push(path)
+          }
+          const authorized = new Set(grants.map(grant => writeGrants.get(grant)))
+          if (authorized.has(undefined) || paths.some(path => !authorized.has(path))) {
+            throw workspaceError("[vitehub] History publication requires a Source write grant for every affected path.")
+          }
+          for (const path of paths) await assertWritableCurrentPath(path)
+          return await history.commit(options)
+        })
+      }
+    },
     async assertWritable(path) {
       return await grantWritablePath(path)
     },

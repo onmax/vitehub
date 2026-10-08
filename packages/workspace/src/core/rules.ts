@@ -159,6 +159,7 @@ export function createWorkspaceWritePolicy(definition: WorkspaceDefinition): Wor
       assertRuleAllows(current)
       if (current.rule?.validate.length) current = await runValidators(current.rule.validate, current)
       await runHooks(policy.hooks, "write:validate", current)
+      assertRuleAllows(current)
       return current
     },
     async after(input) {

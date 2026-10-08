@@ -89,6 +89,7 @@ function facade(workspace: ReturnType<typeof createWorkspace>): ReadonlyWorkspac
     none: () => ({}),
   } as never
   return {
+    history: workspace.history!,
     fs: {
       // SAFETY: This test fixture intentionally constructs the exact asserted Workspace contract.
       readFile: async (path, options) => await workspace.readFile(path, options as never),
@@ -149,6 +150,7 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     },
     getMeta: async key => await workspace.getMeta?.(key),
     history: {
+      ...workspace.history!,
       checkpoint: async options => await workspace.snapshot({ name: options?.message }),
       rebase: async options => await workspace.rebase(options),
     },

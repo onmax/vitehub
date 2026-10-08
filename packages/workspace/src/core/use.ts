@@ -11,6 +11,7 @@ import { useWorkspaceAssets } from "../asset-registry.ts"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 
 import { workspaceError } from "./errors.ts"
+import { requireWorkspaceHistory } from "./history.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern } from "./path.ts"
 import { useRegisteredWorkspace } from "./registry.ts"
@@ -36,6 +37,8 @@ import type {
   WorkspaceAssets,
   WorkspaceContent,
   WorkspaceCapabilities,
+  WorkspaceHistoryReader,
+  WorkspaceRetainedHistory,
   WorkspaceEntry,
   WorkspaceSessionOptions,
   WorkspaceName,
@@ -180,11 +183,12 @@ export interface WritableWorkspaceFs<Name extends WorkspaceName = WorkspaceName>
 
 export interface ReadonlyWorkspaceFacade<Name extends WorkspaceName = WorkspaceName> {
   fs: ReadonlyWorkspaceFs<Name>
+  history: WorkspaceHistoryReader
   getMeta?(key: string): Promise<unknown>
   tools: WorkspaceReadToolSet
 }
 
-export interface WorkspaceHistory extends History<WorkspaceSnapshot> {
+export interface WorkspaceHistory extends History<WorkspaceSnapshot>, WorkspaceRetainedHistory {
   rebase(options?: WorkspaceRebaseOptions): Promise<void>
 }
 
@@ -302,6 +306,13 @@ function createLazyWorkspace(name: WorkspaceName, definition?: WorkspaceDefiniti
       return (resolved as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.()
     },
     name,
+    history: {
+      head: async () => await requireWorkspaceHistory(await resolveWorkspace()).head(),
+      list: async options => await requireWorkspaceHistory(await resolveWorkspace()).list(options),
+      open: async id => await requireWorkspaceHistory(await resolveWorkspace()).open(id),
+      usage: async () => await requireWorkspaceHistory(await resolveWorkspace()).usage(),
+      commit: async options => await requireWorkspaceHistory(await resolveWorkspace()).commit(options),
+    },
     async capabilities() {
       const resolved = await resolveWorkspace()
       return await resolved.capabilities?.() ?? { conditionalWrites: false }
@@ -601,7 +612,7 @@ function emptyTools(): ToolSet {
 
 export function useWorkspace<Name extends WorkspaceName>(name: Name): ReadonlyWorkspaceFacade<Name>
 export function useWorkspace<Name extends WorkspaceName>(name: Name, options: UseWorkspaceOptions & { mode?: "read" }): ReadonlyWorkspaceFacade<Name>
-export function useWorkspace<Name extends WorkspaceName>(name: Name, options: { mode: "write" }): WritableWorkspaceFacade<Name>
+export function useWorkspace<Name extends WorkspaceName>(name: Name, options: UseWorkspaceOptions & { mode: "write" }): WritableWorkspaceFacade<Name>
 export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: UseWorkspaceOptions): ReadonlyWorkspaceFacade<Name> | WritableWorkspaceFacade<Name> {
   if (options?.mode === "write") {
     const workspace = createLazyWorkspace(name, options.definition)
@@ -640,6 +651,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
       diff: async options => await workspace.diff(options),
       fs: createWritableFs(name, workspace),
       history: {
+        ...workspace.history,
         checkpoint: async options => await workspace.snapshot({ name: options?.message }),
         rebase: async options => await workspace.rebase(options),
       },
@@ -675,6 +687,12 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
   tools.none = emptyTools
   const facade = {
     fs,
+    history: {
+      head: () => requireWorkspaceHistory(workspace).head(),
+      list: (options?: import("./types.ts").WorkspaceHistoryListOptions) => requireWorkspaceHistory(workspace).list(options),
+      open: (id: string) => requireWorkspaceHistory(workspace).open(id),
+      usage: () => requireWorkspaceHistory(workspace).usage(),
+    },
     getMeta: async (key: string) => await workspace.getMeta?.(key),
     tools,
   }
