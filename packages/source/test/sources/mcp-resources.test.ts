@@ -325,6 +325,7 @@ describe("mcpResources", () => {
     { resources: undefined },
     { resources: sparseArray() },
     { resources: [undefined] },
+    { resources: [{ name: "item.txt" }] },
     { resources: [], nextCursor: null },
   ])("rejects malformed listResources responses", async response => {
     const source = mcpResources({ server: malformedListClient(response) })
