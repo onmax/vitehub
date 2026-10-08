@@ -299,6 +299,11 @@ export class PullRequestInbox {
         updatedAt: new Date(now).toISOString(), links: [...claim?.activity?.links ?? []], tasks: [], summary: snapshot.lastResult,
       },
     }
+    const previous = v.safeParse(statusDeliverySchema, pending)
+    if (previous.success && previous.output.lease && (previous.output.leaseUntil ?? 0) > now) {
+      delivery.lease = previous.output.lease
+      delivery.leaseUntil = previous.output.leaseUntil
+    }
     if (head !== snapshot.pr?.head?.sha) delivery.precedingHead = snapshot.pr?.head?.sha
     if (claim?.startedAt !== undefined) delivery.activity.startedAt = new Date(claim.startedAt).toISOString()
     await this.setMetaIn(tx, `${statusOutboxPrefix}${key}`, delivery)
@@ -309,15 +314,42 @@ export class PullRequestInbox {
     const now = this.clock()
     return (await this.metaEntries(statusOutboxPrefix)).flatMap(([, value]) => {
       const parsed = v.safeParse(statusDeliverySchema, value)
-      return parsed.success && parsed.output.nextAt <= now && this.repositories.includes(parsed.output.repository) ? [parsed.output] : []
+      return parsed.success && parsed.output.nextAt <= now && (parsed.output.leaseUntil ?? 0) <= now && this.repositories.includes(parsed.output.repository) ? [parsed.output] : []
     }).sort((a, b) => a.nextAt - b.nextAt).slice(0, limit)
   }
-  /** Version comparison prevents an older publication from deleting a newer result. */
+  /** Claim due, eligible deliveries atomically across hosts. Deferred heads yield the batch. */
+  async claimStatusDeliveries(limit = 5, leaseMs = 300_000): Promise<StatusDelivery[]> {
+    if (!Number.isInteger(limit) || limit < 1 || !Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('Status delivery limits must be positive')
+    return await this.transaction(async tx => {
+      const now = this.clock()
+      const rows = await tx.execute(`SELECT value FROM ${this.tables.meta} WHERE scope=? AND substr(key, 1, ?)=?`, [this.scope, statusOutboxPrefix.length, statusOutboxPrefix])
+      const candidates = rows.flatMap(row => {
+        const parsed = v.safeParse(statusDeliverySchema, JSON.parse(stringValue(row.value)))
+        return parsed.success && parsed.output.nextAt <= now && (parsed.output.leaseUntil ?? 0) <= now && this.repositories.includes(parsed.output.repository) ? [parsed.output] : []
+      }).sort((a, b) => a.nextAt - b.nextAt || a.repository.localeCompare(b.repository) || a.number - b.number)
+      const claimed: StatusDelivery[] = []
+      for (const pending of candidates) {
+        const snapshot = await this.getIn(tx, pending.repository, pending.number)
+        if (pending.precedingHead && snapshot?.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
+        const delivery = { ...pending, lease: randomUUID(), leaseUntil: now + leaseMs }
+        await this.setMetaIn(tx, `${statusOutboxPrefix}${statusTargetKey(pending)}`, delivery)
+        claimed.push(delivery)
+        if (claimed.length === limit) break
+      }
+      return claimed
+    })
+  }
+  /** Version and lease comparisons preserve newer results and fence replaced consumers. */
   async finishStatusDelivery(observed: StatusDelivery, outcome: 'delivered' | 'discarded'): Promise<boolean> {
     return await this.transaction(async tx => {
       const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
       const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
-      if (!parsed.success || parsed.output.version !== observed.version) return false
+      if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
+      const { lease: _lease, leaseUntil: _leaseUntil, ...released } = parsed.output
+      if (parsed.output.version !== observed.version) {
+        await this.setMetaIn(tx, key, released)
+        return false
+      }
       if (outcome === 'delivered') {
         await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, head: observed.head, deliveredAt: this.clock() })
       }
@@ -329,9 +361,14 @@ export class PullRequestInbox {
     return await this.transaction(async tx => {
       const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
       const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
-      if (!parsed.success || parsed.output.version !== observed.version) return false
+      if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
+      const { lease: _lease, leaseUntil: _leaseUntil, ...released } = parsed.output
+      if (parsed.output.version !== observed.version) {
+        await this.setMetaIn(tx, key, released)
+        return false
+      }
       const attempts = parsed.output.attempts + 1
-      await this.setMetaIn(tx, key, { ...parsed.output, attempts, nextAt: this.clock() + Math.min(900_000, 60_000 * 2 ** Math.min(attempts - 1, 4)), lastError: String(failure).slice(0, 1000) })
+      await this.setMetaIn(tx, key, { ...released, attempts, nextAt: this.clock() + Math.min(900_000, 60_000 * 2 ** Math.min(attempts - 1, 4)), lastError: String(failure).slice(0, 1000) })
       return true
     })
   }

@@ -36,7 +36,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { allowOperationAfterAdmission?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -184,6 +184,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { allowOpe
     channel: (options) => {
       const channel = githubChannel({ ...options, app: github });
       expect(githubChannelIdentity({ github: channel })).toBe(github);
+      if (preset.activityBarrier) channel.activity = { update: async () => { await preset.activityBarrier; } };
       return channel;
     },
     environment: async () => {
@@ -244,7 +245,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { allowOpe
     inboxPath: join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
     concurrency: 1,
-    activityAuthors: ["vitehub-agent"],
+    activityAuthors: preset.activityBarrier ? ["repair-bot"] : ["vitehub-agent"],
     admission: preset.admission,
     error: errors,
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
@@ -1293,4 +1294,25 @@ describe("Babysitter preset runtime", () => {
     expect(f.command.mock.calls.some(([args]) => args.includes("merge"))).toBe(false);
     await f.runtime.inbox.close();
   });
+  it("keeps queue reconciliation available while a saved status is being published", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const f = await fixture(false, false, { activityBarrier: barrier });
+    await f.reconcile();
+    expect(await f.runtime.inbox.pendingStatusDeliveries()).toHaveLength(1);
+    const second = f.reconcile();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([second, new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => reject(new Error("Status publication blocked reconciliation.")), 1_000);
+      })]);
+    } finally {
+      clearTimeout(deadline);
+      release();
+      await second;
+      await vi.waitFor(async () => expect(await f.runtime.inbox.metaEntries("status-outbox:v1:")).toHaveLength(0));
+      await f.runtime.inbox.close();
+    }
+  });
+
 });

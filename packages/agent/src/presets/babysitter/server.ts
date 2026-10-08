@@ -148,8 +148,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const statusRecovery = createBabysitterStatusRecovery({
     inbox: pullRequestInbox,
     revision: baseAgent.version ?? "durable-status-v1",
-    publish: statusChannel ? pending => publishAgentActivity({ name: `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`, channels: { github: statusChannel } }, {
-      channelId: "github", target: { repository: pending.repository, issue: pending.number }, activity: pending.activity,
+    publish: statusChannel ? (pending, abortSignal) => publishAgentActivity({ name: `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`, channels: { github: statusChannel } }, {
+      channelId: "github", target: { repository: pending.repository, issue: pending.number }, activity: pending.activity, abortSignal,
     }) : undefined,
     event: schedulerEvent,
     error: schedulerError,
@@ -563,7 +563,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
     await statusRecovery.recover();
-    await statusRecovery.flush();
+    void statusRecovery.flush().catch(failure => schedulerError("babysitter.status.flush.failed", failure));
     let modelAdmission = true;
     if (options.admission) {
       const admission = await options.admission();

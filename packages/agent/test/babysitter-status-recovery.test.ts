@@ -178,3 +178,133 @@ test('a timed installer retry stays parked across releases', async t => {
   await createBabysitterStatusRecovery({ inbox, revision: 'release-2' }).recover()
   assert.equal((await inbox.get(repository, 239))?.status, 'waiting')
 })
+
+
+test('five deferred repair comments do not starve another PR status', async t => {
+  const { inbox, claim } = await fixture(t)
+  for (let index = 0; index < 5; index++) {
+    let current = claim
+    if (index) {
+      await inbox.seed(repository, { ...pr, number: pr.number + index })
+      current = (await inbox.claim(1))[0]!
+    }
+    await inbox.finish(current, { text: 'Repair pushed.', wait: { kind: 'checks', headSha: 'd'.repeat(40), reason: 'Waiting for synchronize.', evidenceKey: 'repair' } })
+  }
+  await inbox.seed(repository, { ...pr, number: 244 })
+  await inbox.finish((await inbox.claim(1))[0]!, blocked())
+  const delivered: number[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { delivered.push(pending.number) } }).flush()
+  assert.deepEqual(delivered, [244])
+})
+
+test('two hosts sharing an inbox claim a saved status before publishing', async t => {
+  const { inbox, claim, open } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void
+  let started!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const began = new Promise<void>(resolve => { started = resolve })
+  let calls = 0
+  const publish = async () => { calls++; started(); await barrier }
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish }).flush()
+  await began
+  const second = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish }).flush()
+  let deadline: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([second, new Promise<never>((_, reject) => { deadline = setTimeout(() => reject(new Error('Second host tried to publish the leased status.')), 100) })])
+    assert.equal(calls, 1)
+  } finally {
+    clearTimeout(deadline)
+    release()
+    await Promise.all([first, second])
+  }
+})
+
+test('a stalled publisher is aborted and the status remains durably retryable', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  let release!: () => void
+  let signal: AbortSignal | undefined
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publishTimeoutMs: 20,
+    publish: async (_pending, deadline) => { signal = deadline; await barrier } })
+  const flushing = recovery.flush()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([flushing, new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Status publication blocked past its deadline.')), 200) })])
+    assert.equal(signal?.aborted, true)
+    const entries = await inbox.metaEntries('status-outbox:v1:')
+    assert.equal((entries[0]?.[1] as { attempts: number }).attempts, 1)
+  } finally {
+    clearTimeout(timeout)
+    release()
+    await flushing
+  }
+})
+
+test('an expired delivery lease can be recovered while its old owner is fenced', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  const [unclaimed] = await inbox.pendingStatusDeliveries()
+  assert.ok(unclaimed)
+  assert.equal(await inbox.finishStatusDelivery(unclaimed, 'delivered'), false)
+  assert.equal(await inbox.retryStatusDelivery(unclaimed, new Error('Unclaimed')), false)
+  const [old] = await inbox.claimStatusDeliveries(1, 100)
+  assert.ok(old?.lease)
+  const other = open()
+  t.onTestFinished(() => other.close())
+  assert.deepEqual(await other.claimStatusDeliveries(), [])
+  setClock(old.leaseUntil! + 1)
+  const [replacement] = await other.claimStatusDeliveries()
+  assert.ok(replacement?.lease)
+  assert.notEqual(replacement.lease, old.lease)
+  assert.equal(await inbox.finishStatusDelivery(old, 'delivered'), false)
+  assert.equal(await inbox.retryStatusDelivery(old, new Error('Old owner')), false)
+  assert.equal(await other.finishStatusDelivery(replacement, 'delivered'), true)
+})
+
+test('a newer result keeps the delivery lease until its publisher finishes', async t => {
+  const { inbox, claim, open } = await fixture(t)
+  await inbox.finish(claim, blocked('First result'))
+  const [old] = await inbox.claimStatusDeliveries()
+  assert.ok(old)
+  await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+  await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  assert.deepEqual(await other.claimStatusDeliveries(), [])
+  assert.equal(await inbox.retryStatusDelivery(old, new Error('Old publication failed')), false)
+  const [next] = await other.claimStatusDeliveries()
+  assert.equal(next?.text, 'New result')
+  assert.equal(next?.attempts, 0)
+})
+
+test('the publication deadline reaches GitHub credentials and stalled HTTP requests', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  let credentialSignal: AbortSignal | undefined
+  let requestSignal: AbortSignal | null | undefined
+  const channel = github({ activity: true, app: {
+    token: (_context, scope) => { credentialSignal = scope.signal; return 'deadline-token' },
+    identity: { login: 'worker[bot]' },
+    fetch: async (_input, init) => {
+      requestSignal = init?.signal
+      return await new Promise<Response>((_resolve, reject) => {
+        const abort = () => reject(requestSignal?.reason)
+        if (requestSignal?.aborted) abort()
+        else requestSignal?.addEventListener('abort', abort, { once: true })
+      })
+    },
+  } })
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publishTimeoutMs: 20,
+    publish: (pending, abortSignal) => publishAgentActivity({ name: 'babysitter-worker', channels: { github: channel } }, {
+      channelId: 'github', target: { repository, issue: 239 }, activity: pending.activity, abortSignal,
+    }),
+  }).flush()
+  assert.equal(credentialSignal?.aborted, true)
+  assert.equal(requestSignal?.aborted, true)
+  const entries = await inbox.metaEntries('status-outbox:v1:')
+  assert.equal((entries[0]?.[1] as { attempts: number }).attempts, 1)
+})

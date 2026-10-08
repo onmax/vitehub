@@ -18,31 +18,42 @@ export interface BabysitterStatusRecovery {
 export function createBabysitterStatusRecovery(options: {
   inbox: PullRequestInbox;
   revision: string;
-  publish?: (pending: StatusDelivery) => Promise<unknown>;
+  publish?: (pending: StatusDelivery, signal: AbortSignal) => Promise<unknown>;
+  publishTimeoutMs?: number;
   event?: (name: string, properties: Record<string, unknown>) => void;
   error?: (name: string, error: unknown, properties: Record<string, unknown>) => void;
 }): BabysitterStatusRecovery {
   const { inbox, revision, publish } = options;
+  const publishTimeoutMs = options.publishTimeoutMs ?? 20_000;
+  if (!Number.isFinite(publishTimeoutMs) || publishTimeoutMs <= 0) throw new Error("Status publication timeout must be positive.");
   let flushing: Promise<void> | undefined;
   let initialized = false;
 
   async function flushPending(): Promise<void> {
-    for (const pending of await inbox.pendingStatusDeliveries()) {
+    for (const pending of await inbox.claimStatusDeliveries()) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const snapshot = await inbox.get(pending.repository, pending.number);
-        // Wait for a confirmed repair's synchronize webhook instead of discarding it.
-        if (pending.precedingHead && snapshot?.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === "open") continue;
         if (!snapshot || snapshot.pr?.head?.sha !== pending.head) {
           await inbox.finishStatusDelivery(pending, "discarded");
           continue;
         }
-        await publish?.(pending);
+        const controller = new AbortController();
+        await Promise.race([publish!(pending, controller.signal), new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            const failure = new DOMException("Status publication timed out.", "TimeoutError");
+            controller.abort(failure);
+            reject(failure);
+          }, publishTimeoutMs);
+        })]);
         if (await inbox.finishStatusDelivery(pending, "delivered")) {
           options.event?.("babysitter.status.delivered", { repository: pending.repository, pull_request: pending.number });
         }
       } catch (failure) {
         await inbox.retryStatusDelivery(pending, failure);
         options.error?.("babysitter.status.delivery.failed", failure, { repository: pending.repository, pull_request: pending.number });
+      } finally {
+        clearTimeout(timer);
       }
     }
   }

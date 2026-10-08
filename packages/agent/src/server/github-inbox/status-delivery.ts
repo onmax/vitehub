@@ -16,6 +16,8 @@ export interface StatusDelivery {
   text: string;
   attempts: number;
   nextAt: number;
+  lease?: string;
+  leaseUntil?: number;
   lastError?: string;
   activity: {
     runId: string;
@@ -31,6 +33,7 @@ export interface StatusDelivery {
 export const statusDeliverySchema: v.GenericSchema<unknown, StatusDelivery> = v.object({
   version: v.string(), contentKey: v.string(), repository: v.string(), number: v.number(),
   head: v.string(), precedingHead: v.optional(v.string()), generation: v.number(), text: v.string(), attempts: v.number(), nextAt: v.number(),
+  lease: v.optional(v.string()), leaseUntil: v.optional(v.number()),
   lastError: v.optional(v.string()),
   activity: v.object({
     runId: v.string(), status: v.picklist(["failed", "completed", "waiting"]), startedAt: v.optional(v.string()),

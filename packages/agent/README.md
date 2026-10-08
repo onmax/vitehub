@@ -853,7 +853,10 @@ earlier hand-wired Babysitter once.
 Pass results and their GitHub status deliveries commit in one inbox transaction.
 The host publishes the saved result through its verified GitHub identity, retries
 failed delivery after restart, and compares delivery versions before clearing an
-entry. A newer result cannot be erased by an older publication. Waiting comments
+entry. Delivery claims are atomic across hosts and expire after five minutes if
+a host stops. Publication runs outside queue reconciliation with a twenty-second
+deadline. Deferred repair heads yield the bounded batch to other PRs. A newer
+result cannot be erased by an older publication. Waiting comments
 include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 

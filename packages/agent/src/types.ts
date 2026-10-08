@@ -2284,6 +2284,8 @@ export interface AgentActivityUpdate {
 export interface AgentChannelActivityContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig>
   extends AgentCallbackContext<TRuntimeConfig> {
   activity: AgentActivityUpdate
+  /** Stop activity publication and provider I/O when this signal aborts. */
+  abortSignal?: AbortSignal
   channel: AgentChannelDefinition<TRuntimeConfig>
   target: AgentActivityTarget
 }

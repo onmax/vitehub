@@ -237,7 +237,7 @@ type GitHubAppContext<TRuntimeConfig extends AgentRuntimeConfig> =
 
 export interface GitHubAppOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   /** Use a host-managed credential resolver instead of minting another installation token. */
-  token?: string | ((context: GitHubAppContext<TRuntimeConfig>, scope: { repository?: string }) => string | undefined | Promise<string | undefined>)
+  token?: string | ((context: GitHubAppContext<TRuntimeConfig>, scope: { repository?: string, signal?: AbortSignal }) => string | undefined | Promise<string | undefined>)
   /** Trusted login of the host's authenticated GitHub identity. */
   identity?: { login: string }
   apiBaseUrl?: string
@@ -1465,11 +1465,13 @@ async function githubAppInstallationToken<TRuntimeConfig extends AgentRuntimeCon
   context: GitHubAppContext<TRuntimeConfig>,
   installation?: number,
   repository?: string,
+  signal?: AbortSignal,
 ) {
   const options = githubAppOptions(app) || {}
   if (options.token) {
     const token = hasRuntimeType(options.token, "function") ? await options.token(context, {
       repository: repository ?? ("effect" in context ? githubCommandFromEffect(context)?.repository : undefined),
+      signal,
     }) : options.token
     return requiredString(token, 'token')
   }
@@ -1503,12 +1505,13 @@ async function githubPullRequestMetadataToken<TRuntimeConfig extends AgentRuntim
   context: GitHubAppContext<TRuntimeConfig>,
   installation?: number,
   repository?: string,
+  signal?: AbortSignal,
 ) {
   const env = await githubEnv(context)
   const token = cleanSecret(env.token)
   if (!app) return token
   try {
-    return await githubAppInstallationToken(app, context, installation, repository)
+    return await githubAppInstallationToken(app, context, installation, repository, signal)
   }
   catch (error) {
     if (token) return token
@@ -1885,16 +1888,24 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   return {
     async update(context) {
       const target = githubActivityTarget(context.target)
-      const fetcher = options.fetch || fetch
+      const deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
+      deadline.throwIfAborted()
+      const request = options.fetch || fetch
+      const fetcher: typeof fetch = (input, init) => {
+        deadline.throwIfAborted()
+        return request(input, { ...init, signal: init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline })
+      }
+      const scopedApp = app ? { ...options, fetch: fetcher } : undefined
       const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
-      const token = await githubPullRequestMetadataToken(app, context, target.installationId, target.repository)
+      const token = await githubPullRequestMetadataToken(scopedApp, context, target.installationId, target.repository, deadline)
       if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
       const updateKey = `${token}\0${commentsTarget}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
+        deadline.throwIfAborted()
         const headers = githubApiHeaders(token, options.userAgent)
-        const identity = await githubActivityIdentity(fetcher, apiBaseUrl, headers, token, app, context)
+        const identity = await githubActivityIdentity(fetcher, apiBaseUrl, headers, token, scopedApp, context)
         const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
         const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
         const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
@@ -3309,7 +3320,7 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
   const identity = isAgentGitHub(appInput) ? appInput : undefined
   const appOptions = isAgentGitHub(appInput)
     ? {
-        token: async (_context: unknown, scope: { repository?: string }) => (await appInput.access(scope.repository ? { repository: scope.repository } : {})).token,
+        token: async (_context: unknown, scope: { repository?: string, signal?: AbortSignal }) => (await appInput.access(scope)).token,
         ...(appInput.identity?.() ? { identity: { login: appInput.identity()! } } : {}),
       }
     : appInput

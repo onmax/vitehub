@@ -8608,7 +8608,7 @@ export async function getAgent<TContext extends AgentRuntimeContext>(
 /** Publish a scheduler wait or progress update without creating an invocation. */
 export async function publishAgentActivity(
   agent: Pick<AgentDefinition, 'name' | 'channels'>,
-  options: { channelId: string, target: AgentActivityTarget, activity: AgentActivityUpdate },
+  options: { channelId: string, target: AgentActivityTarget, activity: AgentActivityUpdate, abortSignal?: AbortSignal },
 ): Promise<void> {
   const channel = agent.channels?.[options.channelId]
   if (!channel?.activity) throw new Error(`Agent channel ${options.channelId} does not support activity.`)
@@ -8626,6 +8626,7 @@ export async function publishAgentActivity(
     channel,
     target: options.target,
     activity: { agentName: agent.name, ...options.activity },
+    abortSignal: options.abortSignal,
   })
   await Promise.all(pending)
 }
