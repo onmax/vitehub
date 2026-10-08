@@ -375,6 +375,38 @@ class ViteHubBlobFailure extends ViteHubError<"BLOB_OPERATION_FAILED", { operati
 }
 
 describe("history policy and capabilities", () => {
+  it("applies resolved policies and hooks to complete history commits", async () => {
+    const { store, facade, uploads } = await setup("libsql")
+    const after = vi.fn()
+    const error = vi.fn()
+    const definition = { name: "history", store, rules: {
+      "**": { maxBytes: 3, validate: (input: import("../src/core/types.ts").WorkspaceWriteInput) => ({ ...input, content: input.operation === "writeFile" ? "new" : undefined, mediaType: "text/custom", metadata: { capability: "resolved" } }) },
+      "locked.txt": { write: false as const },
+      "keep.txt": { write: "create" as const },
+    }, hooks: {
+      "write:after": after,
+      "write:error": error,
+      "write:before": (input: import("../src/core/types.ts").WorkspaceWriteInput) => { if (input.path === "rewrite.txt") input.path = "locked.txt" },
+    } }
+    const invocation = { context: { entries: () => new Map<string, unknown>().entries(), get: () => undefined, has: () => false } }
+    const resolved = await createWorkspaceSourceResolutionFacade(facade(), definition, { invocation, overlay: true })
+    // SAFETY: A writable input preserves writable operations through Source resolution.
+    const workspace = resolved.workspace as import("../src/core/use.ts").WritableWorkspaceFacade
+    await expect(workspace.fs.writeFile("locked.txt", "ok")).rejects.toThrow()
+    await expect(workspace.history.commit({ ifHead: null, files: { "locked.txt": "ok" } })).rejects.toThrow()
+    await expect(workspace.history.commit({ ifHead: null, files: { "a.txt": "long" } })).rejects.toThrow("limits writes")
+    await expect(workspace.history.commit({ ifHead: null, files: { "rewrite.txt": "ok" } })).rejects.toThrow("cannot rewrite")
+    expect(error).toHaveBeenCalled()
+    expect(uploads).not.toHaveBeenCalled()
+    const revision = await workspace.history.commit({ ifHead: null, files: { "a.txt": "ok", "keep.txt": "ok" } })
+    const view = await workspace.history.open(revision.id)
+    expect(await view.readFile("a.txt")).toBe("new")
+    expect(await view.stat("a.txt")).toMatchObject({ mediaType: "text/custom", metadata: { capability: "resolved" } })
+    expect(after).toHaveBeenCalledTimes(2)
+    await expect(workspace.history.commit({ ifHead: revision.id, files: { "a.txt": "new" } })).rejects.toThrow("does not allow rm")
+    expect(await workspace.history.head()).toEqual(revision)
+  })
+
   it("rejects stale first-operation heads before build Source synchronization", async () => {
     const { store } = await setup("libsql")
     const revision = await store.history.commit({ ifHead: null, files: rawFiles({ "app.txt": "base" }) })

@@ -1,7 +1,7 @@
 import { createWorkspaceTools } from "../ai.ts"
-import { workspaceConflict, workspaceError } from "../core/errors.ts"
-import { normalizeWorkspacePath, sha256 } from "../core/path.ts"
-import { createWorkspaceHistoryReader, normalizeHistoryPath } from "../core/history.ts"
+import { workspaceError } from "../core/errors.ts"
+import { normalizeWorkspacePath } from "../core/path.ts"
+import { createWorkspaceHistory, createWorkspaceHistoryReader, forwardWorkspaceHistoryFiles } from "../core/history.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 import { createWorkspaceWritePolicy } from "../core/rules.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
@@ -454,36 +454,17 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await writes.writeFile(path, content, options)),
     }
     const baseRebase = sourceView.requireRebaseGrants(async options => await workspace.history.rebase(options))
-    const baseHistoryCommit = sourceView.requireHistoryGrants({
-      ...workspace.history,
-      commit: async options => await workspace.history.commit({
-        ...options,
-        files: Object.fromEntries(Object.entries(options.files).map(([path, file]) => [path, file.content])),
-      }),
-    })
+    const resolvedHistory = createWorkspaceHistory(resolvedDefinition, {
+      ...overlayStore,
+      history: {
+        ...workspace.history,
+        commit: async options => await workspace.history.commit(forwardWorkspaceHistoryFiles(options)),
+      },
+    }, sourceView)
 
     async function commitHistory(options: WorkspaceHistoryCommitOptions) {
       requireCompleteHistory()
-      const head = await workspace.history.head()
-      if ((head?.id ?? null) !== options.ifHead) throw workspaceConflict("[vitehub] Workspace head changed before the history commit.", { details: { expected: options.ifHead, actual: head?.id ?? null } })
-      const previous = head ? await (await workspace.history.open(head.id)).list("", { recursive: true }) : []
-      const desired: Record<string, WorkspaceFile> = Object.create(null)
-      for (const [path, content] of Object.entries(options.files)) {
-        const normalized = normalizeHistoryPath(path)
-        if (Object.hasOwn(desired, normalized)) throw workspaceError(`[vitehub] Duplicate history file path: ${normalized}.`)
-        desired[normalized] = { path: normalized, content }
-      }
-      const grants = []
-      for (const path of new Set([...Object.keys(desired), ...previous.filter(entry => entry.type === "file").map(entry => entry.path)])) {
-        const file = desired[path]
-        const before = previous.find(entry => entry.path === path)
-        if (file && before?.digest === await sha256(file.content)) {
-          desired[path] = { ...file, mediaType: before.mediaType, metadata: before.metadata }
-          continue
-        }
-        grants.push(await sourceView.assertWritable(path))
-      }
-      return await baseHistoryCommit(grants, { ...options, files: desired })
+      return await resolvedHistory.commit(options)
     }
 
     // A takeRemote path replaces local content, so Source-backed paths are rejected.

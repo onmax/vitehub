@@ -8,7 +8,17 @@ import { createWorkspaceWritePolicy } from "./rules.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 
 import type { WorkspaceSourceView, WorkspaceSourceWriteGrant } from "../sources/view.ts"
-import type { Workspace, WorkspaceDefinition, WorkspaceFile, WorkspaceHistoryReader, WorkspaceRetainedHistory, WorkspaceRevision, WorkspaceStore, WorkspaceWriteInput } from "./types.ts"
+import type { Workspace, WorkspaceDefinition, WorkspaceFile, WorkspaceHistoryCommitOptions, WorkspaceHistoryReader, WorkspaceRetainedHistory, WorkspaceRevision, WorkspaceStore, WorkspaceStoreHistory, WorkspaceWriteInput } from "./types.ts"
+
+// Keep per-file hook output when a resolved facade forwards the public file set.
+// The base facade still applies its own policy and Source grants.
+const forwardedHistoryFiles = new WeakMap<WorkspaceHistoryCommitOptions, Record<string, WorkspaceFile>>()
+
+export function forwardWorkspaceHistoryFiles(options: Parameters<WorkspaceStoreHistory["commit"]>[0]): WorkspaceHistoryCommitOptions {
+  const forwarded = { ...options, files: Object.fromEntries(Object.entries(options.files).map(([path, file]) => [path, file.content])) }
+  forwardedHistoryFiles.set(forwarded, options.files)
+  return forwarded
+}
 
 export function requireWorkspaceHistory(workspace: Pick<Workspace, "history">): WorkspaceRetainedHistory {
   if (!workspace.history) throw historyUnavailable()
@@ -59,12 +69,19 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
       if (options.ifHead !== null && (!hasRuntimeType(options.ifHead, "string") || !options.ifHead)) {
         throw workspaceError("[vitehub] History commit requires ifHead to be a revision id or null.")
       }
+      const forwardedFiles = forwardedHistoryFiles.get(options)
       const desired: Record<string, WorkspaceFile> = Object.create(null)
       for (const [path, content] of Object.entries(options.files)) {
         const normalized = normalizeHistoryPath(path)
         if (Object.hasOwn(desired, normalized)) throw workspaceError(`[vitehub] Duplicate history file path: ${normalized}.`)
         if (!hasRuntimeType(content, "string") && !isWorkspaceBytes(content)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
-        desired[normalized] = { path: normalized, content: isWorkspaceBytes(content) ? new Uint8Array(content) : content, mediaType: lookup(normalized) || "application/octet-stream" }
+        const forwarded = forwardedFiles?.[path]
+        desired[normalized] = {
+          path: normalized,
+          content: isWorkspaceBytes(content) ? new Uint8Array(content) : content,
+          mediaType: forwarded?.mediaType ?? (lookup(normalized) || "application/octet-stream"),
+          metadata: copyJsonFileMetadata(normalized, forwarded?.metadata),
+        }
       }
       const metadata = copyJsonWorkspaceMetadata("history revision", options.metadata)
       const current = await retained.head()
@@ -79,7 +96,8 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
         const file = desired[path]
         const before = previousEntries.find(entry => entry.path === path)
         const digest = before?.digest ?? (before && previous ? await sha256(await previous.readFile(path, { encoding: "binary" })) : undefined)
-        if (file && before && digest === await sha256(file.content)) {
+        if (file && before && digest === await sha256(file.content)
+          && (!forwardedFiles || file.mediaType === before.mediaType && JSON.stringify(file.metadata) === JSON.stringify(before.metadata))) {
           desired[path] = { ...file, mediaType: before.mediaType, metadata: before.metadata }
           continue
         }
@@ -87,6 +105,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
         const input = await policy.before({
           content: file?.content,
           mediaType: file?.mediaType,
+          metadata: file?.metadata,
           operation: file ? "writeFile" : "rm",
           path: requested.path,
           previous: before,
