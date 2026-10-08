@@ -311,14 +311,19 @@ describe("Database Nuxt integration", () => {
     })
   })
 
-  it("materializes discovered migrations in Nitro's Cloudflare output", async () => {
+  it.each([
+    ["absent", ""],
+    ["empty", "cloudflare: {},"],
+    ["HTTP only", "cloudflare: { http: true },"],
+    ["binding only", "cloudflare: { binding: 'DB' },"],
+  ])("materializes discovered migrations with %s Cloudflare settings in Nitro's output", async (_label, cloudflare) => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-db-nuxt-migrations-"))
     const definition = join(rootDir, "server/databases/config.ts")
     const migrationsDir = join(rootDir, "server/databases/migrations")
     await mkdir(dirname(definition), { recursive: true })
     await writeFile(definition, [
       'import { defineDatabase } from "@vite-hub/database"',
-      "export default defineDatabase({ schema: {} })",
+      `export default defineDatabase({ ${cloudflare} schema: {} })`,
       "",
     ].join("\n"))
     await mkdir(migrationsDir, { recursive: true })

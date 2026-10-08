@@ -151,7 +151,7 @@ describe("resolveDBViteConfig", () => {
     expect(resolved?.generatedDrizzleConfigFilesByDatabase.default).toBe(join(rootDir, ".vitehub/database/drizzle/default.config.ts"))
     expect(resolved?.generatedSchemaFilesByDatabase.default).toBe(join(rootDir, ".vitehub/database/schema/default.ts"))
     expect(resolved?.generatedDrizzleConfigFile).toBe(join(rootDir, ".vitehub/database/drizzle.config.ts"))
-    expect(resolved?.definitionCloudflareConfigured).toEqual({ default: false })
+    expect(resolved?.definitionCloudflareResourceConfigured).toEqual({ default: false })
   })
 
   it("records dynamic Definition Cloudflare configuration that cannot be resolved statically", async () => {
@@ -168,7 +168,7 @@ describe("resolveDBViteConfig", () => {
     const resolved = resolveDBViteConfig(undefined, rootDir)
 
     expect(resolved?.databases.default.cloudflare).toBeUndefined()
-    expect(resolved?.definitionCloudflareConfigured).toEqual({ default: true })
+    expect(resolved?.definitionCloudflareResourceConfigured).toEqual({ default: true })
   })
 
   it("does not treat an empty parsed Definition object as unresolvable Cloudflare configuration", async () => {
@@ -181,7 +181,7 @@ describe("resolveDBViteConfig", () => {
       "",
     ].join("\n"))
 
-    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareConfigured).toEqual({ default: false })
+    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareResourceConfigured).toEqual({ default: false })
   })
 
   it("treats a literal undefined Definition Cloudflare value as omitted", async () => {
@@ -194,7 +194,7 @@ describe("resolveDBViteConfig", () => {
       "",
     ].join("\n"))
 
-    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareConfigured).toEqual({ default: false })
+    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareResourceConfigured).toEqual({ default: false })
   })
 
   it("recognizes a static computed Definition Cloudflare property", async () => {
@@ -208,7 +208,7 @@ describe("resolveDBViteConfig", () => {
       "",
     ].join("\n"))
 
-    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareConfigured).toEqual({ default: true })
+    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareResourceConfigured).toEqual({ default: true })
   })
 
   it("recognizes a configured Definition Cloudflare property after an undefined one", async () => {
@@ -222,7 +222,7 @@ describe("resolveDBViteConfig", () => {
       "",
     ].join("\n"))
 
-    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareConfigured).toEqual({ default: true })
+    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareResourceConfigured).toEqual({ default: true })
   })
 
   it("treats a final undefined Definition Cloudflare property as omitted", async () => {
@@ -236,7 +236,7 @@ describe("resolveDBViteConfig", () => {
       "",
     ].join("\n"))
 
-    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareConfigured).toEqual({ default: false })
+    expect(resolveDBViteConfig(undefined, rootDir)?.definitionCloudflareResourceConfigured).toEqual({ default: false })
   })
 
   it("resolves named database defaults from definition locations", async () => {

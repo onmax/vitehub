@@ -99,7 +99,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
     const databaseConfig = resolvedOptions.driver === "d1"
       ? resolveDBViteConfig(resolvedOptions, root, { serverDirs })
       : undefined
-    const sourceMigrationsDir = databaseConfig && !databaseConfig.definitionCloudflareConfigured.default
+    const sourceMigrationsDir = databaseConfig && !databaseConfig.definitionCloudflareResourceConfigured.default
       ? databaseConfig.databases.default?.migrationsDir
       : undefined
     const d1 = resolveDatabaseNuxtD1Options(

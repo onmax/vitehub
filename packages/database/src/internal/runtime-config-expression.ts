@@ -2,16 +2,6 @@ import { resolveCloudflareD1BindingName } from "./cloudflare.ts"
 
 import type { ResolvedDBViteConfig, ResolvedDrizzleDatabaseConfig } from "../types.ts"
 
-function getDefaultCloudflareBindingName(name: string) {
-  if (name === "default") return "DB"
-  const suffix = name
-    .replace(/[^a-z0-9]+/gi, "_")
-    .replace(/^_+|_+$/g, "")
-    .replace(/_+/g, "_")
-    .toUpperCase()
-  return `DB_${suffix || "DATABASE"}`
-}
-
 function renderConfigExpression(value: unknown) {
   return typeof value === "undefined" ? "undefined" : JSON.stringify(value)
 }
@@ -25,7 +15,7 @@ export function renderDatabaseConfigExpression(name: string, config: ResolvedDBV
   const definitionCloudflareDefaults = config.definitionDefaults.cloudflare
     ? {
         ...config.definitionDefaults.cloudflare,
-        binding: resolveCloudflareD1BindingName("default", config.definitionDefaults.cloudflare.binding),
+        binding: base.cloudflare?.binding ?? resolveCloudflareD1BindingName("default", config.definitionDefaults.cloudflare.binding),
       }
     : undefined
   const baseHttp = base.cloudflare?.http
@@ -34,7 +24,7 @@ export function renderDatabaseConfigExpression(name: string, config: ResolvedDBV
   return [
     "{",
     `      ...${serializeDatabaseConfig(base)},`,
-    `      cloudflare: ${definitionVariable}.cloudflare ? { binding: ${definitionVariable}.cloudflare.binding ?? ${JSON.stringify(base.cloudflare?.binding ?? getDefaultCloudflareBindingName(name))}, databaseId: ${definitionVariable}.cloudflare.databaseId ?? ${renderConfigExpression(base.cloudflare?.databaseId)}, databaseName: ${definitionVariable}.cloudflare.databaseName ?? ${renderConfigExpression(base.cloudflare?.databaseName)}, http: ${http}, migrationsDir: ${JSON.stringify(base.migrationsDir)}, migrationsTable: ${definitionVariable}.cloudflare.migrationsTable ?? ${renderConfigExpression(base.cloudflare?.migrationsTable)}, previewDatabaseId: ${definitionVariable}.cloudflare.previewDatabaseId ?? ${renderConfigExpression(base.cloudflare?.previewDatabaseId)} } : ${renderConfigExpression(definitionCloudflareDefaults)},`,
+    `      cloudflare: ${definitionVariable}.cloudflare ? { binding: ${definitionVariable}.cloudflare.binding ?? ${JSON.stringify(base.cloudflare?.binding ?? resolveCloudflareD1BindingName(name, undefined))}, databaseId: ${definitionVariable}.cloudflare.databaseId ?? ${renderConfigExpression(base.cloudflare?.databaseId)}, databaseName: ${definitionVariable}.cloudflare.databaseName ?? ${renderConfigExpression(base.cloudflare?.databaseName)}, http: ${http}, migrationsDir: ${JSON.stringify(base.migrationsDir)}, migrationsTable: ${definitionVariable}.cloudflare.migrationsTable ?? ${renderConfigExpression(base.cloudflare?.migrationsTable)}, previewDatabaseId: ${definitionVariable}.cloudflare.previewDatabaseId ?? ${renderConfigExpression(base.cloudflare?.previewDatabaseId)} } : ${renderConfigExpression(definitionCloudflareDefaults)},`,
     `      connection: ${definitionVariable}.connection ? { authToken: ${definitionVariable}.connection.authToken ?? ${renderConfigExpression(base.connection?.authToken)}, url: ${definitionVariable}.connection.url ?? ${renderConfigExpression(base.connection?.url)} } : ${renderConfigExpression(base.connection)},`,
     `      drizzle: ${definitionVariable}.drizzle ?? {},`,
     "    }",

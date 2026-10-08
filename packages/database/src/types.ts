@@ -121,7 +121,7 @@ export interface ResolvedDrizzleDatabaseConfig extends RuntimeDrizzleDatabaseCon
 export interface ResolvedDBViteConfig {
   databaseNames: string[]
   databases: Record<string, ResolvedDrizzleDatabaseConfig>
-  definitionCloudflareConfigured: Record<string, boolean>
+  definitionCloudflareResourceConfigured: Record<string, boolean>
   definitionDefaults: {
     cloudflare?: CloudflareD1BindingConfig
     connection?: DatabaseConnectionConfig

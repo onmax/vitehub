@@ -143,7 +143,7 @@ function createRuntimeConfig(rootDir: string, database: Record<string, unknown>)
         ...database,
       },
     },
-    definitionCloudflareConfigured: { primary: Boolean(database.cloudflare) },
+    definitionCloudflareResourceConfigured: { primary: Boolean(database.cloudflare) },
     definitionDefaults: {},
     definitions: [{
       handler: join(rootDir, "server", "databases", "primary", "config.ts"),
@@ -296,6 +296,60 @@ afterAll(async () => {
 })
 
 describe("Vite db provider outputs", () => {
+  it("queries a named D1 database through the binding emitted by Vite", { timeout: 60_000 }, async () => {
+    const rootDir = await createDbBuildProject("vitehub-db-vite-named-defaults-")
+    await rm(join(rootDir, "server/databases/primary"), { recursive: true })
+    await writeDatabaseDefinition(rootDir, "analytics")
+    await writeFile(join(rootDir, "src/server.ts"), [
+      "import { sql } from 'drizzle-orm'",
+      "import { useDatabase } from '@vite-hub/database/drizzle'",
+      "export default {",
+      "  fetch: async () => new Response(JSON.stringify(await useDatabase('analytics').db.all(sql`SELECT 7 AS value`))),",
+      "}",
+      "",
+    ].join("\n"))
+    await writeFile(join(rootDir, "vite.config.ts"), [
+      "import { resolve } from 'node:path'",
+      "import { defineConfig } from 'vite'",
+      "import { hubDb } from '@vite-hub/database/vite'",
+      "export default defineConfig({",
+      "  appType: 'custom',",
+      "  build: {",
+      "    outDir: 'dist/client',",
+      "    rolldownOptions: { input: resolve(import.meta.dirname, 'src/server.ts') },",
+      "    ssr: true,",
+      "  },",
+      "  plugins: [hubDb({ driver: 'd1', databaseId: 'analytics-id', databaseName: 'analytics-db' })],",
+      "})",
+      "",
+    ].join("\n"))
+    await runDbBuild(rootDir)
+    const wrangler = await readCloudflareConfig(rootDir)
+    expect(wrangler.d1_databases).toMatchObject([{
+      binding: "DB_ANALYTICS",
+      database_id: "analytics-id",
+      database_name: "analytics-db",
+    }])
+
+    const outputDir = (await readdir(join(rootDir, "dist"))).find(entry => entry !== "client")!
+    const runner = join(rootDir, "run-worker.mjs")
+    await writeFile(runner, [
+      `import worker from ${JSON.stringify(pathToFileURL(join(rootDir, "dist", outputDir, "index.js")).href)}`,
+      "const queries = []",
+      "const binding = {",
+      "  prepare(query) {",
+      "    queries.push(query)",
+      "    return { bind: () => ({ all: async () => ({ results: [{ value: 7 }] }) }) }",
+      "  },",
+      "}",
+      "const response = await worker.fetch(new Request('https://example.com'), { DB_ANALYTICS: binding }, {})",
+      "console.log(JSON.stringify({ body: await response.json(), queries }))",
+      "",
+    ].join("\n"))
+    const { stdout } = await execFileAsync(process.execPath, [runner], { cwd: rootDir })
+    expect(JSON.parse(stdout)).toEqual({ body: [{ value: 7 }], queries: ["SELECT 7 AS value"] })
+  })
+
   it("resolves the hosted application entry from the Vite root", async () => {
     const appRootDir = await createWorkspaceTempDir("vitehub-db-vite-app-root-")
     const rootDir = join(appRootDir, "packages", "db")
