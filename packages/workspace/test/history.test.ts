@@ -206,12 +206,14 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { 
   it("retries cleanup after a Blob outage and removes failed-publication objects", async () => {
     const { store, blob } = await setup(driver)
     const first = await store.history.commit({ ifHead: null, files: rawFiles({ "a.txt": "base" }) })
+    await store.setMeta!("source-state", { private: true })
     vi.spyOn(blob, "put").mockResolvedValueOnce([new ViteHubBlobFailure(), undefined])
     await expect(store.history.commit({ ifHead: first.id, files: rawFiles({ "a.txt": "next" }) })).rejects.toThrow("injected")
     const originalDelete = blob.del.bind(blob)
     vi.spyOn(blob, "del").mockResolvedValueOnce([new ViteHubBlobFailure(), undefined])
     await expect(store.delete()).rejects.toThrow("injected")
     expect(await store.history.head()).toBeNull()
+    expect(await store.getMeta!("source-state")).toBeUndefined()
     blob.del = originalDelete
     await store.delete()
     expect((await blob.list())[1]?.blobs).toEqual([])

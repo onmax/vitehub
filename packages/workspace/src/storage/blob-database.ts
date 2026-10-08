@@ -395,7 +395,10 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
 
   async getMeta(key: string) {
     const workspace = await this.#key()
-    const [row] = await this.options.database.select().from(metadata).where(and(eq(metadata.workspace, workspace), eq(metadata.key, key)))
+    const [row] = await this.options.database.select().from(metadata).where(and(
+      eq(metadata.workspace, workspace), eq(metadata.key, key),
+      sql`exists (select 1 from ${refs} where ${refs.workspace} = ${workspace} and ${refs.deleted} = 0)`,
+    ))
     return row?.value
   }
 
