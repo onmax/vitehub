@@ -336,6 +336,21 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { 
     expect(await (await store.history.open(revision.id)).readFile("valid.bin", { encoding: "binary" })).toEqual(new Uint8Array([0, 255, 128]))
   })
 
+  it("rejects non-string messages before uploads or publication", async () => {
+    const { store, facade, uploads } = await setup(driver)
+    for (const message of [1, null, {}, false]) {
+      // @ts-expect-error The public boundary also validates untyped callers.
+      await expect(facade().history.commit({ ifHead: null, files: { "a.txt": "new" }, message })).rejects.toThrow("message must be a string")
+      // @ts-expect-error Raw Store commits must validate untyped callers too.
+      await expect(store.history.commit({ ifHead: null, files: rawFiles({ "a.txt": "new" }), message })).rejects.toThrow("message must be a string")
+    }
+    expect(uploads).not.toHaveBeenCalled()
+    expect(await store.history.head()).toBeNull()
+    const revision = await facade().history.commit({ ifHead: null, files: {}, message: "" })
+    expect(revision.message).toBe("")
+    expect(await store.history.head()).toEqual(revision)
+  })
+
   it("retains a 200-file folder and uploads no bytes for an unchanged publication", async () => {
     const { facade, uploads } = await setup(driver)
     const workspace = facade()

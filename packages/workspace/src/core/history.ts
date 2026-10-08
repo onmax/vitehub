@@ -33,6 +33,10 @@ export function createWorkspaceHistoryReader(history: WorkspaceHistoryReader, co
   }
 }
 
+export function validateHistoryMessage(message: unknown): asserts message is string | undefined {
+  if (message !== undefined && !hasRuntimeType(message, "string")) throw workspaceError("[vitehub] History revision message must be a string.")
+}
+
 export function normalizeHistoryPath(path: string): string {
   return normalizeSafeWorkspacePath(path).split("/").filter(Boolean).join("/")
 }
@@ -51,6 +55,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
     usage: async () => await history().usage(),
     async commit(options) {
       const retained = history()
+      validateHistoryMessage(options.message)
       if (options.ifHead !== null && (!hasRuntimeType(options.ifHead, "string") || !options.ifHead)) {
         throw workspaceError("[vitehub] History commit requires ifHead to be a revision id or null.")
       }

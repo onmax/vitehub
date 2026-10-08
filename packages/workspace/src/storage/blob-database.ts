@@ -4,7 +4,7 @@ import { ViteHubError } from "@vite-hub/runtime"
 
 import { workspaceConflict, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata, copyJsonWorkspaceMetadata } from "../core/file-metadata.ts"
-import { normalizeHistoryPath } from "../core/history.ts"
+import { normalizeHistoryPath, validateHistoryMessage } from "../core/history.ts"
 import { contentToBytes, decodeFile, isExcludedWorkspacePath, isWorkspaceBytes, normalizeSafeWorkspacePath, sha256 } from "../core/path.ts"
 import { createMemoryWorkspaceStore, forkMemoryWorkspaceStore } from "./memory.ts"
 import { workspaceStoreTarget } from "./target.ts"
@@ -194,6 +194,7 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
   }
 
   async #commit(options: CommitOptions): Promise<WorkspaceRevision> {
+    validateHistoryMessage(options.message)
     const workspace = await this.#key()
     const ref = await this.#ref()
     if (ref.deleted) this.#deleted()
