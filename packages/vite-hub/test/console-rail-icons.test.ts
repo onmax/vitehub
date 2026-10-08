@@ -1,5 +1,5 @@
-/// <reference lib="dom" />
 // @vitest-environment happy-dom
+import { Window } from "happy-dom"
 import { createApp, defineComponent, h, nextTick } from "vue"
 import { describe, expect, it, vi } from "vitest"
 
@@ -27,7 +27,7 @@ import Rail from "../src/console/runtime/components/console-rail.vue"
 
 describe("Console rail icons", () => {
   it("renders the shared icon for a known primitive and the descriptor icon for a contributed section", async () => {
-    const root = document.createElement("div")
+    const root = new Window().document.createElement("div")
     const app = createApp(Rail, { sectionsBase: "/sections" })
     app.component("UTooltip", defineComponent({
       setup(_props, { slots }) { return () => h("div", slots.default?.()) },
