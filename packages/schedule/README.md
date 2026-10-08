@@ -215,6 +215,7 @@ The Console Schedules section is a record table. Build-time records list Schedul
 The main `@vite-hub/schedule` entry exports `defineSchedule`, `defineScheduleTarget`, `schedules`, `validateRuntimeScheduleCron`, and public types. Import execution, storage, and runtime state helpers from `@vite-hub/schedule/runtime`. Import `discoverScheduleDefinitions` from `@vite-hub/schedule/vite` when writing a build integration. Applications use `vite-hub/schedule` and `vite-hub/schedule/runtime`.
 
 Runtime execution helpers accept `captureHandlerFailure: true` to return the persisted failed run after a handler error. Pre-execution guards, including disabled schedules, still throw. The dev endpoint uses this option to distinguish a rejected operation from a handler failure.
+Manual calls reject an existing disabled Runtime Schedule even when the same occurrence has a saved run. Provider wakes acknowledge saved occurrences after disablement without another handler attempt. A new provider occurrence still requires an enabled schedule.
 
 This is a breaking import change. Move existing execution, store, and state helper imports to `/runtime`, and discovery imports to `/vite`. Helper behavior is unchanged. The main entry no longer loads file discovery or its build dependencies.
 

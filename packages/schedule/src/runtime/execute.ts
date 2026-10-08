@@ -39,6 +39,8 @@ interface ExecuteRuntimeScheduleOptions {
   /** Return the persisted failed run when the handler throws. Guards still throw. */
   captureHandlerFailure?: boolean
   id: string
+  /** Provider redeliveries acknowledge saved occurrences before checking current schedule state. */
+  intent?: "manual" | "provider"
   requireDue?: boolean
   runtimeScheduleStore?: RuntimeScheduleStore
   scheduledAt?: Date
@@ -305,6 +307,7 @@ export async function executeRuntimeSchedule(options: ExecuteRuntimeScheduleOpti
   const runtimeScheduleStore = runtimeOptions.runtimeScheduleStore
   const scheduleRunStore = runtimeOptions.scheduleRunStore
   const existingRun = await (scheduleRunStore ?? getScheduleRunStore()).getRun(toRunId("runtime", id, scheduledAt))
+  if (existingRun && runtimeOptions.intent === "provider") return existingRun
   const schedule = await (runtimeScheduleStore ?? getRuntimeScheduleStore()).get(id)
   if (schedule && !schedule.enabled) {
     throw createScheduleError("SCHEDULE_DISABLED")
@@ -344,6 +347,7 @@ export async function executeRuntimeSchedule(options: ExecuteRuntimeScheduleOpti
 export async function executeRuntimeScheduleWake(input: RuntimeScheduleWake, options: ExecuteRuntimeScheduleWakeOptions): Promise<void> {
   await executeRuntimeSchedule({
     id: input.scheduleId,
+    intent: "provider",
     requireDue: true,
     runtimeScheduleStore: options.runtimeScheduleStore,
     scheduledAt: input.scheduledAt,
