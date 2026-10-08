@@ -286,15 +286,18 @@ export class PullRequestInbox {
     if (!head || claim && !resultHead && claim.snapshot.pr?.head?.sha !== head) return
     const key = statusTargetKey(snapshot)
     const contentKey = digest([head, snapshot.generation, snapshot.status, snapshot.lastResult])
+    const statusRunId = `saved:${key}:${contentKey}`
     const sent = await this.metaIn(tx, `${statusSentPrefix}${key}`)
     const pending = await this.metaIn(tx, `${statusOutboxPrefix}${key}`)
-    if (isRuntimeRecord(sent) && sent.contentKey === contentKey || isRuntimeRecord(pending) && pending.contentKey === contentKey) return
+    if (isRuntimeRecord(sent) && sent.contentKey === contentKey && typeof sent.runId === 'string'
+      && (sent.runId === statusRunId || sent.runId.startsWith(`${statusRunId}:`))
+      || isRuntimeRecord(pending) && pending.contentKey === contentKey) return
     const now = this.clock()
     const delivery: StatusDelivery = {
       version: randomUUID(), contentKey, repository: snapshot.repository, number: snapshot.number,
       head, generation: snapshot.generation, text: snapshot.lastResult, attempts: 0, nextAt: now,
       activity: {
-        runId: `saved:${key}:${contentKey}`,
+        runId: statusRunId,
         status: snapshot.status === 'waiting' ? 'waiting' : snapshot.status === 'ready' ? 'failed' : 'completed',
         updatedAt: new Date(now).toISOString(), links: [...claim?.activity?.links ?? []], tasks: [], summary: snapshot.lastResult,
       },
@@ -330,9 +333,11 @@ export class PullRequestInbox {
       const claimed: StatusDelivery[] = []
       for (const pending of candidates) {
         const snapshot = await this.getIn(tx, pending.repository, pending.number)
-        if (pending.precedingHead && snapshot?.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
+        if (snapshot?.generation === pending.generation && pending.precedingHead && snapshot.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
         // Upgrade saved entries from releases that reused the invocation run ID.
-        const delivery = { ...pending, activity: { ...pending.activity, runId: `saved:${statusTargetKey(pending)}:${pending.contentKey}` }, lease: randomUUID(), leaseUntil: now + leaseMs }
+        const statusRunId = `saved:${statusTargetKey(pending)}:${pending.contentKey}`
+        const runId = pending.activity.runId.startsWith(`${statusRunId}:`) ? pending.activity.runId : statusRunId
+        const delivery = { ...pending, activity: { ...pending.activity, runId }, lease: randomUUID(), leaseUntil: now + leaseMs }
         await this.setMetaIn(tx, `${statusOutboxPrefix}${statusTargetKey(pending)}`, delivery)
         claimed.push(delivery)
         if (claimed.length === limit) break
@@ -363,7 +368,7 @@ export class PullRequestInbox {
         return false
       }
       if (outcome === 'delivered') {
-        await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, head: observed.head, deliveredAt: this.clock() })
+        await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, runId: observed.activity.runId, head: observed.head, deliveredAt: this.clock() })
       }
       await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
       return true
@@ -384,12 +389,42 @@ export class PullRequestInbox {
       return true
     })
   }
+  /** Repair the external projection after a replaced writer finally settles. */
+  async reconcileSettledStatusWriter(observed: StatusDelivery): Promise<boolean> {
+    if (!observed.lease) return false
+    return await this.transaction(async tx => {
+      const target = statusTargetKey(observed)
+      const key = `${statusOutboxPrefix}${target}`
+      const current = await this.getIn(tx, observed.repository, observed.number)
+      if (!current || current.lease || current.generation !== current.handled || !current.lastResult?.trim()) return false
+      const surviving = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (surviving.success) {
+        // Its side effect may already have happened while its response is still
+        // pending. Preserve ownership, but fence that acknowledgement and replay.
+        const version = randomUUID()
+        await this.setMetaIn(tx, key, { ...surviving.output, version, activity: {
+          ...surviving.output.activity, runId: `saved:${target}:${surviving.output.contentKey}:${version}`,
+        } })
+        return true
+      }
+      await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusSentPrefix}${target}`])
+      await this.enqueueStatusResult(tx, current, undefined, current.wait?.headSha)
+      const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!pending.success) return false
+      // The activity channel remembers prior runs. A correction must have a fresh
+      // identity so an already-published run is not rejected as a stale replay.
+      await this.setMetaIn(tx, key, { ...pending.output, activity: {
+        ...pending.output.activity, runId: `${pending.output.activity.runId}:${pending.output.version}`,
+      } })
+      return true
+    })
+  }
   /** Upgrade historical waiting results without synthetic webhooks or model passes. */
   async backfillStatusDeliveries(): Promise<void> {
     for (const observed of await this.waitsToEvaluate(true, true)) {
       await this.transaction(async tx => {
         const current = await this.getIn(tx, observed.repository, observed.number)
-        if (!current || current.lease || current.status !== 'waiting' || current.generation !== observed.generation
+        if (!current || current.lease || current.status !== 'waiting' || current.generation !== current.handled || current.generation !== observed.generation
           || (current.revision ?? 0) !== (observed.revision ?? 0)) return
         await this.enqueueStatusResult(tx, current, undefined, current.wait?.headSha)
       })

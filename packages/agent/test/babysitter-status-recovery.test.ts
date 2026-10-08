@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { github } from "../src/channels.ts";
 import { publishAgentActivity } from "../src/index.ts";
 import { PullRequestInbox } from "../src/server/github-inbox.ts";
+import type { StatusDelivery } from "../src/server/github-inbox/status-delivery.ts";
 import { createBabysitterStatusRecovery } from "../src/presets/babysitter/status-recovery.ts";
 const head = 'a'.repeat(40)
 const repository = 'acme/app'
@@ -365,6 +366,127 @@ test('a late timed-out writer cannot overwrite a newer result from another host'
   assert.equal(projection, 'New result')
 })
 
+test('a writer that settles after lease replacement requeues the latest saved status', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void
+  let started!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const began = new Promise<void>(resolve => { started = resolve })
+  let projection = ''
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    started()
+    await barrier
+    projection = pending.text
+  } }).flush()
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: async pending => { projection = pending.text } })
+  try {
+    await began
+    const entry = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+    setClock(entry.leaseUntil + 1)
+    await next.flush()
+    assert.equal(projection, 'New result')
+  } finally { release(); await first }
+  await next.flush()
+  assert.equal(projection, 'New result', 'the latest result must be corrected after an expired owner settles')
+})
+
+test('lease replacement repeats a newer write whose response is still in flight', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let releaseOld!: () => void
+  let releaseNew!: () => void
+  let startedOld!: () => void
+  let startedNew!: () => void
+  const oldBarrier = new Promise<void>(resolve => { releaseOld = resolve })
+  const newBarrier = new Promise<void>(resolve => { releaseNew = resolve })
+  const oldBegan = new Promise<void>(resolve => { startedOld = resolve })
+  const newBegan = new Promise<void>(resolve => { startedNew = resolve })
+  let projection = ''
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    startedOld(); await oldBarrier; projection = pending.text
+  } }).flush()
+  let delayNewResponse = true
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: async pending => {
+    projection = pending.text
+    if (delayNewResponse) { delayNewResponse = false; startedNew(); await newBarrier }
+  } })
+  let second = Promise.resolve()
+  try {
+    await oldBegan
+    const entry = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+    setClock(entry.leaseUntil + 1)
+    second = next.flush()
+    await newBegan
+    releaseOld()
+    await first
+  } finally { releaseOld(); releaseNew(); await Promise.all([first, second]) }
+  await next.flush()
+  assert.equal(projection, 'New result')
+})
+
+test('lease replacement corrects a late GitHub write through the real activity channel', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  const comments: Array<{ id: number; body: string; user: { login: string } }> = []
+  let release!: () => void
+  let started!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const began = new Promise<void>(resolve => { started = resolve })
+  let delayOldWrite = true
+  const publisher = (token: string) => {
+    const channel = github({ activity: true, app: { token, identity: { login: 'expiry-worker[bot]' }, fetch: async (_input, init) => {
+      const method = init?.method ?? 'GET'
+      if (method === 'GET') return Response.json(comments)
+      const body = JSON.parse(String(init?.body)).body as string
+      if (method === 'POST') {
+        if (token === 'old-expiry-token' && delayOldWrite) { delayOldWrite = false; started(); await barrier }
+        const comment = { id: comments.length + 1, body, user: { login: 'expiry-worker[bot]' } }
+        comments.push(comment)
+        return Response.json(comment)
+      }
+      const id = Number(String(_input).split('/').at(-1))
+      const comment = comments.find(value => value.id === id)!
+      comment.body = body
+      return Response.json(comment)
+    } } })
+    return (pending: StatusDelivery, abortSignal: AbortSignal) =>
+      publishAgentActivity({ name: 'expiry-correction-worker', channels: { github: channel } }, {
+        channelId: 'github', target: { repository, issue: 239 }, activity: pending.activity, abortSignal,
+      })
+  }
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: publisher('old-expiry-token') }).flush()
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: publisher('new-expiry-token') })
+  try {
+    await began
+    const entry = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+    setClock(entry.leaseUntil + 1)
+    await next.flush()
+  } finally { release(); await first }
+  await next.flush()
+  const managed = comments.filter(comment => !comment.body.startsWith('This Agent activity was superseded'))
+  assert.equal(managed.length, 1)
+  assert.ok(managed[0]!.body.includes('New result'))
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
+  const restarted = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: publisher('restarted-expiry-token') })
+  await restarted.recover()
+  await restarted.flush()
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [], 'the correction acknowledgement must survive restart')
+  assert.equal(comments.length, 2)
+})
+
 test('a stalled writer renews the lease inherited by a newer saved result', async t => {
   const { inbox, claim, open, setClock } = await fixture(t)
   await inbox.finish(claim, blocked('Old result'))
@@ -419,4 +541,60 @@ test('a timed-out writer does not block unrelated publication slots', async t =>
     for (let index = 0; index < 50 && !delivered.has(244); index++) await new Promise(resolve => setTimeout(resolve, 10))
     assert.equal(delivered.has(244), true, 'remaining slots must serve unrelated PRs')
   } finally { release(); await Promise.all([first, second]) }
+})
+
+test('an older release acknowledgement cannot suppress recovery of a silently dropped blocker', async t => {
+  const { inbox, claim } = await fixture(t)
+  const result = { text: 'Waiting for maintainer credentials.', wait: { kind: 'external' as const, headSha: head, reason: 'Provide maintainer credentials.', evidenceKey: 'credentials' } }
+  await inbox.finish(claim, result)
+  const [pending] = await inbox.claimStatusDeliveries()
+  await inbox.finishStatusDelivery(pending!, 'delivered')
+  // Older releases acknowledged the invocation run's rejected waiting update.
+  await inbox.setMeta('status-sent:v1:acme/app#239', { contentKey: pending!.contentKey, head, deliveredAt: Date.now() })
+  const published: string[] = []
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } })
+  await recovery.recover()
+  await recovery.flush()
+  assert.deepEqual(published, [result.text])
+})
+
+test('same-head feedback supersedes an older saved waiting activity', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, { text: 'Waiting for credentials.', wait: { kind: 'external', headSha: head, reason: 'Provide credentials.', evidenceKey: 'credentials' } })
+  const [pending] = await inbox.pendingStatusDeliveries()
+  await inbox.ingest('new-review', 'pull_request_review', { repository: { full_name: repository }, action: 'submitted', pull_request: pr,
+    review: { id: 42, body: 'Repair this new finding.', user: { login: 'reviewer' }, state: 'COMMENTED', commit_id: head } })
+  const current = await inbox.get(repository, pr.number)
+  assert.equal(current?.pr?.head?.sha, head)
+  assert.ok(current!.generation > pending!.generation)
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } }).flush()
+  assert.equal(published.length, 0)
+  assert.deepEqual(await inbox.metaEntries('status-outbox:v1:'), [])
+  const restarted = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } })
+  await restarted.recover()
+  await restarted.flush()
+  assert.deepEqual(published, [], 'backfill must not regenerate a superseded result')
+})
+
+test('feedback after the worker repair head arrives supersedes its waiting status', async t => {
+  const { inbox, claim } = await fixture(t)
+  const repaired = 'd'.repeat(40)
+  await inbox.finish(claim, { text: 'Repair pushed.', wait: { kind: 'checks', headSha: repaired, reason: 'Waiting for CI.', evidenceKey: 'repair' } })
+  const updated = { ...pr, head: { ...pr.head, sha: repaired } }
+  await inbox.seed(repository, updated)
+  await inbox.ingest('repair-review', 'pull_request_review', { repository: { full_name: repository }, action: 'submitted', pull_request: updated,
+    review: { id: 42, body: 'Repair another finding.', user: { login: 'reviewer' }, state: 'COMMENTED', commit_id: repaired } })
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } }).flush()
+  assert.deepEqual(published, [])
+})
+
+test('a confirmed terminal result survives the PR closure webhook', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, { text: 'Merged the verified repair.', terminal: true })
+  await inbox.seed(repository, { ...pr, state: 'closed' })
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { published.push(delivery.text) } }).flush()
+  assert.deepEqual(published, ['Merged the verified repair.'])
 })

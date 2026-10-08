@@ -233,6 +233,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   for (const directory of dependencyDirectories) await collectDependencyFiles(directory);
   for (const path of [...dependencyFiles].sort()) {
     hash.update(relative(root, path)).update("\0");
+    hash.update((await stat(path)).mode & 0o111 ? "executable\0" : "regular\0");
     for await (const chunk of createReadStream(path)) hash.update(chunk);
     hash.update("\0");
   }

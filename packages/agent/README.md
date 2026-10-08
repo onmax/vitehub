@@ -776,7 +776,7 @@ default rather than an ambient executable. Installation failures are recorded in
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
 Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
 Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:`, Git dependencies that prepare remote projects, and unsupported source protocols are rejected before Corepack runs. Use registry packages or HTTPS archives instead, or set `install: false` when dependencies must be prepared in the provider sandbox.
-Local package source files, archives, and patch files contribute their contents to the dependency fingerprint. Local package source trees require regular files and directories; installed modules and Git metadata are excluded.
+Local package source files, archives, and patch files contribute their contents and executable mode to the dependency fingerprint. Local package source trees require regular files and directories; installed modules and Git metadata are excluded.
 Yarn `~/` patch selectors resolve from the project root after decoding. Other local patch selectors are rejected because Yarn can resolve them inside a parent package filesystem. Each grouped lockfile
 descriptor is checked. Workspace glob matches must stay inside the checkout after
 symlink resolution. Trusted GitHub release archives use the HTTPS archive path.
@@ -863,7 +863,12 @@ when the twenty-second deadline requests cancellation. Up to five publications
 run outside queue reconciliation and remain tracked during process drain.
 Deferred repair heads yield the bounded batch to other PRs. Saved results use
 separate activity run IDs so completed invocations can publish their wait reason.
-A newer result cannot be erased by an older publication. Waiting comments
+Older acknowledgements are backfilled with the corrected activity identity.
+New same-head feedback discards obsolete saved results. Confirmed repair-head and
+closure transitions retain their result. If a writer settles after another host
+replaces its expired lease, the latest settled result is requeued with a fresh
+activity identity. GitHub comments are eventually consistent: a lease cannot
+revoke an HTTP write already accepted by GitHub. Waiting comments
 include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 

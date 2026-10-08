@@ -45,7 +45,14 @@ export function createBabysitterStatusRecovery(options: {
     };
     try {
       const snapshot = await inbox.get(pending.repository, pending.number);
-      if (!snapshot || snapshot.pr?.head?.sha !== pending.head) {
+      const repairHeadObserved = snapshot && pending.precedingHead
+        && snapshot.status === "waiting" && snapshot.wait?.headSha === pending.head
+        && snapshot.generation === pending.generation + 1
+        && snapshot.reasons.every(reason => reason === "bootstrap" || reason === "pull_request:synchronize");
+      const terminalResult = snapshot?.status === "terminal" && pending.activity.status === "completed";
+      if (!snapshot || snapshot.pr?.head?.sha !== pending.head || snapshot.lease
+        || snapshot.lastResult !== pending.text
+        || snapshot.generation !== pending.generation && !repairHeadObserved && !terminalResult) {
         await inbox.finishStatusDelivery(pending, "discarded");
         return;
       }
@@ -65,10 +72,12 @@ export function createBabysitterStatusRecovery(options: {
       controller.signal.throwIfAborted();
       if (await inbox.finishStatusDelivery(pending, "delivered")) {
         options.event?.("babysitter.status.delivered", { repository: pending.repository, pull_request: pending.number });
+      } else {
+        await inbox.reconcileSettledStatusWriter(pending);
       }
     } catch (failure) {
       await stopTimers();
-      await inbox.retryStatusDelivery(pending, failure);
+      if (!await inbox.retryStatusDelivery(pending, failure)) await inbox.reconcileSettledStatusWriter(pending);
       options.error?.("babysitter.status.delivery.failed", failure, { repository: pending.repository, pull_request: pending.number });
     } finally {
       clearTimeout(deadline);
