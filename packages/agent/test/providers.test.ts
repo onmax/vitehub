@@ -457,6 +457,7 @@ describe("agent Vite plugin", () => {
           handlers: [
             { handler: generatedRoute, route: "/api/_vitehub/agents/:agent/chat" },
             { handler: generatedRoute, route: "/api/_vitehub/agents/:agent/webhooks/:webhook" },
+            { handler: join(generatedRoot, "agent", "declared-webhook-route.ts"), middleware: true, route: "/**" },
           ],
           plugins: [generatedQueue],
         },
@@ -3076,7 +3077,7 @@ export default defineAgent({
       }])
 
       expect(denoServer).toContain(
-        'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute } from "@vite-hub/agent/server/internal"',
+        'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute, resolvePublicUrl } from "@vite-hub/agent/server/internal"',
       )
       expect(denoServer).not.toContain('import { setWorkspaceRuntimeRegistry } from "@vite-hub/workspace/runtime"')
       expect(denoServer).toContain('await import("../schedule/deno-cron.mjs").catch')

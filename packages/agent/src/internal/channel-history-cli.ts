@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto"
 import { access, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises"
 import { basename, dirname, join, resolve } from "node:path"
 
+import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
 import { deployedChannelWebhookUrl, loadChannelTargets, type LoadedChannelTarget } from "./channel-sync-cli.ts"
 import { agentChannelHistoryHeader } from "./channel-history.ts"
 import { agentChannelSyncProviderHeader } from "./channel-sync.ts"
@@ -39,8 +40,8 @@ function writeUsage(context: ChannelHistoryCliContext): void {
   context.stdout.write([
     "Usage: vitehub channels history --stage <name> --url <https-origin> --output <directory> [--agent <name>] [--channel <id>] [--webhook <id>] [--webhook-path <path>] [--thread <id>] [--query <key=value>]... [--invocations]",
     "",
-    "Download one deployed Channel conversation and its attachments.",
-    "Telegram direct messages infer the thread when exactly one user is allowed; other conversations require --thread.",
+    "Export deployed Channel history or a conversation and its attachments.",
+    "Custom history accepts optional --thread and --query filters. Chat SDK conversations require --thread unless Telegram can infer one allowed user.",
     "",
   ].join("\n"))
 }
@@ -232,10 +233,11 @@ export async function runAgentChannelHistoryCli(
         throw agentDiagnostics.AGENT_R0534({ message: `Channel history export failed with HTTP ${response.status}${detail ? `: ${detail}` : ""}.` })
       }
       const history = await response.json()
-      const allItems: unknown[] = Array.isArray((history as Record<string, unknown>).items) ? [...((history as Record<string, unknown>).items as unknown[])] : []
-      let cursor = (history as Record<string, unknown>).nextCursor
+      const historyRecord = isRuntimeRecord(history) ? history : undefined
+      const allItems: unknown[] = Array.isArray(historyRecord?.items) ? [...historyRecord.items] : []
+      let cursor = historyRecord?.nextCursor
       const seen = new Set<string>()
-      while (typeof cursor === "string" && cursor) {
+      while (hasRuntimeType(cursor, "string") && cursor) {
         if (seen.has(cursor)) throw agentDiagnostics.AGENT_R0534({ message: "Channel history export returned a repeated pagination cursor." })
         seen.add(cursor)
         const nextBody = JSON.stringify({
@@ -252,22 +254,23 @@ export async function runAgentChannelHistoryCli(
           signal: AbortSignal.timeout(120_000),
         })
         if (!nextResponse.ok) throw agentDiagnostics.AGENT_R0534({ message: `Channel history export failed with HTTP ${nextResponse.status}.` })
-        const next = await nextResponse.json() as Record<string, unknown>
-        if (Array.isArray(next.items)) allItems.push(...next.items)
+        const next = await nextResponse.json()
+        if (!isRuntimeRecord(next) || !Array.isArray(next.items)) throw agentDiagnostics.AGENT_R0534({ message: "Channel history export returned an invalid page." })
+        allItems.push(...next.items)
         cursor = next.nextCursor
       }
-      const archive = Array.isArray((history as Record<string, unknown>).items)
+      const archive = historyRecord && Array.isArray(historyRecord.items)
         ? (() => {
-            const { nextCursor: _nextCursor, ...base } = history as Record<string, unknown>
+            const { nextCursor: _nextCursor, ...base } = historyRecord
             return { ...base, items: allItems }
           })()
         : history
       const materialized = await materializeHistory(archive, join(stagingDir, "media"), { value: 0 })
       await writeFile(join(stagingDir, "history.json"), `${JSON.stringify(materialized, null, 2)}\n`)
       await rename(stagingDir, outputDir)
-      const messageCount = Array.isArray((materialized as { messages?: unknown, items?: unknown }).messages)
-        ? (materialized as { messages: unknown[] }).messages.length
-        : Array.isArray((materialized as { items?: unknown }).items) ? (materialized as { items: unknown[] }).items.length : 0
+      const archiveRecord = isRuntimeRecord(materialized) ? materialized : undefined
+      const messageCount = Array.isArray(archiveRecord?.messages) ? archiveRecord.messages.length
+        : Array.isArray(archiveRecord?.items) ? archiveRecord.items.length : 0
       context.stdout.write(`Downloaded ${messageCount} messages to ${outputDir}\n`)
       return 0
     }

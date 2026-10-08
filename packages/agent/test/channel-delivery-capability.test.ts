@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest"
+import * as v from "valibot"
 
+import { defineCollection } from "../../source/src/index.ts"
+import { defineChannel, defineChannelTrigger } from "../src/channels.ts"
+import { replayChannel } from "../src/channel-replay.ts"
 import { channelDelivery, inputCommands } from "../src/capabilities.ts"
 import { createAgentInspectionMetadata, defineAgent, defineCapability, resolveAgentInspectionMetadata, runAgent } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts"
@@ -133,7 +137,7 @@ describe("channelDelivery()", () => {
     expect(channel.send).toHaveBeenCalledWith("Roast", { recipient: "user:1" })
   })
 
-  it("records a dry-run write without sending through the Channel", async () => {
+  it.each(["run", "replay"])("records a dry-run write through %s without sending through the Channel", async (mode) => {
     const channel = createChannel()
     const invocations = defineAgentInvocations({ content: "content", store: createMemoryAgentInvocationStore() })
     const agent = defineAgent({
@@ -141,10 +145,15 @@ describe("channelDelivery()", () => {
         await expect(tools.send_message!.execute!({ message: "Draft reply" })).resolves.toMatchObject({ sent: true })
       }),
       capabilities: [channelDelivery({ channel, options: { recipient: "user:1" } })],
+      channels: { mailbox: defineChannel("mailbox", {
+        history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key: item => item.id },
+        triggers: { received: defineChannelTrigger({ invoke: () => ({ input: { prompt: "Write" } }) }) },
+      }) },
       invocations,
     })
 
-    await expect(runAgent(agent, { dryRun: true, prompt: "Write" })).resolves.toEqual([null, "done"])
+    if (mode === "replay") await expect(replayChannel(agent, "mailbox", { dryRun: true })).resolves.toMatchObject({ processed: 1, failed: 0 })
+    else await expect(runAgent(agent, { dryRun: true, prompt: "Write" })).resolves.toEqual([null, "done"])
     expect(channel.send).not.toHaveBeenCalled()
     const page = await invocations.list()
     const record = page.invocations[0] && await invocations.get(page.invocations[0].id)

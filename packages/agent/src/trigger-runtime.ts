@@ -117,7 +117,6 @@ function channelHistoryAnnotations<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
   trigger: Pick<ResolvedAgentTriggerDefinition, "channelId">,
   input: unknown,
-  context: ResolvedAgentRuntimeContext<TRuntimeConfig>,
 ): AgentRunMetadata["annotations"] | undefined {
   if (!trigger.channelId) return
   const history = agentChannelOptions(agent)[trigger.channelId]?.history
@@ -125,13 +124,13 @@ function channelHistoryAnnotations<TRuntimeConfig extends AgentRuntimeConfig>(
   const annotations: NonNullable<AgentRunMetadata["annotations"]> = {}
   try {
     const key = history.key(input)
-    if (typeof key === "string" && key.trim()) annotations["vitehub.channel.key"] = key
+    if (hasRuntimeType(key, "string") && key.trim()) annotations["vitehub.channel.key"] = key
   }
   catch {}
   if (history.thread) {
     try {
       const thread = history.thread(input)
-      if (typeof thread === "string" && thread.trim()) annotations["vitehub.channel.thread"] = thread
+      if (hasRuntimeType(thread, "string") && thread.trim()) annotations["vitehub.channel.thread"] = thread
     }
     catch {}
   }
@@ -611,9 +610,9 @@ export async function resolveAgentTriggerInvocation<
   }
   const invoked = await trigger.invoke(validatedInput)
   if (invoked instanceof Response) return resolveAgentTriggerInvocationResult(invoked, trigger)
-  const annotations = channelHistoryAnnotations(agent, trigger, validatedInput, context)
+  const annotations = channelHistoryAnnotations(agent, trigger, validatedInput)
   const run = annotations
-    ? { ...(invoked.run || context.run || { runId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}` }), annotations: { ...invoked.run?.annotations, ...context.run?.annotations, ...annotations } }
+    ? { ...(invoked.run || context.run || { runId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}` }), annotations: { ...(invoked.run || context.run)?.annotations, ...annotations } }
     : invoked.run
   return resolveAgentTriggerInvocationResult({
     ...invoked,

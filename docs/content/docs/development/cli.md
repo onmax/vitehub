@@ -287,7 +287,9 @@ A Telegram direct-message Channel infers its thread when the adapter allows exac
 
 Use `--webhook-path <path>` to export through a different path on the confirmed deployment origin while keeping the selected registration's authentication. This can select the built-in route on an older deployment that does not yet serve a declared `webhooks.path`.
 
-The export can only contain history available through the Chat SDK adapter or its configured State Adapter. Telegram's Bot API cannot backfill arbitrary old messages, so its durable fallback uses the configured `threadHistory` window, which defaults to 100 messages retained for seven days. Export before that window expires when the archive is intended for recovery.
+A custom Channel export contains the items returned by its history Collection. With `--invocations`, each item includes `invocations` with `id`, `status`, `createdAt`, `updatedAt`, `dryRun`, `label`, `deliveries: [{ channel, text }]`, and optional retained final `text`. Delivery text is the validated reply before application formatting, including dry-run writes. Retaining this text requires Invocation content storage or `metadataContent` containing `channel.effect.content`.
+
+A Chat SDK export can only contain history available through the adapter or its configured State Adapter. Telegram's Bot API cannot backfill arbitrary old messages, so its durable fallback uses the configured `threadHistory` window, which defaults to 100 messages retained for seven days. Export before that window expires when the archive is intended for recovery.
 
 ## Manage Database migrations
 

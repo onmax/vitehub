@@ -30,7 +30,7 @@ export default defineAgent({ runtime: false, driver: { run: () => 'unused' }, ch
       parseQuery: async query => query,
       page: async () => ({ items: [{ id: 'm1' }], nextCursor: null }),
     } },
-    triggers: { webhook: defineChannelTrigger({ parse: input => input }) },
+    triggers: { webhook: defineChannelTrigger({ invoke: () => Response.json({ ok: true }) }) },
     webhooks: { path: '/api/productlane/webhook', secretHeader: 'x-test-secret', secretToken: 'secret' },
   }),
 } })`
@@ -62,6 +62,9 @@ it('serves declared webhook paths through Nitro middleware with HEAD, authentica
       expect(head.headers.get('x-vitehub-channel-provider')).toBe('productlane')
       expect((await app.request(path, { method: 'POST', body: '{}' })).status).toBe(401)
       expect((await app.request(path, { method: 'GET' })).status).toBe(405)
+      const delivered = await app.request(path, { method: 'POST', body: '{}', headers: { 'x-test-secret': 'secret' } })
+      expect(delivered.status).toBe(200)
+      expect(await delivered.json()).toEqual({ ok: true })
       const history = await app.request(path, { method: 'POST', body: '{}', headers: { 'x-test-secret': 'secret', 'x-vitehub-channel-history': '1' } })
       expect(history.status).toBe(200)
       expect(await history.json()).toMatchObject({ items: [{ key: 'm1', item: { id: 'm1' } }] })
