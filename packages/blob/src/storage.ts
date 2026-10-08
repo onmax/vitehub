@@ -1,4 +1,4 @@
-import { handleCacheHeaders } from "h3"
+import { handleCacheHeaders, type H3Event } from "h3"
 import { literal, object, parse, string } from "valibot"
 
 import { toArray } from "@vite-hub/internal/arrays"
@@ -256,7 +256,8 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
           if (etag) headers.set("ETag", etag)
           if (["GET", "HEAD"].includes(event.req.method)) {
             const previous = ["etag", "cache-control"].map(name => [name, event.res.headers.get(name)] as const)
-            if (handleCacheHeaders(event, { etag, cacheControls: [cacheControl] })) {
+            // SAFETY: h3 reads only the native request headers and mutable response headers/status declared by BlobServeEvent.
+            if (handleCacheHeaders(event as H3Event, { etag, cacheControls: [cacheControl] })) {
               event.res.headers.set("X-Content-Type-Options", "nosniff")
               return null
             }

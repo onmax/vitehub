@@ -1,5 +1,4 @@
 import type { AccessAuthorize, ViteHubError, ViteHubErrorDetails } from "@vite-hub/runtime"
-import type { H3Event } from "h3"
 
 export type BlobDriver =
   | "akamai"
@@ -163,7 +162,13 @@ export interface BlobEnsureOptions {
   types?: BlobType[]
 }
 
-export type BlobServeEvent = H3Event
+export interface BlobServeEvent {
+  req: Pick<Request, "headers" | "method">
+  res: {
+    headers: Headers
+    status?: number
+  }
+}
 
 export interface BlobServeResponseOptions {
   /** Defaults to the event's Cache-Control header, or private, no-cache. */

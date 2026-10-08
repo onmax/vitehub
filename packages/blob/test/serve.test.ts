@@ -45,6 +45,20 @@ describe("Blob response transforms", () => {
     expect(request.res.headers.get("cache-control")).toBe("private, no-cache")
   })
 
+  it("accepts native HTTP request and response fields without an H3 event", async () => {
+    const request = { req: new Request("https://example.test/photo"), res: { headers: new Headers(), status: 200 } }
+    const [error, body] = await storage.serve(request, "private/original", options)
+    expect(error).toBeNull()
+    expect(await new Response(body).text()).toBe("public")
+    const conditional = {
+      req: new Request("https://example.test/photo", { headers: { "if-none-match": request.res.headers.get("etag")! } }),
+      res: { headers: new Headers(), status: 200 },
+    }
+    const [, response] = await storage.serve(conditional, "private/original", options)
+    expect(response).toBeNull()
+    expect(conditional.res.status).toBe(304)
+  })
+
   it("revalidates normal reads when another writer replaces the body and content type", async () => {
     const get = driver.get.bind(driver)
     let replace = true
