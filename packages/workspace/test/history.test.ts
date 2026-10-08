@@ -340,7 +340,9 @@ describe("history policy and capabilities", () => {
     await expect(writable.history.commit({ ifHead: null, files: { "locked.txt": "owned" } })).rejects.toThrow("read-only")
     const first = await writable.history.commit({ ifHead: null, files: { "a.txt": "allowed" } })
     expect(await writable.history.head()).toEqual(first)
-    await expect(writable.history.commit({ ifHead: first.id, files: { "a.txt": "allowed", "b.txt": "new" } })).resolves.toMatchObject({ parentId: first.id })
+    const second = await writable.history.commit({ ifHead: first.id, files: { "a.txt": "allowed", "b.txt": "new" } })
+    expect(second).toMatchObject({ parentId: first.id })
+    await expect(writable.history.commit({ ifHead: first.id, files: { "locked.txt": "owned" } })).rejects.toMatchObject({ code: "WORKSPACE_CONFLICT", details: { expected: first.id, actual: second.id } })
     const scoped = await createWorkspaceSourceResolutionFacade(facade(), definition, { invocation, selectedWorkspaceScope: { all: false, name: "private", paths: ["a.txt"] } })
     await expect(scoped.workspace.history.head()).rejects.toMatchObject({ code: "WORKSPACE_R0069" })
     // SAFETY: The input is writable; this test verifies that its complete-history operation rejects a partial scope.

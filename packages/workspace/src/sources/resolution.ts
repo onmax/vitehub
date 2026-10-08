@@ -1,5 +1,5 @@
 import { createWorkspaceTools } from "../ai.ts"
-import { workspaceError } from "../core/errors.ts"
+import { workspaceConflict, workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath, sha256 } from "../core/path.ts"
 import { createWorkspaceHistoryReader, normalizeHistoryPath } from "../core/history.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
@@ -465,6 +465,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     async function commitHistory(options: WorkspaceHistoryCommitOptions) {
       requireCompleteHistory()
       const head = await workspace.history.head()
+      if ((head?.id ?? null) !== options.ifHead) throw workspaceConflict("[vitehub] Workspace head changed before the history commit.", { details: { expected: options.ifHead, actual: head?.id ?? null } })
       const previous = head ? await (await workspace.history.open(head.id)).list("", { recursive: true }) : []
       const desired: Record<string, WorkspaceFile> = Object.create(null)
       for (const [path, content] of Object.entries(options.files)) {
