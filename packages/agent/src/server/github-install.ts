@@ -39,8 +39,9 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
       args = [`pnpm@${version("pnpm", "10.34.6")}`, "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--config.manage-package-manager-versions=false"];
     }
     else if (await exists(join(target, "package-lock.json"))) {
-      if (packageManager) version("npm", "");
-      command = "npm"; args = ["ci", "--ignore-scripts", "--no-audit", "--no-fund"];
+      const npmVersion = packageManager ? version("npm", "") : undefined;
+      command = npmVersion ? "corepack" : "npm";
+      args = [...(npmVersion ? [`npm@${npmVersion}`] : []), "ci", "--ignore-scripts", "--no-audit", "--no-fund"];
     }
     else if (await exists(join(target, "yarn.lock"))) {
       command = "corepack";

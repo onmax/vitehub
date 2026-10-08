@@ -1,7 +1,7 @@
 ---
 title: Chat
 description: Render an AI SDK message list that follows streaming output and keeps the reader's scroll position.
-navigation.order: 10
+navigation.order: 20
 navigation.group: Chat
 icon: i-ph-chat-circle-text-light
 ---

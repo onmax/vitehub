@@ -51,3 +51,12 @@ it.each(["1.22.22", "4.9.2"])("suppresses Yarn %s delegation, plugins and worksp
     await expect(readFile(join(root, config!))).rejects.toThrow();
   }
 });
+
+it("uses the declared npm version rather than the host npm binary", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.1.0" }));
+  await writeFile(join(root, "package-lock.json"), "{}");
+  await installGitHubPullRequestWorkspace(root);
+  expect(await readFile(join(root, "args.txt"), "utf8")).toBe("npm@11.1.0\nci\n--ignore-scripts\n--no-audit\n--no-fund\n");
+});
