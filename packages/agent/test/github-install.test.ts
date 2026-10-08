@@ -115,7 +115,11 @@ it.each(["pnpm", "manifest"])("rejects escaped negated %s workspace globs before
   const root = await fixture();
   const packages = ["**", "!../../outside"];
   if (manager === "pnpm") await writeFile(join(root, "pnpm-workspace.yaml"), `packages: ${JSON.stringify(packages)}\n`);
-  else await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: packages }));
+  else {
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, "package-lock.json"), "{}");
+    await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3", workspaces: packages }));
+  }
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
   await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
@@ -377,6 +381,29 @@ it.each(["pnpm", "npm", "yarn"])("validates only selected %s workspaces and igno
   await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/protocol/);
 });
 
+it.each(["pnpm", "npm", "yarn"])("selects workspace membership from the active %s manager only", async manager => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: `${manager}@${manager === "pnpm" ? "10.34.6" : manager === "npm" ? "11.6.3" : "4.9.2"}`, workspaces: [manager === "pnpm" ? "fixtures/*" : "packages/*"] }));
+  await writeFile(join(root, "pnpm-workspace.yaml"), `packages: ["${manager === "pnpm" ? "packages/*" : "fixtures/*"}"]\n`);
+  if (manager !== "pnpm") {
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, manager === "npm" ? "package-lock.json" : "yarn.lock"), manager === "npm" ? "{}" : "__metadata:\n  version: 8\n");
+  }
+  for (const directory of ["packages/member", "fixtures/independent"]) {
+    await mkdir(join(root, directory), { recursive: true });
+    await writeFile(join(root, directory, "package.json"), directory.startsWith("packages/") ? "{}" : '{"dependencies":{"unsafe":"exec:./script.js"}}');
+  }
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(join(root, "packages/member/package.json"), '{"dependencies":{"unsafe":"exec:./script.js"}}');
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/protocol/);
+});
+
+it("ignores the unused manifest workspace paths in a pnpm install", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: ["../../unused"] }));
+  await installGitHubPullRequestWorkspace(root);
+});
+
 it.each(["file:./local", "./local"])("validates referenced local packages from %s", async source => {
   const root = await fixture();
   await mkdir(join(root, "local"));
@@ -441,7 +468,9 @@ it("rejects workspace extglobs that select an external symlink", async () => {
   await writeFile(join(outside, "package.json"), JSON.stringify({ name: "outside" }));
   await mkdir(join(root, "packages", "local"), { recursive: true });
   await symlink(outside, join(root, "packages", "external"));
-  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: ["packages/@(local|external)"] }));
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package-lock.json"), "{}");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3", workspaces: ["packages/@(local|external)"] }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
   await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
@@ -547,6 +576,26 @@ writeFileSync("node_modules/installed.txt", "snapshot dependencies");
   expect(await readFile(join(root, "observed-config.txt"), "utf8")).toBe("hoist=false\n");
   await expect(readFile(join(root, "node_modules", "installed.txt"))).rejects.toThrow();
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "failed" });
+});
+
+it("runs package managers from a snapshot inside protected Git metadata", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\npwd > "$HOME/../install-cwd.txt"\nmkdir -p node_modules\n', { mode: 0o755 });
+  await installGitHubPullRequestWorkspace(root);
+  const directory = (await readFile(join(root, ".git", "install-cwd.txt"), "utf8")).trim();
+  expect(directory).toMatch(new RegExp(`^${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.git/vitehub-dependency-snapshot-`));
+});
+
+it("keeps cached CommonJS managers executable in an ESM checkout", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ type: "module", packageManager: "pnpm@10.34.6" }));
+  await writeFile(join(root, "bin", "corepack"), `#!/bin/sh
+set -e
+mkdir -p "$HOME/.cache" node_modules
+printf 'require("node:util");' > "$HOME/.cache/manager.js"
+node "$HOME/.cache/manager.js"
+`, { mode: 0o755 });
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
 });
 
 it("publishes refreshed dependencies and keeps workspace source links live", async () => {

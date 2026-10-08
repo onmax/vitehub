@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { chmod, cp, lstat, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -19,27 +18,34 @@ export interface GitHubInstallSnapshot {
 /** Copy mutable provider inputs into a private host directory before validation. */
 export async function createGitHubInstallSnapshot(target: string): Promise<GitHubInstallSnapshot> {
   const checkout = await realpath(target);
-  const directory = await mkdtemp(join(tmpdir(), "vitehub-dependency-snapshot-"));
+  const directory = await mkdtemp(join(checkout, ".git", "vitehub-dependency-snapshot-"));
   const identities = new Map<string, { dev: string; ino: string }>();
   const managedDirectories = new Set([""]);
   try {
-    await cp(checkout, directory, {
-      recursive: true, dereference: false, verbatimSymlinks: true,
-      filter: async source => {
-        const path = relative(checkout, source);
-        const parts = path.split(sep);
-        if (basename(source) === "node_modules") {
-          managedDirectories.add(relative(checkout, dirname(source)));
-          return false;
-        }
-        if (basename(source) === ".git"
-          || rootOutputs.has(path) || parts[0] === ".yarn" && yarnOutputs.has(parts[1]!)) return false;
-        const info = await lstat(source, { bigint: true });
-        if (path === ".yarn" && !info.isDirectory()) throw new Error("Yarn installation output must use a regular checkout directory.");
-        if (info.isDirectory()) identities.set(path, { dev: String(info.dev), ino: String(info.ino) });
-        return true;
-      },
-    });
+    const root = await lstat(checkout, { bigint: true });
+    identities.set("", { dev: String(root.dev), ino: String(root.ino) });
+    // Node rejects copying an ancestor into itself before running the filter.
+    // Copy each entry so the protected metadata directory is never traversed.
+    for (const entry of await readdir(checkout)) {
+      if (entry === ".git") continue;
+      await cp(join(checkout, entry), join(directory, entry), {
+        recursive: true, dereference: false, verbatimSymlinks: true,
+        filter: async source => {
+          const path = relative(checkout, source);
+          const parts = path.split(sep);
+          if (basename(source) === "node_modules") {
+            managedDirectories.add(relative(checkout, dirname(source)));
+            return false;
+          }
+          if (basename(source) === ".git"
+            || rootOutputs.has(path) || parts[0] === ".yarn" && yarnOutputs.has(parts[1]!)) return false;
+          const info = await lstat(source, { bigint: true });
+          if (path === ".yarn" && !info.isDirectory()) throw new Error("Yarn installation output must use a regular checkout directory.");
+          if (info.isDirectory()) identities.set(path, { dev: String(info.dev), ino: String(info.ino) });
+          return true;
+        },
+      });
+    }
     await chmod(directory, 0o700);
     return { checkout, directory, identities, managedDirectories, close: async () => await rm(directory, { recursive: true, force: true }) };
   } catch (error) {

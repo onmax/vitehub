@@ -63,7 +63,7 @@ export interface GitHubHostPullRequest {
 export interface GitHubHostCheckout extends GitHubHostAccess {
   path: string
   prepareWorkspace(target: string): Promise<void>
-  commitRepair(target: string, input: GitHubRepairCommit): Promise<string>
+  commitRepair(target: string, input: GitHubRepairCommit, options?: { verifyDependencies?: boolean }): Promise<string>
   push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void> }): Promise<string>
   signal: AbortSignal
 }
@@ -778,7 +778,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       operation.signal.throwIfAborted()
       const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
       let pushHead = pullRequest.headSha
-      const commitRepair = async (target: string, input: GitHubRepairCommit) => await commitGitHubPullRequestWorkspace(target, input, { expectedHead: pushHead, signal: operation.signal, identity: env })
+      const commitRepair = async (target: string, input: GitHubRepairCommit, commitOptions?: { verifyDependencies?: boolean }) => await commitGitHubPullRequestWorkspace(target, input, { expectedHead: pushHead, signal: operation.signal, identity: env, verifyDependencies: commitOptions?.verifyDependencies })
       const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void> } = {}) => {
         const signal = options.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
         signal.throwIfAborted()
