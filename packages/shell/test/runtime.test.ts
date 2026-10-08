@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { InMemoryFs } from "just-bash"
 
 import {
   analyzeShellCommand,
@@ -499,6 +500,43 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await fs.appendFile("/workspace/data.bin", content, { encoding })
 
     expect(Array.from(await fs.readFileBuffer("/workspace/data.bin"))).toEqual([0, 128, 255, 0, 128, 255])
+  })
+
+  it.each([
+    { encoding: "ascii", content: "\u0080é" },
+    { encoding: "utf8", content: "\u0080é" },
+    { encoding: "utf-8", content: "\u0080é" },
+    { encoding: "binary", content: "\u0000\u0080\u00ff" },
+    { encoding: "latin1", content: "\u0000\u0080\u00ff" },
+    { encoding: "hex", content: "0080ff" },
+    { encoding: "hex", content: "ff0" },
+    { encoding: "hex", content: "fgzz80" },
+    { encoding: "base64", content: "AID/" },
+    { encoding: "base64", content: " AID/\n" },
+    { encoding: "base64", content: "A" },
+    { encoding: "base64", content: "AA!=" },
+    { encoding: "base64", content: "__8=" },
+  ] as const)("matches Just Bash writes for $encoding input $content", async ({ encoding, content }) => {
+    for (const method of ["writeFile", "appendFile"] as const) {
+      const path = "/workspace/data.bin"
+      const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": "prefix" }))
+      const reference = new InMemoryFs({ [path]: "prefix" })
+      const options = method === "writeFile" ? encoding : { encoding }
+      const results = await Promise.allSettled([
+        reference[method](path, content, options),
+        fs[method](path, content, options),
+      ])
+      expect(results[1]).toEqual(results[0])
+      expect(Array.from(await fs.readFileBuffer(path))).toEqual(Array.from(await reference.readFileBuffer(path)))
+    }
+  })
+
+  it.each(["utf8", "utf-8", "ascii", "binary", "latin1", "hex", "base64"] as const)("matches Just Bash %s reads", async (encoding) => {
+    const bytes = new Uint8Array([0, 128, 255, 195, 169])
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": bytes }))
+    const reference = new InMemoryFs({ "/workspace/data.bin": bytes })
+
+    expect(await fs.readFile("/workspace/data.bin", { encoding })).toBe(await reference.readFile("/workspace/data.bin", { encoding }))
   })
 
   it.each(["binary", "latin1"] as const)("reads Workspace bytes with %s encoding", async (encoding) => {
