@@ -20,7 +20,7 @@ icon: i-lucide-code-2
 
 Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Workspace filesystem types are exported from these entrypoints. Applications that use the `vite-hub` distribution can import the same APIs from `vite-hub/shell`, `vite-hub/shell/providers/*`, and `vite-hub/shell/workspace`.
 
-Custom providers can return Shell Processes as class instances. Sessions retain the process ID, command, and working directory for inspection.
+Custom providers can return Shell Processes as class instances. Sessions read the process ID, command, and working directory from the provider handle when inspected. A failed metadata read does not prevent process cleanup.
 
 ## Use Shell sessions
 

@@ -137,6 +137,46 @@ describe("@vite-hub/shell just-bash runtime", () => {
     expect(stop).toHaveBeenCalledOnce()
   })
 
+  it("keeps process cleanup available when a metadata getter throws", async () => {
+    const metadataError = new Error("process metadata unavailable")
+    const stop = vi.fn(async () => stoppedProcessObservation("worker"))
+    const process: ShellProcess = {
+      get id(): string { throw metadataError },
+      command: "worker",
+      stop,
+    }
+    const session = createShellRuntime({ provider: createBackgroundProvider(async () => process) }).createSession()
+
+    const tracked = await session.startProcess("worker")
+
+    expect(() => tracked.id).toThrow(metadataError)
+    expect((await session.listProcesses())[0]).toBe(tracked)
+    await expect(session.dispose()).resolves.toMatchObject({ event: "session_disposed" })
+    expect(stop).toHaveBeenCalledOnce()
+    expect(await session.listProcesses()).toHaveLength(0)
+  })
+
+  it("disposes a pending process without reading its metadata", async () => {
+    let release!: (process: ShellProcess) => void
+    const stop = vi.fn(async () => stoppedProcessObservation("worker"))
+    const process: ShellProcess = {
+      get id(): string { throw new Error("process metadata unavailable") },
+      command: "worker",
+      stop,
+    }
+    const provider = createBackgroundProvider(() => new Promise(resolve => { release = resolve }))
+    const session = createShellRuntime({ provider }).createSession()
+    const starting = session.startProcess("worker")
+    const disposing = session.dispose()
+    const rejected = expect(starting).rejects.toThrow("Shell session is disposed")
+
+    release(process)
+
+    await expect(disposing).resolves.toMatchObject({ event: "session_disposed" })
+    await rejected
+    expect(stop).toHaveBeenCalledOnce()
+  })
+
   it.each([{ commands: ["curl"] }, { commands: undefined }])("runs controlled curl through the just-bash provider network boundary with commands $commands", async ({ commands }) => {
     const workspace = new MemoryWorkspace({})
     const executeSourceRequest = vi.fn(async () => ({ content: "ok\n" }))
