@@ -206,6 +206,8 @@ When a custom host installs a wake driver, call and await `controller.close()` d
 
 Set `manual: true` on a Static Schedule Definition to allow an on-demand run, then invoke it with `vitehub schedule run <name>`. The name is the discovered schedule file name. Runtime Schedules use the separate `run-runtime` command.
 
+Discovery reads `manual` and `allowRuntimeSchedules` as literal booleans from directly exported Definitions. Use identifier keys or quoted keys without escape sequences. Spreads, computed keys, escaped keys, and metadata getters or methods fail with the source file and line.
+
 The Console Schedules section is a record table. Build-time records list Schedule Definitions. `readScheduleConsoleRecords()` from `@vite-hub/schedule/runtime/console` adds Runtime Schedules with enabled state, next run, last run, and run history on each request. The Console is read-only. A Runtime Schedule with `console: { enabled: false }` is hidden there. The CLI and the Console redact credentials in Schedule input and error messages.
 
 ## Import runtime helpers
