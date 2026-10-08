@@ -166,6 +166,8 @@ Manual hosts can mount the stable `#vitehub/auth/server` handler directly.
 
 Better Auth options stay top-level. ViteHub-owned wiring reserves `access`, `database`, `secondaryStorage`, `basePath`, `route`, and `runtime`. The Better Auth fields `baseURL`, `secret`, and `secrets` are runtime-only: return them from the Definition callback or place them under `runtime`. `access.routes` must be static route strings or `{ authorize, method, route }` objects so the Vite Integration can register Nitro middleware.
 
+`access.routes` must use a dense array. Empty slots, including commented-out entries that leave commas, fail configuration.
+
 ```ts
 export default defineAuth({
   basePath: "/auth",
