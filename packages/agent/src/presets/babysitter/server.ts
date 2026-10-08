@@ -51,7 +51,7 @@ import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReason
 import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admission.ts";
-import { createBabysitterStatusRecovery } from "./status-recovery.ts";
+import { createBabysitterStatusRecovery, isWorkerBlocker } from "./status-recovery.ts";
 
 declare const __VITEHUB_AGENT_BUILD_REVISION__: string;
 
@@ -478,7 +478,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
 
   async function recoverFailedCiWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(false, true)) {
-      if (snapshot.generation > snapshot.handled || !hasFailedActions(snapshot)) continue;
+      if (snapshot.generation > snapshot.handled || isWorkerBlocker(snapshot) || !hasFailedActions(snapshot)) continue;
       const head = snapshot.pr?.head?.sha;
       if (!head) continue;
       const recoveryKey = `ci-recovery-next:${snapshot.repository}#${snapshot.number}:${head}`;

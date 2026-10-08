@@ -631,6 +631,21 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it("retains a worker blocker instead of replacing it with an idle CI permission wait", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const reason = "Host commitRepair repeatedly rejects dependency state despite successful refreshDependencies and repeated focused validation.";
+    const f = await fixture(false, false, { actionsDenied: true, result: { text: reason, wait: { kind: "external", reason } } });
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.reason).toBe(reason);
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.reason).toBe(reason);
+    } finally { await f.runtime.inbox.close(); vi.useRealTimers(); }
+  });
+
   it.each(["commitRepair", "pushRepair"] as const)("rejects %s after the prepared conflict base changes", async operation => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const f = await fixture(false, false, { mergeableState: "dirty" });
