@@ -20,6 +20,8 @@ icon: i-lucide-code-2
 
 Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Workspace filesystem types are exported from these entrypoints. Applications that use the `vite-hub` distribution can import the same APIs from `vite-hub/shell`, `vite-hub/shell/providers/*`, and `vite-hub/shell/workspace`.
 
+Workspace filesystem adapters preserve binary output from redirection and `tee`. Their read, write, and append methods honor Just Bash encoding options.
+
 Custom providers can return Shell Processes as class instances. Sessions read the process ID, command, and working directory from the provider handle when inspected. These public metadata fields are readonly. A failed metadata read does not prevent process cleanup.
 
 `createWritableWorkspaceFs(useWorkspace(name, { mode: "write" }).fs)` accepts the public writable Workspace facade directly. Workspace writes can return revision receipts. The Shell adapter waits for each write and returns `void` from `writeFile()` and `appendFile()`.

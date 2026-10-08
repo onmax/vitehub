@@ -86,6 +86,8 @@ The Just Bash `commands` list also applies to controlled `curl` requests. A Sour
 
 The provider copies the command list at creation. Later changes to the supplied list do not change its permissions or network boundary.
 
+Workspace filesystem adapters preserve binary output from redirection and `tee`. Their read, write, and append methods honor Just Bash encoding options.
+
 Just Bash defaults to `/workspace`. A provider `cwd` changes that default, and an `exec` `cwd` takes precedence. The provider reports the selected directory in its observations. Set `cwd` for a custom filesystem with another root.
 
 Appending creates an absent Workspace file. A read failure for an existing file fails the append before changing its content.
