@@ -103,6 +103,7 @@ const lowLevelOwnerExports = new Set([
   "@vite-hub/database/config",
   "@vite-hub/env/seal",
   "@vite-hub/kv/errors",
+  "@vite-hub/ui/primitive-rail",
   "@vite-hub/workspace/source-metadata",
 ]);
 

@@ -1,4 +1,5 @@
-import { createRenderer, nextTick, ssrContextKey } from "vue"
+// @vitest-environment ./test/support/client-renderer-environment.ts
+import { createRenderer, defineComponent, h, nextTick } from "vue"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@nuxt/ui/composables", () => ({ defineShortcuts: vi.fn() }))
@@ -81,8 +82,11 @@ describe("Console rail icons", () => {
     vi.stubGlobal("document", { activeElement: null })
     const root = node("root")
     const app = renderer.createApp(Rail, { sectionsBase: "/sections" })
-    app.provide(ssrContextKey, {})
-    // Nuxt UI is not installed here, so its components render as plain elements that keep their props.
+    // Tooltips must render their default slot so the test mounts the real rail items inside them.
+    app.component("UTooltip", defineComponent({
+      setup(_props, { slots }) { return () => h("div", slots.default?.()) },
+    }))
+    // Other Nuxt UI components render as plain elements that keep their props.
     app.config.warnHandler = () => {}
     app.mount(root)
     try {
