@@ -27,14 +27,16 @@ function volatileFileOwners(store: WorkspaceStore) {
 }
 
 // A pending checkpoint survives rollback even when all later metadata writes fail.
-export async function beginWorkspaceFileCheckpoint(store: WorkspaceStore, path: string): Promise<string | undefined> {
+async function beginWorkspaceFileCheckpoint(store: WorkspaceStore, path: string): Promise<string | undefined> {
   if (!store.getMeta || !store.setMeta) return undefined
   const token = crypto.randomUUID()
   const current = await store.getMeta(checkpointMetaKey(path))
+  // SAFETY: The preceding object check establishes the only invariant needed to inspect own metadata keys.
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
-  const previous = current && typeof current === "object"
-    ? "committed" in current && current.committed === true && "token" in current ? current.token
-      : "previous" in current ? current.previous : undefined
+  const currentRecord = current && typeof current === "object" ? current as Record<string, unknown> : undefined
+  const previous = currentRecord
+    ? Object.hasOwn(currentRecord, "committed") && currentRecord.committed === true && Object.hasOwn(currentRecord, "token") ? currentRecord.token
+      : Object.hasOwn(currentRecord, "previous") ? currentRecord.previous : undefined
     : undefined
   await store.setMeta(checkpointMetaKey(path), { token, committed: false, previous })
   const identity = workspaceStoreIdentity(store)
@@ -47,11 +49,11 @@ export async function beginWorkspaceFileCheckpoint(store: WorkspaceStore, path: 
   return token
 }
 
-export function endWorkspaceFileCheckpoint(store: WorkspaceStore, path: string): void {
+function endWorkspaceFileCheckpoint(store: WorkspaceStore, path: string): void {
   activeCheckpoints.get(workspaceStoreIdentity(store))?.delete(normalizeWorkspacePath(path))
 }
 
-export async function commitWorkspaceFileCheckpoint(store: WorkspaceStore, path: string, token: string | undefined): Promise<void> {
+async function commitWorkspaceFileCheckpoint(store: WorkspaceStore, path: string, token: string | undefined): Promise<void> {
   if (token) await store.setMeta!(checkpointMetaKey(path), { token, committed: true })
 }
 
@@ -76,33 +78,41 @@ export async function recordWorkspaceFileOwner(store: WorkspaceStore, path: stri
 export async function readWorkspaceFileOwner(store: WorkspaceStore, path: string, retireInvalidRemoval = false): Promise<WorkspaceFileOwner | undefined> {
   const volatile = volatileOwners.get(workspaceStoreIdentity(store))?.get(fileOwnerMetaKey(path))
   const value = volatile !== undefined ? volatile : await store.getMeta?.(fileOwnerMetaKey(path))
+  // SAFETY: The preceding object check establishes the record shape used only for own-key validation below.
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
-  if (!value || typeof value !== "object" || !("workspace" in value) || typeof value.workspace !== "string"
-    || !("source" in value) || typeof value.source !== "string" || ("digest" in value && value.digest !== undefined && typeof value.digest !== "string")) return undefined
-  if ("checkpoint" in value && value.checkpoint !== activeCheckpoints.get(workspaceStoreIdentity(store))?.get(normalizeWorkspacePath(path))) {
+  const owner = value && typeof value === "object" ? value as Record<string, unknown> : undefined
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
+  if (!owner || !Object.hasOwn(owner, "workspace") || typeof owner.workspace !== "string"
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Metadata is an untyped persistence boundary.
+    || !Object.hasOwn(owner, "source") || typeof owner.source !== "string" || (Object.hasOwn(owner, "digest") && owner.digest !== undefined && typeof owner.digest !== "string")) return undefined
+  if (Object.hasOwn(owner, "checkpoint") && owner.checkpoint !== activeCheckpoints.get(workspaceStoreIdentity(store))?.get(normalizeWorkspacePath(path))) {
     const checkpoint = await store.getMeta?.(checkpointMetaKey(path))
+    // SAFETY: The object check and own-key guards establish the persistence record shape before values are read.
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
-    if (!checkpoint || typeof checkpoint !== "object"
-      || !(("token" in checkpoint && checkpoint.token === value.checkpoint && "committed" in checkpoint && checkpoint.committed === true)
-        || ("previous" in checkpoint && checkpoint.previous === value.checkpoint))) {
+    const checkpointRecord = checkpoint as Record<string, unknown> | undefined
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Checkpoint metadata is an untyped persistence boundary.
+    if (!checkpointRecord || typeof checkpointRecord !== "object"
+      || !(Object.hasOwn(checkpointRecord, "token") && checkpointRecord.token === owner.checkpoint && Object.hasOwn(checkpointRecord, "committed") && checkpointRecord.committed === true
+        || Object.hasOwn(checkpointRecord, "previous") && checkpointRecord.previous === owner.checkpoint)) {
       if (retireInvalidRemoval) await removeWorkspaceFileOwner(store, path)
       return undefined
     }
   }
   // Recover an interrupted deletion only while the original file version remains.
-  if ("removing" in value && value.removing === true) {
+  if (Object.hasOwn(owner, "removing") && owner.removing === true) {
     const current = await store.stat(path)
-    if (current?.type === "file" && (!("revision" in value) || !value.revision || !current.revision)) {
+    if (current?.type === "file" && (!Object.hasOwn(owner, "revision") || !owner.revision || !current.revision)) {
       throw new Error(`[vitehub] Cannot retry interrupted removal without a file revision: ${path}. Inspect the file and remove it explicitly if cleanup is still needed.`)
     }
     const remaining = current?.type === "file" ? await store.readFile(path) : undefined
-    if (current?.type !== "file" || !("revision" in value) || current.revision !== value.revision || !("digest" in value) || !value.digest || !remaining || await sha256(remaining.content) !== value.digest) {
+    if (current?.type !== "file" || !Object.hasOwn(owner, "revision") || current.revision !== owner.revision || !Object.hasOwn(owner, "digest") || !owner.digest || !remaining || await sha256(remaining.content) !== owner.digest) {
       if (retireInvalidRemoval) await removeWorkspaceFileOwner(store, path)
       return undefined
     }
   }
+  // SAFETY: The ownership guard above proves workspace and source are strings before returning the public contract.
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Normalize the optional digest from untyped Store metadata to the owner contract.
-  return { workspace: value.workspace, source: value.source, digest: "digest" in value && typeof value.digest === "string" ? value.digest : undefined }
+  return { workspace: owner.workspace as string, source: owner.source as string, digest: Object.hasOwn(owner, "digest") && typeof owner.digest === "string" ? owner.digest : undefined }
 }
 
 export async function removeWorkspaceFileOwner(store: WorkspaceStore, path: string): Promise<void> {
@@ -116,7 +126,7 @@ export async function removeWorkspaceFileOwner(store: WorkspaceStore, path: stri
 }
 
 // Call inside the Store mutation queue after validating ownership.
-export async function markWorkspaceFileRemoval(store: WorkspaceStore, path: string): Promise<void> {
+async function markWorkspaceFileRemoval(store: WorkspaceStore, path: string): Promise<void> {
   const owner = await readWorkspaceFileOwner(store, path)
   // Persist retry evidence before retiring the active owner. Recovery never needs
   // a provider read or metadata write while the provider is unavailable.
@@ -133,4 +143,54 @@ export async function removeWorkspaceOwnedFile(store: WorkspaceStore, path: stri
   await markWorkspaceFileRemoval(store, path)
   await store.rm(path, { force: true })
   await removeWorkspaceFileOwner(store, path)
+}
+
+// Call inside the Store mutation queue so rollback cannot undo another Source write.
+export async function withWorkspaceFileCheckpoint<T>(store: WorkspaceStore, path: string, write: () => Promise<T>, checkpoint: (result: T) => Promise<void>, rollbackCheckpoint?: () => Promise<void>): Promise<T> {
+  const previous = (await store.stat(path))?.type === "file" ? await store.readFile(path) : undefined
+  const owner = await readWorkspaceFileOwner(store, path)
+  const token = previous ? await beginWorkspaceFileCheckpoint(store, path) : undefined
+  try {
+    const result = await write()
+    try {
+      await checkpoint(result)
+    }
+    catch (error) {
+      try {
+        if (previous) {
+          try {
+            // Bind the failed owner's cleanup to its revision, even when restoring
+            // another owner. Marker persistence must not prevent byte restoration.
+            await markWorkspaceFileRemoval(store, path)
+          }
+          finally {
+            endWorkspaceFileCheckpoint(store, path)
+            await store.writeFile(path, previous)
+            try {
+              if (owner) await recordWorkspaceFileOwner(store, path, owner)
+              else await removeWorkspaceFileOwner(store, path)
+            }
+            finally {
+              await rollbackCheckpoint?.()
+            }
+          }
+        }
+        else {
+          await removeWorkspaceOwnedFile(store, path)
+          await rollbackCheckpoint?.()
+        }
+      }
+      catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], `Workspace file checkpoint and rollback failed for "${path}".`)
+      }
+      throw error
+    }
+    // The output and ownership checkpoint have settled. If publishing completion
+    // fails, preserve that output: the completion write may already have committed.
+    await commitWorkspaceFileCheckpoint(store, path, token)
+    return result
+  }
+  finally {
+    endWorkspaceFileCheckpoint(store, path)
+  }
 }

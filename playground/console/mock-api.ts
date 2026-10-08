@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { randomUUID } from "node:crypto"
+import * as v from "valibot"
 
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../../packages/agent/src/invocations.ts"
 import { parseConsoleFixture } from "../../packages/vite-hub/src/console/fixture.ts"
@@ -21,14 +23,75 @@ import manifest from "./package.json" with { type: "json" }
 import { playgroundConsoleContributions } from "./sections.ts"
 
 const fixture = parseConsoleFixture(fixtureDocument)
+const agents = [...new Set(fixture.invocations.map(invocation => invocation.agentName))].sort()
 const store = createMemoryAgentInvocationStore()
 for (const record of fixture.invocations) {
   const { cursor: _cursor, ...input } = record
   store.create(input)
 }
 const invocations = defineAgentInvocations({ content: "content", store })
-const sections = ["env", "connections", "agents", "usage", "database", "kv", "workflows", "queues"] as const
+const sections = ["env", "connections", "agents", "usage", "blob", "databases", "email", "kv", "rate-limits", "sandboxes", "workspaces", "workflows", "queues", "schedules"] as const
 const definitions = {
+  "rate-limits": [
+    {
+      fields: [
+        { label: "Limit", value: "60" },
+        { label: "Window", value: "1m" },
+        { label: "Enforcement", value: "Strict" },
+        { label: "Provider failure", value: "Deny" },
+        { label: "Source location", value: "12:3" },
+      ],
+      file: "server/api/search.get.ts",
+      name: "api-search",
+      source: "require-rate-limit",
+    },
+    {
+      fields: [
+        { label: "Limit", value: "5" },
+        { label: "Window", value: "1h" },
+        { label: "Enforcement", value: "Best effort" },
+        { label: "Provider failure", value: "Allow" },
+        { label: "Source location", value: "8:3" },
+      ],
+      file: "server/api/invite.post.ts",
+      name: "invite",
+      source: "require-rate-limit",
+    },
+  ],
+  sandboxes: [
+    {
+      fields: [{ label: "Kind", value: "Definition" }],
+      file: "server/sandboxes/release-check.ts",
+      name: "release-check",
+      source: "sandbox",
+    },
+    {
+      fields: [{ label: "Kind", value: "Package entry" }],
+      file: "node_modules/@vite-hub/sandbox/dist/providers/node.js",
+      name: "node",
+      source: "sandbox",
+    },
+  ],
+  workspaces: [
+    {
+      fields: [
+        { label: "Kind", value: "Agent workspace" },
+        { label: "Source root", value: "." },
+      ],
+      file: "server/agents/interface-engineer.ts",
+      name: "vitehub",
+      source: "server-agent-workspaces",
+    },
+    {
+      fields: [
+        { label: "Kind", value: "Workspace Definition" },
+        { label: "Source root", value: "docs/content" },
+      ],
+      file: "server/workspaces/docs.ts",
+      name: "docs",
+      source: "workspace",
+    },
+  ],
   queues: [
     {
       fields: [],
@@ -116,6 +179,68 @@ const kvStores = {
     ["release:latest", { commit: "937d2ca", packages: 27, version: "0.0.1" }],
     ["session:interface-engineer", { active: true, invocationId: "ainv_console_navigation" }],
   ]),
+} as const
+
+const scheduleRecords = [
+  {
+    cells: { enabled: "Provider", kind: "Definition", lastRun: "Not in this table", nextRun: "Set by the provider", schedule: "nightly-digest", target: "-", timing: "0 6 * * *" },
+    fields: [
+      { label: "Kind", value: "Static schedule" },
+      { label: "Cron", value: "0 6 * * *" },
+      { label: "Time zone", value: "UTC" },
+      { label: "Manual", value: "Enabled" },
+      { label: "File", value: "server/schedules/nightly-digest.ts" },
+      { label: "Source", value: "schedule" },
+      { label: "Runs", value: "Use `vitehub schedule runs nightly-digest` to list runs that this runtime recorded." },
+    ],
+    id: "definition:nightly-digest",
+    runnable: true,
+  },
+  {
+    cells: { enabled: "-", kind: "Target", lastRun: "-", nextRun: "-", schedule: "reindex-console", target: "reindex-console", timing: "-" },
+    fields: [
+      { label: "Kind", value: "Runtime target" },
+      { label: "Runtime schedules", value: "Allowed" },
+      { label: "File", value: "server/schedules/reindex-console.ts" },
+      { label: "Source", value: "schedule" },
+      { label: "Runs", value: "A Runtime Schedule that uses this target shows its runs in its own row." },
+    ],
+    id: "definition:reindex-console",
+  },
+  {
+    cells: { enabled: "Enabled", kind: "Runtime", lastRun: "succeeded at 2026-08-30T15:00:00.000Z", nextRun: "2026-08-30T19:00:00.000Z", schedule: "sched_console_reindex", target: "reindex-console", timing: "0 */4 * * *" },
+    fields: [
+      { label: "Target", value: "reindex-console" },
+      { label: "Cron", value: "0 */4 * * *" },
+      { label: "Time zone", value: "UTC" },
+      { label: "State", value: "Enabled" },
+      { label: "Next due time", value: "2026-08-30T19:00:00.000Z" },
+      { label: "Automatic runs", value: "A wake driver runs due Schedules in this runtime." },
+      { label: "Console dispatch", value: "Allowed by the record. The Console is read-only. Use `vitehub schedule run` in development." },
+      { label: "Input", value: "{\"sections\":[\"agents\",\"kv\"]}" },
+      { label: "Created", value: "2026-08-28T09:12:00.000Z" },
+      { label: "Updated", value: "2026-08-30T15:00:04.000Z" },
+      { label: "Run 1", value: "2026-08-30T15:00:00.000Z, succeeded, 1 attempt, run_01J6R8" },
+      { label: "Run 2", value: "2026-08-30T11:00:00.000Z, failed, 2 attempts, Console index store was locked., run_01J6QZ" },
+      { label: "Run 3", value: "2026-08-30T07:00:00.000Z, succeeded, 1 attempt, run_01J6QM" },
+    ],
+    id: "runtime:sched_console_reindex",
+  },
+]
+let scheduleRunCount = 0
+
+const blobStores = {
+  default: [
+    { contentType: "image/png", customMetadata: { agent: "interface-engineer", invocation: "ainv_console_empty_states" }, httpEtag: "\"7d3f1c9a\"", httpMetadata: { cacheControl: "public, max-age=31536000" }, pathname: "screenshots/console-empty-states/kv-dark.png", size: 184_320, uploadedAt: "2026-08-30T16:41:12.000Z", urlAvailable: true as const },
+    { contentType: "image/png", customMetadata: { agent: "interface-engineer", invocation: "ainv_console_empty_states" }, httpEtag: "\"5b2e0a44\"", httpMetadata: { cacheControl: "public, max-age=31536000" }, pathname: "screenshots/console-empty-states/kv-light.png", size: 176_128, uploadedAt: "2026-08-30T16:41:13.000Z", urlAvailable: true as const },
+    { contentType: "application/json", customMetadata: {}, httpEtag: "\"c01d2e3f\"", httpMetadata: {}, pathname: "exports/usage-2026-08.json", size: 24_576, uploadedAt: "2026-08-29T06:00:00.000Z" },
+    { contentType: "text/csv", customMetadata: { source: "billing" }, httpEtag: "\"9a8b7c6d\"", httpMetadata: { contentDisposition: "attachment; filename=\"usage-september.csv\"" }, pathname: "exports/usage-september.csv", size: 2_048, uploadedAt: "2026-09-01T06:00:00.000Z" },
+    { contentType: "application/pdf", customMetadata: {}, httpEtag: "\"e4f5a6b7\"", httpMetadata: {}, pathname: "invoices/inv_2026_09.pdf", size: 96_201, uploadedAt: "2026-09-01T06:00:04.000Z", urlAvailable: true as const },
+  ],
+  uploads: [
+    { contentType: "image/svg+xml", customMetadata: { attachment: "desktop-layout.svg" }, httpEtag: "\"11aa22bb\"", httpMetadata: {}, pathname: "attachments/ainv_image_previews/desktop-layout.svg", size: 1_842, uploadedAt: "2026-09-05T18:00:00.000Z", urlAvailable: true as const },
+    { contentType: "image/svg+xml", customMetadata: { attachment: "mobile-layout.svg" }, httpEtag: "\"33cc44dd\"", httpMetadata: {}, pathname: "attachments/ainv_image_previews/mobile-layout.svg", size: 1_311, uploadedAt: "2026-09-05T18:00:00.000Z", urlAvailable: true as const },
+  ],
 } as const
 
 function json(response: ServerResponse, value: unknown, status = 200): void {
@@ -338,8 +463,91 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
 
   if (path === "/api/_vitehub/console/agents") {
     json(response, {
-      agents: [...new Set(fixture.invocations.map(invocation => invocation.agentName))].sort(),
+      agents,
+      // Every Agent accepts a new chat from the Console composer. The profiles are synthetic Invoker Profiles.
+      invocation: Object.fromEntries(agents.map(agent => [agent, { profiles: agent === "product-reviewer"
+        ? [{ id: "reviewer", label: "Reviewer" }, { id: "maintainer", label: "Maintainer" }]
+        : [{ id: "default" }] }])),
     })
+    return true
+  }
+
+  const newInvocation = /^\/api\/_vitehub\/console\/agents\/([^/]+)\/invocations$/.exec(path)
+  if (newInvocation && request.method === "POST") {
+    const agentName = decodeURIComponent(newInvocation[1]!)
+    if (!agents.includes(agentName)) {
+      json(response, { error: "Agent invocation is not available." }, 404)
+      return true
+    }
+    const input = v.safeParse(v.object({
+      files: v.optional(v.pipe(v.array(v.object({ url: v.string(), filename: v.optional(v.string(), "image") })), v.maxLength(10)), []),
+      invokerProfileId: v.optional(v.string()),
+      prompt: v.optional(v.string(), ""),
+    }), await body(request))
+    if (!input.success) {
+      json(response, { error: "Invalid Console input." }, 400)
+      return true
+    }
+    const invokerProfileId = input.output.invokerProfileId?.trim()
+    const profiles = agentName === "product-reviewer" ? ["reviewer", "maintainer"] : ["default"]
+    if (input.output.invokerProfileId !== undefined && (!invokerProfileId || !profiles.includes(invokerProfileId))) {
+      json(response, { error: "Unknown Agent invocation profile." }, 400)
+      return true
+    }
+    const prompt = input.output.prompt.trim()
+    const images = []
+    let totalBytes = 0
+    for (const file of input.output.files) {
+      const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]*={0,2})$/.exec(file.url)
+      const bytes = match ? Buffer.from(match[2]!, "base64") : undefined
+      if (!match || !bytes?.length || bytes.toString("base64") !== match[2]) {
+        json(response, { error: "Provide a valid PNG, JPEG, WebP, or GIF data URL." }, 400)
+        return true
+      }
+      totalBytes += bytes.length
+      if (totalBytes > 10 * 1024 * 1024) {
+        json(response, { error: "Images must total at most 10 MiB." }, 413)
+        return true
+      }
+      // Synthetic sessions retain data URLs without writing to a Blob provider.
+      images.push({ type: "image", url: file.url, name: file.filename.slice(0, 255), mediaType: match[1]!, size: bytes.length })
+    }
+    if (!prompt && !images.length) {
+      json(response, { error: "A prompt or image is required." }, 400)
+      return true
+    }
+    const inputMessages = images.length
+      ? [{ id: "user-1", role: "user", parts: [...(prompt ? [{ type: "text", text: prompt }] : []), ...images] }]
+      : undefined
+    const id = `ainv_console_${randomUUID()}`
+    const now = new Date().toISOString()
+    store.create({
+      agentName,
+      annotations: { triggeredBy: "you" },
+      createdAt: now,
+      id,
+      observations: [
+        {
+          attributes: {
+            "input.hasPrompt": Boolean(prompt),
+            "input.prompt": prompt,
+            "input.hasMessages": images.length > 0,
+            "input.messages": inputMessages,
+            ...(invokerProfileId ? { "input.invokerProfileId": invokerProfileId } : {}),
+          },
+          name: "agent.invocation.start", sequence: 0, timestamp: now, type: "lifecycle",
+        },
+        { attributes: { "vitehub.activity.body": `Loaded ${agentName} for a Console chat. The playground never runs a model, so this session stays live.` }, name: "vitehub.agent.configured", sequence: 1, timestamp: now, type: "lifecycle" },
+        ...(images.length ? [] : [{ attributes: { "message.content": prompt, "message.id": "user-1", "message.role": "user" }, name: "agent.message.recorded", sequence: 2, timestamp: now, type: "run" as const }]),
+      ],
+      origin: "console",
+      startedAt: now,
+      status: "running",
+      title: prompt.length > 48 ? `${prompt.slice(0, 47)}…` : prompt || images[0]?.name || "Image chat",
+      traceId: `trace_${id}`,
+      updatedAt: now,
+    })
+    json(response, { id })
     return true
   }
 
@@ -400,8 +608,21 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
         json(response, { error: "Malformed invocation action." }, 400)
         return true
       }
-      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || Reflect.get(input, "action") !== "delete") {
+      if (!(input instanceof Object) || Array.isArray(input) || Object.keys(input).length !== 1 || !["cancel", "delete"].includes(String(Reflect.get(input, "action")))) {
         json(response, { error: "Unsupported invocation action." }, 400)
+        return true
+      }
+      if (Reflect.get(input, "action") === "cancel") {
+        const cancelOutcome = await invocations.cancel(id)
+        if (cancelOutcome.outcome === "not-found") {
+          json(response, { error: "Invocation not found" }, 404)
+          return true
+        }
+        if (cancelOutcome.outcome === "terminal") {
+          json(response, { error: "Only pending or running invocations can be cancelled." }, 409)
+          return true
+        }
+        json(response, { id, outcome: cancelOutcome.outcome })
         return true
       }
       const outcome = await invocations.delete(id)
@@ -483,11 +704,79 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       json(response, { kind: "record-table", records: readEmailOutboxConsoleRecords(), section })
       return true
     }
-    if (section !== "queues" && section !== "workflows") {
+    if (section === "databases") {
+      // Console search reads the Database catalog, like the real definitions route.
+      json(response, {
+        definitions: [{
+          fields: [
+            { label: "Mode", value: "Default" },
+            { label: "Tables", value: databaseFixture.tables.map(table => table.name).join(", ") },
+          ],
+          file: "server/database/schema.ts",
+          name: databaseFixture.schema,
+          source: "database",
+        }],
+        kind: "definition-catalog",
+        section,
+      })
+      return true
+    }
+    if (section === "schedules") {
+      json(response, { kind: "record-table", records: scheduleRecords, section })
+      return true
+    }
+    if (section !== "queues" && section !== "workflows" && section !== "rate-limits" && section !== "sandboxes" && section !== "workspaces") {
       json(response, { error: "A valid definition section is required" }, 400)
       return true
     }
     json(response, { definitions: definitions[section], kind: "definition-catalog", section })
+    return true
+  }
+
+  if (path === "/api/_vitehub/console/schedule-run" && request.method === "POST") {
+    // SAFETY: The playground validates the name immediately after decoding this local JSON request.
+    const input: unknown = await body(request)
+    const requestedName = input instanceof Object && "name" in input ? input.name : undefined
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- The playground validates the untrusted request name before answering.
+    const name = typeof requestedName === "string" && requestedName ? requestedName : undefined
+    if (!name) {
+      json(response, { message: "Schedule run requires a Schedule Definition name." }, 400)
+      return true
+    }
+    const runnable = scheduleRecords.some(record => record.cells.kind === "Definition"
+      && record.cells.schedule === name
+      && record.fields.some(field => field.label === "Manual" && field.value === "Enabled"))
+    if (!runnable) {
+      json(response, { message: "Schedule run is not available. Set manual: true on the Schedule Definition and enable Console invocation." }, 404)
+      return true
+    }
+    const startedAt = new Date()
+    json(response, { run: {
+      completedAt: new Date(startedAt.getTime() + 1_250).toISOString(),
+      id: `run_playground_${++scheduleRunCount}`,
+      scheduleId: name,
+      startedAt: startedAt.toISOString(),
+      status: "succeeded",
+    } })
+    return true
+  }
+
+  if (path === "/api/_vitehub/console/blob") {
+    const requested = url.searchParams.get("store") || "default"
+    const store = requested === "default" || requested === "uploads" ? requested : undefined
+    if (!store) {
+      json(response, { error: "Blob store not found." }, 404)
+      return true
+    }
+    const prefix = url.searchParams.get("prefix") || ""
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 3, 1), 250)
+    const offset = Math.max(Number(url.searchParams.get("cursor")) || 0, 0)
+    const matching = blobStores[store].filter(blob => blob.pathname.startsWith(prefix))
+    const page = matching.slice(offset, offset + limit)
+    const hasMore = offset + limit < matching.length
+    const result: Record<string, unknown> = { blobs: page, hasMore, limit, prefix, store, stores: Object.keys(blobStores) }
+    if (hasMore) result.cursor = String(offset + limit)
+    json(response, result)
     return true
   }
 

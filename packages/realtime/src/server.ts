@@ -1,12 +1,12 @@
 import { Editor } from "@tiptap/core"
 import { prosemirrorJSONToYDoc, updateYFragment, yDocToProsemirrorJSON } from "@tiptap/y-tiptap"
 import { assertAuthOrigin } from "@vite-hub/auth/server"
+import { getViteHubErrorShape } from "@vite-hub/runtime"
 import { isWorkspaceConflict, normalizeSafeWorkspacePath, resolveWorkspaceStoreTarget, useWorkspace } from "@vite-hub/workspace"
 import { HTTPError, defineEventHandler, defineWebSocketHandler } from "h3"
 import * as decoding from "lib0/decoding"
 import * as encoding from "lib0/encoding"
 import * as awarenessProtocol from "y-protocols/awareness"
-import { Diagnostic } from "nostics"
 import * as syncProtocol from "y-protocols/sync"
 import * as Y from "yjs"
 
@@ -15,7 +15,9 @@ import type { WebSocketMessage, WebSocketPeer } from "h3"
 import type { RealtimeIdentity } from "./presence.ts"
 import type { RealtimeCheckpoint, RealtimeDefinition, RealtimeRegistry } from "./types.ts"
 import { createRealtimeIdentity } from "./presence.ts"
-import { decodeWorkspaceChangePayload, encodeWorkspaceChange, maxAwarenessClients, messageAwareness, messageQueryAwareness, messageWorkspaceChange, readAwarenessClientIds, realtimeCheckpointRejectedCode, realtimeSyncPendingCode } from "./protocol.ts"
+import { AwarenessOwnershipConflict, compactRealtimeAwareness, createRealtimeAwarenessOwners } from "./awareness.ts"
+export { applyRealtimeAwarenessUpdate, bindAwarenessIdentity, claimAwarenessClientIds, compactRealtimeAwareness } from "./awareness.ts"
+import { decodeWorkspaceChangePayload, encodeWorkspaceChange, messageAwareness, messageQueryAwareness, messageWorkspaceChange, realtimeCheckpointRejectedCode, realtimeSyncPendingCode } from "./protocol.ts"
 import { createRealtimeEditorExtensions } from "./editor-extensions.ts"
 import { realtimeErrorDiagnostics } from "./error-diagnostics.ts"
 
@@ -27,7 +29,6 @@ export interface RealtimeHandler {
 const routePrefix = "/api/_vitehub/realtime/"
 const maxMessageBytes = 1024 * 1024
 const maxRoomStateBytes = 8 * 1024 * 1024
-const maxRoomAwarenessBytes = 8 * 1024 * 1024
 const maxMemoryRooms = 128
 const awarenessQueryIntervalMs = 10_000
 const awarenessUpdateIntervalMs = 50
@@ -87,7 +88,7 @@ export function replaceRealtimeDocument(document: Y.Doc, markdown: string): Uint
 
 interface Room {
   awareness: awarenessProtocol.Awareness
-  awarenessClientOwners: Map<number, WebSocketPeer>
+  awarenessOwners: ReturnType<typeof createRealtimeAwarenessOwners>
   baselineDigest?: string
   channel: string
   checkpoint?: Promise<RealtimeCheckpoint>
@@ -115,40 +116,8 @@ interface RealtimeRoomSql {
   exec(query: string, ...bindings: unknown[]): { toArray(): Array<Record<string, unknown>> }
 }
 
-export function claimAwarenessClientIds(owners: Map<number, object>, peer: object, clients: number[]): number[] {
-  for (const client of clients) {
-    const owner = owners.get(client)
-    if (owner && owner !== peer) throw new AwarenessOwnershipConflict()
-  }
-  const ownedClients = new Set(
-    [...owners].filter(([, owner]) => owner === peer).map(([client]) => client),
-  )
-  for (const client of clients) ownedClients.add(client)
-  if (ownedClients.size > maxAwarenessClients) {
-    throw realtimeErrorDiagnostics.REALTIME_R0003({ message: "Peer owns too many awareness clients." })
-  }
-  const claimed = clients.filter(client => !owners.has(client))
-  for (const client of clients) owners.set(client, peer)
-  return claimed
-}
-
 export function realtimeRoomKey(definitionName: string, documentId: string): string {
   return JSON.stringify([definitionName, documentId])
-}
-
-class AwarenessOwnershipConflict extends Diagnostic {
-  constructor() {
-    super({ code: "REALTIME_R0013", docs: "https://vitehub.dev/docs/reference/diagnostics", why: "Awareness client id is already owned by another peer." }, AwarenessOwnershipConflict)
-    this.name = "AwarenessOwnershipConflict"
-  }
-}
-
-export function bindAwarenessIdentity(update: Uint8Array, identity: RealtimeIdentity): Uint8Array {
-  return awarenessProtocol.modifyAwarenessUpdate(update, (state: unknown) => {
-    if (state === null) return null
-    if (!state || typeof state !== "object" || Array.isArray(state)) throw realtimeErrorDiagnostics.REALTIME_R0004({ message: "Invalid awareness state." })
-    return { ...state, user: identity }
-  })
 }
 
 export async function writeRealtimeDocument(
@@ -248,40 +217,6 @@ export function assertRealtimeRoomStateQuota(document: Y.Doc, maxStateBytes = ma
   }
 }
 
-export function applyRealtimeAwarenessUpdate(
-  awareness: awarenessProtocol.Awareness,
-  update: Uint8Array,
-  origin: unknown,
-  maxStateBytes = maxRoomAwarenessBytes,
-): void {
-  const candidateDocument = new Y.Doc()
-  const candidate = new awarenessProtocol.Awareness(candidateDocument)
-  candidate.setLocalState(null)
-  const currentClients = [...awareness.getStates().keys()]
-  if (currentClients.length) {
-    awarenessProtocol.applyAwarenessUpdate(candidate, awarenessProtocol.encodeAwarenessUpdate(awareness, currentClients), origin)
-  }
-  awarenessProtocol.applyAwarenessUpdate(candidate, update, origin)
-  const candidateClients = [...candidate.getStates().keys()]
-  const stateBytes = candidateClients.length
-    ? awarenessProtocol.encodeAwarenessUpdate(candidate, candidateClients).byteLength
-    : 0
-  candidate.destroy()
-  candidateDocument.destroy()
-  if (stateBytes > maxStateBytes) throw realtimeErrorDiagnostics.REALTIME_R0006({ message: "Realtime awareness exceeds its 8 MiB room quota." })
-  awarenessProtocol.applyAwarenessUpdate(awareness, update, origin)
-}
-
-export function compactRealtimeAwareness(awareness: awarenessProtocol.Awareness): awarenessProtocol.Awareness {
-  const clients = [...awareness.getStates().keys()]
-  const update = clients.length ? awarenessProtocol.encodeAwarenessUpdate(awareness, clients) : undefined
-  const compacted = new awarenessProtocol.Awareness(awareness.doc)
-  compacted.setLocalState(null)
-  if (update) awarenessProtocol.applyAwarenessUpdate(compacted, update, "compaction")
-  awareness.destroy()
-  return compacted
-}
-
 function matchesBytes(actual: Uint8Array | undefined, expected: Uint8Array): boolean {
   return !!actual && actual.length === expected.length && actual.every((byte, index) => byte === expected[index])
 }
@@ -316,7 +251,17 @@ export async function readRealtimeWorkspaceDocument(
   writable: WritableWorkspaceFacade,
   documentId: string,
 ): Promise<{ baselineDigest: string | undefined, markdown: string }> {
-  const stat = () => writable.fs.stat(documentId)
+  const stat = async () => {
+    try {
+      return await writable.fs.stat(documentId)
+    }
+    catch (error) {
+      const shape = getViteHubErrorShape(error)
+      // Registry failures name the missing Workspace; absent document paths do not.
+      if (shape?.code === "WORKSPACE_NOT_FOUND" && shape.details?.name === undefined) return undefined
+      throw error
+    }
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const before = await stat()
     let markdown = ""
@@ -394,7 +339,6 @@ export function createRealtimeHandler(registry: RealtimeRegistry): RealtimeHandl
   const inactiveMemoryRoomKeys = new Set<string>()
   const memoryRoomKeys = new Set<string>()
   const rooms = new Map<string, Promise<Room>>()
-  const peerAwarenessClients = new WeakMap<WebSocketPeer, Set<number>>()
   const peerAwarenessQueryAt = new WeakMap<WebSocketPeer, number>()
   const peerAwarenessUpdateAt = new WeakMap<WebSocketPeer, number>()
   const peerPendingAwareness = new WeakMap<WebSocketPeer, { timer: ReturnType<typeof setTimeout>, update: Uint8Array }>()
@@ -518,7 +462,7 @@ export function createRealtimeHandler(registry: RealtimeRegistry): RealtimeHandl
           awareness.setLocalState(null)
           const value: Room = {
             awareness,
-            awarenessClientOwners: new Map(),
+            awarenessOwners: createRealtimeAwarenessOwners(),
             baselineDigest: initial.baselineDigest,
             channel: `vitehub:realtime:${key}`,
             document,
@@ -532,7 +476,7 @@ export function createRealtimeHandler(registry: RealtimeRegistry): RealtimeHandl
           value.document.on("update", (update: Uint8Array, origin: unknown) => {
             value.mutated = true
             persistRoomUpdate(value, update)
-            if (origin && typeof origin === "object" && "publish" in origin) {
+            if (value.peers.has(origin as WebSocketPeer)) {
               (origin as WebSocketPeer).publish(value.channel, encodeSyncUpdate(update))
             }
           })
@@ -833,12 +777,8 @@ export function createRealtimeHandler(registry: RealtimeRegistry): RealtimeHandl
       const pendingAwareness = peerPendingAwareness.get(peer)
       if (pendingAwareness) clearTimeout(pendingAwareness.timer)
       peerPendingAwareness.delete(peer)
-      const clients = [...(peerAwarenessClients.get(peer) || [])]
-      peerAwarenessClients.delete(peer)
+      const clients = room.awarenessOwners.release(peer)
       if (clients.length) {
-        for (const client of clients) {
-          if (room.awarenessClientOwners.get(client) === peer) room.awarenessClientOwners.delete(client)
-        }
         awarenessProtocol.removeAwarenessStates(room.awareness, clients, peer)
         peer.publish(room.channel, encodeAwarenessState(room.awareness, clients))
         room.awareness = compactRealtimeAwareness(room.awareness)
@@ -848,22 +788,11 @@ export function createRealtimeHandler(registry: RealtimeRegistry): RealtimeHandl
     }
 
     function applyAwareness(peer: WebSocketPeer, input: Uint8Array) {
-      let update = input
       let clients: number[]
-      let claimed: number[] = []
       try {
-        clients = readAwarenessClientIds(update)
-        claimed = claimAwarenessClientIds(room.awarenessClientOwners as Map<number, object>, peer, clients)
-        if (identity) update = bindAwarenessIdentity(update, identity)
-        applyRealtimeAwarenessUpdate(room.awareness, update, peer)
-        const ownedClients = peerAwarenessClients.get(peer) || new Set<number>()
-        for (const client of clients) ownedClients.add(client)
-        peerAwarenessClients.set(peer, ownedClients)
+        clients = room.awarenessOwners.apply(room.awareness, peer, input, identity)
       }
       catch (error) {
-        for (const client of claimed) {
-          if (room.awarenessClientOwners.get(client) === peer) room.awarenessClientOwners.delete(client)
-        }
         peer.close(error instanceof AwarenessOwnershipConflict ? 4500 : 4400, "Invalid awareness update.")
         return
       }

@@ -4,6 +4,7 @@ import json from "comark-content/plugins/json"
 import media from "comark-content/plugins/media"
 import sqliteFullTextSearch from "comark-content/plugins/sqlite-full-text-search"
 import { setTimeout as delay } from "node:timers/promises"
+import { runInNewContext } from "node:vm"
 import { afterEach, describe, expect, expectTypeOf, it } from "vitest"
 
 import { clearSources, createSource, defineSource, registerSources, useSource } from "@vite-hub/source"
@@ -105,6 +106,23 @@ describe("contentSource", () => {
     await content.dispose()
   })
 
+  it("preserves plugin methods whose names are inherited by the runtime object", () => {
+    const plugin: ContentPlugin<{ constructor: () => string }> = {
+      name: "prototype-key",
+      setup: () => ({ constructor: () => "plugin-constructor" }),
+    }
+    const content = defineContent({
+      plugins: [plugin],
+      source: {
+        keys: () => [],
+        getItem: () => "",
+        getItemRaw: () => "",
+      },
+    })
+
+    expect((content as unknown as { constructor: () => string }).constructor()).toBe("plugin-constructor")
+  })
+
   it.each(["definition", "name", "factory"] as const)("uses a fresh reader on refresh with a %s", async (input) => {
     let revision = 1
     const prepared: string[] = []
@@ -139,6 +157,28 @@ describe("contentSource", () => {
     expect(JSON.stringify(refreshed?.nodes)).toContain("Revision 2")
     expect(prepared).toContain("1")
     expect(prepared.at(-1)).toBe("2")
+  })
+
+  it("keeps separate Content instances on their own adapted Source loads", async () => {
+    let revision = 0
+    const source = contentSource(() => ({
+      async items() {
+        return [{ content: `---\ntitle: Revision ${++revision}\n---\n# Content`, key: "index.md" }]
+      },
+    }), { prefix: "/docs" })
+    const first = defineContent({ source })
+    const second = defineContent({ source })
+
+    await first.init()
+    await second.init()
+    await expect(first.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 1" } })])
+    await expect(second.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 2" } })])
+
+    await first.cache.refresh("default")
+    await expect(first.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 3" } })])
+    await expect(second.list()).resolves.toEqual([expect.objectContaining({ data: { title: "Revision 2" } })])
+    expect(revision).toBe(3)
+    await Promise.all([first.dispose(), second.dispose()])
   })
 
   it("keeps each adapted source on one revision while async init parsers read", async () => {
@@ -580,6 +620,117 @@ describe("contentSource", () => {
     expect(source.prefix).toBe("configured")
     await expect(source.keys()).resolves.toEqual(["index.md"])
     await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
+  it("preserves native Sources with null-parent constructor prototypes", async () => {
+    class NullProtoSource extends null {
+      constructor() {
+        return Object.create(new.target.prototype)
+      }
+
+      async keys() {
+        return ["index.md"]
+      }
+
+      async getItem() {
+        return "# Native"
+      }
+
+      async getItemRaw() {
+        return "# Native"
+      }
+    }
+
+    const source = contentSource(new NullProtoSource(), { prefix: "configured" })
+    expect(source.prefix).toBe("configured")
+    await expect(source.keys()).resolves.toEqual(["index.md"])
+    await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
+  it("preserves ViteHub Sources inherited from null-parent constructor prototypes", async () => {
+    class NullProtoSource extends null {
+      constructor() {
+        return Object.create(new.target.prototype)
+      }
+
+      async getKeys() {
+        return ["index.md"]
+      }
+
+      async getItem() {
+        return { content: "# Native", key: "index.md" }
+      }
+    }
+
+    class DerivedSource extends NullProtoSource {}
+
+    const source = contentSource(new DerivedSource() as never)
+    await expect(source.keys()).resolves.toEqual(["index.md"])
+    await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
+  it("reads inherited class accessors with the source instance as this", async () => {
+    class AccessorSource {
+      #content = "# Native"
+
+      get keys() {
+        return async () => ["index.md"]
+      }
+
+      get getItem() {
+        const content = this.#content
+        return async () => content
+      }
+
+      get getItemRaw() {
+        const content = this.#content
+        return async () => content
+      }
+    }
+
+    const source = contentSource(new AccessorSource() as never)
+    await expect(source.keys()).resolves.toEqual(["index.md"])
+    await expect(source.getItem("index.md")).resolves.toBe("# Native")
+  })
+
+  it("does not treat a reader with inherited Comark methods as a native source", async () => {
+    const source = Object.assign(Object.create({
+      keys: async () => ["inherited.md"],
+      getItem: async () => "# Inherited",
+      getItemRaw: async () => "# Inherited",
+    }), {
+      items: async () => [{ content: "# Reader", key: "reader.md" }],
+    })
+
+    const adapted = contentSource(source as never)
+    await expect(adapted.keys()).resolves.toEqual(["reader.md"])
+    await expect(adapted.getItem("reader.md")).resolves.toBe("# Reader")
+  })
+
+  it("does not treat a reader with inherited Source methods as a Source definition", async () => {
+    const source = Object.assign(Object.create({
+      getKeys: async () => ["inherited.md"],
+      getItem: async () => ({ content: "# Inherited", key: "inherited.md" }),
+    }), {
+      items: async () => [{ content: "# Reader", key: "reader.md" }],
+    })
+
+    const adapted = contentSource(source as never)
+    await expect(adapted.keys()).resolves.toEqual(["reader.md"])
+    await expect(adapted.getItem("reader.md")).resolves.toBe("# Reader")
+  })
+
+  it("does not treat a reader from another realm's Object.prototype as a native source", async () => {
+    const source = runInNewContext(`
+      Object.prototype.keys = async () => ["inherited.md"];
+      Object.prototype.getItem = async () => "# Inherited";
+      Object.prototype.getItemRaw = async () => "# Inherited";
+      ({ items: async () => [{ content: "# Reader", key: "reader.md" }] })
+    `)
+
+    const adapted = contentSource(source as never)
+    await expect(adapted.keys()).resolves.toEqual(["reader.md"])
+    await expect(adapted.getItem("reader.md")).resolves.toBe("# Reader")
   })
 
   it("rejects duplicate public paths", async () => {

@@ -3,14 +3,15 @@ import type { AgentChannelDefinition } from '../types.ts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { execFile } from "node:child_process"
 import type { ExecFileOptionsWithStringEncoding } from "node:child_process"
-import { createHash, createSign } from "node:crypto"
-import { mkdtemp, realpath, rm } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { lstat, mkdtemp, readdir, realpath } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { promisify } from "node:util"
 import { Diagnostic } from "nostics"
 
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
+import { CodeHostResponseError, codeHostErrorStatus, codeHostProvider, githubAppCredentials } from "../internal/code-host.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { prepareGitHubPullRequestWorkspace } from "./github-checkout.ts"
 
@@ -137,16 +138,6 @@ function positiveInteger(value: string, name: string): number {
   return number
 }
 
-function base64url(value: string): string {
-  return Buffer.from(value).toString("base64url")
-}
-
-function appJwt(appId: number, privateKey: string): string {
-  const now = Math.floor(Date.now() / 1_000)
-  const data = `${base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${base64url(JSON.stringify({ exp: now + 540, iat: now - 60, iss: appId }))}`
-  return `${data}.${createSign("RSA-SHA256").update(data).sign(privateKey).toString("base64url")}`
-}
-
 export interface GitHubAppEnvironment {
   appId: number
   privateKey: string
@@ -164,23 +155,12 @@ export interface GitHubAppEnvironment {
 export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
   const installations = new Map<string, Promise<number>>()
   let identity: Promise<{ login: string, email: string }> | undefined
-  const request = async (path: string, signal?: AbortSignal): Promise<unknown> => {
-    const response = await fetch(`https://api.github.com${path}`, {
-      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${appJwt(app.appId, app.privateKey)}`, "user-agent": app.userAgent || "vitehub" },
-      signal,
-    })
-    if (!response.ok) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App request ${path} failed with ${response.status}.` })
-    return await response.json()
-  }
+  const client = githubAppCredentials(app)
   const installation = (repository: string, signal?: AbortSignal) => {
     const key = owner(repository)
     let pending = installations.get(key)
     if (!pending) {
-      pending = request(`/repos/${repository}/installation`, signal).then((body) => {
-        const id = isRuntimeRecord(body) ? body.id : undefined
-        if (!hasRuntimeType(id, "number") || !Number.isSafeInteger(id) || id <= 0) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App is not installed for ${repository}.` })
-        return id
-      })
+      pending = client.installation(repository, signal)
       // A failed lookup, for example before the App is installed, is retried on the next request.
       pending.catch(() => installations.delete(key))
       installations.set(key, pending)
@@ -196,14 +176,15 @@ export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
     /** The App bot's login and noreply email, used as the commit author. */
     async identity(): Promise<{ login: string, email: string }> {
       identity ??= (async () => {
-        const body = await request("/app")
-        const slug = isRuntimeRecord(body) ? body.slug : undefined
-        if (!hasRuntimeType(slug, "string") || !slug) throw agentDiagnostics.AGENT_R0757({ message: "GitHub App response did not include a slug." })
-        const login = `${slug}[bot]`
-        const user = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, { headers: { accept: "application/vnd.github+json", "user-agent": app.userAgent || "vitehub" } })
-        const userBody: unknown = user.ok ? await user.json() : undefined
-        const id = isRuntimeRecord(userBody) ? userBody.id : undefined
-        return { login, email: hasRuntimeType(id, "number") ? `${id}+${login}@users.noreply.github.com` : `${login}@users.noreply.github.com` }
+        const { login } = await client.app().catch((error: unknown) => {
+          const status = codeHostErrorStatus(error)
+          if (status !== undefined) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App request /app failed with ${status}.`, cause: error })
+          if (error instanceof CodeHostResponseError) throw agentDiagnostics.AGENT_R0757({ message: error.message, cause: error })
+          throw error
+        })
+        const provider = await codeHostProvider({ host: "github", userAgent: app.userAgent })
+        const user = await provider.users.get(login).catch(() => undefined)
+        return { login, email: user?.id ? `${user.id}+${login}@users.noreply.github.com` : `${login}@users.noreply.github.com` }
       })()
       identity.catch(() => { identity = undefined })
       return await identity
@@ -321,7 +302,6 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
   const fallbackIdentityLimit = 1_000
   const budgetStateLimit = 1_000
   const budgetStateAccess = new Map<string, number>()
-  const appTokens = new Map<string, { expiresAt: number, token: string }>()
 
   function touchBudgetState(key: string, now: number): void {
     if (budgetStateAccess.has(key)) {
@@ -429,31 +409,17 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         const numericAppId = positiveInteger(appId, "GitHub App appId")
         const numericInstallationId = positiveInteger(installationId, "GitHub App installationId")
         rateLimitKey = `app:${numericAppId}:${numericInstallationId}`
-        const key = `${numericAppId}:${numericInstallationId}:${privateKey}`
-        let appToken = appTokens.get(key)
-        if (input.refresh || !appToken || appToken.expiresAt <= Date.now() + 60_000) {
-          const response = await fetch(`https://api.github.com/app/installations/${numericInstallationId}/access_tokens`, {
-            headers: {
-              accept: "application/vnd.github+json",
-              authorization: `Bearer ${appJwt(numericAppId, privateKey)}`,
-              "user-agent": options.userAgent || "vitehub",
-            },
-            method: "POST",
-            signal: input.signal,
-          })
-          if (!response.ok) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App token request failed with ${response.status}.` })
-          const body: unknown = await response.json()
-          const responseToken = isRuntimeRecord(body) ? body.token : undefined
-          const expiresAt = isRuntimeRecord(body) ? body.expires_at : undefined
-          if (!hasRuntimeType(responseToken, "string")) throw agentDiagnostics.AGENT_R0758({ message: "GitHub App token response did not include a token." })
-          appToken = {
-            expiresAt: hasRuntimeType(expiresAt, "string") ? Date.parse(expiresAt) || Date.now() + 50 * 60_000 : Date.now() + 50 * 60_000,
-            token: responseToken,
-          }
-          if (appTokens.size >= 128) appTokens.delete(appTokens.keys().next().value!)
-          appTokens.set(key, appToken)
+        try {
+          token = (await githubAppCredentials({ appId: numericAppId, privateKey, userAgent: options.userAgent })
+            .installationToken(numericInstallationId, { refresh: input.refresh, signal: input.signal })).token
         }
-        token = appToken.token
+        catch (error) {
+          if (input.signal?.aborted) throw abortError(input.signal.reason)
+          const status = codeHostErrorStatus(error)
+          if (status !== undefined) throw agentDiagnostics.AGENT_R0757({ message: `GitHub App token request failed with ${status}.`, cause: error })
+          if (error instanceof CodeHostResponseError) throw agentDiagnostics.AGENT_R0758({ message: "GitHub App token response did not include a token.", cause: error })
+          throw error
+        }
       }
     }
     else {
@@ -717,6 +683,50 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef is required when headRepository is supplied." })
     }
     const checkout = await mkdtemp(join(tmpdir(), `vitehub-${pullRequest.repository.replace("/", "-")}-pr-${pullRequest.number}-`))
+    const checkoutIdentity = await lstat(checkout, { bigint: true })
+    const isCheckout = async (path: string) => {
+      try {
+        const identity = await lstat(path, { bigint: true })
+        return identity.dev === checkoutIdentity.dev && identity.ino === checkoutIdentity.ino
+      }
+      catch {
+        return false
+      }
+    }
+    const cleanupCheckout = async () => {
+      const parent = dirname(checkout)
+      // Candidate paths are only hints. The worker pins its cwd first, then
+      // validates that inode before touching any contents. Do not rename a
+      // candidate: it may have been replaced since discovery.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const candidates = [checkout, ...(await readdir(parent)).map(entry => join(parent, entry))]
+        for (const candidate of candidates) {
+          if (!await isCheckout(candidate)) continue
+          try {
+            const result = await exec(process.execPath, ["--input-type=module", "--eval", `
+              import { lstat, readdir, rm } from "node:fs/promises"
+              const info = await lstat(".", { bigint: true })
+              if (String(info.dev) === process.argv[1] && String(info.ino) === process.argv[2]) {
+                for (const entry of await readdir(".")) {
+                  await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 })
+                }
+                process.stdout.write("cleaned")
+              }
+            `, String(checkoutIdentity.dev), String(checkoutIdentity.ino)], { cwd: candidate, maxBuffer })
+            // Retain the empty inode. Node has no inode-conditional rmdir;
+            // removing its pathname could delete an empty replacement.
+            if (result.stdout === "cleaned") return
+          }
+          catch (error) {
+            // A move before cwd resolution needs another discovery pass.
+            // SAFETY: execFile rejects with an Error; its optional code identifies cwd resolution failures.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+          }
+        }
+      }
+      throw new Error(`[vitehub] Could not locate disposable checkout for cleanup: ${checkout}`)
+    }
+
     const operation = controlledOperation(options)
     try {
       const baseAuth = await access({
@@ -730,17 +740,20 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         await exec("git", ["check-ref-format", `refs/heads/${pullRequest.headRef}`], commandOptions)
         if (pullRequest.headRef.startsWith("-")) throw agentDiagnostics.AGENT_R0766({ message: "A pull request headRef cannot start with a dash." })
       }
-      await exec("git", ["clone", "--filter=blob:none", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
+      // Provider workspaces must be self-contained. A blobless partial clone
+      // defers file objects to a lazy network fetch, which is unavailable to
+      // isolated agent runs when they inspect a full PR diff.
+      await exec("git", ["clone", "--no-checkout", "--", `https://github.com/${pullRequest.repository}.git`, checkout], commandOptions)
       if (pullRequest.headRef) {
         // Fetch the source branch: GitHub's synthetic pull refs can lag a push.
         const sourceRepository = pullRequest.headRepository ?? pullRequest.repository
         const sourceAuth = sourceRepository === pullRequest.repository ? baseAuth : await access({ refresh: true, repository: sourceRepository, signal: operation.signal })
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", `https://github.com/${sourceRepository}.git`, `refs/heads/${pullRequest.headRef}`], { ...commandOptions, env: { ...env, ...sourceAuth.env } })
-        await exec("git", ["-C", checkout, "checkout", "-B", pullRequest.headRef, "FETCH_HEAD"], commandOptions)
+        await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "-B", pullRequest.headRef, "FETCH_HEAD"], commandOptions)
       }
       else {
         await exec("git", ["-C", checkout, "fetch", "--no-tags", "--", "origin", pullRequest.headSha], commandOptions)
-        await exec("git", ["-C", checkout, "checkout", "--detach", "FETCH_HEAD"], commandOptions)
+        await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "checkout", "--detach", "FETCH_HEAD"], commandOptions)
       }
       await exec("git", ["-C", checkout, "remote", "set-url", "origin", `https://github.com/${pullRequest.repository}.git`], commandOptions)
       const pushUrl = pullRequest.headRepository
@@ -805,7 +818,9 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
     }
     finally {
       operation.close()
-      await rm(checkout, { force: true, recursive: true })
+      // Cleanup is best effort. Preserve the callback result or error when
+      // the checkout moved or filesystem discovery fails.
+      await cleanupCheckout().catch(() => undefined)
     }
   }
 

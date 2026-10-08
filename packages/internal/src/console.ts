@@ -30,6 +30,8 @@ export interface ViteHubConsoleRecord {
   cells: Readonly<Record<string, string>>
   fields: readonly ViteHubDefinitionField[]
   id: string
+  /** The Console can run this record when it represents a runnable Schedule Definition. */
+  runnable?: boolean
 }
 
 /** Serializable description of a Console section. The Console UI in `vite-hub` renders the view. */
@@ -102,7 +104,6 @@ const runtimeModulePattern = /^@vite-hub\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/
 const runtimeExportPattern = /^[A-Za-z_$][\w$]*$/
 
 export function isViteHubConsoleSectionId(value: unknown): value is string {
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This public boundary validates untrusted section ids before applying the route pattern.
   return typeof value === "string" && sectionIdPattern.test(value)
 }
 

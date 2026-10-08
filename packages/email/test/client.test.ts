@@ -43,6 +43,11 @@ describe("createEmail", () => {
     expect(() => createEmail({ driver: {} as EmailDriver })).toThrow("name")
   })
 
+  it("rejects an inherited driver marker", () => {
+    const definition = Object.create({ driver: fixtureDriver() })
+    expect(() => createEmail(definition as never)).toThrow("expects an object with a driver")
+  })
+
   it("preserves the portable message contract and normalizes the result", async () => {
     const driver = fixtureDriver()
     const client = createEmail({ driver })
@@ -58,13 +63,15 @@ describe("createEmail", () => {
   })
 
   it("resolves a lazy driver for each send", async () => {
-    const factory = vi.fn(() => fixtureDriver())
+    const initialize = vi.fn()
+    const factory = vi.fn(() => ({ ...fixtureDriver(), initialize }))
     const client = createEmail({ driver: factory })
 
     await client.send(message)
     await client.send(message)
 
     expect(factory).toHaveBeenCalledTimes(2)
+    expect(initialize).toHaveBeenCalledTimes(2)
   })
 
   it("keeps an eager driver's lifecycle across sends", async () => {

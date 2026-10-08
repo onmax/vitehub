@@ -15,7 +15,7 @@ import { createCloudflareQueueRuntimeClient } from "../src/internal/runtime/clou
 import { createQueueClient } from "../src/runtime/create-client.ts"
 import { createQueueVercelServer } from "../src/internal/runtime/vercel-vite.ts"
 import { createVercelQueueRuntimeClient } from "../src/internal/runtime/vercel-client.ts"
-import { enterQueueRuntimeEvent, getQueueRuntimeClientFactory, getQueueRuntimeEvent, missingQueueDefinitionError, runWithQueueRuntimeEvent, setQueueRuntimeConfig, setQueueRuntimeRegistry } from "../src/internal/runtime/state.ts"
+import { enterQueueRuntimeEvent, getQueueRuntimeClientFactory, getQueueRuntimeEvent, loadQueueDefinition, missingQueueDefinitionError, runWithQueueRuntimeEvent, setQueueRuntimeConfig, setQueueRuntimeRegistry } from "../src/internal/runtime/state.ts"
 
 import type { VercelQueueCallbackOptions } from "../src/types.ts"
 
@@ -40,6 +40,14 @@ it("identifies a missing generated Queue Definition", () => {
     code: "QUEUE_R0013",
     message: "Missing queue definition.",
   })
+})
+
+it("does not load inherited Queue Definitions", async () => {
+  const inherited = async () => ({ handler: async () => {} })
+  const registry = Object.create({ inherited }) as import("../src/types.ts").QueueDefinitionRegistry
+  setQueueRuntimeRegistry(registry)
+
+  await expect(loadQueueDefinition("inherited")).resolves.toBeUndefined()
 })
 
 vi.mock("@vercel/queue", () => ({
@@ -94,6 +102,32 @@ describe("cloudflare queue runtime", () => {
     })
     await vercel.send("vercel")
     expect(vercelSend).toHaveBeenCalledWith("topic", "vercel", expect.any(Object))
+  })
+
+  it("rejects inherited Cloudflare binding methods", () => {
+    const inherited = {
+      send: async () => {},
+      sendBatch: async () => {},
+    }
+
+    expect(() => createCloudflareQueueClient({
+      binding: Object.create(inherited),
+      provider: "cloudflare",
+    })).toThrow("Cloudflare queue binding is invalid.")
+  })
+
+  it("accepts Cloudflare bindings implemented by a class", async () => {
+    class QueueBinding {
+      async send() {}
+      async sendBatch() {}
+    }
+
+    const client = createCloudflareQueueClient({
+      binding: new QueueBinding(),
+      provider: "cloudflare",
+    })
+
+    await expect(client.send("message")).resolves.toMatchObject({ status: "queued" })
   })
 
   it("rejects region for single and batch sends while forwarding supported options", async () => {
@@ -192,6 +226,28 @@ describe("cloudflare queue runtime", () => {
     expect(report.mock.calls[0]?.[1]).toMatchObject({ queue: "image-expiry", retryable: true })
   })
 
+  it.each([
+    ["inherited", Object.create({ retry: { delaySeconds: 30 } })],
+    ["callable", Object.assign(() => undefined, { retry: { delaySeconds: 30 } })],
+    ["array", Object.assign([], { retry: { delaySeconds: 30 } })],
+  ])("ignores %s Cloudflare retry directives", async (_kind, action) => {
+    const retry = vi.fn()
+    const onError = vi.fn(() => action)
+    const batchHandler = createCloudflareQueueBatchHandler({
+      onError,
+      onMessage: async () => { throw new Error("boom") },
+    })
+
+    await batchHandler({
+      ackAll: vi.fn(),
+      messages: [{ ack: vi.fn(), attempts: 1, body: "fail", id: "1", retry }],
+      queue: "queue--666f6f",
+      retryAll: vi.fn(),
+    })
+
+    expect(retry).toHaveBeenCalledWith()
+  })
+
   it("maps Cloudflare send failures without exposing provider payloads", async () => {
     const cause = new Error("Bearer secret-token failed at https://queue.example/private")
     const binding = {
@@ -244,6 +300,26 @@ describe("cloudflare queue runtime", () => {
     })
     expect(error.details).toBeUndefined()
     expect(JSON.stringify(error)).not.toMatch(/secret-token|queue\.example|private|https:/)
+  })
+
+  it("rejects inherited Queue Definition markers", async () => {
+    const handler = vi.fn(async () => {})
+    setQueueRuntimeRegistry({
+      inherited: async () => Object.create({ default: { handler } }),
+    })
+
+    await expect(runQueue("inherited", { email: "ava@example.com" })).rejects.toMatchObject({ code: "QUEUE_DEFINITION_NOT_FOUND" })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it("rejects inherited Queue Definition handlers", async () => {
+    const handler = vi.fn(async () => {})
+    setQueueRuntimeRegistry({
+      inherited: async () => Object.create({ handler }),
+    })
+
+    await expect(runQueue("inherited", { email: "ava@example.com" })).rejects.toMatchObject({ code: "QUEUE_DEFINITION_NOT_FOUND" })
+    expect(handler).not.toHaveBeenCalled()
   })
 
   it("maps Queue Definition loader failures while retaining the internal cause", async () => {
@@ -726,6 +802,23 @@ describe("vercel provider", () => {
     expect(JSON.stringify(error)).not.toMatch(/providerSecret|missing-message-id|cause/)
   })
 
+  it("rejects inherited Vercel SDK exports", async () => {
+    const inherited = {
+      QueueClient: class {
+        send = async () => ({ messageId: "inherited" })
+        handleCallback = () => async () => new Response("inherited")
+      },
+    }
+    Object.defineProperty(globalThis, "__vitehubVercelQueue", {
+      configurable: true,
+      value: Object.create(inherited),
+    })
+
+    await expect(createVercelQueueClient({ provider: "vercel", region: "iad1", topic: "topic--77656c636f6d65" })).rejects.toMatchObject({
+      code: "VERCEL_QUEUE_SDK_INVALID",
+    })
+  })
+
   it("redacts Vercel SDK load failures while retaining the internal cause", async () => {
     const cause = new Error("Cannot load secret-token from https://queue.example/private")
     Object.defineProperty(globalThis, "__vitehubVercelQueue", {
@@ -852,6 +945,31 @@ describe("vercel provider", () => {
     await runWithQueueRuntimeEvent({ node: { req: { headers: { "x-vercel-id": "iad1::request" } } } }, () => runQueue("welcome", { email: "ava@example.com" }))
     expect(vercelQueueMock.options).toEqual({ region: "iad1" })
   })
+
+  it.each([
+    { explicit: "sfo1", queue: "fra1", runtime: "iad1", expected: "sfo1" },
+    { explicit: undefined, queue: "fra1", runtime: "iad1", expected: "fra1" },
+    { explicit: undefined, queue: undefined, runtime: "iad1", expected: "iad1" },
+  ])("shares globally selected region $expected across request contexts", async ({ explicit, queue, runtime, expected }) => {
+    if (queue) process.env.QUEUE_REGION = queue;
+    process.env.VERCEL_REGION = runtime;
+    setQueueRuntimeConfig({ provider: "vercel", region: explicit }, createVercelQueueRuntimeClient);
+    setQueueRuntimeRegistry({ welcome: async () => ({ handler: async () => {} }) });
+    const first = await runWithQueueRuntimeEvent({ request: new Request("https://example.com", { headers: { "ce-vqsregion": "ams1" } }) }, () => dynamicQueue.get("welcome"));
+    const second = await runWithQueueRuntimeEvent({ node: { req: { headers: { "x-vercel-id": "hnd1::request" } } } }, () => dynamicQueue.get("welcome"));
+    expect(first).toBe(second);
+    expect(vercelQueueMock.options).toEqual({ region: expected });
+  });
+
+  it("prefers the queue-region header while keeping request-selected clients separate", async () => {
+    setQueueRuntimeConfig({ provider: "vercel" }, createVercelQueueRuntimeClient);
+    setQueueRuntimeRegistry({ welcome: async () => ({ handler: async () => {} }) });
+    const first = await runWithQueueRuntimeEvent({ request: new Request("https://example.com", { headers: { "ce-vqsregion": "fra1", "x-vercel-id": "iad1::request" } }) }, () => dynamicQueue.get("welcome"));
+    expect(vercelQueueMock.options).toEqual({ region: "fra1" });
+    const second = await runWithQueueRuntimeEvent({ req: { headers: new Headers({ "ce-vqsregion": "hnd1" }) } }, () => dynamicQueue.get("welcome"));
+    expect(first).not.toBe(second);
+    expect(vercelQueueMock.options).toEqual({ region: "hnd1" });
+  });
 
   it("uses Vercel waitUntil for deferred dispatch", async () => {
     process.env.VERCEL_REGION = "iad1"

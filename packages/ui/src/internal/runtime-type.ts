@@ -1,4 +1,4 @@
-import { uiErrorDiagnostics } from "../error-diagnostics.ts"
+import { runtimeErrorDiagnostics } from "@vite-hub/runtime"
 type RuntimeTypeMap = {
   bigint: bigint;
   boolean: boolean;
@@ -44,7 +44,7 @@ export function hasRuntimeType<TType extends keyof RuntimeTypeMap>(
     case "string": return isPrimitive && tag === "[object String]";
     case "symbol": return isPrimitive && tag === "[object Symbol]";
   }
-  throw uiErrorDiagnostics.UI_R0003({ message: `Unsupported runtime type: ${expected}` });
+  throw runtimeErrorDiagnostics.RUNTIME_R0008({ message: `Unsupported runtime type: ${expected}` });
 }
 
 export function runtimeType(value: unknown): keyof RuntimeTypeMap {

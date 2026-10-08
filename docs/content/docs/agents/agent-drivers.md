@@ -95,7 +95,7 @@ export default defineAgent({
 })
 ```
 
-`credentials` accepts the contents of Codex `auth.json`, a sealed Server Env value, or an invocation-time resolver. This lets a Kubernetes secret or an [Env provider](/docs/server-primitives/env#read-external-env-storage) supply auth without startup file plumbing. ViteHub resolves it for each invocation, validates the JSON object, and projects it as a `0600` file inside a `0700` Codex Home. Provisioned credentials require a POSIX host; ViteHub rejects them on Windows because these file modes cannot guarantee owner-only access there. The value never enters the provider environment or inspection output.
+`credentials` accepts the contents of Codex `auth.json`, a sealed Server Env value, or an invocation-time resolver. This lets a Kubernetes secret or an [Env provider](/docs/env/server-api#read-external-env-storage) supply auth without startup file plumbing. ViteHub resolves it for each invocation, validates the JSON object, and projects it as a `0600` file inside a `0700` Codex Home. Provisioned credentials require a POSIX host; ViteHub rejects them on Windows because these file modes cannot guarantee owner-only access there. The value never enters the provider environment or inspection output.
 
 A named `credentialProfile` shares one writable Home between Drivers in the process and stores it at `.vitehub/data/codex/<credentialProfile>`. ViteHub serializes Codex runtime access to the profile, so one Codex process owns that Home at a time. Codex can refresh `auth.json` there. ViteHub fingerprints the last external seed, preserves Codex's refreshed file while that seed is unchanged, and replaces the file on the next invocation when the resolver returns a rotated value.
 
@@ -140,6 +140,81 @@ launch: ({ command, providerCommand }) => ({
 })
 ```
 
+### Route model requests through a gateway
+
+Set `gateway` to send the provider's model requests to an LLM proxy or gateway. Import a preset from `vite-hub/agent/gateways`. Like a Nuxt module, each preset reads its URL and key from the environment, so the code names only the gateway:
+
+```ts [server/agents/review/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+import { cliproxy, cloudflareAccess } from 'vite-hub/agent/gateways'
+
+export default defineAgent({
+  driver: {
+    kind: 'codex',
+    model: 'gpt-5.5',
+    // Reads CLIPROXY_URL, CLIPROXY_API_KEY, CF_ACCESS_CLIENT_ID, and CF_ACCESS_CLIENT_SECRET.
+    gateway: cliproxy({ headers: cloudflareAccess() }),
+  },
+})
+```
+
+```sh [.env]
+CLIPROXY_URL=https://proxy.example.com
+CLIPROXY_API_KEY=...
+CF_ACCESS_CLIENT_ID=...
+CF_ACCESS_CLIENT_SECRET=...
+```
+
+Pass a value to override its variable, for example `cliproxy({ url: 'https://proxy.example.com', apiKey: () => useServerEnv().proxyKey })`.
+
+Each preset knows the base URL that each Driver expects, so one gateway definition works for Codex and Claude Code:
+
+| Preset | Codex base URL | Claude Code base URL | Variables |
+| --- | --- | --- | --- |
+| `cliproxy()` | `<url>/v1` | `<url>` | `CLIPROXY_URL`, `CLIPROXY_API_KEY` |
+| `litellm()` | `<url>/v1` | `<url>` | `LITELLM_URL`, `LITELLM_API_KEY` |
+| `ollama()` | `<url>/v1` | `<url>` | `OLLAMA_URL` (default `http://localhost:11434`), `OLLAMA_API_KEY` (default `ollama`) |
+| `openrouter()` | `https://openrouter.ai/api/v1` | `https://openrouter.ai/api` | `OPENROUTER_API_KEY` |
+| `vercel()` | `https://ai-gateway.vercel.sh/codex/v1` | `https://ai-gateway.vercel.sh/claude-code` | `AI_GATEWAY_API_KEY`, then `VERCEL_OIDC_TOKEN` |
+| `openai()` | `https://api.openai.com/v1` | | `OPENAI_API_KEY` |
+| `anthropic()` | | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` |
+
+`cloudflareAccess()` returns the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers for a gateway behind Cloudflare Access. It reads `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`, or takes `{ clientId, clientSecret }`.
+
+Each value first reads its canonical name, `VITEHUB_` and the Server Env path in upper snake case, then the vendor name in the table. `cliproxy()` reads `VITEHUB_CLIPROXY_API_KEY`, then `CLIPROXY_API_KEY`, and `cloudflareAccess()` reads `VITEHUB_CLOUDFLARE_ACCESS_CLIENT_ID`, then `CF_ACCESS_CLIENT_ID`. See [Server Env variable names](/docs/env/configure).
+
+ViteHub finds the presets in Agent files and declares their variables in Server Env as `env.server.<preset>.<field>`, for example `env.server.cliproxy.apiKey`. The Console shows them, `useServerEnv()` types them, and an [Env provider](/docs/env/server-api#read-external-env-storage) can supply them. Your own declaration of a field wins. The values are optional: a server that hosts Agents without the gateway still starts. Without `hubEnv()`, presets read the host variables directly.
+
+`url` is the gateway origin. A trailing `/v1` is removed. Every preset accepts `apiKey` and `headers`. `apiKey` and each header value accept a string, a sealed Server Env value, or an invocation-time resolver that may return `undefined`. ViteHub reads values for each invocation. A missing URL, key, or header value fails the invocation with `AGENT_R0980`, `AGENT_R0977`, or `AGENT_R0978` and names the variable to set. A preset that does not serve the selected Driver fails at definition time with `AGENT_R0976`.
+
+Use `defineGateway()` for an endpoint without a preset:
+
+```ts
+import { defineGateway } from 'vite-hub/agent/gateways'
+
+export const gateway = defineGateway({
+  name: 'internal',
+  baseURL: { 'codex': 'https://llm.example.com/openai/v1', 'claude-code': 'https://llm.example.com/anthropic' },
+  apiKeyEnv: ['INTERNAL_LLM_KEY'],
+  auth: 'x-api-key',
+})
+```
+
+`auth` selects how the gateway receives the key. `'bearer'`, the default, sends `Authorization: Bearer <key>`. `'x-api-key'` sends `x-api-key: <key>`.
+
+`apiKeyEnv` reads host variables, not Server Env. Use `apiKey: () => useServerEnv().internal.key` when the key is declared in Server Env. A `baseURL` entry can also be a resolver, so the URL can come from Server Env for each invocation.
+
+ViteHub converts the gateway to each provider's own configuration:
+
+- Codex receives a generated `vitehub` model provider through `-c` overrides: `base_url`, `wire_api = "responses"`, `env_key`, and `env_http_headers`. The key and the header values go in the provider environment as `VITEHUB_GATEWAY_API_KEY` and `VITEHUB_GATEWAY_HEADER_<n>`. The launch arguments contain only variable names. The gateway overrides come after `providerSettings.launchArgs`, so they take precedence.
+- Claude Code receives `ANTHROPIC_BASE_URL`, the key in `ANTHROPIC_AUTH_TOKEN` (bearer) or `ANTHROPIC_API_KEY` (x-api-key) with the other variable set to empty, and `ANTHROPIC_CUSTOM_HEADERS`.
+
+The gateway owns these variables. Setting one of them, or `T3CODE_CODEX_LAUNCH_ARGS` for Codex, in `driver.env` fails with `AGENT_R0979`. A gateway replaces `credentials` and `credentialProfile`, including values inherited through `defineAgent({ extends })`. A `launch` wrapper receives the gateway variable names in `requiredEnvironment`, so SSH runners forward them. Agent inspection reports the gateway name and `executionAuthority.credentials: "provisioned"`. `agent.status()` does not cache results for an Agent with a gateway.
+
+ViteHub does not forward ambient variables such as `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, or `CLIPROXY_API_KEY` to the provider. Use a gateway or `driver.env` to select them.
+
+A gateway changes where requests go, not their protocol. The endpoint must accept OpenAI Responses requests from Codex and Anthropic Messages requests from Claude Code, and `model` must be a model ID that the gateway accepts. The key and header values are in the provider process environment, so commands that the provider runs can read them. Treat a gateway key as available to the Agent. Prefer API keys: routing a Claude subscription sign-in through a proxy is not permitted by [Anthropic's terms](https://code.claude.com/docs/en/legal-and-compliance).
+
 ### Run in an existing directory
 
 By default, each invocation receives a new temporary working directory. Set `cwd` when the provider must run in a directory that the application prepares, such as a disposable local checkout that is also the Workspace's local store root:
@@ -160,6 +235,26 @@ export default defineAgent({
 
 The directory is the working copy. ViteHub still materializes Workspace Sources, but it does not start a Workspace session. It does not copy Workspace files into the directory, create a Git baseline, compute a diff, write changes back, or remove the directory. Generated instruction and Skill files are restored after the provider stops. When the directory is a Git repository root, Git ignores the generated files while the provider runs, so provider commits do not include them. Title and progress summary runs ignore `cwd` and use a temporary directory. The application owns the directory's contents, cleanup, and isolation between concurrent invocations. Agent inspection reports whether `cwd` is static or dynamic without resolving it.
 
+### Provision the project toolchain
+
+Set `toolchain` when the provider works on a JavaScript project that pins its own Node.js and package manager. It uses the same declaration as [`box.toolchain`](/docs/agents/boxes#provision-nodejs-and-the-package-manager):
+
+```ts [server/agents/review/agent.ts]
+import { defineAgent } from 'vite-hub/agent'
+
+export default defineAgent({
+  driver: {
+    kind: 'codex',
+    permissions: 'allow-all',
+    toolchain: 'project',
+  },
+})
+```
+
+After ViteHub prepares the pull request checkout, the Workspace, or `cwd`, it reads the pins from that directory, provisions them on this host under `$XDG_CACHE_HOME/vitehub/toolchains`, and checks `node -v` and the package manager version. The toolchain `bin` directories come before the host `PATH` for the provider process, every command it starts, and Workspace commands. With a pull request mounted below the Workspace root, ViteHub reads the pins from that mount. A launcher from `launch` receives the same `PATH` in its environment, so it must run on this host. Provider CLIs that start through `#!/usr/bin/env node`, such as the npm Codex package, also run on the project's Node.js. Title and progress summary runs do not provision a toolchain.
+
+`status()` does not report `node`, `npm`, `npx`, `pnpm`, `pnpx`, `yarn`, or `yarnpkg` as missing when `toolchain` is set, because the toolchain exists only after an invocation prepares its checkout. With `box`, declare `box.toolchain` instead; the Agent rejects `driver.toolchain` with `AGENT_R0972`.
+
 Threads resume with the provider's opaque cursor. ViteHub normalizes assistant text, reasoning, native and Capability tool activity, approvals, provider questions, usage, warnings, errors, and terminal state into Agent Invocation events.
 
 | Option | Purpose |
@@ -175,10 +270,11 @@ Threads resume with the provider's opaque cursor. ViteHub normalizes assistant t
 | `instructions` | Invocation-scoped instructions composed with colocated instructions. |
 | `launch` | Provider command wrapper or invocation-time resolver. Receives the provider executable, working directory, selected environment, and abort signal. |
 | `cwd` | Optional existing directory or invocation-time resolver. The provider runs there without a Workspace session, write-back, or removal. See [Run in an existing directory](#run-in-an-existing-directory). |
-| `permissions` | `"ask"`, `"allow-edits"`, or `"allow-all"`; defaults to `"ask"`. Set `"allow-all"` explicitly to run provider actions without approval. |
+| `permissions` | `"ask"`, `"allow-edits"`, `"allow-edits-unattended"`, or `"allow-all"`; defaults to `"ask"`. `"allow-edits-unattended"` keeps the provider edit mode and denies native permission escalation without prompting. Host-bound MCP tools keep their separate authorization. Set `"allow-all"` explicitly to run provider actions without approval. |
 | `providerSettings` | Advanced settings passed to the embedded provider runtime. Explicit settings override the installed Codex executable fallback. |
 | `requirements` | Command names that `status()` checks where the Driver runs. Missing commands are reported in `missingCommands`. |
 | `sessionStorePath` | Optional SQLite file for provider session cursors. Enables thread continuation after a process restart on the same persistent host volume. |
+| `toolchain` | `"project"` or `{ node, packageManager, fallbackNode }`. Provisions project-pinned Node.js and package manager for the provider and its commands. See [Provision the project toolchain](#provision-the-project-toolchain). |
 | `output` | Optional structured Agent output contract. |
 | `capacity` | Optional process-local static or adaptive concurrency and queue limits. |
 
@@ -240,6 +336,8 @@ export default defineAgent({
 ```
 
 The callback receives prepared input, messages, tools, Workspace access, invocation context, and the resolved Actor as both `actor` and `invoker`. A custom run callback may call a model internally, but ViteHub treats that execution and usage as application-owned behavior.
+
+ViteHub cannot stop a custom run callback. When a user cancels the Invocation, `input.abortSignal` aborts, and the cancel result reports `notEnforcedBy: 'run'`. Pass the signal to your own I/O, or throw `input.abortSignal.reason`, to stop early. Model-backed and provider-backed Drivers stop on cancel. See [Cancel an invocation](/docs/agents/invocations#cancel-an-invocation).
 
 Read [Instructions](/docs/agents/instructions) for model-facing behavior and [Workspace context](/docs/agents/workspace-context) for files and writeback.
 
@@ -327,7 +425,7 @@ export default defineAgent({
 
 State, instructions, and criteria accept JSON values. Root numbers and booleans become text for the `advocaat` Entry contract. Numbers and booleans inside objects or arrays stay native. Score legends retain the original level descriptions.
 
-`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/capabilities/llm-gate) or [`llmRoute()`](/docs/capabilities/llm-route) without a `model`, the decision also uses Jev.
+`driver.ask` accepts only `ask` and `capacity`. Missing `advocaat`, a missing `typesafe` group, and a missing TypeSafe API key fail the Invocation with a diagnostic. The Console and `vitehub agent info` show the Driver kind as `ask`. When an ask Driver Agent uses [`llmGate()`](/docs/agents/capabilities/llm-gate) or [`llmRoute()`](/docs/agents/capabilities/llm-route) without a `model`, the decision also uses Jev.
 
 ### Provider exit evidence
 

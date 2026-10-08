@@ -1,3 +1,4 @@
+import type { EnvAccessContext } from "@vite-hub/env/bridge"
 import type { EnvDatabase } from "@vite-hub/env/database"
 
 /** Maximum name length that fits the Env Bridge `connection/<name>` key. */
@@ -234,10 +235,14 @@ export interface ConnectionEffect {
 }
 
 export interface UseConnectionOptions {
-  /** Actor for policy and activity, for example `schedule:gmail`. Defaults to `server`. */
+  /** The Env access context of the calling Agent. The ViteHub Agent runtime creates it. An `agent:` actor comes only from it. */
+  access?: EnvAccessContext
+  /** Actor for policy and activity, for example `schedule:gmail`. Defaults to `server`. `agent:` actors need `access`. */
   actor?: string
   /** Skip provider calls for writes and report each skipped write to `onEffect`. */
   dryRun?: boolean
+  /** Reject approval-gated calls without storing a replay request when the caller needs the response immediately. */
+  rejectApprovals?: boolean
   invocationId?: string
   onEffect?: (effect: ConnectionEffect) => void
   traceId?: string

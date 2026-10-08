@@ -1,18 +1,13 @@
+import { envAccessActor } from "@vite-hub/env/internal/connections"
+
 import type { EnvActor } from "@vite-hub/env/bridge"
 
 import { ConnectionError } from "./errors.ts"
 
-import { isConnectionReadMethod } from "./types.ts"
-import type { ConnectionAccessRule, ConnectionActionInfo, ConnectionApiCatalog, ConnectionDefinition } from "./types.ts"
+import { matchesPattern } from "./catalog.ts"
+import type { ConnectionAccessRule, ConnectionDefinition, UseConnectionOptions } from "./types.ts"
 
 export type ConnectionDecision = "allow" | "approve" | "deny"
-
-/** Match an id against a pattern with an optional trailing `.*`. */
-export function matchesPattern(id: string, pattern: string): boolean {
-  if (pattern === "*") return true
-  if (pattern.endsWith(".*")) return id.startsWith(pattern.slice(0, -1))
-  return id === pattern
-}
 
 /** Validate an actor string and map it to an Env Bridge actor. */
 export function envActor(actor: string): EnvActor {
@@ -27,33 +22,19 @@ export function envActor(actor: string): EnvActor {
   return mapped
 }
 
-/** The provider API catalogs of a definition, by API name. */
-export function providerApis(definition: ConnectionDefinition): Readonly<Record<string, ConnectionApiCatalog>> {
-  // SAFETY: ConnectionProvider maps each named API to a ConnectionApiCatalog; the default object generic erases those keys.
-  return definition.provider.apis as Readonly<Record<string, ConnectionApiCatalog>>
-}
-
-/** List the API methods that a definition exposes, as action ids. */
-export function connectionActions(definition: ConnectionDefinition): ConnectionActionInfo[] {
-  const apis = providerApis(definition)
-  // SAFETY: ConnectionApiSelection maps each named API to optional string patterns; the default object generic erases those keys.
-  const selection = definition.api as Readonly<Record<string, readonly string[] | undefined>> | undefined
-  const actions: ConnectionActionInfo[] = []
-  for (const [api, catalog] of Object.entries(apis)) {
-    const patterns = selection ? selection[api] : ["*"]
-    if (!patterns?.length) continue
-    for (const [method, [httpMethod]] of Object.entries(catalog.methods)) {
-      if (!patterns.some(pattern => matchesPattern(method, pattern))) continue
-      const write = !isConnectionReadMethod(httpMethod)
-      actions.push({
-        highRisk: write && (catalog.highRisk ?? []).some(pattern => matchesPattern(method, pattern)),
-        id: `${api}.${method}`,
-        method: httpMethod,
-        write,
-      })
+/** Resolve the caller. An Agent actor comes only from an Env context that the Agent runtime created. */
+export function callerActor(options: Pick<UseConnectionOptions, "access" | "actor">): string {
+  if (options.access) {
+    const actor = envAccessActor(options.access)
+    if (actor.kind !== "agent" || options.actor !== undefined) {
+      throw new ConnectionError("invalid", "Connection `access` must be the Env access context of an Agent, without `actor`.")
     }
+    return `agent:${actor.id}`
   }
-  return actions
+  if (options.actor?.startsWith("agent:")) {
+    throw new ConnectionError("invalid", "Agent actors come from the Agent runtime. Use the Connection capabilities of the Agent.")
+  }
+  return options.actor ?? "server"
 }
 
 function allowsWrite(rule: ConnectionAccessRule, action: string, highRisk: boolean): boolean {

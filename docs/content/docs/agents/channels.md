@@ -8,7 +8,7 @@ icon: i-lucide-radio
 
 A Channel describes where an Agent Invocation came from and how replies return there. It carries transport, event, thread, message, and delivery facts. It does not prove who the caller is.
 
-Use [Agent Actors](/docs/agents/actors) for trusted identity and [Input Commands](/docs/capabilities/input-commands) for explicit command handling.
+Use [Agent Actors](/docs/agents/actors) for trusted identity and [Input Commands](/docs/agents/capabilities/input-commands) for explicit command handling.
 
 ## Add a Channel
 
@@ -28,6 +28,8 @@ export default defineAgent({
 ```
 
 Built-in helpers include `discord()`, `github()`, [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
+
+`teams()` instructs the Agent to cite sources with descriptive Markdown links to verified URLs. Chat SDK Channel delivery labels unresolved native web citations as `[source link unavailable]`, including during streaming. Codex app-server does not supply a citation-ID-to-URL map, so ViteHub cannot recover those links from the IDs. Ordinary source links remain intact.
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
@@ -104,7 +106,7 @@ The Console shows the recorded call, such as `label(["Receipts"])`. The call tex
 
 ## Replay Channel history
 
-Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/server-primitives/source#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID.
+Add `history` to a Channel to run an Agent on messages that arrived before the Agent existed, or to run them again after a change. `history.collection` is a [Collection](/docs/source/server-api#expose-a-typed-collection). Each item has the shape of the Channel trigger input, so a replayed message takes the same trigger path as a live one. `history.key` returns a stable key for each item, such as the provider message ID.
 
 ```ts [server/agents/labeller.ts]
 import { defineAgent } from 'vite-hub/agent'
@@ -291,6 +293,10 @@ export default defineAgent({
 
 Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent invocation slots per repository and pull request. The default is `1`. Set a positive integer such as `4` to allow up to four deliveries for the same pull request to run together. Other pull requests have separate limits. ViteHub ignores bot-authored `synchronize` events to prevent a bot push from immediately triggering itself. Existing slash commands still work when reconciliation is enabled. Reconciliation starts work; merge policy and any required human consent remain application-owned instructions or Capabilities.
 
+Persisted inline webhook executions have a 15-minute default deadline. Set `messages.timeout` in milliseconds to change it, for example `30 * 60_000`. A timeout on the persisted Invocation input takes precedence. The selected timeout must be positive, finite, and at most `2_147_483_647` milliseconds; invalid values use the 15-minute default. Replayed or rehydrated Invocation input can override the deadline after setup, with elapsed setup time deducted. Setup remains bounded by the initial deadline. The deadline includes workspace preparation and cancels the Invocation when it expires.
+
+Queued GitHub reconciliation reloads the PR head, comments, and files before the Driver starts, so each Invocation uses the current PR state. Eligibility is decided when the delivery is accepted and is preserved while queued. Use the default `concurrencyLimit: 1` for tasks that write to the same PR branch.
+
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 
 When a declared GitHub Source uses the same repository and the same non-root mount, the pull request checkout replaces it for that Invocation. Reads use the pull request head SHA; the declared Source remains unchanged for other Invocations. Different repositories, overlapping parent or child mounts, and Sources contributed by other Capabilities still produce a conflict.
@@ -408,7 +414,9 @@ Install the matching `@chat-adapter/*` package when a built-in Channel uses prov
 
 Built-in Channels read credentials from Server Env under `env.server.<channel>`. ViteHub discovers built-in Channel factories in Agent definitions and declares their fields automatically, so applications usually need no separate Env declaration. Explicit Channel options take precedence over Env values. Declare a field yourself when the host variable name or provider differs from the default.
 
-Use [Server Env](/docs/server-primitives/env) to inspect the discovered fields and their required or secret status. When a Channel is defined outside a discovered Agent file, declare its Env fields explicitly.
+Each field first reads its canonical name, `VITEHUB_` and the path in upper snake case, then its vendor names. `telegram()` reads `VITEHUB_TELEGRAM_BOT_TOKEN`, then `TELEGRAM_BOT_TOKEN`. Use the canonical name when the vendor name is taken, for example `VITEHUB_GITHUB_TOKEN` in CI. See [Server Env variable names](/docs/env/configure).
+
+Use [Server Env](/docs/env) to inspect the discovered fields and their required or secret status. When a Channel is defined outside a discovered Agent file, declare its Env fields explicitly.
 
 For Telegram, ViteHub can own the verified webhook route and synchronize it after deployment:
 
@@ -542,4 +550,4 @@ A Channel and an Agent Invocation are separate records. One Agent Definition can
 
 Use verified Channel metadata to identify the Agent Actor, choose a Capability, or select a Workspace Scope. When a message reaches the wrong Agent, carries the wrong identity, or loses delivery data, inspect the Channel and the [Invocation](/docs/agents/invocations) together.
 
-To send an application message without an Agent, use the [Channels Server Primitive](/docs/server-primitives/channels).
+To send an application message without an Agent, use the [Channels Server Primitive](/docs/channels).

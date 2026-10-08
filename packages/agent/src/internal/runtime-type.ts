@@ -1,4 +1,4 @@
-import { agentDiagnostics } from "../agent-diagnostics.ts"
+import { runtimeErrorDiagnostics } from "@vite-hub/runtime"
 type RuntimeTypeMap = {
   bigint: bigint
   boolean: boolean
@@ -45,7 +45,7 @@ export function hasRuntimeType<TType extends keyof RuntimeTypeMap>(
     case "string": return isPrimitive && tag === "[object String]"
     case "symbol": return isPrimitive && tag === "[object Symbol]"
   }
-  throw agentDiagnostics.AGENT_R0572({ message: `Unsupported runtime type: ${expected}` })
+  throw runtimeErrorDiagnostics.RUNTIME_R0008({ message: `Unsupported runtime type: ${expected}` })
 }
 
 export function isCallableMember<TValue>(value: TValue): value is Extract<TValue, CallableFunction> {

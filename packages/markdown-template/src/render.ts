@@ -5,7 +5,7 @@ import { escapeHtml } from "comark/utils"
 import type { ElementNode, Node } from "comark"
 import type { NodeHandler, NodeRenderData, State } from "comark/render"
 
-import { resolveTemplateAttributes as resolveAttributes } from "./bindings.ts"
+import { resolveTemplateBinding, resolveScalarTemplateBinding, resolveScalarTemplateAttributes, snapshotTemplateData } from "./bindings.ts"
 import { matchesCondition } from "./condition.ts"
 import { markdownTemplateErrorDiagnostics as diagnostics } from "./error-diagnostics.ts"
 import { prepareTemplate } from "./prepare.ts"
@@ -14,6 +14,30 @@ import type { RenderMarkdownTemplateInternalOptions, RenderMarkdownTemplateOptio
 
 const parserOptions = { autoClose: false, autoUnwrap: false, linkify: false, plugins: [binding()] }
 const literalHtmlTags = new Set(["code", "pre", "script", "style", "textarea", "kbd", "samp", "var"])
+const urlAttributesByTag = new Map([
+  ["a", new Set(["href"])],
+  ["area", new Set(["href"])],
+  ["audio", new Set(["src"])],
+  ["base", new Set(["href"])],
+  ["blockquote", new Set(["cite"])],
+  ["button", new Set(["formaction"])],
+  ["del", new Set(["cite"])],
+  ["embed", new Set(["src"])],
+  ["form", new Set(["action"])],
+  ["iframe", new Set(["src"])],
+  ["img", new Set(["src"])],
+  ["input", new Set(["formaction", "src"])],
+  ["ins", new Set(["cite"])],
+  ["link", new Set(["href"])],
+  ["object", new Set(["data"])],
+  ["q", new Set(["cite"])],
+  ["script", new Set(["src"])],
+  ["source", new Set(["src"])],
+  ["track", new Set(["src"])],
+  ["video", new Set(["poster", "src"])],
+])
+// Comark normalizes SVG image tags to img nodes.
+const svgUrlAttributes = new Set(["a", "animate", "feimage", "image", "use"])
 
 export async function renderMarkdownTemplate(template: string, options: RenderMarkdownTemplateOptions = {}): Promise<string> {
   return await renderMarkdownTemplateInternal(template, options)
@@ -26,12 +50,12 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
   const prepared = await prepareTemplate(template)
   const parseOptions = { ...parserOptions, plugins: [...parserOptions.plugins, ...(options.plugins ?? [])] }
   const tree = await parseMarkdown(prepared.template, parseOptions)
-  const data = ownData(options.data ?? {})
+  const data = snapshotTemplateData(options.data ?? {})
   // Comark resolves attributes before custom handlers; only our path resolver may read caller data.
   const renderData = (state: State): NodeRenderData => ({ ...state.renderData, data })
   return prepared.restore((await renderMarkdown(tree, {
     components: {
-      Binding: async (node, state, parent) => state.one(scalarValue(node, renderData(state)), state, parent, true),
+      Binding: async (node, state, parent) => state.one(resolveScalarTemplateBinding(node[1], renderData(state)), state, parent, true),
       If: async (node, state, parent) => {
         const { branches, after } = conditionalBranches(node)
         const selected = branches.find(branch => branch[0] === "else"
@@ -49,7 +73,7 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         if (options.validateFragmentPath && (typeof path !== "string" || !path.startsWith("data.") || !options.validateFragmentPath(path.slice(5)))) {
           throw diagnostics.MARKDOWN_TEMPLATE_R0020({ message: `[vitehub] Markdown template fragment "${String(path)}" must use an allowed data path.` })
         }
-        const value = boundValue(node, renderData(state), "markdown")
+        const value = resolveTemplateBinding(node[1], renderData(state), "markdown")
         if (typeof value !== "string") {
           throw diagnostics.MARKDOWN_TEMPLATE_R0020({ message: `[vitehub] Markdown template Insert markdown prop "${String(path ?? "markdown")}" must resolve to a string.` })
         }
@@ -66,57 +90,56 @@ export async function renderMarkdownTemplateInternal(template: string, options: 
         return await renderNodes(fragment.nodes, literalState(state), parent)
       },
       A: async (node, state, parent) => {
-        if (!Object.hasOwn(node[1], ":href")) return await state.handlers.a!(node, state, parent)
-        const props = resolveAttributes(node[1], renderData(state), { parseJson: true })
-        for (const key of Object.keys(node[1])) {
-          if (key.startsWith(":")) requireScalar(props[key.slice(1)], String(node[1][key]))
-        }
-        const bound = resolveAttributes({ ":value": node[1][":href"] }, renderData(state), { parseJson: true })
-        const href = await safeLinkDestination(requireScalar(bound.value, String(node[1][":href"])), String(node[1][":href"]))
+        const props = resolveScalarTemplateAttributes(node[1], renderData(state))
+        const authoredHtml = node[1].$?.html === 1
+        const sanitized = authoredHtml ? await sanitizeUrlAttributes("a", props, node[1]) : props
+        const href = Object.hasOwn(node[1], ":href")
+          ? await safeLinkDestination(resolveScalarTemplateBinding({ ":value": node[1][":href"] }, renderData(state)), String(node[1][":href"]))
+          : authoredHtml ? sanitized.href : undefined
+        if (href === undefined) return await state.handlers.a!(node, state, parent)
         // SAFETY: Preserve the element tag and children, replacing only its resolved attributes.
-        return await state.handlers.a!([node[0], { ...props, href }, ...node.slice(2)] as ElementNode, state, parent)
+        return await state.handlers.a!([node[0], { ...sanitized, href }, ...node.slice(2)] as ElementNode, state, parent)
       },
       Html: {
-        match: node => node[1].$?.html === 1 && !literalHtmlTags.has(node[0]),
+        match: node => node[1].$?.html === 1,
         handler: async (node, state, parent) => {
           const [tag, attrs, ...children] = node
-          const props = resolveAttributes(attrs, renderData(state), { parseJson: true })
-          for (const key of Object.keys(attrs)) {
-            if (key.startsWith(":")) requireScalar(props[key.slice(1)], String(attrs[key]))
-          }
-          const escaped = Object.fromEntries(Object.entries(props).map(([key, value]) =>
+          const props = resolveScalarTemplateAttributes(attrs, renderData(state))
+          const sanitized = await sanitizeUrlAttributes(tag, props, attrs, state.context.svg === true)
+          const escaped = Object.fromEntries(Object.entries(sanitized).map(([key, value]) =>
             // doctor-disable-next-line typescript/strict/no-runtime-typeof -- String XML attributes need escaping; Comark serializes boolean and numeric attributes.
             [key, typeof value === "string" ? escapeHtml(value) : value]))
           // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Only raw text children of block HTML need Markdown parsing; parsed nodes are rendered directly.
-          const content = attrs.$?.block === 1 && children.every(child => typeof child === "string")
+          const content = attrs.$?.block === 1 && !literalHtmlTags.has(tag) && children.every(child => typeof child === "string")
             ? (await parseMarkdown(children.join(""), parseOptions)).nodes
             : children
-          return await state.handlers.html!([tag, { ...escaped, $: attrs.$ }, ...content], state, parent)
+          // Preserve SVG ancestry across descendants; foreignObject children use HTML semantics.
+          const revert = state.applyContext({ svg: tag.toLowerCase() === "svg" || state.context.svg === true && tag.toLowerCase() !== "foreignobject" })
+          try {
+            return await state.handlers.html!([tag, { ...escaped, $: attrs.$ }, ...content], state, parent)
+          }
+          finally {
+            state.applyContext(revert)
+          }
         },
       },
     },
   })).trim())
 }
 
-function boundValue(node: ElementNode, renderData: NodeRenderData, prop = "value"): unknown {
-  const props = resolveAttributes(node[1], renderData, { parseJson: true })
-  if (props[prop] === undefined || props[prop] === null) {
-    throw diagnostics.MARKDOWN_TEMPLATE_R0017({ message: `[vitehub] Markdown template binding "${String(node[1][`:${prop}`] ?? prop)}" is not defined.` })
+async function sanitizeUrlAttributes(tag: string, props: Record<string, unknown>, source: Record<string, unknown>, svgContext = false): Promise<Record<string, unknown>> {
+  const sanitized = { ...props }
+  for (const [key, value] of Object.entries(props)) {
+    const attribute = key.toLowerCase()
+    const isUrl = urlAttributesByTag.get(tag.toLowerCase())?.has(attribute)
+      || (attribute === "href" || attribute === "xlink:href")
+        && (svgUrlAttributes.has(tag.toLowerCase()) || tag.toLowerCase() === "img" && svgContext)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark attributes include booleans and numbers; only string URL values need destination validation.
+    if (typeof value !== "string" || !isUrl) continue
+    const binding = source[`:${key}`]
+    sanitized[key] = await safeLinkDestination(value, String(binding ?? key), { decodeHtmlEntities: binding === undefined })
   }
-  return props[prop]
-}
-
-function scalarValue(node: ElementNode, renderData: NodeRenderData): string {
-  return requireScalar(boundValue(node, renderData), String(node[1][":value"] ?? "value"))
-}
-
-function requireScalar(value: unknown, path: string): string {
-  if (value === undefined || value === null) {
-    throw diagnostics.MARKDOWN_TEMPLATE_R0017({ message: `[vitehub] Markdown template binding "${path}" is not defined.` })
-  }
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This binding boundary accepts exactly the three scalar representations and rejects objects.
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
-  throw diagnostics.MARKDOWN_TEMPLATE_R0018({ message: `[vitehub] Markdown template binding "${path}" must resolve to a scalar value.` })
+  return sanitized
 }
 
 function literalState(state: State): State {
@@ -157,33 +180,4 @@ function conditionalBranches(node: ElementNode): { branches: ElementNode[], afte
   }
   visit(node)
   return { branches, after }
-}
-
-// Comark resolves inherited properties; expose only the explicit data for this render.
-function ownData<T>(value: T, seen = new WeakMap<object, object>()): T {
-  // Comark resolves inherited properties; expose a stable snapshot of explicit data.
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Clone object properties recursively while preserving scalar values unchanged.
-  if (!value || (typeof value !== "object" && typeof value !== "function")) return value
-  // SAFETY: `value` is an object tracked in this map, so the stored clone has type T.
-  // SAFETY: every value inserted into `seen` is the clone of the corresponding input object.
-  if (seen.has(value)) return seen.get(value) as T
-  const copy = Object.setPrototypeOf(Array.isArray(value) ? [] : {}, null)
-  if (Array.isArray(value)) copy.length = value.length
-  seen.set(value, copy)
-  for (const key of Object.keys(value)) {
-    // SAFETY: callers provide object-like data; indexing by an own enumerable key yields its value.
-    const descriptor = Object.getOwnPropertyDescriptor(value, key)
-    let resolved: unknown
-    let loaded = false
-    const read = () => {
-      if (!loaded) {
-        resolved = ownData(descriptor && "value" in descriptor ? descriptor.value : Reflect.get(value, key), seen)
-        loaded = true
-      }
-      return resolved
-    }
-    Object.defineProperty(copy, key, { enumerable: true, configurable: true, get: read })
-  }
-  // SAFETY: `copy` mirrors the input's enumerable data shape and is returned as the same generic type.
-  return copy as T
 }

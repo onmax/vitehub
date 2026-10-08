@@ -5,8 +5,7 @@ import { files as filesLoader } from "./loaders/files.ts"
 import { contentStreamChunks, normalizeWorkspacePath, sha256 } from "./core/path.ts"
 import { workspaceError } from "./core/errors.ts"
 import { createSourceContext, normalizeWorkspaceSources, sourceMountIntersectsPath, type ResolvedWorkspaceSource } from "./sources/config.ts"
-import { readWorkspaceFileOwner, recordWorkspaceFileOwner, removeWorkspaceFileOwner, removeWorkspaceOwnedFile } from "./sources/file-ownership.ts"
-import { withWorkspaceFileCheckpoint } from "./sources/owned-write.ts"
+import { withWorkspaceFileCheckpoint, readWorkspaceFileOwner, recordWorkspaceFileOwner, removeWorkspaceFileOwner, removeWorkspaceOwnedFile } from "./sources/file-ownership.ts"
 import { prepareWorkspaceSource } from "./sources/preparation.ts"
 import { invalidateSourceSnapshot, readCurrentSourceSnapshot, reconcileRemovedStartupSources, sourceSnapshotOwnsAnyPath } from "./sources/materialization.ts"
 import { invalidateWorkspaceSourceMaterialization } from "./sources/view.ts"
@@ -145,6 +144,17 @@ async function pruneBuildDirectories(store: WorkspaceStore, workspace: string): 
         if (previousUsers) users[path] = previousUsers
         await writeBuildMetadata(store, buildDirectoriesMetaKey(workspace), [...pending])
         await writeBuildMetadata(store, buildDirectoryUsersMetaKey, users)
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Store implementations may throw untyped filesystem errors.
+        const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined
+        // The memory Store uses this specific Workspace error for non-empty removal.
+        const nonEmptyRace = code === "ENOTEMPTY"
+          || (code === "WORKSPACE_FAILED" && error instanceof Error && error.message === `[vitehub] Workspace directory is not empty: ${path}.`)
+        if (nonEmptyRace) {
+          // A concurrent writer won the empty-directory race. Keep the path
+          // owned so a later sync can retry after that writer is finished.
+          retained.push(path)
+          continue
+        }
         throw error
       }
     }

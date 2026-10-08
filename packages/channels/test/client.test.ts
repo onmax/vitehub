@@ -4,6 +4,31 @@ import { createChannel, defineOutboundChannel, useChannel } from "../src/index.t
 import { setChannelRuntimeRegistry } from "../src/runtime/state.ts"
 
 describe("createChannel", () => {
+  it("preserves connector option instances and their private state", async () => {
+    class Destination {
+      #id = "room-1"
+
+      getId() {
+        return this.#id
+      }
+    }
+    const options = Object.assign(new Destination(), { connector: "configured" as const })
+    const send = vi.fn((_text: string, options: Destination) => ({ id: options.getId() }))
+    const channel = createChannel("instances", { connectors: { configured: { send } } })
+
+    await expect(channel.send("message", options)).resolves.toMatchObject([null, { id: "room-1" }])
+    expect(send.mock.calls[0]?.[1]).toBe(options)
+  })
+
+  it("preserves array connector options", async () => {
+    const options = Object.assign(["room-1", "room-2"], { connector: "configured" as const })
+    const send = vi.fn((_text: string, options: string[]) => ({ id: options.join(",") }))
+    const channel = createChannel("arrays", { connectors: { configured: { send } } })
+
+    await expect(channel.send("message", options)).resolves.toMatchObject([null, { id: "room-1,room-2" }])
+    expect(send.mock.calls[0]?.[1]).toBe(options)
+  })
+
   it("selects the connector through send options and normalizes the result", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     const send = vi.fn(async (text: string, options: { chatId: string }) => ({ id: `${text}:${options.chatId}` }))
@@ -15,7 +40,7 @@ describe("createChannel", () => {
       deliveryId: expect.any(String),
       id: "Build finished.:chat-1",
     }])
-    expect(send).toHaveBeenCalledWith("Build finished.", { chatId: "chat-1" })
+    expect(send).toHaveBeenCalledWith("Build finished.", { connector: "telegram", chatId: "chat-1" })
     info.mockRestore()
   })
 
@@ -131,6 +156,52 @@ describe("createChannel", () => {
     }
   })
 
+  it.each(["getter", "descriptor", "enumeration"])("preserves delivery when optional metadata %s throws", async (failure) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {})
+    const metadata = {
+      id: "delivered",
+      providerStatus: "accepted",
+      get raw() { throw new Error("metadata unavailable") },
+    }
+    const result = new Proxy(metadata, {
+      ownKeys(target) {
+        if (failure === "enumeration") throw new Error("cannot enumerate metadata")
+        return Reflect.ownKeys(target)
+      },
+      getOwnPropertyDescriptor(target, key) {
+        if (failure === "descriptor" && key === "raw") throw new Error("cannot inspect metadata")
+        return Reflect.getOwnPropertyDescriptor(target, key)
+      },
+    })
+    const send = vi.fn(() => result)
+    try {
+      const channel = createChannel("alerts", { connectors: { configured: { send } } })
+      const [error, receipt] = await channel.send("Build finished.", { connector: "configured" })
+
+      expect(error).toBeNull()
+      expect(receipt).toMatchObject({ id: "delivered", channel: "alerts", connector: "configured" })
+      if (failure !== "enumeration") expect(receipt).toHaveProperty("providerStatus", "accepted")
+      expect(receipt).not.toHaveProperty("raw")
+      expect(send).toHaveBeenCalledOnce()
+      expect(info.mock.calls.flat().join("\n")).not.toContain("outbound.failed")
+    }
+    finally {
+      info.mockRestore()
+    }
+  })
+
+  it.each([123, null, false, {}, ["provider-id"], new String("provider-id")].map(id => ({ id })))("omits a non-string connector ID without retrying delivery: $id", async ({ id }) => {
+    const send = vi.fn(() => ({ id, status: "accepted" }))
+    const channel = createChannel("alerts", defineOutboundChannel({ connectors: { webhook: { send } } }))
+
+    const [error, receipt] = await channel.send("Build finished.", { connector: "webhook" })
+
+    expect(error).toBeNull()
+    expect(receipt).toMatchObject({ channel: "alerts", connector: "webhook", status: "accepted" })
+    expect(receipt).not.toHaveProperty("id")
+    expect(send).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ["", "non-empty"],
     ["Build finished.", "requires a connector"],
@@ -206,6 +277,25 @@ describe("createChannel", () => {
     }
   })
 
+  it("rejects inherited channel definition markers", async () => {
+    const send = vi.fn(() => ({ id: "inherited" }))
+    const inherited = {
+      default: { connectors: { configured: { send } } },
+    }
+    setChannelRuntimeRegistry({
+      inherited: async () => Object.create(inherited),
+    })
+    try {
+      const [error, receipt] = await useChannel("inherited" as string).send("Build finished.", { connector: "configured" })
+      expect(error?.message).toContain('No Channel Definition was discovered for "inherited"')
+      expect(receipt).toBeNull()
+      expect(send).not.toHaveBeenCalled()
+    }
+    finally {
+      setChannelRuntimeRegistry(undefined)
+    }
+  })
+
   it("retries failed discovery on a later send", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     const send = vi.fn(() => ({ id: "delivered" }))
@@ -225,6 +315,63 @@ describe("createChannel", () => {
       info.mockRestore()
     }
   })
+
+  it("shares definition loading across named clients and concurrent sends", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const send = vi.fn(() => ({ id: "delivered" }));
+    const load = vi.fn(async () => ({ connectors: { configured: { send } } }));
+    setChannelRuntimeRegistry({ alerts: load });
+    try {
+      const first = useChannel("alerts" as string);
+      const second = useChannel("alerts" as string);
+      const results = await Promise.all([first.send("First", { connector: "configured" }), second.send("Second", { connector: "configured" })]);
+      expect(results.every(([error]) => error === null)).toBe(true);
+      expect(load).toHaveBeenCalledOnce();
+      expect(send).toHaveBeenCalledTimes(2);
+    } finally {
+      setChannelRuntimeRegistry(undefined);
+      info.mockRestore();
+    }
+  });
+
+  it("refreshes existing named clients when their registry changes", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const first = vi.fn(() => ({ id: "old" }));
+    const second = vi.fn(() => ({ id: "new" }));
+    setChannelRuntimeRegistry({ alerts: async () => ({ connectors: { configured: { send: first } } }) });
+    const channel = useChannel("alerts" as string);
+    try {
+      await expect(channel.send("First", { connector: "configured" })).resolves.toMatchObject([null, { id: "old" }]);
+      setChannelRuntimeRegistry({ alerts: async () => ({ connectors: { configured: { send: second } } }) });
+      await expect(channel.send("Second", { connector: "configured" })).resolves.toMatchObject([null, { id: "new" }]);
+      expect(first).toHaveBeenCalledOnce();
+      expect(second).toHaveBeenCalledOnce();
+    } finally {
+      setChannelRuntimeRegistry(undefined);
+      info.mockRestore();
+    }
+  });
+
+  it("keeps an old failed load from evicting the replacement registry client", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    let fail!: (error: Error) => void;
+    const old = new Promise<never>((_resolve, reject) => { fail = reject; });
+    setChannelRuntimeRegistry({ alerts: () => old });
+    const channel = useChannel("alerts" as string);
+    const pending = channel.send("First", { connector: "configured" });
+    const load = vi.fn(async () => ({ connectors: { configured: { send: () => ({ id: "new" }) } } }));
+    setChannelRuntimeRegistry({ alerts: load });
+    try {
+      await expect(channel.send("Second", { connector: "configured" })).resolves.toMatchObject([null, { id: "new" }]);
+      fail(new Error("old registry failed"));
+      await expect(pending).resolves.toMatchObject([expect.any(Error), null]);
+      await expect(channel.send("Third", { connector: "configured" })).resolves.toMatchObject([null, { id: "new" }]);
+      expect(load).toHaveBeenCalledOnce();
+    } finally {
+      setChannelRuntimeRegistry(undefined);
+      info.mockRestore();
+    }
+  });
 
   it("normalizes non-Error connector failures", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})

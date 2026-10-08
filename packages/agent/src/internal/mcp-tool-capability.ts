@@ -1,3 +1,4 @@
+import { hasAgentToolStandardSchema } from "../tool-schema.ts"
 import { defineCapability } from "../capability-runtime.ts"
 import { hasRuntimeType, isRuntimeObject, isRuntimeRecord } from "./runtime-type.ts"
 import { ViteHubError } from "@vite-hub/runtime"
@@ -12,12 +13,10 @@ import type {
   AgentCapabilityRuntimeContext,
   AgentRuntimeConfig,
   AgentToolDefinition,
-  AgentToolExecutionContext,
   AgentToolSet,
   MaybePromise,
 } from "../types.ts"
-import type { McpClient, McpClientConfig, McpToolFingerprints } from "../mcp/types.ts"
-import type { AgentConnection, AgentConnectionEffect } from "../capabilities/connection.ts"
+import type { McpClient, McpClientConfig, McpToolFingerprints, McpToolOverride, McpToolOverrides } from "../mcp/types.ts"
 import type { WorkspaceName } from "@vite-hub/workspace"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 
@@ -27,12 +26,9 @@ interface McpToolDrift {
   removed: string[]
 }
 
-/** Connection that authorizes one MCP server. Each discovered tool gets a policy for its Operation. */
+/** Connection that governs the MCP transport. The runtime owns access and approval. */
 export interface McpToolServerConnection {
-  /** Runs one tool with its own approval context, including unapproved executions. */
-  execute: <T>(operation: string, input: unknown, approved: boolean, run: () => Promise<T>) => Promise<T>
-  connection: AgentConnection
-  operation: (toolName: string) => { effect: AgentConnectionEffect, id: string }
+  name: string
 }
 
 export interface ResolvedMcpToolServer {
@@ -63,6 +59,7 @@ export interface McpToolCapabilityOptions<
   unavailableNotice?: boolean | ((servers: string[]) => string)
   requires?: AgentCapabilityRequirement[]
   servers: McpToolServerDefinition<TRuntimeConfig, Name>[]
+  toolOverrides?: McpToolOverrides
   toolName: (serverName: string, toolName: string) => string
 }
 
@@ -308,6 +305,30 @@ export function defineMcpToolCapability<
       }
       await publishInspection()
       if (hardFailure) throw hardFailure.reason
+      const configuredServerNames = new Set(options.servers.map(server => server.name))
+      for (const [serverName, overrides] of Object.entries(options.toolOverrides ?? {})) {
+        if (!configuredServerNames.has(serverName)) {
+          throw agentDiagnostics.AGENT_R0981({ message: `mcp({ toolOverrides }) references unknown server "${serverName}".` })
+        }
+        for (const override of Object.values(overrides)) {
+          if (override.inputSchema && hasAgentToolStandardSchema(override.inputSchema)) {
+            throw agentDiagnostics.AGENT_R0983({ message: "mcp({ toolOverrides }) input schemas require plain JSON Schema without transforms." })
+          }
+          if (override.inputSchema !== undefined && (!isRuntimeRecord(override.inputSchema) || override.inputSchema.type !== "object")) {
+            throw agentDiagnostics.AGENT_R0983({ message: "mcp({ toolOverrides }) input schemas require an object JSON Schema." })
+          }
+        }
+      }
+      for (const result of results) {
+        if (result.status !== "fulfilled" || !result.value) continue
+        const { server, serverTools } = result.value
+        const serverOverrides = options.toolOverrides?.[server.name]
+        for (const toolName of Object.keys(serverOverrides ?? {})) {
+          if (!Object.hasOwn(serverTools || {}, toolName)) {
+            throw agentDiagnostics.AGENT_R0982({ message: `mcp({ toolOverrides }) references unknown tool "${toolName}" on discovered MCP server "${server.name}".` })
+          }
+        }
+      }
       if (options.unavailableNotice && unavailableServers.size) {
         const unavailable = [...unavailableServers]
         const notice = options.unavailableNotice === true
@@ -332,6 +353,7 @@ export function defineMcpToolCapability<
       for (const result of results) {
         if (result.status !== "fulfilled" || !result.value) continue
         const { binding, metadata, server, serverTools } = result.value
+        const serverOverrides = options.toolOverrides?.[server.name]
         for (const [toolName, tool] of Object.entries(serverTools || {})) {
           // SAFETY: McpClient.tools() establishes that each discovered entry is an Agent tool definition.
           const definition = tool as AgentToolDefinition & { metadata?: Record<string, unknown> }
@@ -339,26 +361,21 @@ export function defineMcpToolCapability<
           if (tools[name]) {
             throw agentDiagnostics.AGENT_R0563({ message: `[vitehub] Duplicate MCP tool name "${name}" after normalization.` })
           }
-          const operation = binding?.operation(toolName)
+          const override = serverOverrides && Object.hasOwn(serverOverrides, toolName)
+            ? serverOverrides[toolName]
+            : undefined
           tools[name] = {
             ...definition,
+            ...(override ? mcpToolOverride(override) : {}),
             metadata: {
               ...definition.metadata,
-              ...(binding && operation ? { connection: { name: binding.connection.name, operation: operation.id } } : {}),
+              ...(binding ? { connection: { name: binding.name, operation: "fetch" } } : {}),
               mcp: metadata,
               mcpServer: server.name,
               originalName: toolName,
             },
             name,
-            ...(binding && operation
-              ? {
-                  async execute(input: unknown, execution: AgentToolExecutionContext | undefined) {
-                    const approved = binding.connection.approval(input).has(operation.id)
-                    return binding.execute(operation.id, input, approved, async () => definition.execute?.(input, execution))
-                  },
-                  policy: binding.connection.policy(name, [operation]),
-                }
-              : {}),
+
           }
         }
       }
@@ -376,4 +393,12 @@ export function defineMcpToolCapability<
       if (errors.length > 1) throw new AggregateError(errors, "[vitehub] Multiple MCP clients failed to close.")
     },
   })
+}
+
+function mcpToolOverride(override: McpToolOverride): Pick<AgentToolDefinition, "description" | "inputSchema" | "title"> {
+  return {
+    ...(override.description === undefined ? {} : { description: override.description }),
+    ...(override.inputSchema === undefined ? {} : { inputSchema: override.inputSchema }),
+    ...(override.title === undefined ? {} : { title: override.title }),
+  }
 }

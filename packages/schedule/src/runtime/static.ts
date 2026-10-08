@@ -1,6 +1,7 @@
-import type { ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRegistryDefinition, ScheduleRunContext } from "../types.ts"
-import { createLocalWaitUntil } from "./wait-until.ts"
+import type { ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRunContext } from "../types.ts"
+import { runWithScheduleWaitUntil } from "./wait-until.ts"
 import { scheduleErrorDiagnostics } from "../error-diagnostics.ts"
+import { isViteHubBearerSecretEqual } from "@vite-hub/internal/secret"
 
 export interface ExecuteStaticScheduleOptions {
   cron: string
@@ -32,8 +33,6 @@ interface CloudflareScheduledEventLike {
   scheduledTime?: number | string | Date
 }
 
-type LoadedScheduleModule = ScheduleRegistryDefinition | { default?: ScheduleRegistryDefinition }
-
 export interface StaticScheduleRun extends ScheduleRunContext {
   cron: string
   scheduleId: string
@@ -41,6 +40,13 @@ export interface StaticScheduleRun extends ScheduleRunContext {
 
 export function missingScheduleDefinitionError(name: string): Error {
   return scheduleErrorDiagnostics.SCHEDULE_R0034({ message: `Missing schedule definition: ${name}` })
+}
+
+/**
+ * Checks the `Authorization` header of a Vercel Cron request against `CRON_SECRET` in constant time.
+ */
+export function isScheduleCronAuthorized(authorization: string | null | undefined, cronSecret: string): boolean {
+  return isViteHubBearerSecretEqual(authorization, cronSecret)
 }
 
 export function normalizeScheduleRuntimeError(error: unknown): Error {
@@ -62,26 +68,10 @@ export function createStaticScheduleRun(
 }
 
 export async function executeStaticSchedule(options: ExecuteStaticScheduleOptions): Promise<unknown> {
-  const localWaitUntil = createLocalWaitUntil()
-  try {
-    const result = await options.definition.handler(createStaticScheduleRun({
-      ...options,
-      waitUntil: options.waitUntil ?? localWaitUntil.waitUntil,
-    }))
-    if (!options.waitUntil) await localWaitUntil.flush()
-    return result
-  }
-  catch (error) {
-    if (!options.waitUntil) {
-      try {
-        await localWaitUntil.flush()
-      }
-      catch {
-        // Preserve the handler error after all locally owned work settles.
-      }
-    }
-    throw error
-  }
+  return await runWithScheduleWaitUntil(
+    waitUntil => options.definition.handler(createStaticScheduleRun({ ...options, waitUntil })),
+    options.waitUntil,
+  )
 }
 
 export async function executeMatchingStaticSchedules(options: ExecuteMatchingStaticSchedulesOptions): Promise<unknown[]> {
@@ -239,7 +229,19 @@ function readCloudflareEventEnv(event: CloudflareScheduledEventLike): Record<str
   return isRecord(runtimeCloudflare?.env) ? runtimeCloudflare.env : undefined
 }
 
-function unwrapScheduleDefinition(loaded: LoadedScheduleModule): ScheduleDefinition | undefined {
-  const definition = "default" in loaded ? loaded.default : loaded
-  return definition && "cron" in definition ? definition : undefined
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Object(value) === value && !Array.isArray(value)
+}
+
+function isStaticScheduleDefinition(value: unknown): value is ScheduleDefinition {
+  return isObjectRecord(value)
+    && Object.hasOwn(value, "cron")
+    && Object.hasOwn(value, "handler")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Registry handlers cross module and JavaScript realm boundaries; validate callability without realm-sensitive instanceof.
+    && typeof value.handler === "function"
+}
+
+export function unwrapScheduleDefinition(loaded: unknown): ScheduleDefinition | undefined {
+  const candidate = isObjectRecord(loaded) && Object.hasOwn(loaded, "default") ? loaded.default : loaded
+  return isStaticScheduleDefinition(candidate) ? candidate : undefined
 }

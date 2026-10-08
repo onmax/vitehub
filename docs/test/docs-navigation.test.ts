@@ -1,146 +1,171 @@
 import { describe, expect, it } from "vitest";
 import { docsManifest, getDocsPageByPath } from "../modules/vitehub-docs/runtime/utils/docs";
 import {
-  getDocsLaneSelectionTarget,
-  getDocsSectionsForLane,
-  resolveDocsLane,
+  docsCategoryOrder,
+  docsRootSectionId,
+  getDocsCatalog,
+  getDocsSectionForPath,
+  getDocsSectionSubpages,
+  getDocsSidebarGroups,
+  getUncategorizedDocsSections,
+  isDocsLandingPath,
 } from "../modules/vitehub-docs/runtime/utils/docs-navigation";
-import { docsLanes } from "../modules/vitehub-docs/docs-lanes";
 import { createDocsRedirectRouteRules, docsPageRedirects } from "../modules/vitehub-docs/redirects";
 
-describe("docs lane navigation", () => {
-  it("lets route-owned lanes override query and persisted state", () => {
-    const page = getDocsPageByPath("/docs/server-primitives/kv");
+const serverPrimitiveSections = [
+  "auth",
+  "blob",
+  "browser",
+  "channels",
+  "connections",
+  "content",
+  "database",
+  "email",
+  "env",
+  "kv",
+  "queue",
+  "rate-limit",
+  "realtime",
+  "sandbox",
+  "schedule",
+  "shell",
+  "source",
+  "workflows",
+  "workspace",
+];
 
-    expect(resolveDocsLane({
-      path: "/docs/server-primitives/kv",
-      page,
-      queryLane: "agents",
-      persistedLane: "agents",
-    })).toBe("server-primitives");
+describe("docs product navigation", () => {
+  it("files every section under one catalog category", () => {
+    expect(getUncategorizedDocsSections(docsManifest.sections)).toEqual([]);
+
+    const catalog = getDocsCatalog(docsManifest.sections);
+    expect(catalog.map(group => group.category)).toEqual([...docsCategoryOrder]);
+    expect(catalog.find(group => group.category === "Start")?.sections.map(section => section.id)).toEqual([docsRootSectionId]);
+
+    const productIds = catalog
+      .filter(group => ["Data", "Compute", "Access", "Delivery", "Files"].includes(group.category))
+      .flatMap(group => group.sections.map(section => section.id))
+      .sort();
+    expect(productIds).toEqual(serverPrimitiveSections);
+    expect(catalog.find(group => group.category === "Agents")?.sections.map(section => section.id)).toEqual(["agents", "ui"]);
   });
 
-  it("uses page metadata before persisted state for mixed sections", () => {
-    const page = getDocsPageByPath("/docs/concepts/auth-users-and-agent-invokers");
+  it("orders every Server Primitive section by the product page template", () => {
+    const template = ["Overview", "Get started", "Configure", "Server API", "Agent capability", "Hosts", "Limits and errors"];
 
-    expect(resolveDocsLane({
-      path: page!.path,
-      page,
-      persistedLane: "server-primitives",
-    })).toBe("agents");
-  });
-
-  it("uses the query to preserve lane context on shared pages", () => {
-    const page = getDocsPageByPath("/docs/concepts");
-
-    expect(resolveDocsLane({
-      path: page!.path,
-      page,
-      queryLane: "server-primitives",
-      persistedLane: "agents",
-    })).toBe("server-primitives");
-  });
-
-  it("filters product sections and mixed pages through the manifest", () => {
-    const agents = getDocsSectionsForLane(docsManifest.sections, "agents");
-    const primitives = getDocsSectionsForLane(docsManifest.sections, "server-primitives");
-
-    expect(agents.map(section => section.id)).toContain("agents");
-    expect(agents.map(section => section.id)).not.toContain("server-primitives");
-    expect(primitives.map(section => section.id)).toContain("server-primitives");
-    expect(primitives.map(section => section.id)).not.toContain("agents");
-    expect(agents.find(section => section.id === "getting-started")?.pages.map(page => page.id)).not.toContain("first-server-primitive");
-    expect(primitives.find(section => section.id === "getting-started")?.pages.map(page => page.id)).not.toContain("first-agent");
-  });
-
-  it("groups large sections and keeps UI in the Agents lane", () => {
-    const agents = getDocsSectionsForLane(docsManifest.sections, "agents");
-    const primitives = getDocsSectionsForLane(docsManifest.sections, "server-primitives");
-
-    expect(agents.map(section => section.id)).toContain("ui");
-    expect(primitives.map(section => section.id)).not.toContain("ui");
-
-    for (const sectionId of [
-      "agents",
-      "capabilities",
-      "concepts",
-      "development",
-      "frameworks-hosts",
-      "reference",
-      "server-primitives",
-      "ui",
-    ]) {
+    for (const sectionId of serverPrimitiveSections) {
       const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
-      const navigablePages = section?.pages.filter(page => page.navigation) || [];
+      const pages = section?.pages.filter(page => page.navigation) || [];
+      const titles = pages.map(page => page.title);
+      const templateTitles = titles.filter(title => template.includes(title));
 
-      expect(navigablePages.length, sectionId).toBeGreaterThan(0);
-      expect(navigablePages.every(page => page.group), sectionId).toBe(true);
+      expect(pages[0]?.path, sectionId).toBe(`/docs/${sectionId}`);
+      expect(titles[0], sectionId).toBe("Overview");
+      expect(templateTitles, sectionId).toContain("Get started");
+      expect(templateTitles, sectionId).toContain("Server API");
+      // Template pages appear in template order. Product-specific pages such as Env Bridge come after them.
+      expect(templateTitles, sectionId).toEqual(template.filter(title => templateTitles.includes(title)));
+      expect(titles.slice(templateTitles.length).some(title => template.includes(title)), sectionId).toBe(false);
+
+      const capability = pages.find(page => page.id === "agent-capability");
+      if (capability) {
+        expect(capability.title, sectionId).toBe("Agent capability");
+        expect(capability.sourceTitle, sectionId).toBe(`${section?.title} capability`);
+      }
     }
   });
 
-  it("persists in-place lane selections without navigating exclusive pages", () => {
-    const sharedPage = getDocsPageByPath("/docs/concepts");
-    const agentPage = getDocsPageByPath("/docs/agents/invocations");
+  it("keeps Agent-only Capabilities inside the Agents section", () => {
+    const agents = docsManifest.sections.find(section => section.id === "agents");
+    const capabilities = agents?.pages.filter(page => page.id.startsWith("capabilities")) || [];
 
-    expect(getDocsLaneSelectionTarget({
-      hash: "#runtime",
-      lane: "server-primitives",
-      page: null,
-      path: "/docs/",
-      query: { source: "test" },
-    })).toEqual({
-      hash: "#runtime",
-      path: "/docs/",
-      query: { source: "test", lane: "server-primitives" },
-    });
-    expect(getDocsLaneSelectionTarget({
-      hash: "#runtime",
-      lane: "server-primitives",
-      page: sharedPage,
-      path: sharedPage!.path,
-      query: { lane: "agents", source: "test" },
-    })).toEqual({
-      hash: "#runtime",
-      path: "/docs/concepts",
-      query: { lane: "server-primitives", source: "test" },
-    });
-    expect(getDocsLaneSelectionTarget({
-      lane: "server-primitives",
-      page: agentPage,
-      path: agentPage!.path,
-    })).toBeNull();
+    expect(capabilities.map(page => page.path)).toContain("/docs/agents/capabilities");
+    expect(capabilities.map(page => page.path)).toContain("/docs/agents/capabilities/mcp");
+    expect(capabilities.every(page => page.group === "Capabilities")).toBe(true);
+    expect(docsManifest.sections.map(section => section.id)).not.toContain("capabilities");
+    expect(docsManifest.sections.map(section => section.id)).not.toContain("server-primitives");
   });
 
-  it("lists each topic once in a lane", () => {
-    for (const lane of docsLanes) {
+  it("resolves the sidebar section from the route", () => {
+    expect(getDocsSectionForPath(docsManifest.sections, "/docs/kv/agent-capability/")?.id).toBe("kv");
+    expect(getDocsSectionForPath(docsManifest.sections, "/docs/agents/capabilities/mcp")?.id).toBe("agents");
+    expect(getDocsSectionForPath(docsManifest.sections, "/docs")).toBeNull();
+    expect(getDocsSectionForPath(docsManifest.sections, "/docs/unknown")).toBeNull();
+  });
+
+  it("keeps the UI sidebar Console-first", () => {
+    const ui = docsManifest.sections.find(section => section.id === "ui");
+    expect(getDocsSidebarGroups(ui!).map(group => group.label)).toEqual([
+      "Start",
+      "Console",
+      "Chat",
+      "Agent work",
+      "Utilities",
+    ]);
+    expect(getDocsSidebarGroups(ui!).find(group => group.label === "Console")?.pages.map(page => page.title))
+      .toEqual(["Chat App", "Invocation Dashboard", "Code Review"]);
+  });
+
+  it("groups every navigable page of a large section", () => {
+    for (const sectionId of ["agents", "development", "frameworks-hosts", "reference", "ui"]) {
+      const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
+      const groups = getDocsSidebarGroups(section!);
+
+      expect(groups.length, sectionId).toBeGreaterThan(0);
+      expect(groups.every(group => group.label && group.pages.length > 0), sectionId).toBe(true);
+    }
+
+    const kv = docsManifest.sections.find(candidate => candidate.id === "kv");
+    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null]);
+  });
+
+  it("lists each topic once inside a section", () => {
+    for (const section of docsManifest.sections) {
+      // UI components are named after the feature they render.
+      if (section.id === "ui") continue;
       const pathsByTitle = new Map<string, string[]>();
 
-      for (const section of getDocsSectionsForLane(docsManifest.sections, lane)) {
-        // Section overviews share a title, and UI components are named after the feature they render.
-        if (section.id === "ui") continue;
-        for (const page of section.pages.filter(page => page.navigation && page.title !== "Overview")) {
-          const title = page.title.toLowerCase();
-          pathsByTitle.set(title, [...(pathsByTitle.get(title) || []), page.path]);
-        }
+      for (const page of section.pages.filter(page => page.navigation && page.title !== "Overview")) {
+        const title = page.title.toLowerCase();
+        pathsByTitle.set(title, [...(pathsByTitle.get(title) || []), page.path]);
       }
 
       const duplicates = [...pathsByTitle].filter(([, paths]) => paths.length > 1);
-      expect(duplicates, lane).toEqual([]);
+      expect(duplicates, section.id).toEqual([]);
     }
   });
 
+  it("renders the catalog and every product Overview as a landing page", () => {
+    expect(isDocsLandingPath(docsManifest.sections, "/docs")).toBe(true);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/kv/")).toBe(true);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/agents")).toBe(true);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/kv/get-started")).toBe(false);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/getting-started")).toBe(false);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/reference")).toBe(false);
+    expect(isDocsLandingPath(docsManifest.sections, "/docs/ui")).toBe(false);
+
+    const kv = docsManifest.sections.find(section => section.id === "kv");
+    expect(getDocsSectionSubpages(kv!).map(page => page.title)[0]).toBe("Get started");
+    expect(getDocsSectionSubpages(kv!).some(page => page.id === "index")).toBe(false);
+  });
+
   it("keeps commas in frontmatter titles", () => {
-    expect(getDocsPageByPath("/docs/concepts/runtime-policy-approvals-and-traces")?.title)
+    expect(getDocsPageByPath("/docs/getting-started/concepts/runtime-policy-approvals-and-traces")?.title)
       .toBe("Runtime policy, approvals, and traces");
   });
 
-  it("redirects each removed page and its raw Markdown copy to a published page", () => {
+  it("redirects each removed page, its trailing-slash form, and its raw Markdown copy to a published page", () => {
     const routeRules = createDocsRedirectRouteRules();
+
+    expect(docsPageRedirects["/docs/server-primitives/kv"]).toBe("/docs/kv");
+    expect(docsPageRedirects["/docs/capabilities/db"]).toBe("/docs/database/agent-capability");
+    expect(docsPageRedirects["/docs/capabilities/mcp"]).toBe("/docs/agents/capabilities/mcp");
 
     for (const [from, to] of Object.entries(docsPageRedirects)) {
       expect(getDocsPageByPath(from), from).toBeNull();
       expect(getDocsPageByPath(to), to).not.toBeNull();
       expect(routeRules[from]).toEqual({ redirect: { statusCode: 301, to } });
+      expect(routeRules[`${from}/`]).toEqual({ redirect: { statusCode: 301, to } });
       expect(routeRules[`/raw${from}.md`]).toEqual({ redirect: { statusCode: 301, to: `/raw${to}.md` } });
     }
   });

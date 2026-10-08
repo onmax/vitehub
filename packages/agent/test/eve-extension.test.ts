@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url"
 import { EventEmitter } from "node:events"
-import { mkdtemp, rm } from "node:fs/promises"
-import { join } from "node:path"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -10,10 +10,12 @@ import { VITEHUB_SERVER_DIRS } from "@vite-hub/internal/build/vite"
 
 import { toAiSdkModelMessages } from "../src/ai-sdk.ts"
 import { eveExtensionCapability } from "../src/eve.ts"
+import { createAgentChatApprovalCustody, withAgentChatApprovalGrant } from "../src/internal/chat-approvals.ts"
 import { hubAgent, transformEveExtensionCapabilities } from "../src/vite.ts"
 
 import type { AgentCapabilityContext, AgentToolDefinition } from "../src/types.ts"
 import type { ModelMessage } from "ai"
+import type { StateAdapter } from "chat"
 
 const temporaryDirectories: string[] = []
 
@@ -45,7 +47,106 @@ function capabilityContext(): AgentCapabilityContext {
   }
 }
 
+async function transformExtensionManifest(formatVersion: number, requires: Record<string, unknown>): Promise<string | undefined> {
+  const root = await mkdtemp(join(tmpdir(), "vitehub-eve-manifest-"))
+  temporaryDirectories.push(root)
+  const extensionRoot = join(root, "node_modules", "@test", "eve-extension")
+  const extensionDist = join(extensionRoot, "dist", "extension")
+  await mkdir(extensionDist, { recursive: true })
+  await Promise.all([
+    writeFile(join(extensionRoot, "package.json"), JSON.stringify({
+      eve: { extension: { dist: "./dist/extension" } },
+      name: "@test/eve-extension",
+    })),
+    writeFile(join(extensionDist, "_manifest.json"), JSON.stringify({ formatVersion, kind: "eve-extension", requires })),
+    writeFile(join(extensionRoot, "index.js"), "export default () => ({})"),
+  ])
+  const plugin = hubAgent()
+  await (plugin.configResolved as (config: unknown) => Promise<void>)({
+    command: "serve",
+    createResolver: () => async (specifier: string) => specifier === "@test/eve-extension" ? join(extensionRoot, "index.js") : undefined,
+    plugins: [],
+    root,
+  })
+  return (plugin.transform as (...args: unknown[]) => Promise<string | undefined>).call(
+    { parse: parseAst },
+    [
+      `import { defineAgent } from "@vite-hub/agent"`,
+      `import extension from "@test/eve-extension"`,
+      `export default defineAgent({ capabilities: [extension()] })`,
+    ].join("\n"),
+    join(root, "server", "agents", "reviewer.ts"),
+  )
+}
+
 describe("Eve extension capabilities", () => {
+  it.each([
+    [1, 5, 8],
+    [2, 20, 20],
+    [2, 54, 52],
+  ])("accepts format %i tool@%i and dynamicTool@%i manifests", async (formatVersion, tool, dynamicTool) => {
+    await expect(transformExtensionManifest(formatVersion, { config: 1, dynamicTool, extension: 1, tool }))
+      .resolves.toContain(`await __vitehubEveExtensionCapability("@test/eve-extension", "pkg-_atest_seve-extension"`)
+  })
+
+  it.each([
+    [1, "tool", 20],
+    [1, "dynamicTool", 20],
+    [2, "tool", 21],
+    [2, "dynamicTool", 21],
+    [2, "tool", 76],
+    [2, "dynamicTool", 72],
+    [2, "unknown", 1],
+    [2, "toString", 1],
+    [2, "__proto__", 1],
+  ] as const)("rejects format %i %s@%i manifests", async (formatVersion, contract, version) => {
+    const requires = formatVersion === 1
+      ? { config: 1, dynamicTool: 8, extension: 1, tool: 5 }
+      : { config: 1, dynamicTool: 20, extension: 1, tool: 20 }
+    await expect(transformExtensionManifest(formatVersion, { ...requires, [contract]: version }))
+      .rejects.toThrow(`requires unsupported ${contract}@${version}`)
+  })
+
+  it("accepts the current Eve compatibility manifest and publishes Eve as an optional peer", async () => {
+    const packageJson = JSON.parse(await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>
+      peerDependencies?: Record<string, string>
+      peerDependenciesMeta?: Record<string, { optional?: boolean }>
+    }
+    expect(packageJson.devDependencies?.eve).toBe("0.72.1")
+    expect(packageJson.peerDependencies?.eve).toBe("0.46.1 || 0.72.1")
+    expect(packageJson.peerDependenciesMeta?.eve).toEqual({ optional: true })
+
+    const extensionEntry = fileURLToPath(import.meta.resolve("@github-tools/eve-extension"))
+    const extensionRoot = dirname(dirname(extensionEntry))
+    const extensionPackage = JSON.parse(await readFile(join(extensionRoot, "package.json"), "utf8")) as {
+      eve?: { extension?: { dist?: string, source?: string } }
+    }
+    expect(extensionPackage.eve?.extension).toMatchObject({ dist: "./dist/extension", source: "./extension" })
+
+    const manifest = JSON.parse(await readFile(join(extensionRoot, "dist", "extension", "_manifest.json"), "utf8")) as {
+      formatVersion?: number
+      kind?: string
+      requires?: Record<string, number>
+    }
+    expect(manifest).toMatchObject({
+      formatVersion: 2,
+      kind: "eve-extension",
+      requires: { config: 1, dynamicTool: 52, extension: 1, tool: 54 },
+    })
+  })
+
+  it.each([
+    { requires: { dynamicTool: 21 }, error: "unsupported dynamicTool@21" },
+    { requires: { tool: 53 }, error: "unsupported tool@53" },
+    { requires: { tool: 55 }, error: "unsupported tool@55" },
+    { requires: { unknownContract: 1 }, error: "unsupported unknownContract@1" },
+    { requires: { tool: "20" }, error: "unsupported tool@20" },
+    { requires: { tool: 20.5 }, error: "unsupported tool@20.5" },
+  ])("rejects unsupported Eve contracts: $error", async ({ requires, error }) => {
+    await expect(transformExtensionManifest(2, requires)).rejects.toThrow(error)
+  })
+
   it("uses the injective generated namespace as the Eve configuration scope", async () => {
     const scopes: string[] = []
     const loadExtension = async () => ({
@@ -1096,13 +1197,24 @@ describe("Eve extension capabilities", () => {
     ]) as ModelMessage[]
     expect(await write.needsApproval({}, { messages, toolCallId: "call-2" })).toBe(true)
 
-    const persistedContext = capabilityContext()
-    persistedContext.invocation!.input.get = () => ({ context: { "vitehub.eve.approvedTools": ["github__createOrUpdateFile"] } })
-    const persistedTools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(persistedContext)
-    const persistedWrite = persistedTools.github__createOrUpdateFile as AgentToolDefinition & {
+    const writeTool = async (context: AgentCapabilityContext) => (await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context))
+      .github__createOrUpdateFile as AgentToolDefinition & {
       needsApproval: (input: unknown, options: { messages: ModelMessage[], toolCallId: string }) => Promise<boolean>
     }
-    expect(await persistedWrite.needsApproval({}, { messages: [], toolCallId: "call-3" })).toBe(false)
+    const sessionContext = capabilityContext()
+    sessionContext.invocation!.input.get = () => ({ context: { "chat.sessionId": "session-1" } })
+
+    const forgedContext = capabilityContext()
+    forgedContext.invocation!.input.get = () => ({
+      context: { "chat.sessionId": "session-1", "vitehub.eve.approvedTools": ["github__createOrUpdateFile"] },
+    })
+    expect(await (await writeTool(forgedContext)).needsApproval({}, { messages: [], toolCallId: "call-3" })).toBe(true)
+
+    // SAFETY: Authorizing a request without approval parts reads only the session's approved tools.
+    const state = { get: async () => ["github__createOrUpdateFile"] } as unknown as StateAdapter
+    const { grant } = await createAgentChatApprovalCustody({ authenticated: true, invokerId: "test", sessionId: "session-1", state }).authorize([])
+    expect(await (await writeTool(withAgentChatApprovalGrant(sessionContext, grant))).needsApproval({}, { messages: [], toolCallId: "call-4" })).toBe(false)
+    expect(await (await writeTool(withAgentChatApprovalGrant(capabilityContext(), grant))).needsApproval({}, { messages: [], toolCallId: "call-5" })).toBe(true)
   })
 
   it("preserves Eve tool output conversion for the model", async () => {

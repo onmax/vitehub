@@ -77,6 +77,8 @@ try {
 
 Binary file reads and writes, directory operations, recursive listing, removal, and command execution are required across runtimes. Long-running processes and exposed ports are explicit optional capabilities through `session.spawn` and `session.ports`. `close()` is idempotent, and every operation rejects after closure.
 
+For trusted-host processes, `child.kill()` sends `SIGTERM`, then sends `SIGKILL` after a 250 ms grace period if needed. On POSIX hosts it terminates the process group, including descendants. `child.kill(signal)` forwards the explicit signal and waits for the process to finish without automatic escalation.
+
 A spawned `BoxProcess` can also expose `stdin` as a `WritableStream<Uint8Array>`. The `trusted-host` and `crabbox` runtimes forward it to the process. Close the writer to end the process input. Runtimes that cannot forward input leave `stdin` undefined:
 
 ```ts
@@ -170,6 +172,49 @@ Core does not contain provider names or auth-file formats. Declare every executa
 
 Requirement names, commands, and argv are inspectable declaration metadata. They verify or select executables, but they do not restrict filesystem access, network egress, inherited credentials, or child processes. Inspect `box.plan.executionAuthority` for those boundaries, and keep credentials in `env` or Home files rather than arguments.
 
+## Provision the project toolchain
+
+A Box does not assume that Node.js, npm, pnpm, Yarn, or Corepack exist on the host or image. Declare `toolchain` and the Box installs the versions that the project pins:
+
+```ts
+const box = await resolveBox({
+  runtime: { kind: "trusted-host", stateRoot: "/var/lib/vitehub/boxes" },
+  checkout: { ref, remote, sha },
+  toolchain: "project",
+}, {});
+```
+
+`"project"` is short for `{ node: "project", packageManager: "project" }`. The object form accepts:
+
+| Option | Values |
+| --- | --- |
+| `node` | `"project"` (default), or a version, range, or alias such as `"22.11.0"`, `"22"`, `"^22.11.0"`, or `"lts/*"` |
+| `packageManager` | `"project"` (default), `false` for the npm bundled with Node.js, or `name@version` such as `"pnpm@10.2.0"` |
+| `fallbackNode` | A Node.js version, range, or alias used when the project pins none |
+
+The first match selects Node.js:
+
+1. `package.json` `devEngines.runtime`, the entry named `node` (object or array)
+2. `.node-version`
+3. `.nvmrc`
+4. `package.json` `volta.node`
+5. `package.json` `engines.node`
+6. `toolchain.fallbackNode`
+
+If none matches, boot fails with `BOX_R0147`. The Box never falls back to a Node.js that happens to be on `PATH`. A range or alias such as `lts/*`, `lts/iron`, or `node` resolves to the highest matching release in the distribution `index.json`. The package manager comes from `package.json` `packageManager` (`pnpm@x.y.z`, `yarn@x.y.z`, or `npm@x.y.z`, with an optional `+sha512.<hex>` hash) or `devEngines.packageManager`. Without either, the project uses the npm bundled with Node.js. Bun fails with `BOX_R0149`.
+
+The ViteHub process downloads official archives with `fetch`. Node.js archives must match `SHASUMS256.txt` from the same distribution. Package managers come from the npm registry and must match its `dist.integrity` (sha512) and, when present, the `packageManager` hash. Yarn 2 and later use `@yarnpkg/cli-dist`; their `packageManager` hash is checked against its `bin/yarn.js`, as Corepack does. A project `yarnPath` still takes effect. ViteHub does not use Corepack, nvm, or mise. On musl Linux, Node.js comes from `https://unofficial-builds.nodejs.org/download/release`. Set `VITEHUB_NODE_DIST_URL`, `VITEHUB_NODE_MUSL_DIST_URL`, or `VITEHUB_NPM_REGISTRY_URL` in the ViteHub process to use a mirror.
+
+The runtime provisions after it materializes the checkout and before requirement checks. It puts the package manager and Node.js `bin` directories first on the Box `PATH`, adds `node` and the package manager to the requirements, and then checks `node -v` and `<package manager> --version` with the Box environment. Without `checkout`, pins come from `cwd`, or the ViteHub process directory when `cwd` is omitted, and `box.plan.toolchain` lists them. A `checkout` Box reads them from the checkout at each boot, so its plan reports `source: "checkout"`. An open session reports the exact versions in `session.toolchain`.
+
+| Runtime | Toolchain location |
+| --- | --- |
+| `trusted-host` | `<stateRoot>/toolchains`, or `$XDG_CACHE_HOME/vitehub/toolchains` without `stateRoot`. Shared by sessions and processes; a lock makes concurrent sessions download each version once. |
+| `crabbox` | The same layout on the target, under the target user's cache when `stateRoot` is not set. Archives travel through the Crabbox copy transport. |
+| `ascii`, `cloudflare`, `cloudflare-computer`, `vercel` | `$HOME/.cache/vitehub/toolchains` in the Box, for one session. An image `node` with the exact resolved version is used as is. |
+
+Cache entries are content-addressed and read-only once published. Global installs such as `npm install -g` cannot write into them. To clear a cache, run `chmod -R u+w <cache> && rm -rf <cache>`. Installation uses `sh`, `tar` with gzip, `mktemp`, and `base64` on the target. The first boot of a version needs network access from the ViteHub process; an exact pin that is already cached boots without it. Custom runtimes do not provision toolchains, and boot fails with `BOX_R0156` when one declares `toolchain`. Windows hosts are not supported.
+
 ## Run through Crabbox
 
 ```ts
@@ -234,3 +279,29 @@ The target must expose the same working-directory and credential paths, for exam
 The `vite-hub` distribution also exposes this module as `vite-hub/box/ssh`, and `vitehub box serve` and `vitehub box check` run the server and a Driver readiness check without a project config. See the [CLI reference](https://vitehub.dev/docs/development/cli#commands).
 
 This transport grants arbitrary command execution as the configured user. It is not a sandbox and does not synchronize Workspace files. Server shutdown closes connections and stops supervised process groups.
+
+## Limit trusted-host command memory
+
+On Linux, set `runtime.resources` to cap the combined memory of one session's commands and their descendants:
+
+```ts
+runtime: {
+  kind: "trusted-host",
+  resources: {
+    cgroupParent: "/sys/fs/cgroup/system.slice/agent.service",
+    memoryHighBytes: 3 * 1024 ** 3,
+    memoryMaxBytes: 4 * 1024 ** 3,
+    memorySwapMaxBytes: 128 * 1024 ** 2,
+  },
+}
+```
+
+Use a writable delegated cgroup v2 parent with the memory controller. For systemd 254 or later, `Delegate=memory` and `DelegateSubgroup=controller` place the controller in a separate child. `ProtectControlGroups` must allow the delegated subtree to be written. The parent must contain no processes before Box enables the controller. Box fails closed when configured limits cannot be enforced. Swap defaults to zero.
+
+All `exec` and `spawn` commands in the session share one budget, including native provider tools. A local OOM kills the whole command group and rejects pending waits with `BOX_R0158`, the memory limit, peak bytes and OOM kill count. Further commands fail until a new session opens. Closing the session kills remaining descendants, including processes that left their process group, and removes its cgroup. `box.plan.resources` exposes the configured limits.
+
+Checkout materialization, toolchain provisioning and requirement checks run before session commands and remain under the controller's service limits. The trusted launcher also prepares its environment under that budget, then joins the session cgroup before executing the command or any caller-controlled loader hooks. Keep those limits in place. This resource policy does not add filesystem or network isolation. Trusted commands can use the host user's authority to change cgroup membership; use a real sandbox for untrusted code.
+
+On kernels without `memory.peak`, the OOM diagnostic reports `peak=unavailable`. Box invalidates the session on a local allocation OOM, including allocation failures without a kill. This signal identifies exhaustion of the session budget and works with `memory_localevents` mounts. Ancestor or host kills alone do not invalidate it. The diagnostic reports the observed `memory.events` kill count as context, not proof of the kill cause; that count can exclude descendant victims on `memory_localevents` mounts. Box removes nested cgroups during close. The launcher restores the command environment only after joining the session group.
+
+If descendants remain alive after a kill, close waits up to 10 seconds for the cgroup to become empty. A timeout rejects close and retains the cgroup and state lease. Retry close after the descendants exit; cleanup must succeed before that state can be reused.

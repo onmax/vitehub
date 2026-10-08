@@ -1,8 +1,9 @@
 import { emailError, isEmailError } from "./errors.ts"
 import { isEmailProviderError } from "./provider.ts"
+import { createEmailDriverResolver } from "./driver.ts"
 import { applyUnsubscribe } from "./drivers/shared.ts"
 
-import type { EmailClient, EmailDefinition, EmailDriver, EmailDriverSource, EmailMessage, EmailProviderErrorCode, EmailSendResult } from "./types.ts"
+import type { EmailClient, EmailDefinition, EmailMessage, EmailProviderErrorCode, EmailSendResult } from "./types.ts"
 import { emailErrorDiagnostics } from "./error-diagnostics.ts"
 
 const errorCodes: Record<EmailProviderErrorCode, "EMAIL_AUTHENTICATION" | "EMAIL_NETWORK" | "EMAIL_NOT_CONFIGURED" | "EMAIL_PROVIDER_FAILED" | "EMAIL_RATE_LIMITED" | "EMAIL_TIMEOUT"> = {
@@ -16,41 +17,17 @@ const errorCodes: Record<EmailProviderErrorCode, "EMAIL_AUTHENTICATION" | "EMAIL
   UNSUPPORTED: "EMAIL_PROVIDER_FAILED",
 }
 
-function assertEmailDriver(value: unknown): asserts value is EmailDriver {
-  if (!value || typeof value !== "object") throw emailErrorDiagnostics.EMAIL_R0001({ message: "Email driver must be an object." })
-  const driver = value as Partial<EmailDriver>
-  if (typeof driver.name !== "string" || driver.name.trim().length === 0) throw emailErrorDiagnostics.EMAIL_R0002({ message: "Email driver name must be a non-empty string." })
-  if (typeof driver.send !== "function") throw emailErrorDiagnostics.EMAIL_R0003({ message: "Email driver send must be a function." })
-}
-
-function resolveEmailDriver(source: EmailDriverSource): Promise<EmailDriver> {
-  return Promise.resolve(typeof source === "function" ? source() : source).then((driver) => {
-    assertEmailDriver(driver)
-    return driver
-  })
-}
-
 export function createEmail(options: EmailDefinition): EmailClient {
-  if (!options || typeof options !== "object" || !("driver" in options)) throw emailErrorDiagnostics.EMAIL_R0004({ message: "`createEmail()` expects an object with a driver." })
-  if (typeof options.driver !== "function") assertEmailDriver(options.driver)
-  let initialization: Promise<void> | undefined
+  if (!options || typeof options !== "object" || !Object.hasOwn(options, "driver")) throw emailErrorDiagnostics.EMAIL_R0004({ message: "`createEmail()` expects an object with a driver." })
+  const resolveDriver = createEmailDriverResolver(options.driver)
 
   return {
     async send(message: EmailMessage): Promise<EmailSendResult> {
       let driverName = "unknown"
       try {
-        const driver = await resolveEmailDriver(options.driver)
+        const driver = await resolveDriver()
         driverName = driver.name
-        if (typeof options.driver === "function") {
-          await driver.initialize?.()
-        }
-        else {
-          initialization ??= Promise.resolve(driver.initialize?.()).catch((error: unknown) => {
-            initialization = undefined
-            throw error
-          })
-          await initialization
-        }
+        await driver.initialize?.()
         const preparedMessage = applyUnsubscribe(message, driver.name)
         const result = await driver.send(preparedMessage, { attempt: 1, driver: driver.name, meta: {}, signal: undefined, stream: preparedMessage.stream })
         if (result.error) throw result.error

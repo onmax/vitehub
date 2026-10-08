@@ -8,6 +8,9 @@
       "@vite-hub/box": [
         "packages/box/src/index.ts"
       ],
+      "@vite-hub/box/_internal/toolchain": [
+        "packages/box/src/internal/host-toolchain.ts"
+      ],
       "#vitehub/agent/registry": [
         "packages/agent/src/runtime/empty-registry.ts"
       ],
@@ -82,6 +85,12 @@
       ],
       "@vite-hub/workflow/runtime/state": [
         "packages/workflow/src/runtime/state.ts"
+      ],
+      "@vite-hub/env/*": [
+        "packages/env/src/*.ts"
+      ],
+      "@vite-hub/agent/env-identity": [
+        "packages/agent/src/env-identity.ts"
       ]
     },
     "rootDir": "..",

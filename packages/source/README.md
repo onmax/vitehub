@@ -34,6 +34,11 @@ reader. Revision-aware loaders receive the same pinned revision on every
 operation. Loaders without revision support can observe origin changes. Create
 another reader to resolve a new revision. No registration or global type map is needed.
 
+`glob()` keeps its cached key listing in each reader. Opening another reader
+refreshes that reader's listing without changing existing readers. File content
+and metadata are read from the current file system. Set `keyCache: false` to
+refresh keys on each listing and when an item is missing from the latest listing.
+
 `file()` follows a symbolic link only when its resolved target stays inside the Source root. `glob()` is also confined to the Source root. It does not follow symbolic links by default, and it checks each file path again before it reads content or metadata. Set `followSymlinks: true` to follow links when their resolved targets stay inside the Source root. This option controls file selection. It does not isolate the process from concurrent file system changes.
 
 File paths are relative to the Source root. Absolute paths, Windows drive paths such as `C:notes.md`, parent traversal, and null bytes are rejected on every host.
@@ -196,7 +201,7 @@ requires a signed-in `@vite-hub/auth` session, and a callback receives
 `{ request, session, user }` and returns `true`, `false` for `403`, or a
 `Response`. The route checks access before it parses the query. Without a session
 it returns `401`, and `useCollection()` sets `error` to a `CollectionAccessError`
-with that `status`. Generated routes pass Auth's `authorizeRequest` when the host
+with that `status`. Generated routes wrap the page with Auth's `withAuthorization` when the host
 enables Auth with a discovered Auth Definition (`hubSource({ auth: true })`
 alongside `hubAuth()` outside `vite-hub`); otherwise a
 Collection with `authorize` fails closed. Do not repeat the route under

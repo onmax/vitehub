@@ -23,7 +23,7 @@ import type {
   VercelSandboxCreateOptions,
   VercelSandboxInstance,
 } from "./vercel.ts";
-import { isBuiltInBoxRuntime } from "./internal/runtime.ts";
+import { hasDeclaredBoxRuntimeMember, isBuiltInBoxRuntime } from "./internal/runtime.ts";
 import { boxErrorDiagnostics } from "./error-diagnostics.ts"
 
 export type {
@@ -84,6 +84,67 @@ export interface BoxCheckout<Context> {
   sha: BoxValue<string, Context>;
 }
 
+/**
+ * Node.js and package manager for Box commands. `"project"` reads both from
+ * the project, the same as `{ node: "project", packageManager: "project" }`.
+ */
+export type BoxToolchain = "project" | BoxToolchainOptions;
+
+export interface BoxToolchainOptions {
+  /** Node.js version, range, or alias used when the project pins none. */
+  fallbackNode?: string;
+  /** `"project"` (default) or a Node.js version, range, or alias such as `22`, `^22.11.0`, or `lts/*`. */
+  node?: "project" | (string & {});
+  /** `"project"` (default) reads package.json; `false` uses the npm bundled with Node.js; or `name@version`. */
+  packageManager?: "project" | false | (string & {});
+}
+
+export interface BoxToolchainPin {
+  /** Project file or option that declared the version, such as `.node-version`. */
+  readonly source: string;
+  /** Declared version, range, or alias. */
+  readonly version: string;
+}
+
+export interface BoxToolchainPackageManagerPin extends BoxToolchainPin {
+  /** Expected `algorithm.hex` digest from a package.json packageManager value. */
+  readonly integrity?: string;
+  readonly name: "npm" | "pnpm" | "yarn";
+}
+
+export interface BoxToolchainPins {
+  readonly node: BoxToolchainPin;
+  readonly packageManager?: BoxToolchainPackageManagerPin;
+}
+
+/** Normalized toolchain declaration passed to Box runtimes. */
+export interface BoxToolchainInput {
+  readonly fallbackNode?: string;
+  readonly node: string;
+  readonly packageManager: string | false;
+  /** Pins read before the Box opened. Runtimes read checkout pins after materialization. */
+  readonly pins?: BoxToolchainPins;
+}
+
+export interface BoxToolchainPlan {
+  readonly node?: BoxToolchainPin;
+  readonly packageManager?: BoxToolchainPackageManagerPin;
+  /** `checkout` pins are read from the Box checkout each time it opens. */
+  readonly source: "checkout" | "project";
+}
+
+/** Toolchain provisioned for an open Box session. */
+export interface BoxResolvedToolchain {
+  /** Directories prepended to PATH, in order. */
+  readonly bin: readonly string[];
+  readonly node: { readonly source: string; readonly version: string };
+  readonly packageManager?: {
+    readonly name: BoxToolchainPackageManagerPin["name"];
+    readonly source: string;
+    readonly version: string;
+  };
+}
+
 export interface BoxDefinition<Context = unknown> {
   checkout?: BoxCheckout<Context>;
   cwd?: BoxValue<string, Context>;
@@ -91,6 +152,8 @@ export interface BoxDefinition<Context = unknown> {
   home?: BoxHome<Context>;
   requires?: readonly BoxRequirement[];
   runtime: BoxRuntimeDefinition;
+  /** Provision project-pinned Node.js and package manager before requirement checks. */
+  toolchain?: BoxToolchain;
 }
 
 export type BuiltInBoxRuntimeName = "ascii" | "crabbox" | "trusted-host" | "vercel";
@@ -194,6 +257,8 @@ export interface BoxSession {
   readonly id: string;
   readonly inspectionConcurrency?: number;
   readonly ports?: BoxPorts;
+  /** Provisioned toolchain, when the Box declares one. */
+  readonly toolchain?: BoxResolvedToolchain;
   readonly spawn?: (
     command: string,
     args?: readonly string[],
@@ -237,6 +302,7 @@ export interface BoxRuntimeInput {
   identity: string;
   plan: ResolvedBoxPlan;
   requirements: readonly ResolvedBoxRequirementInput[];
+  toolchain?: BoxToolchainInput;
 }
 
 export interface ResolvedBoxCheckout {
@@ -256,6 +322,8 @@ export interface BoxResolvedRequirement {
 }
 
 export interface BoxPlan {
+  /** Configured trusted-host command limits. Absent on runtimes without this contract. */
+  readonly resources?: TrustedHostOptions["resources"];
   readonly cache: {
     readonly state: "disposable";
   };
@@ -270,6 +338,7 @@ export interface BoxPlan {
   readonly identity: string;
   readonly requirements: readonly BoxResolvedRequirement[];
   readonly runtime: string;
+  readonly toolchain?: BoxToolchainPlan;
   readonly workspace: {
     readonly path?: string;
     readonly state: "authoritative" | "disposable";
@@ -360,7 +429,11 @@ async function resolveBoxRuntime(value: unknown): Promise<BoxRuntime> {
 function isBoxRuntime(value: unknown): value is BoxRuntime {
   if (!value || typeof value !== "object") return false;
   const runtime = value as Partial<BoxRuntime>;
-  return typeof runtime.name === "string"
+  return hasDeclaredBoxRuntimeMember(runtime, "name")
+    && hasDeclaredBoxRuntimeMember(runtime, "open")
+    && hasDeclaredBoxRuntimeMember(runtime, "prepare")
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Runtime detection validates the name and callable operations after checking their declaring prototypes.
+    && typeof runtime.name === "string"
     && typeof runtime.open === "function"
     && typeof runtime.prepare === "function";
 }
@@ -400,17 +473,20 @@ export async function resolveBox<Context>(
       }
     : undefined;
   const plan = resolvePlan(definition, context, cwd || process.cwd());
+  const toolchain = await resolveToolchain(definition.toolchain, checkout ? undefined : cwd || process.cwd());
   const requirements = normalizeRequirements([
     ...(checkout ? ["git"] : []),
+    ...(toolchain ? ["node", ...(toolchain.pins?.packageManager ? [toolchain.pins.packageManager.name] : [])] : []),
     ...(definition.requires || []),
     ...(options.requires || []),
   ]);
   const input: BoxRuntimeInput = {
     ...(checkout ? { checkout } : {}),
     ...(cwd ? { cwd } : {}),
-    identity: planIdentity(plan, requirements, checkout),
+    identity: planIdentity(plan, requirements, checkout, toolchain),
     plan,
     requirements,
+    ...(toolchain ? { toolchain } : {}),
   };
   const prepared = await runtime.prepare(input);
   let executionAuthority: ExecutionAuthority;
@@ -432,26 +508,60 @@ export async function resolveBox<Context>(
     home: Object.freeze({
       state: Object.freeze(homeState),
     }),
+    ...(toolchain
+      ? {
+          toolchain: Object.freeze({
+            ...(toolchain.pins?.node ? { node: toolchain.pins.node } : {}),
+            ...(toolchain.pins?.packageManager ? { packageManager: toolchain.pins.packageManager } : {}),
+            source: toolchain.pins ? "project" as const : "checkout" as const,
+          }),
+        }
+      : {}),
   });
   return Object.freeze({
     async open(options?: BoxOpenOptions) {
       options?.signal?.throwIfAborted();
-      return await runtime.open(input, {
+      const session = await runtime.open(input, {
         ...options,
         executionAuthority: boxPlan.executionAuthority,
       });
+      if (toolchain && !session.toolchain) {
+        await session.close().catch(() => undefined);
+        throw boxErrorDiagnostics.BOX_R0156({ message: `[vitehub] Box runtime ${runtime.name} does not provision toolchains. Use a built-in runtime or remove box.toolchain.` });
+      }
+      return session;
     },
     plan: boxPlan,
   });
+}
+
+/** Read toolchain pins now unless they come from a checkout that exists only after open. */
+async function resolveToolchain(
+  declaration: BoxToolchain | undefined,
+  projectRoot: string | undefined,
+): Promise<BoxToolchainInput | undefined> {
+  if (declaration === undefined) return;
+  // Boxes without a toolchain do not load the provisioner or its Node.js dependencies.
+  const [{ normalizeToolchain, readToolchainPins, toolchainReadsProject }, { readHostProjectFiles }] = await Promise.all([
+    import("./internal/toolchain.ts"),
+    import("./internal/host-toolchain.ts"),
+  ]);
+  const toolchain = normalizeToolchain(declaration, "box.toolchain");
+  if (!toolchain) return;
+  if (!projectRoot && toolchainReadsProject(toolchain)) return toolchain;
+  const files = toolchainReadsProject(toolchain) ? await readHostProjectFiles(projectRoot!) : {};
+  return Object.freeze({ ...toolchain, pins: readToolchainPins(toolchain, files) });
 }
 
 function planIdentity(
   plan: ResolvedBoxPlan,
   requirements: readonly ResolvedBoxRequirementInput[],
   checkout: ResolvedBoxCheckout | undefined,
+  toolchain: BoxToolchainInput | undefined,
 ) {
   const value = JSON.stringify({
     checkout,
+    toolchain,
     env: Object.keys(plan.env).toSorted(),
     files: Object.keys(plan.files).toSorted(),
     requirements,

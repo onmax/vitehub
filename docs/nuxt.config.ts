@@ -12,6 +12,10 @@ export default defineNuxtConfig({
   schemaOrg: {
     defaults: false,
   },
+  agentDiscovery: {
+    // Pages with a Markdown twin. On Cloudflare these also run the Worker before static assets.
+    routes: ["/", "/docs", "/docs/**", "/blog/**", "/about", "/contact", "/privacy"],
+  },
   llms: {
     contentRawMarkdown: false,
     domain: "https://vitehub.dev",
@@ -110,6 +114,8 @@ export default defineNuxtConfig({
         "lucide:code-2",
         "lucide:copy",
         "lucide:hash",
+        "lucide:hard-drive-download",
+        "lucide:hard-drive-upload",
         "lucide:lightbulb",
         "lucide:menu",
         "lucide:paperclip",
@@ -189,6 +195,7 @@ export default defineNuxtConfig({
         "simple-icons:cloudflare",
         "simple-icons:discord",
         "simple-icons:vercel",
+        "vscode-icons:file-type-toml",
         "vscode-icons:file-type-typescript",
       ],
     },
@@ -238,7 +245,7 @@ export default defineNuxtConfig({
     payloadExtraction: false,
     defaults: {
       nuxtLink: {
-        trailingSlash: "append",
+        trailingSlash: "remove",
       },
     },
   },

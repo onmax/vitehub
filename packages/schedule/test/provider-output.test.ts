@@ -383,12 +383,14 @@ describe("schedule provider output", () => {
 
     expect(existsSync(cloudflareWorker)).toBe(true)
     await expect(readFile(cloudflareWorker, "utf8")).resolves.toContain("waitUntil: (promise) => ctx.waitUntil(promise)")
+    await expect(readFile(cloudflareWorker, "utf8")).resolves.toContain("unwrapScheduleDefinition")
     expect(JSON.parse(await readFile(cloudflareConfig, "utf8")).triggers.crons).toEqual(["0 0 * * *"])
     expect(JSON.parse(await readFile(vercelConfig, "utf8")).crons).toEqual([{
       path: "/api/vitehub/schedules/vercel/cleanup",
       schedule: "0 0 * * *",
     }])
     expect(await readFile(vercelFunction, "utf8")).toContain("executeStaticSchedule")
+    expect(await readFile(vercelFunction, "utf8")).toContain("unwrapScheduleDefinition")
     expect(await readFile(vercelFunction, "utf8")).not.toContain("setWorkflowRuntimeRegistry")
     expect(existsSync(join(rootDir, ".vercel", "output", "functions", "api", "vitehub", "schedules", "vercel", "agent-turn.func"))).toBe(false)
     const netlifyModule = await import(pathToFileURL(netlifyFunction).href)
@@ -397,6 +399,7 @@ describe("schedule provider output", () => {
     expect(existsSync(join(createDefaultNetlifyOutputRoot(rootDir), "functions", "vitehub-schedule-agent-turn.mjs"))).toBe(false)
     await expect(readFile(netlifyFunction, "utf8")).resolves.toContain("schedule: \"0 0 * * *\"")
     await expect(readFile(netlifyFunction, "utf8")).resolves.toContain("executeStaticSchedule")
+    await expect(readFile(netlifyFunction, "utf8")).resolves.toContain("unwrapScheduleDefinition")
     await expect(readFile(join(rootDir, ".vitehub", "schedule", "registry.mjs"), "utf8")).resolves.not.toContain("agent-turn")
   })
 
@@ -564,6 +567,7 @@ describe("schedule provider output", () => {
     expect(new Set(cronNames).size).toBe(cronNames.length)
     expect(cronNames.every(name => name.length <= 64 && /^[a-z0-9 _-]+$/i.test(name))).toBe(true)
     expect(source).toContain('from "@vite-hub/schedule/runtime/static"')
+    expect(source).toContain("unwrapScheduleDefinition")
     expect(source).not.toContain("./registry.mjs")
     expect(source).toContain("handler: () => \"ok\"")
   })
@@ -720,6 +724,43 @@ describe("schedule provider output", () => {
     await expect(readFile(join(netlifyRoot, "functions", "vitehub-schedule-stale.mjs"), "utf8")).rejects.toThrow()
     await expect(readFile(join(netlifyRoot, "functions", "vitehub-schedule-cleanup.mjs"), "utf8")).resolves.toContain("schedule: \"0 0 * * *\"")
     expect(JSON.parse(await readFile(join(cloudflareRoot, "wrangler.json"), "utf8")).triggers.crons).toEqual(["0 1 * * *", "0 0 * * *"])
+  })
+
+  it("filters malformed provider cron entries before publishing output", async () => {
+    const rootDir = await createTempProject("vitehub-schedule-output-cron-shapes-")
+    const cloudflareRoot = createDefaultCloudflareOutputRoot(rootDir)
+    const vercelRoot = join(rootDir, ".vercel", "output")
+    await mkdir(cloudflareRoot, { recursive: true })
+    await mkdir(vercelRoot, { recursive: true })
+    await writeFile(join(cloudflareRoot, "wrangler.json"), JSON.stringify({
+      main: "index.js",
+      triggers: { crons: ["0 1 * * *", null, 42] },
+    }), "utf8")
+    await writeFile(join(vercelRoot, "config.json"), JSON.stringify({
+      crons: [
+        { path: "/api/user-cron", schedule: "0 1 * * *" },
+        { path: "/api/vitehub/schedules/vercel/stale", schedule: "0 2 * * *" },
+        { path: "/api/invalid" },
+        "invalid",
+        null,
+      ],
+      version: 3,
+    }), "utf8")
+
+    await generateProviderOutputs({ clientOutDir: "dist/client", rootDir })
+
+    expect(JSON.parse(await readFile(join(cloudflareRoot, "wrangler.json"), "utf8")).triggers.crons).toEqual(["0 1 * * *", "0 0 * * *"])
+    expect(JSON.parse(await readFile(join(vercelRoot, "config.json"), "utf8")).crons).toEqual([
+      { path: "/api/user-cron", schedule: "0 1 * * *" },
+      { path: "/api/vitehub/schedules/vercel/cleanup", schedule: "0 0 * * *" },
+    ])
+
+    await generateProviderOutputs({ clientOutDir: "dist/client", definitions: [], rootDir })
+
+    expect(JSON.parse(await readFile(join(cloudflareRoot, "wrangler.json"), "utf8")).triggers.crons).toEqual(["0 1 * * *"])
+    expect(JSON.parse(await readFile(join(vercelRoot, "config.json"), "utf8")).crons).toEqual([
+      { path: "/api/user-cron", schedule: "0 1 * * *" },
+    ])
   })
 
   it("avoids empty Netlify output and cleans stale files without static schedules", async () => {
@@ -1491,8 +1532,28 @@ describe("schedule provider output", () => {
 
     const source = await readFile(join(rootDir, ".vercel", "output", "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs"), "utf8")
     expect(source).toContain("process.env.CRON_SECRET")
-    expect(source).toContain("authorization !== `Bearer ${cronSecret}`")
+    expect(source).toContain("if (cronSecret && !isScheduleCronAuthorized(authorization, cronSecret))")
+    expect(source).not.toContain("!== `Bearer ${cronSecret}`")
     expect(source).toContain("res.statusCode = 401")
+
+    const { default: handler }: { default: (req: { headers: Record<string, string>, url: string }, res: { end: (body?: string) => void, statusCode?: number }) => Promise<void> } = await import(pathToFileURL(join(rootDir, ".vercel", "output", "functions", "api", "vitehub", "schedules", "vercel", "cleanup.func", "index.mjs")).href)
+    const run = async (authorization?: string) => {
+      const res: { end: (body?: string) => void, statusCode?: number } = { end: () => {} }
+      await handler({ headers: authorization ? { authorization } : {}, url: "/api/vitehub/schedules/vercel/cleanup" }, res)
+      return res.statusCode
+    }
+    const previousSecret = process.env.CRON_SECRET
+    process.env.CRON_SECRET = "cron-secret"
+    try {
+      for (const authorization of [undefined, "Bearer cron", "Bearer cron-secret-", "Bearer cron-secreT", "Basic cron-secret"]) {
+        expect(await run(authorization)).toBe(401)
+      }
+      expect(await run("Bearer cron-secret")).toBe(404)
+    }
+    finally {
+      if (previousSecret === undefined) delete process.env.CRON_SECRET
+      else process.env.CRON_SECRET = previousSecret
+    }
   })
 
   it("emits Vercel handlers that load unsanitized schedule names", async () => {

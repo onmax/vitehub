@@ -1,11 +1,20 @@
 import * as v from 'valibot'
 
 const nonempty = v.pipe(v.string(), v.minLength(1))
-const waitSchema = v.object({ headSha: nonempty, reason: nonempty, evidenceKey: nonempty, knownFailures: v.optional(v.array(v.string())) })
+const repository = v.pipe(v.string(), v.regex(/^[\w.-]+\/[\w.-]+$/))
+const commitSha = v.pipe(v.string(), v.regex(/^[a-f0-9]{40,64}$/))
+export type PullRequestWake = { kind: 'checks'; repository: string; headSha: string } | { kind: 'pull-request'; repository: string; number: number }
+export const wakeSchema: v.GenericSchema<unknown, PullRequestWake> = v.variant('kind', [
+  v.object({ kind: v.literal('checks'), repository, headSha: commitSha }),
+  v.object({ kind: v.literal('pull-request'), repository, number: v.pipe(v.number(), v.integer(), v.minValue(1)) }),
+])
+const waitSchema = v.object({ headSha: nonempty, reason: nonempty, evidenceKey: nonempty, retryAt: v.optional(v.number()), knownFailures: v.optional(v.array(v.string())), kind: v.optional(v.picklist(['checks', 'external'])), wake: v.optional(wakeSchema) })
 
 /**
  * Caller-selected structured evidence that must change before another Agent pass.
+ * `retryAt` schedules a host-only merge reevaluation after transient or live-only gates.
  * `knownFailures` lists failing checks that the parked pass already saw.
+ * An external wait without `wake` resumes on feedback, head or base changes after the named manual action.
  */
-export type PullRequestWait = { headSha: string; reason: string; evidenceKey: string; knownFailures?: string[] }
+export type PullRequestWait = { headSha: string; reason: string; evidenceKey: string; retryAt?: number; knownFailures?: string[]; kind?: 'checks' | 'external'; wake?: PullRequestWake }
 export const parseWait = (value: unknown): PullRequestWait => v.parse(waitSchema, value)

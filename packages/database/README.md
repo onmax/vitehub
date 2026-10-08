@@ -62,6 +62,10 @@ Use `src/database.ts` or `server/databases/config.ts` for one default database. 
 
 Application code calls `useDatabase()` with the discovered name. Use `default` for a Default Database.
 
+When the Nitro Vite plugin builds with a Cloudflare preset, the Vite integration merges each resolved D1 binding into `nitro.cloudflare.wrangler.d1_databases` and copies the Definition's migration SQL to `.output/server/.vitehub/database/migrations/<binding>`. A Definition's binding replaces a Nitro binding with the same name.
+
+Production Nuxt builds with only D1-over-HTTP Databases do not bundle libSQL or its native libraries. Local SQLite development and projects with libSQL connections keep their existing drivers.
+
 ## Remote D1 development
 
 Set `cloudflare.http` on a Database Definition to query remote D1 during local development. `true` uses Cloudflare's API with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; an object selects an authenticated D1-compatible proxy.
@@ -77,6 +81,12 @@ export default defineDatabase({
 ```
 
 Remote access is explicit. Omitting `cloudflare.http` keeps the local SQLite default, and a Cloudflare deployment still prefers its D1 binding.
+
+When a libSQL connection URL or auth token changes at runtime, the next database
+access creates a client with the new credentials and closes the previous client.
+Credential refresh is therefore a lifecycle boundary: await outstanding database
+work before changing the credential, because libSQL closes can abort operations
+that are still in flight.
 
 ## Nuxt D1 host wiring
 

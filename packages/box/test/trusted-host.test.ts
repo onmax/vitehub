@@ -228,6 +228,9 @@ describe("createTrustedHostRuntime", () => {
     await expect(session.run({ command: "true", env: { CODEX_HOME: ambientHome } })).rejects.toThrow(
       "cannot override CODEX_HOME",
     );
+    await expect(session.run({ command: "true", env: { "A.B": "unsupported" } })).rejects.toThrow(
+      "Invalid Box environment variable: A.B",
+    );
     await session.destroy?.();
   });
 
@@ -491,6 +494,92 @@ describe("createTrustedHostRuntime", () => {
     await session.destroy?.();
   });
 
+  it.each(["SIGKILL", "KILL", undefined])("terminates a SIGTERM-ignoring process with %s", async (signal) => {
+    if (process.platform === "win32") return;
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await box.open();
+    try {
+      const child = await session.spawn!(process.execPath, ["-e",
+        "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)",
+      ]);
+      const reader = child.stdout.getReader();
+      await reader.read();
+      reader.releaseLock();
+      await expect(Promise.race([
+        child.kill(signal).then(() => "killed"),
+        new Promise(resolve => setTimeout(resolve, 1_500, "still running")),
+      ])).resolves.toBe("killed");
+      await expect(child.wait()).resolves.toMatchObject({ code: 1 });
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("terminates surviving descendants after the leader exits without shortening the grace period", async () => {
+    if (process.platform === "win32") return;
+    const root = await temporaryRoot();
+    const survived = join(root, "survived");
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await box.open();
+    let descendantPid: number | undefined;
+    try {
+      const descendantCode = [
+        "process.on('SIGTERM', () => {",
+        "  setTimeout(() => require('node:fs').writeFileSync(process.argv[1], ''), 400);",
+        "});",
+        "process.send(process.pid);",
+        "setInterval(() => {}, 1000);",
+      ].join("\n");
+      const child = await session.spawn!("exec", [process.execPath, "-e", [
+        "const { spawn } = require('node:child_process');",
+        `const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendantCode)}, ${JSON.stringify(survived)}], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });`,
+        "descendant.once('message', pid => {",
+        "  descendant.disconnect(); descendant.unref(); console.log(pid);",
+        "});",
+        "process.on('SIGTERM', () => process.exit(0));",
+        "setInterval(() => {}, 1000);",
+      ].join("\n")]);
+      const reader = child.stdout.getReader();
+      const ready = await reader.read();
+      reader.releaseLock();
+      descendantPid = Number(new TextDecoder().decode(ready.value));
+      expect(descendantPid).toBeGreaterThan(0);
+      const started = performance.now();
+      await child.kill();
+      expect(performance.now() - started).toBeGreaterThanOrEqual(200);
+      await expect(child.wait()).resolves.toMatchObject({ code: 0 });
+      await new Promise(resolve => setTimeout(resolve, 450));
+      await expect(stat(survived)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (descendantPid) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch (error) {
+          expect(error).toMatchObject({ code: "ESRCH" });
+        }
+      }
+      await session.close();
+    }
+  });
+
+  it("normalizes portable signal names before forwarding them to Node", async () => {
+    if (process.platform === "win32") return;
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await box.open();
+    try {
+      const child = await session.spawn!(process.execPath, ["-e",
+        "console.log('ready'); setInterval(() => {}, 1000)",
+      ]);
+      const reader = child.stdout.getReader();
+      await reader.read();
+      reader.releaseLock();
+      await child.kill("TERM");
+      await expect(child.wait()).resolves.toMatchObject({ code: 1 });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("does not start commands cancelled during working-directory resolution", async () => {
     const root = await temporaryRoot();
     const marker = join(root, "started");
@@ -546,6 +635,28 @@ describe("createTrustedHostRuntime", () => {
         await vi.waitFor(() => expect(() => process.kill(-child.pid!, 0)).toThrow());
     } finally {
       registration.mockRestore();
+      await session.destroy?.();
+    }
+  });
+
+  it("observes an aborted background process before wait is called", async () => {
+    const box = await resolveBox({ runtime: createTrustedHostRuntime() }, {});
+    const session = await boxProvider(box).createSession();
+    const controller = new AbortController();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const child = await session.spawn({
+        abortSignal: controller.signal,
+        command: "node -e \"setInterval(() => {}, 1000)\"",
+      });
+      controller.abort(new Error("cancelled"));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(unhandled).toEqual([]);
+      await expect(child.wait()).rejects.toThrow("cancelled");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
       await session.destroy?.();
     }
   });

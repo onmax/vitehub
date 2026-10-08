@@ -6,6 +6,7 @@ import { toAiSdkModelMessages } from "./ai-sdk.ts"
 import type { ModelMessage } from "ai"
 import type { AgentCapabilityContext, AgentCapabilityDefinition, AgentToolDefinition } from "./types.ts"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
+import { agentChatApprovedTools } from "./internal/chat-approvals.ts"
 
 interface EveApprovalContext {
   approvedTools: ReadonlySet<string>
@@ -75,10 +76,8 @@ async function loadMountedExtension(
   }
 }
 
-function approvedToolNamesFromContext(context: AgentCapabilityContext): Set<string> {
-  const approved = context.invocation?.input.get().context?.["vitehub.eve.approvedTools"]
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Invocation context is external input and approved tool names must be strings.
-  return new Set(Array.isArray(approved) ? approved.filter((name): name is string => typeof name === "string") : [])
+function approvedToolNamesFromContext(context: AgentCapabilityContext): ReadonlySet<string> {
+  return agentChatApprovedTools(context, context.invocation?.input.get().context?.["chat.sessionId"])
 }
 
 function eveSessionId(context: AgentCapabilityContext): string {

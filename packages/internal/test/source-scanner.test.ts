@@ -4,6 +4,7 @@ import {
   findDefaultExportCall,
   findIdentifierCalls,
   readObjectProperty,
+  readObjectPropertyNames,
   splitTopLevel,
 } from "../src/source-scanner.ts"
 
@@ -531,5 +532,41 @@ describe("source scanner", () => {
   it("reads top-level object properties without matching nested values", () => {
     expect(readObjectProperty(`{ nested: { cron: "wrong" }, cron: "0 8 * * *" }`, "cron"))
       .toBe(`"0 8 * * *"`)
+  })
+
+  it.each([
+    "manual: true",
+    "manual",
+    "get /* option */ 'manual'() { return true }",
+    'set "manual"(value) {}',
+    'async "manual"() {}',
+    "*'manual'() {}",
+  ])("finds a property regardless of member syntax: %s", (member) => {
+    expect(readObjectPropertyNames(`{ ${member} }`)).toEqual(["manual"])
+  })
+
+  it("does not report properties inside another member", () => {
+    expect(readObjectPropertyNames(`{ nested: { manual: true }, handler() { const manual = true }, /* trailing */ }`)).toEqual(["nested", "handler"])
+    expect(readObjectProperty(`{ get manual() { return true }, manual: false }`, "manual")).toBe("false")
+  })
+
+  it.each(["é", "𐐀", "a\u0301", "manualé", "manual\u200C", "allowRuntimeSchedules\u200D"])("reads a Unicode identifier key: %s", (name) => {
+    expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([name])
+    expect(readObjectProperty(`{ ${name}: true }`, name)).toBe("true")
+    expect(readObjectPropertyNames(`{ get ${name}() {}, async ${name}() {} }`)).toEqual([name, name])
+  })
+
+  it.each(["0x2a", "1e2", "1_000", ".5", "1.5", "1e+2", "1e-2", "1.", "1_000.5_2", "0b1010", "0o52", "42n"])("preserves numeric key spelling: %s", (name) => {
+    expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([name])
+    expect(readObjectProperty(`{ ${name}: true }`, name)).toBe("true")
+    expect(readObjectPropertyNames(`{ get ${name}() {}, async ${name}() {} }`)).toEqual([name, name])
+  })
+
+  it.each(["1manual", "1e+", "1__0", "0xg"])("reports an unresolved numeric key spelling: %s", (name) => {
+    expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([undefined])
+  })
+
+  it("reports unresolved keys without evaluating them", () => {
+    expect(readObjectPropertyNames(String.raw`{ get ["manual"]() {}, "manu\u0061l": true, ...options }`)).toEqual([undefined, undefined, undefined])
   })
 })

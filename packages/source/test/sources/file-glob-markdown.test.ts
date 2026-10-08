@@ -4,7 +4,7 @@ import { join, resolve } from "node:path"
 
 import { afterEach, describe, expect, it } from "vitest"
 
-import { clearSources, defineSources, registerSources, useSource } from "../../src/index.ts"
+import { clearSources, createSource, defineSources, registerSources, useSource } from "../../src/index.ts"
 import { file } from "../../src/file.ts"
 import { glob } from "../../src/glob.ts"
 import { markdown } from "../../src/markdown.ts"
@@ -72,6 +72,24 @@ describe("@vite-hub/source local file sources", () => {
       .rejects.toThrow("file could not find")
     await expect(useSource("docs", { rootDir: root }).read("../package.json" as any))
       .rejects.toThrow("glob could not find")
+  })
+
+  it("keeps a prepared glob listing local to each reader", async () => {
+    const root = await createRoot()
+    await writeFile(join(root, "first.md"), "# First\n")
+    const docs = glob({ include: "**/*.md" })
+    const first = createSource(docs, { rootDir: root })
+    await expect(first.keys()).resolves.toEqual(["first.md"])
+
+    await writeFile(join(root, "second.md"), "# Second\n")
+    const second = createSource(docs, { rootDir: root })
+    await expect(second.keys()).resolves.toEqual(["first.md", "second.md"])
+
+    await expect(first.keys()).resolves.toEqual(["first.md"])
+    await expect(first.items()).resolves.toMatchObject([{ key: "first.md" }])
+    await expect(first.get("second.md")).rejects.toThrow("glob could not find")
+    await expect(first.meta("second.md")).rejects.toThrow("glob could not find")
+    await expect(second.read("second.md")).resolves.toBe("# Second\n")
   })
 
   it("resolves relative glob cwd from the source root", async () => {

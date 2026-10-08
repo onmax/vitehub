@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { integer, sqliteTable, text, unique, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 import {
   consoleDatabaseKey,
@@ -12,8 +13,11 @@ import {
   consoleDatabaseRequestQuery,
   parseConsoleDatabase,
 } from "../src/console/runtime/components/console-database-model.ts";
-import consoleDatabaseHandler from "../src/console/runtime/server/database.get.ts";
+import consoleDatabaseHandlerRoute from "../src/console/runtime/server/database.get.ts";
 import { installConsoleDatabase } from "../src/console/runtime/server/database.ts";
+import { allowed } from "./support/console-access.ts";
+
+const consoleDatabaseHandler = allowed(consoleDatabaseHandlerRoute);
 
 const users = sqliteTable("users", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -99,6 +103,32 @@ describe("Console database inspection", () => {
       from: { column: "author_id", table: "posts" },
       to: { column: "id", table: "users" },
     });
+  });
+
+  it("marks only individually unique columns across constraints and indexes", async () => {
+    const accounts = sqliteTable("accounts", {
+      tenant: text("tenant"),
+      email: text("email"),
+      handle: text("handle"),
+      externalId: text("external_id"),
+      activeAlias: text("active_alias"),
+      expression: text("expression"),
+    }, table => [
+      unique().on(table.tenant, table.email),
+      unique().on(table.handle),
+      uniqueIndex("external_id_unique").on(table.externalId),
+      uniqueIndex("active_alias_unique").on(table.activeAlias).where(sql`${table.activeAlias} <> 'shared'`),
+      uniqueIndex("expression_unique").on(sql`lower(${table.expression})`),
+    ]);
+    const client = createClient({ url: "file::memory:" });
+    clients.push(client);
+    const schema = { accounts };
+    installConsoleDatabase("/project", { default: { db: drizzle({ client, schema }), schema } }, ["default"]);
+
+    const result = await consoleDatabaseHandler(event());
+
+    expect(Object.fromEntries(result.tables[0]!.columns.map(column => [column.key, column.unique])))
+      .toEqual({ tenant: false, email: false, handle: true, externalId: true, activeAlias: false, expression: false });
   });
 
   it("paginates, filters, and sorts rows through structured read-only inputs", async () => {

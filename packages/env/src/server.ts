@@ -11,6 +11,8 @@ import {
 import { createEnvBridgeHandler } from "./http.ts"
 import type { EnvManagement } from "./http.ts"
 import { SecretEnv } from "./secret.ts"
+import { isRecord, isRuntimeEnvEntry, isRuntimeLiteralEntry, isRuntimeProviderEntry, runtimeRegistryEntries } from "./core/registry.ts"
+import type { RuntimeEnvEntry, RuntimeProviderEntry } from "./core/registry.ts"
 import { envValueTypeName, parseEnvValue, stringValueSchema } from "./core/values.ts"
 
 import type {
@@ -18,7 +20,6 @@ import type {
   EnvProviders,
   EnvRuntimeRegistry,
   DeepReadonly,
-  EnvValueSchema,
   LoadServerEnvOptions,
   ServerEnvInspection,
   ServerEnvDescription,
@@ -31,56 +32,8 @@ export type { ServerEnvInspection, ServerEnvInspectionEntry, ServerEnvInspection
 
 type RuntimeEnv = Record<string, unknown>
 
-interface RuntimeEnvEntry {
-  default?: unknown
-  required: boolean
-  schema?: EnvValueSchema
-  secret: boolean
-  source: { kind: "env", label: string, name: string, names?: string[], skipEmpty?: boolean }
-}
-
-interface RuntimeProviderEntry {
-  default?: unknown
-  required: boolean
-  schema?: EnvValueSchema
-  secret: boolean
-  source: { key: string, kind: "provider", label: "provider", provider: string }
-}
-
-interface RuntimeLiteralEntry {
-  kind: "literal"
-  value: unknown
-}
-
 type ProviderValues = ReadonlyMap<string, unknown>
 type ProviderLoads = Map<string, Promise<ProviderValues>>
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function isRuntimeLiteralEntry(value: unknown): value is RuntimeLiteralEntry {
-  return isRecord(value) && value.kind === "literal"
-}
-
-function isRuntimeEnvEntry(value: unknown): value is RuntimeEnvEntry {
-  return isRecord(value)
-    && isRecord(value.source)
-    && value.source.kind === "env"
-    && typeof value.source.name === "string"
-    && typeof value.required === "boolean"
-    && typeof value.secret === "boolean"
-}
-
-function isRuntimeProviderEntry(value: unknown): value is RuntimeProviderEntry {
-  return isRecord(value)
-    && isRecord(value.source)
-    && value.source.kind === "provider"
-    && typeof value.source.key === "string"
-    && typeof value.source.provider === "string"
-    && typeof value.required === "boolean"
-    && typeof value.secret === "boolean"
-}
 
 function processEnv(): RuntimeEnv {
   return typeof process === "object" && process && process.env ? process.env : {}
@@ -90,20 +43,32 @@ function runtimeEnv(event?: unknown): RuntimeEnv {
   return { ...processEnv(), ...getCloudflareEnv(event) }
 }
 
-function readRuntimeSource(entry: RuntimeEnvEntry, env: RuntimeEnv): { found: boolean, value?: unknown } {
+function hasRuntimeName(entry: RuntimeEnvEntry, env: RuntimeEnv, name: string): boolean {
+  return Object.hasOwn(env, name) && env[name] !== undefined && !(entry.source.skipEmpty && env[name] === "")
+}
+
+function readRuntimeSource(entry: RuntimeEnvEntry, env: RuntimeEnv): { found: boolean, name?: string, value?: unknown } {
   for (const name of entry.source.names || [entry.source.name]) {
-    if (Object.hasOwn(env, name) && typeof env[name] !== "undefined" && !(entry.source.skipEmpty && env[name] === "")) {
-      return { found: true, value: env[name] }
-    }
+    if (hasRuntimeName(entry, env, name)) return { found: true, name, value: env[name] }
   }
   return { found: false }
+}
+
+/** Report which kind of name supplied the value, and whether a shadowed conventional name holds another value. */
+function runtimeSourceOrigin(entry: RuntimeEnvEntry, env: RuntimeEnv, source: { found: boolean, name?: string, value?: unknown }): Pick<ServerEnvInspectionEntry, "conflict" | "via"> {
+  const canonical = entry.source.canonical
+  if (!source.found || canonical === undefined || canonical === false) return {}
+  if (source.name !== canonical) return { via: "conventional" }
+  const conflict = (entry.source.names || [entry.source.name])
+    .some(name => name !== canonical && hasRuntimeName(entry, env, name) && env[name] !== source.value)
+  return conflict ? { conflict: true, via: "canonical" } : { via: "canonical" }
 }
 
 function resolvedRuntimeValue(entry: RuntimeEnvEntry | RuntimeProviderEntry, value: unknown, found: boolean, path: string): unknown {
   const resolved = found ? value : entry.default
   if (typeof resolved === "undefined") {
     if (entry.required) {
-      throw missingRequiredEnv(entry.source.kind, `Missing Runtime Env from ${entry.source.kind}.`)
+      throw missingRequiredEnv(entry.source.kind, `Missing Runtime Env from ${entry.source.kind}.`, path)
     }
     return undefined
   }
@@ -200,18 +165,17 @@ async function readProvider(
   }
 }
 
-function collectProviderKeys(value: unknown, requests = new Map<string, Set<string>>()): Map<string, Set<string>> {
-  if (isRuntimeProviderEntry(value)) {
-    let keys = requests.get(value.source.provider)
+function collectProviderKeys(value: unknown): Map<string, Set<string>> {
+  const requests = new Map<string, Set<string>>()
+  for (const { entry } of runtimeRegistryEntries(value)) {
+    if (!isRuntimeProviderEntry(entry)) continue
+    let keys = requests.get(entry.source.provider)
     if (!keys) {
       keys = new Set()
-      requests.set(value.source.provider, keys)
+      requests.set(entry.source.provider, keys)
     }
-    keys.add(value.source.key)
-    return requests
+    keys.add(entry.source.key)
   }
-  if (isRuntimeEnvEntry(value) || isRuntimeLiteralEntry(value) || !isRecord(value)) return requests
-  for (const child of Object.values(value)) collectProviderKeys(child, requests)
   return requests
 }
 
@@ -366,7 +330,7 @@ function inspectionProvider(entry: RuntimeProviderEntry): { provider?: string } 
   return /^[A-Za-z0-9_-]{1,64}$/.test(entry.source.provider) ? { provider: entry.source.provider } : {}
 }
 
-async function inspectRegistryValue(
+async function inspectRegistryEntry(
   value: unknown,
   env: RuntimeEnv,
   options: LoadServerEnvOptions,
@@ -380,7 +344,7 @@ async function inspectRegistryValue(
   }
   if (isRuntimeEnvEntry(value)) {
     const source = readRuntimeSource(value, env)
-    entries.push({ masked: value.secret, ...inspectionPath(path), required: value.required, source: "env", status: inspectionStatus(value, source.value, source.found) })
+    entries.push({ masked: value.secret, ...inspectionPath(path), required: value.required, source: "env", status: inspectionStatus(value, source.value, source.found), ...runtimeSourceOrigin(value, env, source) })
     return
   }
   if (isRuntimeProviderEntry(value)) {
@@ -400,10 +364,6 @@ async function inspectRegistryValue(
       entries.push({ masked: value.secret, ...inspectionPath(path), ...inspectionProvider(value), required: value.required, source: "provider", status: "error" })
     }
     return
-  }
-  if (!isRecord(value)) return
-  for (const [key, child] of Object.entries(value)) {
-    await inspectRegistryValue(child, env, options, loads, `${path}.${key.includes(".") ? "!" : ""}${key}`, entries)
   }
 }
 
@@ -433,14 +393,15 @@ export async function loadServerEnv<TServerEnv extends Record<string, unknown> =
 /** Describe declarations without loading host values or calling providers. */
 export function describeServerEnv(registry: EnvRuntimeRegistry): ServerEnvDescription {
   const entries: ServerEnvDescriptionEntry[] = []
-  function visit(value: unknown, path: string): void {
+  for (const { entry: value, path } of runtimeRegistryEntries(registry)) {
     if (isRuntimeLiteralEntry(value)) {
       entries.push({ ...inspectionPath(path), source: "literal", secret: false, required: false, hasDefault: false })
-      return
+      continue
     }
     if (isRuntimeEnvEntry(value) || isRuntimeProviderEntry(value)) {
       entries.push({
         ...inspectionPath(path),
+        ...(isRuntimeEnvEntry(value) && value.source.canonical && /^[A-Z_][A-Z0-9_]{0,127}$/.test(value.source.canonical) ? { canonicalName: value.source.canonical } : {}),
         source: value.source.kind,
         ...(isRuntimeProviderEntry(value) ? inspectionProvider(value) : {}),
         secret: value.secret,
@@ -448,11 +409,8 @@ export function describeServerEnv(registry: EnvRuntimeRegistry): ServerEnvDescri
         hasDefault: value.default !== undefined,
         type: value.secret && value.schema?.kind === "enum" ? "enum" : envValueTypeName(value.schema ?? stringValueSchema),
       })
-      return
     }
-    if (isRecord(value)) for (const [key, child] of Object.entries(value)) visit(child, `${path}.${key.includes(".") ? "!" : ""}${key}`)
   }
-  visit(registry, "env.server")
   return { entries }
 }
 
@@ -473,7 +431,9 @@ export async function inspectServerEnv(
   await Promise.allSettled(loads.values())
   if (options.signal?.aborted) throw abortReason(options.signal)
   const entries: ServerEnvInspectionEntry[] = []
-  await inspectRegistryValue(registry, env, options, loads, "env.server", entries)
+  for (const { entry, path } of runtimeRegistryEntries(registry)) {
+    await inspectRegistryEntry(entry, env, options, loads, path, entries)
+  }
   if (options.signal?.aborted) throw abortReason(options.signal)
   return Object.freeze({ entries: Object.freeze(entries.map(entry => Object.freeze(entry))) })
 }
@@ -481,17 +441,10 @@ export async function inspectServerEnv(
 /** Limit management to safe, declared provider paths. Host variables stay read-only. */
 export function createServerEnvManagement(registry: EnvRuntimeRegistry, providers: EnvProviders): (request: Request) => Promise<Response> {
   const targets = new Map<string, { key: string; management: EnvManagement }>()
-  function visit(value: unknown, path: string): void {
-    if (isRuntimeProviderEntry(value)) {
-      const management = Object.hasOwn(providers, value.source.provider) ? providers[value.source.provider]?.management : undefined
-      if (inspectionPath(path).path && management) targets.set(path, { key: value.source.key, management })
-      return
-    }
-    if (isRuntimeEnvEntry(value) || isRuntimeLiteralEntry(value)) return
-    if (isRecord(value)) for (const [key, child] of Object.entries(value)) {
-      if (/^[A-Za-z_$][A-Za-z0-9_$-]{0,63}$/.test(key)) visit(child, `${path}.${key}`)
-    }
+  for (const { entry, path } of runtimeRegistryEntries(registry)) {
+    if (!isRuntimeProviderEntry(entry)) continue
+    const management = Object.hasOwn(providers, entry.source.provider) ? providers[entry.source.provider]?.management : undefined
+    if (inspectionPath(path).path && management) targets.set(path, { key: entry.source.key, management })
   }
-  visit(registry, "env.server")
   return createEnvBridgeHandler(path => targets.get(path))
 }

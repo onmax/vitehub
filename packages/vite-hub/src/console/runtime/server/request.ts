@@ -25,7 +25,7 @@ export interface ConsoleRequestEvent {
   }
   req?: {
     body?: ReadableStream<Uint8Array> | null
-    context?: { clientAddress?: string }
+    context?: { clientAddress?: string, [key: string]: unknown }
     ip?: string
     headers?: ConsoleHeaders
     json?: () => Promise<unknown>
@@ -57,6 +57,7 @@ function stringByteLength(value: string): number {
   return bytes
 }
 
+/** Read bounded JSON across Fetch, H3 v1, and already-decoded RPC request bodies. */
 export async function consoleRequestJSON(event: ConsoleRequestEvent, maximumBytes: number = maximumConsoleRequestBodyBytes): Promise<unknown> {
   const fetchBody = event.req?.body
   if (fetchBody) {
@@ -64,18 +65,25 @@ export async function consoleRequestJSON(event: ConsoleRequestEvent, maximumByte
     const decoder = new TextDecoder()
     let body = ""
     let bytes = 0
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      bytes += chunk.value.byteLength
-      if (bytes > maximumBytes) {
-        await reader.cancel()
-        throw consoleRequestError(413, "Console request body exceeds the byte limit.")
+    try {
+      while (true) {
+        const chunk = await reader.read()
+        if (chunk.done) break
+        bytes += chunk.value.byteLength
+        if (bytes > maximumBytes) throw consoleRequestError(413, "Console request body exceeds the byte limit.")
+        body += decoder.decode(chunk.value, { stream: true })
       }
-      body += decoder.decode(chunk.value, { stream: true })
+      body += decoder.decode()
+      return JSON.parse(body)
     }
-    body += decoder.decode()
-    return JSON.parse(body)
+    catch (error) {
+      // Cleanup must not replace a size, read, or JSON failure with a cancellation failure.
+      await reader.cancel().catch(() => undefined)
+      throw error
+    }
+    finally {
+      reader.releaseLock()
+    }
   }
   if (event.req?.json) {
     const body = await event.req.json()

@@ -10,7 +10,8 @@ import { check, fallback, literal, object, optional, pipe, record, safeParse, st
 
 import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
-import { contentStreamChunks, contentToBytes, isExcludedWorkspacePath, matchesAny, normalizeWorkspacePath, resolveInside, sha256 } from "../core/path.ts"
+import { createWorkspaceGlobMatcher } from "../core/glob.ts"
+import { contentStreamChunks, contentToBytes, isExcludedWorkspacePath, normalizeWorkspacePath, resolveInside, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
 
 import type {
@@ -777,6 +778,7 @@ class LocalWorkspaceStore implements WorkspaceStore {
 
   #baseline: WorkspaceSnapshot | undefined
   #files = new Map<string, { version: string, value: Pick<WorkspaceFile, "mediaType" | "metadata"> }>()
+  #metaCache: { ino: number, mtimeMs: number, size: number, value: Map<string, unknown> } | undefined
   #fileMetadataRoot: string
   #metaPath: string
   #ignoreGit: boolean
@@ -1181,10 +1183,10 @@ class LocalWorkspaceStore implements WorkspaceStore {
     return entries.sort((a, b) => a.path.localeCompare(b.path))
   }
 
-  async glob(pattern: string | string[], _options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
-    const patterns = Array.isArray(pattern) ? pattern : [pattern]
-    const entries = await this.list("", { recursive: true })
-    return entries.filter(entry => entry.type === "file" && patterns.some(item => matchesAny(entry.path, item)))
+  async glob(pattern: string | string[], options: GlobOptions = {}): Promise<WorkspaceEntry[]> {
+    const { cwd, matches } = createWorkspaceGlobMatcher(pattern, options)
+    const entries = await this.list(cwd, { recursive: true })
+    return entries.filter(entry => entry.type === "file" && matches(entry.path))
   }
 
   async stat(path: string): Promise<WorkspaceStat | undefined> {
@@ -1312,8 +1314,8 @@ class LocalWorkspaceStore implements WorkspaceStore {
     const entries: WorkspaceDiff["entries"] = []
     const keys = new Set([...Object.keys(from?.entries || {}), ...Object.keys(to.entries)])
     for (const path of [...keys].sort()) {
-      const before = from?.entries[path]
-      const after = to.entries[path]
+      const before = from && Object.hasOwn(from.entries, path) ? from.entries[path] : undefined
+      const after = Object.hasOwn(to.entries, path) ? to.entries[path] : undefined
       if (!before && after) entries.push({ path, type: "added", after })
       else if (before && !after) entries.push({ path, type: "removed", before })
       else if (before && after && (before.digest !== after.digest || before.type !== after.type || before.size !== after.size || JSON.stringify(before.metadata) !== JSON.stringify(after.metadata))) {
@@ -1324,19 +1326,19 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async getMeta(key: string): Promise<unknown> {
-    return (await this.#readMeta()).get(key)
+    return structuredClone((await this.#readMeta()).get(key))
   }
 
   async setMeta(key: string, value: unknown): Promise<void> {
     await this.#pathLock(this.root, ".vitehub/metadata", async () => {
-      const metadata = await this.#readMeta()
+      const metadata = new Map(await this.#readMeta())
       metadata.set(key, value)
       await this.#writeMeta(metadata)
     })
   }
 
   async #createSnapshot(name?: string): Promise<WorkspaceSnapshot> {
-    const entries: WorkspaceSnapshot["entries"] = {}
+    const entries: WorkspaceSnapshot["entries"] = Object.create(null)
     for (const entry of await this.#list("", { recursive: true }, true)) {
       entries[entry.path] = {
         type: entry.type,
@@ -1354,14 +1356,29 @@ class LocalWorkspaceStore implements WorkspaceStore {
   }
 
   async #readMeta(): Promise<Map<string, unknown>> {
+    const info = await stat(this.#metaPath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (!info) {
+      this.#metaCache = undefined
+      return new Map()
+    }
+    if (this.#metaCache?.ino === info.ino && this.#metaCache.mtimeMs === info.mtimeMs && this.#metaCache.size === info.size) return this.#metaCache.value
     const content = await readFile(this.#metaPath, "utf8").catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined
       throw error
     })
-    if (!content) return new Map()
+    if (!content) {
+      this.#metaCache = { ino: info.ino, mtimeMs: info.mtimeMs, size: info.size, value: new Map() }
+      return this.#metaCache.value
+    }
     const value: unknown = JSON.parse(content)
-    if (!value || Object(value) !== value || Array.isArray(value)) return new Map()
-    return new Map(Object.entries(Object(value)))
+    const metadata = !value || Object(value) !== value || Array.isArray(value)
+      ? new Map<string, unknown>()
+      : new Map(Object.entries(Object(value)))
+    this.#metaCache = { ino: info.ino, mtimeMs: info.mtimeMs, size: info.size, value: metadata }
+    return metadata
   }
 
   async #writeMeta(metadata: Map<string, unknown>) {

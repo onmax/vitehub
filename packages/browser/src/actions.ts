@@ -1,3 +1,4 @@
+import { withBrowserTimeout } from "./internal/timeout.ts"
 import runtimeConfig from "#vitehub/browser/runtime"
 
 import {
@@ -89,22 +90,20 @@ async function readQuickActionText(
       text += decoder.decode(value, { stream: true })
     }
   }
-  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    return await Promise.race([
+    return await withBrowserTimeout(
       read(),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          const error = browserProviderError("cloudflare", `read ${action} quick action response`)
+      () => browserProviderError("cloudflare", `read ${action} quick action response`),
+      {
+        timeoutMs: actionTimeoutMs(input),
+        onTimeout(error) {
           timeoutError = error
           void reader.cancel(error).catch(() => {})
-          reject(error)
-        }, actionTimeoutMs(input))
-      }),
-    ])
+        },
+      },
+    )
   }
   finally {
-    if (timer) clearTimeout(timer)
     try {
       reader.releaseLock()
     }
@@ -117,20 +116,11 @@ async function runQuickAction(
   action: BrowserAction,
   input: Record<string, unknown>,
 ): Promise<Response> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      binding.quickAction(action, input),
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(browserProviderError("cloudflare", `run ${action} quick action`))
-        }, actionTimeoutMs(input))
-      }),
-    ])
-  }
-  finally {
-    if (timer) clearTimeout(timer)
-  }
+  return await withBrowserTimeout(
+    binding.quickAction(action, input),
+    () => browserProviderError("cloudflare", `run ${action} quick action`),
+    { timeoutMs: actionTimeoutMs(input) },
+  )
 }
 
 export async function runBrowserAction(

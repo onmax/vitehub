@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 
+import { isPlainObject } from "@vite-hub/internal/object"
 import { getCloudflareEnv, setActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 import type { QueueClient, QueueDefinition, QueueDefinitionRegistry, QueueProviderOptions, ResolvedQueueOptions } from "../../types.ts"
 import { queueErrorDiagnostics } from "../../error-diagnostics.ts"
@@ -13,7 +15,7 @@ let registryOverride: QueueDefinitionRegistry | undefined
 
 const queueEventStorage = new AsyncLocalStorage<unknown>()
 let queueEventDefaults: unknown
-const queueClientCache = new Map<string, Promise<unknown>>()
+const queueClientCache = new Map<string, Promise<QueueClient>>()
 
 export function missingQueueDefinitionError(): Error {
   return queueErrorDiagnostics.QUEUE_R0013({ message: "Missing queue definition." })
@@ -60,16 +62,29 @@ export function setQueueRuntimeRegistry(registry: QueueDefinitionRegistry | unde
   queueClientCache.clear()
 }
 
-export function getQueueClientCache(): Map<string, Promise<unknown>> {
-  return queueClientCache
+export function getOrCreateQueueClient(name: string, createClient: () => Promise<QueueClient>): Promise<QueueClient> {
+  const existing = queueClientCache.get(name)
+  if (existing) return existing
+
+  const pending = createClient().catch((error) => {
+    // Runtime replacement can install a newer client while this creation is pending.
+    if (queueClientCache.get(name) === pending) queueClientCache.delete(name)
+    throw error
+  })
+  queueClientCache.set(name, pending)
+  return pending
 }
 
 function isQueueDefinition(value: unknown): value is QueueDefinition {
-  return Boolean(value) && typeof value === "object" && typeof (value as QueueDefinition).handler === "function"
+  return isPlainObject(value)
+    && Object.hasOwn(value, "handler")
+    && hasRuntimeType(value.handler, "function")
 }
 
 export async function loadQueueDefinition(name: string): Promise<QueueDefinition | undefined> {
-  const entry = registryOverride?.[name]
+  const registry = registryOverride
+  if (!registry || !Object.hasOwn(registry, name)) return undefined
+  const entry = registry[name]
   if (!entry) {
     return undefined
   }
@@ -79,7 +94,7 @@ export async function loadQueueDefinition(name: string): Promise<QueueDefinition
     return loaded
   }
 
-  if (loaded && typeof loaded === "object" && "default" in loaded && isQueueDefinition(loaded.default)) {
+  if (isPlainObject(loaded) && Object.hasOwn(loaded, "default") && isQueueDefinition(loaded.default)) {
     return loaded.default
   }
 
