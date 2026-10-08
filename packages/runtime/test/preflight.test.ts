@@ -137,24 +137,30 @@ describe("runtime preflight", () => {
   })
 
   it("includes callback scheduling in each timeout budget", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0)
     let quickCalled = false
-    const manifest = await runRuntimePreflight({
-      timeoutMs: 1,
-      checks: [
-        {
-          id: "command:blocking",
-          kind: "command",
-          check: () => {
-            const until = Date.now() + 15
-            while (Date.now() < until) {}
-            return true
+    try {
+      const manifest = await runRuntimePreflight({
+        timeoutMs: 1,
+        checks: [
+          {
+            id: "command:blocking",
+            kind: "command",
+            check: () => {
+              // Advance past both deadlines only after the first callback starts.
+              clock.mockReturnValue(15)
+              return true
+            },
           },
-        },
-        { id: "command:quick", kind: "command", check: () => { quickCalled = true; return true } },
-      ],
-    })
-    expect(manifest.capabilities).toEqual({ "command:blocking": "unknown", "command:quick": "unknown" })
-    expect(quickCalled).toBe(false)
+          { id: "command:quick", kind: "command", check: () => { quickCalled = true; return true } },
+        ],
+      })
+      expect(manifest.capabilities).toEqual({ "command:blocking": "unknown", "command:quick": "unknown" })
+      expect(quickCalled).toBe(false)
+    }
+    finally {
+      clock.mockRestore()
+    }
   })
 
   it("observes a promise returned after a synchronous timeout", async () => {

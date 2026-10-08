@@ -20,6 +20,8 @@ icon: i-lucide-code-2
 
 Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Workspace filesystem types are exported from these entrypoints. Applications that use the `vite-hub` distribution can import the same APIs from `vite-hub/shell`, `vite-hub/shell/providers/*`, and `vite-hub/shell/workspace`.
 
+Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
+
 ## Use Shell sessions
 
 A Shell Session keeps policy across repeated commands: call budget, output size, timeouts, and process budget.

@@ -8,6 +8,7 @@ import { readProvisionedId, readProvisionStateSync } from "@vite-hub/internal/pr
 import { resolve } from "pathe"
 
 import { resolveConfigValue } from "../config-value.ts"
+import { isStaticD1HttpDefinition } from "../config.ts"
 import { resolveCloudflareD1Bindings } from "./cloudflare.ts"
 import { renderDatabaseRuntimeModule } from "./runtime-module.ts"
 import { renderDatabaseConfigExpression } from "./runtime-config-expression.ts"
@@ -77,6 +78,12 @@ interface CloudflareDBConfig {
   observability: { enabled: true }
 }
 
+export function usesD1HttpOnly(runtimeConfig: ResolvedDBViteConfig) {
+  return runtimeConfig.databaseNames.length > 0
+    && runtimeConfig.databaseNames.every(name => Boolean(runtimeConfig.databases[name]?.cloudflare?.http))
+    && runtimeConfig.definitions.every(definition => isStaticD1HttpDefinition(definition.handler))
+}
+
 function renderRuntimeModule(file: string, runtimeConfig: ResolvedDBViteConfig) {
   const imports = runtimeConfig.definitions.flatMap((definition, index) => [
     `import definition_${index} from ${JSON.stringify(createImportPath(file, definition.handler))}`,
@@ -93,7 +100,7 @@ function renderRuntimeModule(file: string, runtimeConfig: ResolvedDBViteConfig) 
     createAgentDatabaseImport: createImportPath(file, resolveRuntimeModule("runtime/agent")),
     databaseEntries,
     imports: [
-      `import { createHostedDrizzleDb, resolveRuntimeCloudflareConfig } from ${JSON.stringify(createImportPath(file, resolveRuntimeModule("runtime/hosted")))}`,
+      `import { createHostedDrizzleDb, resolveRuntimeCloudflareConfig } from ${JSON.stringify(createImportPath(file, resolveRuntimeModule(usesD1HttpOnly(runtimeConfig) ? "runtime/d1" : "runtime/hosted")))}`,
       "",
       ...imports,
     ],

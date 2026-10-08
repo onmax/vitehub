@@ -33,6 +33,24 @@ const generatedRegistryFileName = "registry.mjs"
 
 type ImportResolver = (specifier: string) => string
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider output config is parsed as unknown and must be narrowed before reading fields.
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function readStringArray(value: unknown): string[] {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider output config entries are untrusted JSON values.
+  return Array.isArray(value)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider output config entries are untrusted JSON values.
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : []
+}
+
+function isVercelCron(value: unknown): value is { path: string, schedule: string } {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider output config entries are untrusted JSON values.
+  return isRecord(value) && typeof value.path === "string" && typeof value.schedule === "string"
+}
+
 export function resolveScheduleRuntimeEntry(resolveImport: ImportResolver = specifier => import.meta.resolve(specifier)) {
   return fileURLToPath(resolveImport(scheduleStaticRuntimeImport))
 }
@@ -499,9 +517,14 @@ export async function writeVercelScheduleFunctions(options: {
       vercelConfig = createVercelConfigJson()
     }
     const schedulePathPrefix = "/api/vitehub/schedules/vercel/"
-    const previousCrons = vercelConfig.crons ?? []
+    const rawPreviousCrons = vercelConfig.crons
+    const previousCrons = Array.isArray(rawPreviousCrons)
+      ? rawPreviousCrons.filter(isVercelCron)
+      : []
+    const hasMalformedCrons = rawPreviousCrons !== undefined
+      && (!Array.isArray(rawPreviousCrons) || previousCrons.length !== rawPreviousCrons.length)
     const existingCrons = previousCrons.filter(cron => !cron.path.startsWith(schedulePathPrefix))
-    if (!definitions.length && existingCrons.length === previousCrons.length) {
+    if (!definitions.length && !hasMalformedCrons && existingCrons.length === previousCrons.length) {
       await removeEmptyDirectories(functionRoot, options.rootDir)
       options.signal?.throwIfAborted()
       if (previousCrons.length === 0) {
@@ -732,12 +755,13 @@ async function writeCloudflareScheduleOutput(options: {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
   }
 
-  const existingTriggers = typeof wranglerConfig.triggers === "object" && wranglerConfig.triggers !== null
-    ? wranglerConfig.triggers as { crons?: string[] }
+  const existingTriggers = isRecord(wranglerConfig.triggers)
+    ? wranglerConfig.triggers
     : {}
   const previousState = await readCloudflareOutputState(options.previousStateFile ?? options.stateFile)
   options.signal?.throwIfAborted()
-  const externalCrons = (existingTriggers.crons ?? []).filter(cron => !previousState?.crons.includes(cron))
+  const existingCrons = readStringArray(existingTriggers.crons)
+  const externalCrons = existingCrons.filter(cron => !previousState?.crons.includes(cron))
   const ownedCrons = options.crons.filter(cron => !externalCrons.includes(cron))
   const main = typeof wranglerConfig.main === "string" && wranglerConfig.main
     ? wranglerConfig.main

@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
 import { resolveViteHubGeneratedRoot, resolveViteHubProjectRoot, VITEHUB_GENERATED_ROOT } from "@vite-hub/internal/build/vite"
+import { resolveRuntimeModule } from "@vite-hub/internal/build/paths"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { isPlainObject as isRecord } from "@vite-hub/internal/object"
@@ -13,7 +14,7 @@ import { mergeCloudflareD1Bindings, resolveCloudflareD1Binding } from "./interna
 import { getDatabaseNuxtProvisionStateKey } from "./provision.ts"
 import { renderDatabaseRuntimeModule } from "./internal/runtime-module.ts"
 import { writeGeneratedDatabaseArtifacts } from "./internal/generated.ts"
-import { writeHostedDatabaseRuntimeModules } from "./internal/vite-build.ts"
+import { usesD1HttpOnly, writeHostedDatabaseRuntimeModules } from "./internal/vite-build.ts"
 import { resolveConfigValue, withConfigValueFallback } from "./config-value.ts"
 import { resolveDBViteConfig } from "./config.ts"
 import { hubDb as hubDbVite } from "./vite.ts"
@@ -120,7 +121,8 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
       : effectiveOptions
     const viteOptions = resolveDatabaseViteOptions({ ...runtimeOptions, projectRoot: root })
     if (viteOptions) {
-      viteConfig.database = { ...(isRecord(viteConfig.database) ? viteConfig.database : {}), ...viteOptions }
+      const configuredDatabase = isRecord(viteConfig.database) ? viteConfig.database : undefined
+      viteConfig.database = { ...configuredDatabase, ...viteOptions }
     }
     installVitePlugin(viteConfig, { ...runtimeOptions, projectRoot: root })
 
@@ -145,9 +147,14 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
           )
         }
         if (!nuxtOptions.dev) {
-          const runtimeProvider = provider ?? (d1 ? "cloudflare" : undefined)
+          const runtime = resolveDBViteConfig(runtimeOptions, root, { serverDirs })
+          const d1Only = runtime && usesD1HttpOnly(runtime)
+          const runtimeProvider = provider === "vercel" ? "vercel" : provider === "cloudflare" || d1 || d1Only ? "cloudflare" : provider
+          if (d1Only) {
+            const alias = ensureRecord(config, "alias")
+            alias["#vitehub/database/definition-runtime"] ??= resolveRuntimeModule(resolve(databaseRuntimeDir, "../.."), "runtime/d1")
+          }
           if (runtimeProvider === "cloudflare" || runtimeProvider === "vercel") {
-            const runtime = resolveDBViteConfig(runtimeOptions, root, { serverDirs })
             if (runtime) {
               await writeGeneratedDatabaseArtifacts(runtime)
               await writeHostedDatabaseRuntimeModules(resolve(root, ".vitehub/database"), runtime, [runtimeProvider])
