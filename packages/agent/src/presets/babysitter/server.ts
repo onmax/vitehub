@@ -868,19 +868,26 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Check durable ownership at dispatch, including after admission I/O.
               // The cancellation watcher alone leaves a window for a reclaimed worker.
               const repairOperation = new AsyncLocalStorage<boolean>();
-              const repairEvidenceKey = (snapshot: Snapshot, current = snapshot) => mergeReviewEvidenceKey({
-                ...snapshot,
-                // Resolved failures cease to be repair requirements. Missing or
-                // pending evidence retains the original failure and fences publication.
-                checks: Object.fromEntries(Object.entries(snapshot.checks).filter(([key]) =>
-                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase()))),
-                statuses: Object.fromEntries(Object.entries(snapshot.statuses).filter(([key]) =>
-                  String(current.statuses[key]?.state).toLowerCase() !== "success")),
-                // A base advance is checked separately before conflict repair.
-                // Title and body remain part of the worker's repair requirements.
-                pr: snapshot.pr && { ...snapshot.pr,
-                  base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
-              }, waitPolicy);
+              const repairEvidenceKey = (snapshot: Snapshot, current = snapshot) => {
+                const published = current.pr?.head?.sha !== pullRequest.headRefOid && verifiedPushHeads.has(current.pr?.head?.sha ?? "");
+                const original = published && snapshot === inboxClaim.snapshot;
+                const checks: Snapshot["checks"] = original ? {} : Object.fromEntries(Object.entries(snapshot.checks).filter(([key]) =>
+                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase())));
+                const statuses: Snapshot["statuses"] = original ? {} : Object.fromEntries(Object.entries(snapshot.statuses).filter(([key]) =>
+                  String(current.statuses[key]?.state).toLowerCase() !== "success"));
+                if (published) {
+                  for (const key of Object.keys(checks)) checks[key] = { ...checks[key], head_sha: pullRequest.headRefOid };
+                  for (const key of Object.keys(statuses)) statuses[key] = { ...statuses[key], sha: pullRequest.headRefOid };
+                }
+                // A self-push replaces old-head checks, but fresh failures and
+                // feedback still revoke further publication on every owned head.
+                return mergeReviewEvidenceKey({ ...snapshot, checks, statuses,
+                  pr: snapshot.pr && { ...snapshot.pr,
+                    head: snapshot.pr.head && { ...snapshot.pr.head, sha: published ? pullRequest.headRefOid : snapshot.pr.head.sha },
+                    base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
+                }, waitPolicy);
+              };
+              let observePendingPush: ((current: Snapshot) => void) | undefined;
               verifiedPushHeads.add(pullRequest.headRefOid);
               const pendingInboxHeads = new Set([pullRequest.headRefOid]);
               const assertLease = async () => {
@@ -889,8 +896,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 if (current?.lease !== inboxClaim.token || current.leaseUntil <= Date.now()) {
                   throw new DOMException("Pull request lease lost.", "AbortError");
                 }
+                observePendingPush?.(current);
                 const observedHead = current.pr?.head?.sha;
-                if (current.sourcePushHead !== inboxClaim.snapshot.sourcePushHead && !verifiedPushHeads.has(current.sourcePushHead ?? "")) {
+                if (current.sourcePushHeads?.some(head => !verifiedPushHeads.has(head)) || current.sourcePushHead !== inboxClaim.snapshot.sourcePushHead && !verifiedPushHeads.has(current.sourcePushHead ?? "")) {
                   throw new DOMException("Pull request source branch changed before synchronize.", "AbortError");
                 }
                 const stopped = claimStopReason(inboxClaim, current, observedHead && pendingInboxHeads.has(observedHead) ? observedHead : pushedHead);
@@ -902,8 +910,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 // Repair publication may coalesce base and successful-check updates
                 // when its head, requirements and actionable feedback are unchanged.
                 const selfHead = observedHead !== pullRequest.headRefOid && verifiedPushHeads.has(observedHead ?? "");
-                if (current.generation !== inboxClaim.generation && !selfHead
-                  && !(repairOperation.getStore() && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot, current))) {
+                if (current.generation !== inboxClaim.generation
+                  && !((selfHead || repairOperation.getStore()) && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot, current))) {
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
                 return current;
@@ -1021,13 +1029,22 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   try {
                     const result = await prepared.push(providerDirectory, {
                       signal: abortSignal,
-                      beforePush: async () => { await assertLease(); await assertRepairBase(); },
+                      beforePush: async head => {
+                        await assertLease(); await assertRepairBase();
+                        // The host supplies its exact validated local Git head.
+                        // A signed source webhook can confirm publication before
+                        // the local push subprocess returns its receipt.
+                        observePendingPush = head ? current => {
+                          if (current.sourcePushHeads?.includes(head)) recordPush(head);
+                        } : undefined;
+                      },
                       // The synchronize webhook may still expose the pre-push head.
                       afterPush: async head => { recordPush(head); await assertLease(); },
                     });
                     recordPush(result);
                     return result;
                   } finally {
+                    observePendingPush = undefined;
                     clearInterval(renew);
                   }
                 },

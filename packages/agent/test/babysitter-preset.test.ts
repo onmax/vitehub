@@ -56,7 +56,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { operationCount?: number; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { expectedOperationErrorAt?: number; operationCount?: number; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -209,7 +209,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
   const commit = vi.fn(async (directory: string, input: { message: string; paths: string[] }) => remoteBox
     ? await commitGitHubPullRequestWorkspace(directory, input, { expectedHead: head })
     : head);
-  const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }) => {
+  const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: (head?: string) => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }) => {
     pushed = true;
     if (remoteBox) {
       expect(remoteBox.closed).toBe(false);
@@ -350,7 +350,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
             await onRepair?.();
             for (let count = 0; count < (preset.operationCount ?? 1); count++) {
               const result = await client.callTool({ name: operation, arguments: operationArguments });
-              if (onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
+              if (preset.expectedOperationErrorAt === count || onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
               else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
             }
           }
@@ -405,6 +405,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
     passes,
     commit,
     advanceBase: (sha: string) => { baseHead = sha },
+    advanceHead: (sha: string) => { head = sha },
     push,
     prepare,
     command,
@@ -1411,7 +1412,7 @@ describe("Babysitter preset runtime", () => {
     } finally { release?.(); timers.mockRestore(); get.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
   });
 
-  it.each([false, true])("fences a source push before synchronize during renewal, worker published=%s", async published => {
+  it.each([{ published: false, lateOwn: false }, { published: true, lateOwn: false }, { published: true, lateOwn: true }])("fences source pushes before synchronize, published=$published lateOwn=$lateOwn", async ({ published, lateOwn }) => {
     const f = await fixture();
     f.choose("pushRepair");
     f.onAdmission(() => {});
@@ -1424,6 +1425,9 @@ describe("Babysitter preset runtime", () => {
         repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: "c".repeat(40),
       });
       expect((await f.runtime.inbox.get("acme/app", 12))?.sourcePushHead).toBe("c".repeat(40));
+      if (lateOwn) await f.runtime.inbox.ingest("delayed-own-source-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: "b".repeat(40),
+      });
       const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
       if (!renewal) throw new Error("Missing push renewal timer");
       renewal();
@@ -1441,6 +1445,69 @@ describe("Babysitter preset runtime", () => {
       expect(current.status).toBe("ready");
       expect(current.wait).toBeUndefined();
     } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it("retains an accepted worker push before the local push command returns", async () => {
+    const f = await fixture();
+    f.choose("pushRepair");
+    const head = "b".repeat(40);
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    let completed = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await options?.beforePush?.(head);
+      f.advanceHead(head);
+      await f.runtime.inbox.ingest("early-own-source-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => {
+        options?.signal?.throwIfAborted();
+        expect(renew).toHaveBeenCalledOnce();
+      });
+      expect(await renew.mock.results[0]?.value).toBe(true);
+      await options?.afterPush?.(head);
+      completed = true;
+      return head;
+    });
+    try {
+      await f.reconcile();
+      expect(completed).toBe(true);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(head);
+    } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it.each(["comment", "failed check"])("rechecks %s before publication after successive verified pushes", async feedback => {
+    const f = await fixture(false, false, { operationCount: 3, expectedOperationErrorAt: 2 });
+    f.choose("pushRepair");
+    const first = "b".repeat(40), second = "d".repeat(40);
+    f.push.mockImplementationOnce(async (_target, options) => {
+      f.advanceHead(first);
+      await options?.afterPush?.(first);
+      await f.runtime.inbox.ingest("first-head-synchronized", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "synchronize", pull_request: f.pr(),
+      });
+      return first;
+    });
+    f.push.mockImplementationOnce(async (_target, options) => {
+      f.advanceHead(second);
+      await options?.afterPush?.(second);
+      if (feedback === "comment") await f.runtime.inbox.ingest("new-requirement", "issue_comment", {
+        repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+        comment: { id: 99, body: "Preserve the existing API contract.", user: { login: "reviewer" } },
+      });
+      else await f.runtime.inbox.ingest("new-failure", "check_run", {
+        repository: { full_name: "acme/app" }, check_run: { id: 99, name: "new requirement", head_sha: first, status: "completed", conclusion: "failure", pull_requests: [{ number: 12 }] },
+      });
+      return second;
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledTimes(2);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(second);
+    } finally { await f.runtime.inbox.close(); }
   });
 
   it("revalidates an equivalent generation arriving between renewal read and CAS", async () => {

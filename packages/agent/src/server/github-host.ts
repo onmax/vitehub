@@ -65,7 +65,7 @@ export interface GitHubHostCheckout extends GitHubHostAccess {
   /** Restore source instruction files only before the provider injects its instructions. */
   prepareWorkspace(target: string, options?: { restoreInstructions?: boolean }): Promise<void>
   commitRepair(target: string, input: GitHubRepairCommit, options?: { verifyDependencies?: boolean }): Promise<string>
-  push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }): Promise<string>
+  push(target?: string, options?: { signal?: AbortSignal, beforePush?: (head?: string) => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }): Promise<string>
   signal: AbortSignal
 }
 
@@ -774,7 +774,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       const prepareWorkspace = async (target: string, options: { restoreInstructions?: boolean } = {}) => await prepareGitHubPullRequestWorkspace(checkout, target, { ...options, signal: operation.signal })
       let pushHead = pullRequest.headSha
       const commitRepair = async (target: string, input: GitHubRepairCommit, commitOptions?: { verifyDependencies?: boolean }) => await commitGitHubPullRequestWorkspace(target, input, { expectedHead: pushHead, signal: operation.signal, identity: env, verifyDependencies: commitOptions?.verifyDependencies })
-      const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> } = {}) => {
+      const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: (head?: string) => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> } = {}) => {
         const signal = options.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
         signal.throwIfAborted()
         const expectedHead = pushHead
@@ -805,7 +805,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
           signal,
         })
         signal.throwIfAborted()
-        await options.beforePush?.()
+        await options.beforePush?.(head)
         await exec("git", ["-C", checkout, "-c", "core.hooksPath=/dev/null", "push", "--no-verify", `--force-with-lease=refs/heads/${pullRequest.headRef}:${expectedHead}`, "--", pushUrl, `${head}:refs/heads/${pullRequest.headRef}`], {
           env: { ...process.env, ...refreshed.env },
           maxBuffer,
