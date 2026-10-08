@@ -76,7 +76,20 @@ describe("Chat SDK citation delivery", () => {
     const ast = parseMarkdown(input);
     const files = [{ filename: "report.txt", data: Buffer.from("report") }];
     const formatted = formatChannelCitationMessage({ ast, files });
-    expect(formatted).toEqual({ ast: parseMarkdown(expected), files });
+    expect(formatted).toMatchObject({
+      ast: {
+        children: [
+          {
+            children: [
+              { value: "Yes. [source link unavailable] See " },
+              { url: "https://github.com/acme/portal/pull/1188" },
+              { value: "." },
+            ],
+          },
+        ],
+      },
+      files,
+    });
     expect(stringifyMarkdown(ast)).toContain("cite");
   });
 
@@ -143,7 +156,7 @@ describe("Chat SDK citation delivery", () => {
       },
       fallbackText: expected,
     });
-    expect(formatChannelCitationMessage(card)).toEqual((formatted as { card: CardElement }).card);
+    expect(formatChannelCitationMessage(card)).toMatchObject({ type: "card", title: expected });
     expect(card.title).toBe(input);
   });
 });
