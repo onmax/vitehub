@@ -18612,13 +18612,17 @@ describe("server helpers", () => {
     }
     try {
       await state.connect()
+      vi.useFakeTimers()
       pending.push(ownerHandler(request(91_120), "telegram", context))
       await vi.waitFor(() => expect(runs).toBe(1))
       pending.push(handler(request(91_121), "telegram", context))
       await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(1))
+      // Expire the 1ms delivery dedupe window before the duplicate starts.
+      await vi.advanceTimersByTimeAsync(2)
       pending.push(handler(request(91_121), "telegram", context))
       await vi.waitFor(() => expect(admitted).toHaveBeenCalledTimes(3))
       expect(sendInput).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(500)
       await Promise.all(pending.slice(1))
       expect(runs).toBe(1)
       acceptance.resolve()
@@ -18636,6 +18640,7 @@ describe("server helpers", () => {
       released.resolve()
       await Promise.allSettled(pending)
       await Promise.allSettled(reconciliation)
+      vi.useRealTimers()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }
