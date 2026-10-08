@@ -895,9 +895,12 @@ at that deadline. If an expired writer later settles in a live process, the host
 queues the latest status again. An unobserved remote write after the deadline
 can still overwrite the comment. Channels serialize activity publication by PR target before resolving credentials.
 Separate token callbacks and token rotation cannot split that queue. Credential
-resolution and publication each have a thirty-second upper bound. Caller
-cancellation can shorten it, and a stalled callback releases the local queue
-even when it ignores cancellation. Waiting comments
+resolution and read stages have thirty-second bounds. Caller cancellation can
+shorten them, and a stalled credential or lookup callback releases the local queue
+even when it ignores cancellation. An already-started write requests cancellation
+at the deadline but retains target ordering and its durable delivery lease until
+the actual transport settles. A custom transport that never settles after
+cancellation can hold that target queue. Waiting comments
 include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 

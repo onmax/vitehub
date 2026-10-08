@@ -393,6 +393,48 @@ describe("agent channels", () => {
     expect(storedBody).toContain("| Completed |")
   })
 
+  it.each(["POST", "PATCH"])("retains target ownership until a non-cancelling %s settles", async method => {
+    const { github } = await import("../src/channels.ts")
+    let release!: () => void, entered!: () => void
+    const barrier = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    let storedBody = method === "PATCH" ? "<!-- vitehub-agent-activity:e30 -->" : ""
+    let writes = 0, firstSettled = false
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => timeout(ms === 30_000 ? 50 : ms))
+    const channel = github({ activity: true, app: {
+      token: "write-ownership-token", identity: { login: "write-ownership-bot" },
+      fetch: async (_input, init) => {
+        if (!init?.method || init.method === "GET") return Response.json(storedBody ? [{ id: 7, body: storedBody, user: { login: "write-ownership-bot" } }] : [])
+        if (++writes === 1) { expect(init.method).toBe(method); entered(); await barrier }
+        const payload: unknown = JSON.parse(String(init.body))
+        if (!isRuntimeRecord(payload) || !hasRuntimeType(payload.body, "string")) throw new Error("Invalid comment body")
+        storedBody = payload.body
+        return Response.json({ id: 7 })
+      },
+    } })
+    const context = (status: "running" | "completed") => ({
+      activity: { agentName: "write-ownership", links: [], runId: "write-ownership-run", status, tasks: [] },
+      abortSignal: new AbortController().signal, channel, memo: vi.fn(), run: { runId: "write-ownership-run" },
+      runtime: "unknown", target: { repository: `acme/write-ownership-${method}`, issue: 432 }, waitUntil: vi.fn(),
+    })
+    let failure: unknown
+    // SAFETY: These fixtures supply all activity callback fields consumed by GitHub.
+    const first = Promise.resolve(channel.activity!.update(context("running") as never)).catch(error => { failure = error }).finally(() => { firstSettled = true })
+    await started
+    // SAFETY: These fixtures supply all activity callback fields consumed by GitHub.
+    const next = Promise.resolve(channel.activity!.update(context("completed") as never))
+    let ownedAfterDeadline = false
+    try {
+      await new Promise(resolve => setTimeout(resolve, 150))
+      ownedAfterDeadline = !firstSettled && writes === 1
+    } finally { release(); await Promise.all([first, next]); vi.restoreAllMocks() }
+    expect(ownedAfterDeadline).toBe(true)
+    expect(failure).toBeInstanceOf(DOMException)
+    expect(writes).toBe(2)
+    expect(storedBody).toContain("| Completed |")
+  })
+
   it("serializes separate activity channels created from the same GitHub host", async () => {
     const { github } = await import("../src/channels.ts")
     const { createGitHubHost } = await import("../src/server/github.ts")

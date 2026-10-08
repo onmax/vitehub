@@ -1858,10 +1858,16 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
       let deadline = githubActivityDeadline(context.abortSignal)
       deadline.throwIfAborted()
       const request = options.fetch || fetch
+      const pendingWrites = new Set<Promise<Response>>()
       const fetcher: typeof fetch = (input, init) => {
         deadline.throwIfAborted()
         const signal = init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline
-        return githubActivityAwait(request(input, { ...init, signal }), signal)
+        const pending = request(input, { ...init, signal })
+        if (!["GET", "HEAD"].includes((init?.method ?? "GET").toUpperCase())) {
+          pendingWrites.add(pending)
+          void pending.then(() => pendingWrites.delete(pending), () => pendingWrites.delete(pending))
+        }
+        return githubActivityAwait(pending, signal)
       }
       const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
@@ -1964,7 +1970,13 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
           if (terminal) activeRuns.delete(runId)
           if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
         }
-        await githubActivityAwait(publication(), deadline)
+        try { await githubActivityAwait(publication(), deadline) }
+        finally {
+          // A deadline stops reads and requests cancellation, but cannot revoke
+          // an accepted write. Keep target ordering and durable delivery custody
+          // until a transport that ignores cancellation actually settles.
+          await Promise.allSettled([...pendingWrites])
+        }
       })
       githubActivityUpdates.set(updateKey, update)
       try {
