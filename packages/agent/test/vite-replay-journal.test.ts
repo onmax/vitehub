@@ -33,7 +33,7 @@ import { defineAgent } from '@vite-hub/agent'
 import { defineChannel, defineChannelTrigger } from '@vite-hub/agent/channels'
 import { channelDelivery } from '@vite-hub/agent/capabilities'
 export default defineAgent({ runtime: false, workspace: { mode: 'read' },
-  driver: { async run({ tools, input }) { if (input.prompt === 'm2') return 'No delivery'; await tools.send_message.execute({ message: 'Synthetic raw draft' }); return 'Synthetic final answer' } },
+  driver: { async run({ tools, input }) { if (input.context?.skipDelivery) return 'No delivery'; await tools.send_message.execute({ message: 'Synthetic raw draft' }); return 'Synthetic final answer' } },
   capabilities: [channelDelivery({ required: true, channel: { name: 'teams', send: async () => { throw new Error('Connector must never run') } }, options: {} , format: message => 'Formatted: ' + message })],
   channels: { mailbox: defineChannel('mailbox', { messages: false,
     webhooks: { secretHeader: 'x-signature', secretToken: 'secret', signature: 'github-sha256' },
@@ -41,7 +41,7 @@ export default defineAgent({ runtime: false, workspace: { mode: 'read' },
       parseQuery: async query => { if (query.turns !== 'last') throw new Error('Expected turns query'); return query },
       page: async ({ query }) => ({ items: [{ id: query.delivery === 'skip' ? 'm2' : 'm1', thread: 't1' }], nextCursor: null }),
     } },
-    triggers: { received: defineChannelTrigger({ invoke: item => ({ input: { prompt: item.id }, run: { runId: 'authored', annotations: { authored: 'kept' } } }) }) },
+    triggers: { received: defineChannelTrigger({ invoke: (_context, item) => ({ input: { prompt: item.id, context: { skipDelivery: item.id === 'm2' } }, run: { runId: 'authored', annotations: { authored: 'kept' } } }) }) },
   }) },
 })
 `)
