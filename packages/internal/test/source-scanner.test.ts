@@ -9,6 +9,12 @@ import {
 } from "../src/source-scanner.ts"
 
 describe("source scanner", () => {
+  it("scans a regex operand after new", () => {
+    const value = "new /['\"]/u.constructor()"
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
+  })
+
   it.each(["count++ / total", "count-- / total"])("trims comments after postfix division: %s", (value) => {
     for (const comment of ["// after\n", "/* after */"]) {
       expect(readObjectProperty(`{ value: ${value} ${comment}}`, "value")).toBe(value)
@@ -48,6 +54,10 @@ describe("source scanner", () => {
     "if (ready) {} else {}",
     "{}",
     "function task() {}",
+    "const marker = 1\nfunction task() {}",
+    "prepare()\nfunction task() {}",
+    "function task(): void {}",
+    "class Task {}",
   ])("scans a regex statement after a closed block: %s", (statement) => {
     const value = `${statement} /['"]/u.test(value)`
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
@@ -60,11 +70,28 @@ describe("source scanner", () => {
     "const value = function task() {} / total",
     "const value = (() => {}) / total",
     "const value = class Task {} / total",
+    "const value =\nfunction task() {} / total",
+    "const value = function task(): void {} / total",
+    "const value =\nclass Task {} / total",
+    "const value = typeof\nfunction task() {} / total",
+    "const docs = `example\nfunction fake(): type\n`\nconst value = {} / total",
+    "const value = énew / total",
+    "const value = 𐐀return / total",
+    "const value = a\u200Cvoid / total",
+    "const text = `x${{} / total}`",
+    "const text = `x${ /* object */ {} / total}`",
   ])("preserves division after an expression-owned closing brace: %s", (value) => {
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
     const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
     expect(call?.argument).toBe(`{ value: "real" }`)
   })
+
+  it("shares regex classifications across repeated declarations", () => {
+    const value = Array.from({ length: 24 }, (_, index) => `function task${index}(): void {} /['"]/u.test(value)`).join("\n")
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  }, 1_000)
 
   it.each([
     "for (é of /['\"]/u) {}",

@@ -127,7 +127,12 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
       throw error
     }
   }
-  return !token || /[({[=,:!&|?;>+\-*%^~]/.test(token) || /\b(?:await|break|case|continue|debugger|delete|do|else|in|instanceof|return|throw|typeof|void|yield)$/.test(token)
+  if (!token || /[({[=,:!&|?;>+\-*%^~]/.test(token)) return true
+  const keyword = /\b(?:await|break|case|continue|debugger|delete|do|else|in|instanceof|new|return|throw|typeof|void|yield)$/.exec(token)?.[0]
+  if (!keyword) return false
+  const end = previousCodeIndex(source, index - 1, controlFlowRegexes)
+  const start = end - keyword.length + 1
+  return source.slice(start, end + 1) === keyword && !/[$\p{ID_Continue}\u200C\u200D]$/u.test(source.slice(0, start))
 }
 
 function endsWithPostfixUpdate(source: string, index: number, sign: string) {
@@ -254,12 +259,27 @@ function isStatementBlockRegexStart(source: string, closeBrace: number, controlF
   for (let openBrace = closeBrace - 1; openBrace >= 0; openBrace--) {
     if (source[openBrace] !== "{" || findMatching(source, openBrace, "{", "}", controlFlowRegexes) !== closeBrace) continue
     const previous = previousCodeIndex(source, openBrace - 1, controlFlowRegexes)
+    if (source[previous] === "{" && source[previous - 1] === "$") return false
     if (previous < 0 || /[;{}]/.test(source[previous] ?? "")) return true
     const head = source.slice(0, previous + 1)
     if (/(?:^|[^$\p{ID_Continue}\u200C\u200D])(?:do|else|finally|try)$/u.test(head)) return true
+    if (isDeclarationBlockStart(source, openBrace, controlFlowRegexes)) return true
     return isControlFlowRegexStart(source, openBrace, controlFlowRegexes)
   }
   return false
+}
+
+function isDeclarationBlockStart(source: string, openBrace: number, controlFlowRegexes: ControlFlowRegexCache) {
+  const head = source.slice(0, openBrace).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => comment.replace(/[^\r\n\u2028\u2029]/g, " "))
+  const declaration = /(?:^|[;{}\r\n\u2028\u2029])\s*(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*\([^{}]*\)(?:\s*:[^;{}]+)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?(?:\s+extends\s+[^;{}]+)?)\s*$/u.exec(head)
+  if (!declaration) return false
+  const before = head.slice(0, declaration.index).trimEnd()
+  if (/[=([,:?!&|+\-*/%^~<>.]$/.test(before)) return false
+  if (/(?:^|[^.$\p{ID_Continue}\u200C\u200D])(?:await|delete|in|instanceof|new|typeof|void)$/u.test(before)) return false
+  const keyword = /\b(?:class|function)\b/.exec(declaration[0])
+  if (!keyword) return false
+  const keywordStart = declaration.index + keyword.index
+  return maskSourceLiteralsWithContext(source.slice(0, keywordStart + keyword[0].length), controlFlowRegexes).slice(keywordStart) === keyword[0]
 }
 
 function isLabeledStatementRegexStart(source: string, index: number, labelEnd: number, controlFlowRegexes: ControlFlowRegexCache) {
@@ -388,6 +408,10 @@ export function stripBoundaryComments(source: string): string {
 }
 
 export function maskSourceLiterals(source: string): string {
+  return maskSourceLiteralsWithContext(source, new Map<number, boolean | undefined>())
+}
+
+function maskSourceLiteralsWithContext(source: string, controlFlowRegexes: ControlFlowRegexCache): string {
   const output = source.split("")
   let previousSignificant = ""
   const mask = (start: number, end: number) => {
@@ -401,12 +425,12 @@ export function maskSourceLiterals(source: string): string {
     const next = source[index + 1]
     let end: number | undefined
     if (isQuote(char)) {
-      end = skipQuoted(source, index)
+      end = skipQuoted(source, index, controlFlowRegexes)
       previousSignificant = "literal"
     }
     else if (char === "/" && next === "/") end = skipLineComment(source, index)
     else if (char === "/" && next === "*") end = skipBlockComment(source, index)
-    else if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant) || isControlFlowRegexStart(source, index))) {
+    else if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant, controlFlowRegexes) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
       end = skipRegexLiteral(source, index)
       previousSignificant = "/"
     }
