@@ -118,7 +118,7 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
       const previous = previousCodeIndex(source, index - 1, controlFlowRegexes)
       const result = token === "of"
         ? isForOfRegexStart(source, index, controlFlowRegexes)
-        : source[previous] !== token || source[previous - 1] !== token
+        : !endsWithPostfixUpdate(source, previous, token)
       controlFlowRegexes.set(index, result)
       return result
     }
@@ -128,6 +128,13 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
     }
   }
   return !token || /[({[=,:!&|?;>+\-*%^~]/.test(token) || /\b(?:await|case|delete|do|else|in|instanceof|return|throw|typeof|void|yield)$/.test(token)
+}
+
+function endsWithPostfixUpdate(source: string, index: number, sign: string) {
+  let count = 0
+  while (source[index - count] === sign) count += 1
+  // Update operators consume pairs; an odd trailing sign starts a new expression.
+  return count > 0 && count % 2 === 0
 }
 
 function isForOfRegexStart(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): boolean {

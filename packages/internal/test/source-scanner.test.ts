@@ -15,6 +15,12 @@ describe("source scanner", () => {
     }
   })
 
+  it.each(["count+++/['\"]/u", "count---/['\"]/u"])("scans a regex after a compact update and operator: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const call = findDefaultExportCall(`const value = ${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
   it.each([
     "for (const x of /['\"]/u) {}",
     "for await (const x of /['\"]/u) {}",
