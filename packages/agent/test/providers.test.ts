@@ -9644,6 +9644,7 @@ describe("server helpers", () => {
       const delivery = (await handler.deliveries(request(), "github", options)).find(item => item.sourceId === "delivery-rehydrate-outcome")
       expect(delivery?.status).toBe(kind === "exhausted" || kind === "timeout" || kind === "recovery" ? "failed" : "completed")
       expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
+      expect(delivery?.events.filter(event => event.type === "retrying").every(event => event.runId === undefined)).toBe(true)
     } finally {
       if (kind === "timeout" && !cancelBody.mock.calls.length) streamController.close()
       clock?.mockRestore()

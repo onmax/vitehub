@@ -1666,8 +1666,6 @@ async function executeQueuedWebhookDelivery(
           recordChannelDeliveryEvidence(channelDelivery, {
             attempt: delivery.attempts + 1,
             type: "retrying",
-            // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
-            runId: (delivery.invocation?.run as AgentRunMetadata | undefined)?.runId,
           }),
           executionTimeout,
         ])
