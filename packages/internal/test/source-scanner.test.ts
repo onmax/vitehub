@@ -10,6 +10,44 @@ import {
 
 describe("source scanner", () => {
   it.each([
+    'import "x"\n',
+    'import value from "x"\n',
+    'export { value } from "x"\n',
+    'interface Task {} ',
+    'enum Task {} ',
+    'namespace Task {} ',
+    'type Task = {}\n',
+    'export @dec class Task {} ',
+    'export default @dec class Task {} ',
+    '@factory().dec\nclass Task {} ',
+    '@factory.dec().next\nclass Task {} ',
+  ])("scans regex statements after module and decorated declarations: %s", (statement) => {
+    const value = `${statement}/['"]/u.test(value)`
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(findDefaultExportCall(`${value}\nexport default defineThing({ ok: true })`, ["defineThing"])?.argument).toBe("{ ok: true }")
+  })
+
+  it.each([
+    "promise.catch(handler) / total",
+    "object.for(handler) / total",
+    "object.if(handler) / total",
+    "object.with(handler) / total",
+    "object?.while(handler) / total",
+    "object. /* gap */ catch(handler) / total",
+    "object.\tif(handler) / total",
+    "const value = @(dec)\nclass Task {} / total",
+    'import value from "x"\nconst other = "y"\n/ total',
+    'const text = `import "x"`\n/ total',
+    'import("x") / total',
+    "const value = @factory().dec\nclass Task {} / total",
+    "const value = @factory.dec().next\nclass Task {} / total",
+    "class X extends /['\"]/u.constructor {}",
+  ])("preserves reviewed expression slash contexts: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(findDefaultExportCall(`${value}\nexport default defineThing({ ok: true })`, ["defineThing"])?.argument).toBe("{ ok: true }")
+  })
+
+  it.each([
     "fn(.../['\"]/u)",
     "fn(... /* gap */ /['\"]/u)",
     "value / /['\"]/u.test(text)",
