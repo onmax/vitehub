@@ -486,6 +486,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       const admission = await options.admission();
       if (!admission.accepting) {
         modelAdmission = false;
+        // SAFETY: This metadata key is only written by this admission branch with the fields below; absent or unrelated values are ignored.
         const previous = await pullRequestInbox.meta("admission-skipped") as { reason?: string; at?: number } | undefined;
         if (previous?.reason !== admission.reason || Date.now() - (previous?.at ?? 0) >= 900_000) {
           const skipped = { at: Date.now(), reason: admission.reason, detail: admission.detail, retryAt: admission.retryAt, active_owners: active.size };

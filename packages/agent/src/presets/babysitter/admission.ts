@@ -1,4 +1,4 @@
-import { hasRuntimeType } from "../../internal/runtime-type.ts";
+import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import type { AgentInvocations } from "../../invocations.ts";
 import type { Snapshot } from "../../server/github-inbox.ts";
 import { readFile, statfs } from "node:fs/promises";
@@ -80,12 +80,12 @@ export function babysitterBudgetWindows(now: number): BabysitterBudgetWindows {
 
 /** Summarizes the sanitized proxy account file without exposing account credentials. */
 export function summarizeProxyAccounts(status: unknown, provider: string, now: number, maxAgeMs: number): BabysitterProxyStatus {
-  if (!status || typeof status !== "object" || Array.isArray(status) || !Array.isArray((status as Record<string, unknown>).accounts)) return { state: "unknown" };
-  const value = status as Record<string, unknown>;
+  if (!isRuntimeRecord(status) || Array.isArray(status) || !Array.isArray(status.accounts)) return { state: "unknown" };
+  const value = status;
   const observedAt = Date.parse(String(value.observedAt));
   if (!(now - observedAt <= maxAgeMs)) return { state: "stale", observedAt: String(value.observedAt) };
-  const rawAccounts = value.accounts as unknown[];
-  const accounts = rawAccounts.filter((account): account is Record<string, unknown> => Boolean(account) && typeof account === "object" && !Array.isArray(account))
+  const rawAccounts = Array.isArray(value.accounts) ? value.accounts : [];
+  const accounts = rawAccounts.filter((account): account is Record<string, unknown> => isRuntimeRecord(account) && !Array.isArray(account))
     .filter(account => account.provider === provider && account.disabled !== true);
   if (!accounts.length) return { state: "unknown", observedAt: String(value.observedAt) };
   const exhausted = (account: Record<string, unknown>) => account.available !== true || account.limitReached === true;
@@ -178,7 +178,10 @@ export function createBabysitterAdmission(options: { invocations?: Pick<AgentInv
       state.dailyInputTokens = sumInvocationInputTokens(usage, windows.dayStart);
     }
     try { state.proxy = summarizeProxyAccounts(JSON.parse(await readFile(options.limits.proxyStatusFile, "utf8")), options.limits.proxyProvider, now, options.limits.proxyStatusMaxAgeMs); }
-    catch (error) { state.proxy = { state: (error as NodeJS.ErrnoException).code === "ENOENT" ? "unknown" : "unreadable" }; }
+    catch (error) {
+      const code = isRuntimeRecord(error) && hasRuntimeType(error.code, "string") ? error.code : undefined;
+      state.proxy = { state: code === "ENOENT" ? "unknown" : "unreadable" };
+    }
     return { ...babysitterAdmissionDecision(state, options.limits), accounting: "best-effort-retained-journal", state, limits: options.limits };
   };
 }
