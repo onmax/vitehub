@@ -22,6 +22,7 @@ import type {
   AgentRuntimeContext,
   ResolvedAgentRuntimeContext,
   DiscoveredAgentDefinition,
+  DefineAgent,
 } from "../index.ts"
 
 export interface ViteAgentRuntimeContext extends ResolvedAgentRuntimeContext {
@@ -81,15 +82,27 @@ export function createViteWorkspaceAgentLoader(
 ) {
   return async () => {
     const module = await server.ssrLoadModule(pathToFileURL(definition.handler).href)
+    // Use the host facade so definitions authored with the primitive package also inherit
+    // the Console's configured journal. The facade keeps journal selection lazy and scoped.
+    let authored = module.default
+    if (server.config.plugins?.some(plugin => plugin.name === "vite-hub/console")) {
+      // SAFETY: The active Console plugin belongs to vite-hub, whose Agent facade exports DefineAgent.
+      const framework = await server.ssrLoadModule("vite-hub/agent") as { defineAgent: DefineAgent }
+      authored = framework.defineAgent({ extends: authored })
+    }
     const colocatedInstructions = await readColocatedAgentInstructions(definition.handler)
     const agent = workspaceAgentWithSourceRoot(
       withColocatedAgentSkills(
-        agentWithColocatedInstructions(module.default, colocatedInstructions),
+        agentWithColocatedInstructions(authored, colocatedInstructions),
         colocatedSkills(definition.handler),
       ),
       workspaceSourceRoot(definition.handler),
       colocatedInstructions,
     )
+    // Workspace decoration spreads values and can drop the facade's non-enumerable getter.
+    // Keep that binding, including an explicitly authored journal, on the loaded definition.
+    const invocations = Object.getOwnPropertyDescriptor(authored, "invocations")
+    if (invocations) Object.defineProperty(agent, "invocations", invocations)
     return {
       ...module,
       default: agent,

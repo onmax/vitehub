@@ -14,9 +14,9 @@ import type { AgentRunMetadata, AgentRuntimeConfig, AgentRuntimeContext, MaybePr
 import type { RuntimeDiagnosticError, TraceEvent, TraceEventContentPolicy, TraceEventLog, TraceEventLogEntry, TraceEventPayload } from "@vite-hub/runtime"
 import { agentDiagnostics } from "./agent-diagnostics.ts"
 
-const bindAgentInvocationsSymbol = Symbol("vitehub.bindAgentInvocations")
-const recoverInterruptedAgentInvocationsSymbol = Symbol("vitehub.recoverInterruptedAgentInvocations")
-const agentInvocationsBrand: unique symbol = Symbol("vitehub.agentInvocations")
+const bindAgentInvocationsSymbol = Symbol.for("vitehub.bindAgentInvocations")
+const recoverInterruptedAgentInvocationsSymbol = Symbol.for("vitehub.recoverInterruptedAgentInvocations")
+const agentInvocationsBrand: unique symbol = Symbol.for("vitehub.agentInvocations")
 
 const MAX_ANNOTATIONS = 32
 const MAX_ANNOTATION_KEY_LENGTH = 64

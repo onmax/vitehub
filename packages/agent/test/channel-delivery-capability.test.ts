@@ -166,6 +166,24 @@ describe("channelDelivery()", () => {
     ]))
   })
 
+  it.each([false, true])("retains raw drafts separately from formatted deliveries, dryRun=%s", async dryRun => {
+    const channel = createChannel()
+    const invocations = defineAgentInvocations({ content: "content", store: createMemoryAgentInvocationStore() })
+    const agent = defineAgent({
+      extends: agentCalling(async tools => { await tools.send_message!.execute!({ message: "Raw draft" }) }),
+      invocations,
+      capabilities: [channelDelivery({ channel, options: { recipient: "user:1" }, required: true, format: message => `Formatted: ${message}` })],
+    })
+    await expect(runAgent(agent, { dryRun, prompt: "Write" })).resolves.toEqual([null, "done"])
+    if (dryRun) expect(channel.send).not.toHaveBeenCalled()
+    else expect(channel.send).toHaveBeenCalledWith("Formatted: Raw draft", { recipient: "user:1" })
+    const page = await invocations.list()
+    const record = await invocations.get(page.invocations[0]!.id)
+    const effect = record?.observations?.find(observation => observation.name === "agent.channel.delivery.effect")
+    expect(effect?.attributes).toMatchObject({ "channel.effect.channel": "teams", "channel.effect.content": "Raw draft" })
+    expect(effect?.attributes?.["channel.effect.skipped"]).toBe(dryRun ? "dry-run" : undefined)
+  })
+
   it("fails a required delivery that the Agent never sent", async () => {
     const channel = createChannel()
     const agent = defineAgent({
