@@ -40,7 +40,7 @@ function isCheckpointEntry(value: unknown): boolean {
 function isRealtimeCheckpoint(value: unknown): value is RealtimeCheckpoint {
   if (!isRecord(value) || !isString(value.content) || !isRecord(value.snapshot)) return false
   const snapshot = value.snapshot
-  if (!isString(snapshot.id) || !isString(snapshot.createdAt) || !isRecord(snapshot.entries)) return false
+  if (!isString(snapshot.id) || !isString(snapshot.createdAt) || (snapshot.name !== undefined && !isString(snapshot.name)) || !isRecord(snapshot.entries)) return false
   return Object.values(snapshot.entries).every(isCheckpointEntry)
 }
 
@@ -161,7 +161,17 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
           body: Uint8Array.from(Y.encodeStateAsUpdate(current)).buffer,
           method: "POST",
         })
-        if (response.ok) return parseRealtimeCheckpoint(await response.json())
+        if (response.ok) {
+          try {
+            return parseRealtimeCheckpoint(await response.json())
+          }
+          catch (error) {
+            if (error instanceof SyntaxError) {
+              throw realtimeErrorDiagnostics.REALTIME_R0012({ message: "The realtime checkpoint response was malformed." })
+            }
+            throw error
+          }
+        }
         const data = await response.json().catch(() => undefined) as { data?: { code?: string }, message?: string, statusMessage?: string } | undefined
         if (response.status === 409 && isRetryableRealtimeCheckpointCode(data?.data?.code) && attempt < 20) {
           await new Promise(resolve => setTimeout(resolve, 50))
