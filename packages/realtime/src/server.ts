@@ -256,7 +256,9 @@ export async function readRealtimeWorkspaceDocument(
       return await writable.fs.stat(documentId)
     }
     catch (error) {
-      if (getViteHubErrorShape(error)?.code === "WORKSPACE_NOT_FOUND") return undefined
+      const shape = getViteHubErrorShape(error)
+      // Registry failures name the missing Workspace; absent document paths do not.
+      if (shape?.code === "WORKSPACE_NOT_FOUND" && shape.details?.name === undefined) return undefined
       throw error
     }
   }
