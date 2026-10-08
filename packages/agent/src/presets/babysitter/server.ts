@@ -918,7 +918,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   try {
                     const result = await prepared.push(providerDirectory, {
                       signal: abortSignal,
-                      beforePush: assertLease,
+                      beforePush: async () => { await assertLease(); },
                     });
                     // A no-op push does not advance the remote head and emits
                     // no synchronize webhook; do not park this generation as

@@ -1015,7 +1015,7 @@ describe("Babysitter preset runtime", () => {
     const originalPush = f.push.getMockImplementation()!;
     f.push.mockImplementationOnce(async (...args) => {
       const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
-      if (typeof renewal !== "function") throw new Error("Missing push renewal timer");
+      if (!renewal) throw new Error("Missing push renewal timer");
       renewal();
       await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
       expect(await renew.mock.results[0]?.value).toBe(true);
