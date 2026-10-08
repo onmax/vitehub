@@ -5295,13 +5295,9 @@ describe("agent message protocol", () => {
       text: "Review completed.",
     })
 
-    expect(fetcher).toHaveBeenCalledWith(
-      "https://api.github.test/app/installations/123/access_tokens",
-      expect.objectContaining({
-        headers: expect.objectContaining({ authorization: expect.stringMatching(/^Bearer [^.]+\.[^.]+\.[^.]+$/) }),
-        method: "POST",
-      }),
-    )
+    const tokenCall = fetcher.mock.calls.find(([url]) => String(url) === "https://api.github.test/app/installations/123/access_tokens")
+    expect(tokenCall?.[1]?.method).toBe("POST")
+    expect(new Headers(tokenCall?.[1]?.headers).get("authorization")).toMatch(/^Bearer [^.]+\.[^.]+\.[^.]+$/)
     expect(fetcher).toHaveBeenCalledWith(
       "https://api.github.test/repos/vite-hub/vitehub/issues/comments/99/reactions",
       expect.objectContaining({

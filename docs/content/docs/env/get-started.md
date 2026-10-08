@@ -59,15 +59,30 @@ console.log(publicEnv.appName)
 
 ::
 
-::tutorial-step{title="Build and verify"}
-## Build and verify
+::tutorial-step{title="Run and verify"}
+## Run and verify
 
-Build the app to generate the aliased module and its types:
+Create a verification script that loads the example through Vite. Vite generates
+the Env module and resolves the alias before it executes `src/app.ts`.
 
-```bash [commands/build]
-pnpm vite build
+```js [scripts/verify-env.mjs]
+import { createServer } from 'vite'
+
+const server = await createServer({ server: { middlewareMode: true } })
+try {
+  await server.ssrLoadModule('/src/app.ts')
+} finally {
+  await server.close()
+}
 ```
 
-The generated `#vitehub/env/public` module resolves `appName` to `Acme`.
+Run it from the app root:
+
+```bash [commands/verify]
+node scripts/verify-env.mjs
+```
+
+The terminal prints `Acme`. This confirms that the generated Public Env module
+contains the declared value.
 
 ::

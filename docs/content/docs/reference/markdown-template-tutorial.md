@@ -64,7 +64,13 @@ the trusted `notes` fragment.
 ::tutorial-step{title="Verify the result"}
 ## Verify the result
 
-Run the module with your project's TypeScript runner. The output is Markdown:
+Run the module with Node 24:
+
+```sh [commands/verify]
+node server/render-release.ts
+```
+
+The output is Markdown:
 
 ```md [output/result.md]
 # Release 0.0.4

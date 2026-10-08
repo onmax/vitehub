@@ -16,7 +16,11 @@ Queue has hosted providers only. This tutorial uses Cloudflare Queues. Use Verce
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
+Use Node.js 24 or newer. Start in an empty directory:
+
 ```bash [commands/install]
+pnpm init
+pnpm pkg set type=module
 pnpm add @vite-hub/queue h3 nitro
 pnpm add -D @vite-hub/cli vite
 ```

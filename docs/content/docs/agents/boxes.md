@@ -41,6 +41,30 @@ For each invocation, ViteHub opens a new Box session. The Box creates a private 
 `trusted-host` isolates Home and declared environment values. It does not isolate the filesystem, network, processes, or installed executables. Use it only when the Agent may act with the authority of the host user.
 :::
 
+## Limit worker memory on Linux
+
+A trusted-host Box can cap all session commands and their descendants in one cgroup v2 group:
+
+```ts
+box: {
+  runtime: {
+    kind: 'trusted-host',
+    resources: {
+      cgroupParent: '/sys/fs/cgroup/system.slice/agent.service',
+      memoryHighBytes: 3 * 1024 ** 3,
+      memoryMaxBytes: 4 * 1024 ** 3,
+      memorySwapMaxBytes: 128 * 1024 ** 2,
+    },
+  },
+},
+```
+
+The parent must be writable, must delegate the memory controller, and must have no resident processes. With systemd 254 or later, configure `Delegate=memory` and `DelegateSubgroup=controller` and allow writes to the delegated control groups. Each Box creates a separate child group. The ViteHub controller remains outside the worker group. Configured limits fail closed if delegation is unavailable. Swap defaults to zero.
+
+A worker OOM kills its command group. Command waits reject with `BOX_R0158`, including the limit, peak memory and OOM kill count. Further commands in that session fail. Reduce the workload before retrying. Session close kills all remaining descendants and removes the cgroup. Inspect the configuration with `box.plan.resources`.
+
+These limits cover session `exec` and `spawn`, including the provider's native tools. Checkout preparation, toolchain setup and requirement checks remain under the controller's service budget. The trusted launcher also prepares its environment under that budget, then joins the session cgroup before executing the command or any caller-controlled loader hooks. Keep a service limit as a second boundary. Trusted-host commands retain host user authority; resource limits do not provide a security sandbox.
+
 ## Pin an exact checkout
 
 Box callbacks receive the Agent invocation context. Resolve repository facts from trusted invocation data when every run must inspect an exact commit.
@@ -235,3 +259,5 @@ Launch diagnostics redact resolved `box.env` values. When `box.home.files` or `b
 Use `@vite-hub/box` directly when application code owns the process lifecycle. Use [`sandbox()`](/docs/sandbox/agent-capability) to give a model-backed Agent an allowlisted executable tool.
 
 Provider status inspection inside an Agent Box is currently unsupported. `agent.status()` reports `readiness: "unsupported"` for boxed provider Drivers. Invocation execution still uses the configured Box.
+
+On kernels without `memory.peak`, the OOM diagnostic reports `peak=unavailable`. Box invalidates the session on a local allocation OOM, including allocation failures without a kill. This signal identifies exhaustion of the session budget and works with `memory_localevents` mounts. Ancestor or host kills alone do not invalidate it. The diagnostic reports the observed `memory.events` kill count as context, not proof of the kill cause; that count can exclude descendant victims on `memory_localevents` mounts. Box removes nested cgroups during close. The launcher restores the command environment only after joining the session group.
