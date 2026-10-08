@@ -364,9 +364,10 @@ export class PullRequestInbox {
     const delivery: StatusDelivery = {
       version, contentKey, repository: current.repository, number: current.number,
       head, generation: current.generation, projection: true,
+      workerLease: current.status === 'working' ? current.lease ?? undefined : undefined,
       text, attempts: 0, nextAt: now,
       activity: { runId: `saved:${target}:${contentKey}:${version}`,
-        status: current.status === 'terminal' ? 'completed' : 'queued',
+        status: current.status === 'terminal' ? 'completed' : current.status === 'working' && current.lease ? 'running' : 'queued',
         updatedAt: new Date(now).toISOString(), links: [], tasks: [], summary: text },
     }
     if (surviving.success && surviving.output.lease && (surviving.output.leaseUntil ?? 0) > now) {
@@ -397,7 +398,10 @@ export class PullRequestInbox {
       const claimed: StatusDelivery[] = []
       for (const pending of candidates) {
         const snapshot = await this.getIn(tx, pending.repository, pending.number)
-        if (pending.projection && snapshot?.lease && snapshot.status !== 'terminal') continue
+        if (pending.projection && snapshot?.lease && snapshot.status !== 'terminal' && pending.workerLease !== snapshot.lease) {
+          await this.enqueueStatusProjectionIn(tx, snapshot)
+          continue
+        }
         if (snapshot?.generation === pending.generation && pending.precedingHead && snapshot.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
         // Upgrade saved entries from releases that reused the invocation run ID.
         const statusRunId = `saved:${statusTargetKey(pending)}:${pending.contentKey}`

@@ -880,7 +880,10 @@ Older acknowledgements are backfilled with the corrected activity identity.
 New same-head feedback discards obsolete saved results. Confirmed repair-head and
 closure transitions retain their result. If a writer settles after another host
 replaces its expired lease, the latest settled result is requeued with a fresh
-activity identity. GitHub comments are eventually consistent: a lease cannot
+activity identity. A late saved-status write during an active worker queues a
+running projection bound to that worker's claim. Its correction can publish
+before the pass finishes, while an obsolete claim cannot authorize it.
+GitHub comment writes cannot be fenced: a lease cannot
 revoke an HTTP write already accepted by GitHub. A crashed writer's marker
 expires fifteen minutes after its last delivery lease. Corrective replay stops
 at that deadline. If an expired writer later settles in a live process, the host

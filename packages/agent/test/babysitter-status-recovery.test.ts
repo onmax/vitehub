@@ -200,6 +200,45 @@ test('terminal status survives restart before an orphaned worker claim expires',
   assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 0)
 })
 
+for (const replaced of [false, true]) test(`a late status write corrects the live worker projection across hosts, replaced=${replaced}`, async t => {
+  const { inbox, claim, open } = await fixture(t)
+  await inbox.finish(claim, blocked('Old waiting result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void, entered!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { entered = resolve })
+  let projection = '', status = ''
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    entered(); await barrier; projection = pending.text; status = pending.activity.status
+  } }).flush()
+  try {
+    await started
+    assert.equal(await other.wake((await other.get(repository, 239))!, 'new-feedback'), true)
+    const [worker] = await other.claim(1)
+    assert.ok(worker)
+    projection = 'Worker running.'; status = 'running'
+    release(); await first
+    assert.equal(projection, 'Old waiting result')
+    let currentWorker = worker
+    if (replaced) {
+      assert.equal(await other.release(worker), true)
+      const [replacement] = await other.claim(1)
+      assert.ok(replacement)
+      currentWorker = replacement
+    }
+    const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: async pending => {
+      assert.equal(pending.workerLease, currentWorker.token)
+      projection = pending.text; status = pending.activity.status
+    } })
+    await next.flush()
+    await next.flush()
+    assert.equal(projection, 'Pull request repair is claimed.')
+    assert.equal(status, 'running')
+    assert.equal((await other.get(repository, 239))?.lease, currentWorker.token)
+  } finally { release(); await first }
+})
+
 test('recovery backfills a legacy blocker completed after its first scan', async t => {
   const { inbox, claim } = await fixture(t)
   const delivered: string[] = []
@@ -826,7 +865,7 @@ for (const priorFeedback of [false, true]) test(`publishes a pinned repair when 
   assert.deepEqual(published, ['Own repair pushed'])
 })
 
-test('defers projection correction to an active repair when publication is in flight', async t => {
+test('corrects the active repair projection when saved publication is in flight', async t => {
   const { inbox, claim } = await fixture(t)
   await inbox.finish(claim, blocked('Old result'))
   let next: typeof claim | undefined
@@ -841,13 +880,14 @@ test('defers projection correction to an active repair when publication is in fl
   await recovery.flush()
   assert.ok(next)
   const correction = (await inbox.metaEntries('status-outbox:v1:'))[0]?.[1] as StatusDelivery | undefined
-  assert.equal(correction?.text, 'New pull request evidence is queued.')
-  assert.deepEqual(await inbox.claimStatusDeliveries(), [], 'a saved projection cannot supersede an active repair')
+  assert.equal(correction?.text, 'Pull request repair is claimed.')
+  assert.equal(correction?.workerLease, next.token)
+  assert.equal(correction?.activity.status, 'running')
   await recovery.flush()
-  assert.deepEqual(published, ['Old result'])
+  assert.deepEqual(published, ['Old result', 'Pull request repair is claimed.'])
   await inbox.finish(next, blocked('New result'))
   await recovery.flush()
-  assert.deepEqual(published, ['Old result', 'New result'])
+  assert.deepEqual(published, ['Old result', 'Pull request repair is claimed.', 'New result'])
 })
 
 test('persists correction atomically when publication is in flight during closure', async t => {
