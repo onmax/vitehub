@@ -41,3 +41,5 @@ export const statusDeliverySchema: v.GenericSchema<unknown, StatusDelivery> = v.
     tasks: v.array(v.never()), summary: v.string(),
   }),
 });
+
+export const statusAcknowledgementSchema = v.object({ contentKey: v.string(), runId: v.string() });

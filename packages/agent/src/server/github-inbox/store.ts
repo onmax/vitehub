@@ -7,7 +7,7 @@ import { isRuntimeNumber, isRuntimeString } from '../../internal/runtime-value.t
 import { isRuntimeRecord } from '../../internal/runtime-type.ts'
 import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
 import type { AgentRunActivity } from '../../types.ts'
-import { statusDeliverySchema, statusOutboxPrefix, statusSentPrefix, statusTargetKey, workerBlockerPrefix, type StatusDelivery } from './status-delivery.ts'
+import { statusAcknowledgementSchema, statusDeliverySchema, statusOutboxPrefix, statusSentPrefix, statusTargetKey, workerBlockerPrefix, type StatusDelivery } from './status-delivery.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
 import { matchesGitHubPullRequestFilter } from '../../internal/github-pull-request-filter.ts'
@@ -287,10 +287,10 @@ export class PullRequestInbox {
     const key = statusTargetKey(snapshot)
     const contentKey = digest([head, snapshot.generation, snapshot.status, snapshot.lastResult])
     const statusRunId = `saved:${key}:${contentKey}`
-    const sent = await this.metaIn(tx, `${statusSentPrefix}${key}`)
+    const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${key}`))
     const pending = await this.metaIn(tx, `${statusOutboxPrefix}${key}`)
-    if (isRuntimeRecord(sent) && sent.contentKey === contentKey && typeof sent.runId === 'string'
-      && (sent.runId === statusRunId || sent.runId.startsWith(`${statusRunId}:`))
+    if (sent.success && sent.output.contentKey === contentKey
+      && (sent.output.runId === statusRunId || sent.output.runId.startsWith(`${statusRunId}:`))
       || isRuntimeRecord(pending) && pending.contentKey === contentKey) return
     const now = this.clock()
     const delivery: StatusDelivery = {
