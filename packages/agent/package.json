@@ -219,7 +219,8 @@
     "esbuild": "catalog:esbuild-v27",
     "nostics": "catalog:runtime",
     "proper-lockfile": "catalog:",
-    "valibot": "catalog:runtime"
+    "valibot": "catalog:runtime",
+    "yaml": "catalog:tooling"
   },
   "devDependencies": {
     "@agntn/web": "catalog:ai",
