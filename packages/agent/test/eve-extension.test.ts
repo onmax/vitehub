@@ -1507,6 +1507,18 @@ describe("Eve extension capabilities", () => {
     await expect(secondTools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("run-2")
   })
 
+  it("rejects unavailable authoritative step index when a step.started handler reads it", async () => {
+    const handler = vi.fn((input: { data: { stepIndex: number } }) => ({ run: { description: String(input.data.stepIndex), execute: () => "ok" } }));
+    const capability = await eveExtensionCapability(
+      "test-extension", "test",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({ dynamic: { events: { "step.started": handler }, kind: "eve:dynamic" } }),
+    );
+    await expect((capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext()))
+      .rejects.toMatchObject({ code: "AGENT_R0415", message: expect.stringContaining("stepIndex") });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it.each(["turn.started", "step.started"])("rejects unavailable authoritative data when %s handlers read it", async event => {
     const handler = vi.fn((input: { data: { sequence: number, modelId: string } }) => ({ run: { description: String(event === "step.started" ? input.data.modelId : input.data.sequence), execute: () => "ok" } }))
     const capability = await eveExtensionCapability(
