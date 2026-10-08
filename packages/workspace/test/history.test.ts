@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import { createClient } from "@libsql/client"
@@ -33,6 +33,7 @@ afterEach(async () => {
 })
 
 async function setup(driver: "libsql" | "d1" | "d1-http", workspace = "drop-1") {
+  await mkdir(join(homedir(), ".cache/fleet/tmp"), { recursive: true })
   const root = await mkdtemp(join(homedir(), ".cache/fleet/tmp/workspace-history-"))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   let database: RuntimeDrizzleDatabase<Record<string, unknown>>
