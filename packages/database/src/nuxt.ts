@@ -114,6 +114,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
     const runtimeOptions = d1?.d1Database
       ? {
           ...resolvedOptions,
+          // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Keep runtime lookup when a Database ID is an Env declaration.
           databaseId: typeof resolvedOptions.databaseId === "object"
             ? { ...resolvedOptions.databaseId, default: resolvedOptions.databaseId.default ?? d1.d1Database.database_id }
             : resolvedOptions.databaseId ?? d1.d1Database.database_id,
