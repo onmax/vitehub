@@ -22,6 +22,22 @@ it("installs on the host with a frozen lockfile and no host secrets or lifecycle
   expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false });
 });
+it("reports the trusted host Corepack prerequisite when Node does not provide it", async () => {
+  const root = await fixture();
+  vi.stubEnv("PATH", join(root, "missing-host-tools"));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/requires Corepack in PATH/);
+  expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "failed" });
+});
+
+it.each(["true", "false"])("accepts lockfile-shaping npm peer settings: %s", async legacyPeerDeps => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3" }));
+  await writeFile(join(root, "package-lock.json"), "{}");
+  await writeFile(join(root, ".npmrc"), `legacy-peer-deps=${legacyPeerDeps}\ninstall-links=true\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
 it("records a reproduced installation failure for durable retry", async () => {
   const root = await fixture();
   await writeFile(join(root, "bin", "corepack"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
