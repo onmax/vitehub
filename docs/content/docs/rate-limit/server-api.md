@@ -46,6 +46,8 @@ The ID, `limit`, `window`, `enforcement`, and `failure` must use static literals
 
 Every driver returns `allowed`. Portable quota metadata is optional because native providers do not expose the same fields.
 
+When present, `resetAt` must be a positive Unix timestamp in milliseconds, at most `8.64e15`. The memory driver rejects a fixed window whose end exceeds that range before it stores a counter. It preserves the configured duration. Invalid custom driver timestamps throw regardless of the failure policy.
+
 ```ts
 interface RateLimitDecision {
   allowed: boolean

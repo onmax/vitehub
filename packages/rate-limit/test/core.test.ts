@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest"
 import { createRateLimiter } from "../src/index.ts"
 import { memoryRateLimitDriver } from "../src/drivers/memory.ts"
 
-import type { RateLimitDriverCapabilities } from "../src/index.ts"
+import type { RateLimitDriver, RateLimitDriverCapabilities } from "../src/index.ts"
 
 const strictCapabilities = {
   enforcement: "strict",
@@ -152,6 +152,46 @@ describe("Rate Limit core", () => {
     const counter = await limiter.peek({ key: "user" })
     expect(counter).toMatchObject({ resetAt: 8.64e15, status: "known", used: 1 })
     expect(new Date(consumed.resetAt!).toISOString()).toBe("+275760-09-13T00:00:00.000Z")
+  })
+
+  it.each([
+    { timestamp: 6e15, window: "5000000000000000ms" },
+    { timestamp: 8.64e15, window: "1ms" },
+  ] as const)("rejects an unrepresentable fixed-window end at $timestamp without storing a counter", async ({ timestamp, window }) => {
+    const driver = memoryRateLimitDriver({ now: () => timestamp })
+    const limiter = createRateLimiter({ driver, failure: "allow", limit: 1, window })
+
+    await expect(limiter.consume({ key: "user" })).rejects.toMatchObject({ code: "RATE_LIMIT_R0045" })
+    expect(driver.size()).toBe(0)
+    const counter = await limiter.peek({ key: "user" })
+    expect(counter).toMatchObject({ status: "known", used: 0 })
+    expect(counter).not.toHaveProperty("resetAt")
+  })
+
+  it.each(["consume", "peek"] as const)("rejects custom %s timestamps outside the supported range", async (operation) => {
+    for (const resetAt of [8.64e15 + 1, 1e16]) {
+      const driver: RateLimitDriver = {
+        capabilities: strictCapabilities,
+        consume: () => [null, { allowed: true, resetAt }],
+        name: "custom",
+        peek: () => [null, { resetAt, used: 1 }],
+      }
+      const limiter = createRateLimiter({ driver, failure: "allow", limit: 2, window: "1m" })
+      await expect(limiter[operation]({ key: "user" })).rejects.toThrow("8640000000000000")
+    }
+  })
+
+  it("accepts the exact custom reset timestamp boundary for consume and peek", async () => {
+    const driver: RateLimitDriver = {
+      capabilities: strictCapabilities,
+      consume: () => [null, { allowed: true, resetAt: 8.64e15 }],
+      name: "custom",
+      peek: () => [null, { resetAt: 8.64e15, used: 1 }],
+    }
+    const limiter = createRateLimiter({ driver, limit: 2, window: "1m" })
+
+    await expect(limiter.consume({ key: "user" })).resolves.toMatchObject({ resetAt: 8.64e15 })
+    await expect(limiter.peek({ key: "user" })).resolves.toMatchObject({ resetAt: 8.64e15, status: "known" })
   })
 
   it("consumes a fixed window atomically in memory", async () => {
