@@ -134,6 +134,33 @@ test('a new release wakes a worker blocker once and leaves real external blocker
   assert.equal((await inbox.get(repository, 239))?.status, 'waiting')
 })
 
+test('release recovery persists the queued projection while worker admission is unavailable', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { published.push(pending.text) } }).flush()
+  assert.equal(published.length, 1)
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-2' }).recover()
+  assert.equal((await inbox.get(repository, 239))?.status, 'ready')
+  assert.equal((await inbox.pendingStatusDeliveries())[0]?.text, 'New pull request evidence is queued.')
+})
+
+test('closure of a live claim persists terminal status before the worker finishes', async t => {
+  const { inbox, open, claim, setClock } = await fixture(t)
+  assert.equal((await inbox.get(repository, 239))?.status, 'working')
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
+  await inbox.ingest('closed-live-worker', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  await inbox.close()
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  assert.equal((await restored.pendingStatusDeliveries())[0]?.text, 'Pull request closed.', 'closure must survive a crash before worker cleanup')
+  setClock(claim.snapshot.leaseUntil + 1)
+  await restored.recoverLeases()
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async pending => { published.push(pending.text) } }).flush()
+  assert.deepEqual(published, ['Pull request closed.'])
+})
+
 test('historical results are backfilled once and worker recovery survives restart', async t => {
   const { inbox, claim, open } = await fixture(t)
   const { createBabysitterStatusRecovery } = await loadRecovery()

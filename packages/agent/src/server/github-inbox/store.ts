@@ -243,9 +243,11 @@ export class PullRequestInbox {
   }
   private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
     let reopened = false
-    if (this.activityAuthors.size && s.status === 'ready') {
+    let wasWorking = false
+    if (this.activityAuthors.size && (s.status === 'ready' || s.status === 'terminal')) {
       const [previous] = await tx.execute(`SELECT status FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, s.repository, s.number])
-      reopened = previous?.status === 'terminal'
+      reopened = s.status === 'ready' && previous?.status === 'terminal'
+      wasWorking = previous?.status === 'working'
     }
     this.compactTerminal(s)
     const head = s.pr?.head?.sha
@@ -259,7 +261,7 @@ export class PullRequestInbox {
       const target = statusTargetKey(s)
       const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, `${statusOutboxPrefix}${target}`))
       const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
-      if (reopened || (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed')) {
+      if (reopened || wasWorking || (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed')) {
         await this.enqueueStatusProjectionIn(tx, s)
       }
     }
@@ -564,6 +566,7 @@ export class PullRequestInbox {
       this.dirty(s, 'wait:worker-release-changed')
       await this.put(tx, s)
       await this.setMetaIn(tx, key, { revision, head: s.pr?.head?.sha })
+      if (this.activityAuthors.size) await this.enqueueStatusProjectionIn(tx, s)
       return true
     })
   }

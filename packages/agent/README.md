@@ -880,7 +880,9 @@ include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 
 Known worker setup failures receive one recovery attempt per Agent `version` and
-PR head. Bump the version with each deployed release. The wake and release marker
+PR head. Bump an explicit version with each deployed Agent release. An Agent without
+a version uses the installed package build identity, which changes with package
+source and dependency updates even when preview builds reuse a manifest version. The wake and release marker
 commit together, so restarting the same release cannot repeat the wake. Timed
 retries, check dependencies, and maintainer credential blockers keep their existing
 wake conditions. Health can reuse admission accounting for at most two minutes

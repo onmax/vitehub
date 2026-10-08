@@ -52,6 +52,8 @@ import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./st
 import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admission.ts";
 import { createBabysitterStatusRecovery } from "./status-recovery.ts";
 
+declare const __VITEHUB_AGENT_BUILD_REVISION__: string;
+
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
   /** Discovered Agent name for per-Agent public URLs. Defaults to the definition name. */
@@ -150,7 +152,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const statusChannel = verifiedHostIdentity ? github.channel({ activity: true, pullRequest: { workspace: false } }) : undefined;
   const statusRecovery = createBabysitterStatusRecovery({
     inbox: pullRequestInbox,
-    revision: baseAgent.version ?? "durable-status-v1",
+    // The package build stamps its source identity; direct source tests have no build define.
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Guard a compile-time global that is absent when running package sources.
+    revision: baseAgent.version ?? (typeof __VITEHUB_AGENT_BUILD_REVISION__ === "undefined" ? "source" : __VITEHUB_AGENT_BUILD_REVISION__),
     publish: statusChannel ? (pending, abortSignal) => publishAgentActivity({ name: `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`, channels: { github: statusChannel } }, {
       channelId: "github", target: { repository: pending.repository, issue: pending.number }, activity: pending.activity, abortSignal,
     }) : undefined,

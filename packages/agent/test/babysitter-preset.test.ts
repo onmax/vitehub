@@ -56,7 +56,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -284,7 +284,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { activity
     agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
     ...(discovered ? { agentName: preset.agentName ?? "babysitter" } : {}),
     github,
-    inboxPath: join(root, "inbox.sqlite"),
+    inboxPath: preset.inboxPath ?? join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
     concurrency: 1,
     activityAuthors: preset.activityBarrier ? ["repair-bot"] : ["vitehub-agent"],
@@ -420,6 +420,32 @@ async function fixture(autoMerge = false, discovered = false, preset: { activity
 }
 
 describe("Babysitter preset runtime", () => {
+  it("retries an unversioned Agent worker blocker once per package build", async () => {
+    const result = { wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
+    vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", "build-first");
+    const first = await fixture(false, false, { result });
+    const inboxPath = join(first.checkout, "..", "inbox.sqlite");
+    try {
+      await first.reconcile();
+      expect((await first.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect(first.passes).toHaveLength(1);
+    } finally { await first.runtime.inbox.close(); }
+    const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test", detail: "Observe recovery with model admission paused" });
+    const unchanged = await fixture(false, false, { inboxPath, admission });
+    try {
+      await unchanged.reconcile();
+      expect((await unchanged.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect(unchanged.passes).toHaveLength(0);
+    } finally { await unchanged.runtime.inbox.close(); }
+    vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", "build-second");
+    const upgraded = await fixture(false, false, { inboxPath, admission });
+    try {
+      await upgraded.reconcile();
+      expect((await upgraded.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+      expect(upgraded.passes).toHaveLength(0);
+    } finally { await upgraded.runtime.inbox.close(); vi.unstubAllGlobals(); }
+  });
+
   it("parks model work until the recorded provider quota cooldown ends", async () => {
     const f = await fixture(false);
     const until = Date.now() + 60 * 60_000;

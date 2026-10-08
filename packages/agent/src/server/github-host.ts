@@ -159,6 +159,7 @@ export interface GitHubAppEnvironment {
  * repository from the App, and the App's bot identity for commits. Results are cached.
  */
 export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
+  const configuredInstallations = new Map(Object.entries(app.installations ?? {}).map(([name, id]) => [name.toLowerCase(), id]));
   const installations = new Map<string, number>()
   let identity: Promise<{ login: string, email: string }> | undefined
   const client = githubAppCredentials(app)
@@ -177,7 +178,7 @@ export function createGitHubAppCredentials(app: GitHubAppEnvironment) {
     async credentials(context: GitHubHostCredentialContext): Promise<GitHubHostCredentials> {
       if (!context.repository) return { token: app.token }
       const repositoryOwner = owner(context.repository)
-      const configured = app.installations?.[repositoryOwner] ?? (!app.owner || app.owner.toLowerCase() === repositoryOwner ? app.installationId : undefined)
+      const configured = configuredInstallations.get(repositoryOwner) ?? (!app.owner || app.owner.toLowerCase() === repositoryOwner ? app.installationId : undefined)
       const installationId = configured ?? await installation(context.repository, context.signal)
       return { appId: app.appId, installationId, owner: owner(context.repository), privateKey: app.privateKey, token: app.token }
     },
