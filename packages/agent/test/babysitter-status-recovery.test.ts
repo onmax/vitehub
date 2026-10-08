@@ -683,6 +683,99 @@ test('a writer that settles after lease replacement does not relabel a retry res
   } finally { release(); await first }
   await next.flush()
   assert.deepEqual(await inbox.pendingStatusDeliveries(), [], 'a result from an earlier generation must not become current feedback')
+  assert.equal(projection, 'New pull request evidence is queued.', 'the older writer must not remain the visible projection')
   const current = (await inbox.get(repository, pr.number))!
   assert.ok(current.generation > current.handled)
+  assert.equal(current.lastResult, 'New result', 'projection recovery must preserve the actual saved result')
+})
+
+for (const change of ['closed', 'feedback', 'feedback-with-lost-response'] as const) test(`corrects a status writer superseded by ${change} while publication is in flight`, async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked('Waiting for old checks'))
+  let projection = ''
+  let writes = 0
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    if (writes++ === 0) {
+      if (change === 'closed') await inbox.ingest('closed-during-write', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+      else await inbox.ingest('feedback-during-write', 'issue_comment', { repository: { full_name: repository }, action: 'created', issue: { number: pr.number, pull_request: {} }, comment: { id: 91, body: 'Changed requirements', user: { login: 'reviewer' } } })
+    }
+    projection = pending.text
+    if (change === 'feedback-with-lost-response' && writes === 1) throw new Error('Response lost after the old write')
+  } })
+  await recovery.flush()
+  await recovery.flush()
+  assert.equal(projection, change === 'closed' ? 'Pull request closed.' : 'New pull request evidence is queued.')
+  const current = (await inbox.get(repository, pr.number))!
+  assert.equal(current.lastResult, 'Waiting for old checks')
+  if (change !== 'closed') assert.ok(current.generation > current.handled, 'new feedback must remain available to a worker')
+})
+
+for (const repaired of [false, true]) test(`does not relabel a superseded pinned wait, repaired=${repaired}`, async t => {
+  const { inbox, claim } = await fixture(t)
+  const resultHead = repaired ? 'd'.repeat(40) : head
+  if (repaired) await inbox.seed(repository, { ...pr, head: { ...pr.head, sha: resultHead } })
+  await inbox.ingest('feedback-before-wait', 'issue_comment', { repository: { full_name: repository }, action: 'created',
+    issue: { number: pr.number, pull_request: {} }, comment: { id: 92, body: 'New repair requirements', user: { login: 'reviewer' } } })
+  await inbox.finish(claim, { text: 'Earlier pinned wait', wait: { kind: 'checks', headSha: resultHead, reason: 'Waiting for checks', evidenceKey: 'old-checks' } })
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { published.push(pending.text) } }).flush()
+  assert.deepEqual(published, [])
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
+  const current = (await inbox.get(repository, pr.number))!
+  assert.ok(current.generation > current.handled)
+})
+
+for (const priorFeedback of [false, true]) test(`publishes a pinned repair when its synchronize webhook precedes completion, priorFeedback=${priorFeedback}`, async t => {
+  const fixtureResult = await fixture(t)
+  const { inbox } = fixtureResult
+  let claim = fixtureResult.claim
+  if (priorFeedback) {
+    await inbox.finish(claim, { text: 'Initial retry', retry: true })
+    await inbox.ingest('claimed-feedback', 'issue_comment', { repository: { full_name: repository }, action: 'created',
+      issue: { number: pr.number, pull_request: {} }, comment: { id: 93, body: 'Requirements already in this claim', user: { login: 'reviewer' } } })
+    claim = (await inbox.claim(1))[0]!
+  }
+  const repaired = 'd'.repeat(40)
+  await inbox.ingest('own-repair', 'pull_request', { repository: { full_name: repository }, action: 'synchronize', pull_request: { ...pr, head: { ...pr.head, sha: repaired } } })
+  await inbox.finish(claim, { text: 'Own repair pushed', wait: { kind: 'checks', headSha: repaired, reason: 'Waiting for repair checks', evidenceKey: 'repair-checks' } })
+  const published: string[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { published.push(pending.text) } }).flush()
+  assert.deepEqual(published, ['Own repair pushed'])
+})
+
+test('defers projection correction to an active repair when publication is in flight', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  let next: typeof claim | undefined
+  const published: string[] = []
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => {
+    published.push(pending.text)
+    if (published.length === 1) {
+      await inbox.wake((await inbox.get(repository, pr.number))!, 'new-feedback')
+      ;[next] = await inbox.claim(1)
+    }
+  } })
+  await recovery.flush()
+  assert.ok(next)
+  const correction = (await inbox.metaEntries('status-outbox:v1:'))[0]?.[1] as StatusDelivery | undefined
+  assert.equal(correction?.text, 'New pull request evidence is queued.')
+  assert.deepEqual(await inbox.claimStatusDeliveries(), [], 'a saved projection cannot supersede an active repair')
+  await recovery.flush()
+  assert.deepEqual(published, ['Old result'])
+  await inbox.finish(next, blocked('New result'))
+  await recovery.flush()
+  assert.deepEqual(published, ['Old result', 'New result'])
+})
+
+test('persists correction atomically when publication is in flight during closure', async t => {
+  const { inbox, claim, open } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const [pending] = await inbox.claimStatusDeliveries()
+  assert.ok(pending)
+  await inbox.seed(repository, { ...pr, state: 'closed' })
+  assert.equal(await inbox.finishStatusDelivery(pending, 'delivered'), false)
+  const restarted = open()
+  t.onTestFinished(() => restarted.close())
+  assert.equal((await restarted.pendingStatusDeliveries())[0]?.text, 'Pull request closed.')
+  assert.equal(await restarted.meta('status-sent:v1:acme/app#239'), undefined)
 })

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PullRequestInbox, Snapshot } from "../../server/github-inbox.ts";
-import type { StatusDelivery } from "../../server/github-inbox/status-delivery.ts";
+import { isStatusDeliveryCurrent, type StatusDelivery } from "../../server/github-inbox/status-delivery.ts";
 
 export function isWorkerBlocker(snapshot: Pick<Snapshot, "wait" | "lastResult">): boolean {
   if (snapshot.wait?.kind !== "external" || snapshot.wait.wake || snapshot.wait.retryAt !== undefined) return false;
@@ -45,14 +45,7 @@ export function createBabysitterStatusRecovery(options: {
     };
     try {
       const snapshot = await inbox.get(pending.repository, pending.number);
-      const repairHeadObserved = snapshot && pending.precedingHead
-        && snapshot.status === "waiting" && snapshot.wait?.headSha === pending.head
-        && snapshot.generation === pending.generation + 1
-        && snapshot.reasons.every(reason => reason === "bootstrap" || reason === "pull_request:synchronize");
-      const terminalResult = snapshot?.status === "terminal" && pending.activity.status === "completed";
-      if (!snapshot || snapshot.pr?.head?.sha !== pending.head || snapshot.lease
-        || snapshot.lastResult !== pending.text
-        || snapshot.generation !== pending.generation && !repairHeadObserved && !terminalResult) {
+      if (!isStatusDeliveryCurrent(pending, snapshot)) {
         await inbox.finishStatusDelivery(pending, "discarded");
         return;
       }
