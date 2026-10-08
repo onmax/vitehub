@@ -146,9 +146,21 @@ async function githubMentionTokens(body: string): Promise<string[]> {
       markdownItPlugins: [md => {
         // Remove actual inline comments before Comark falls back to raw text.
         // Escaped or entity-encoded delimiters remain visible text tokens.
-        md.core.ruler.after("inline", "github-mention-comments", state => {
+        md.core.ruler.after("linkify", "github-mention-comments", state => {
           for (const token of state.tokens) {
-            if (token.children) token.children = token.children.filter(child => child.type !== "html_inline" || !child.content.startsWith("<!--"))
+            if (!token.children) continue
+            token.children = token.children.filter(child => child.type !== "html_inline" || !child.content.startsWith("<!--"))
+            for (let index = 0; index < token.children.length; index++) {
+              const child = token.children[index]!
+              if (child.type === "link_open" && child.info === "auto") child.attrSet("data-github-autolink", "true")
+              // Markdown-It ends fuzzy URLs at quotes, while GitHub keeps
+              // their adjacent path text inside the same non-notifying link.
+              const label = token.children[index - 1]
+              const suffix = token.children[index + 1]
+              if (child.type === "link_close" && child.markup === "linkify" && label?.type === "text" && /^(?:https?:\/\/|www\.)/i.test(label.content) && suffix?.type === "text") {
+                suffix.content = suffix.content.replace(/^["'][^\s<>]*/, "")
+              }
+            }
           }
         })
       }],
@@ -170,12 +182,12 @@ async function githubMentionTokens(body: string): Promise<string[]> {
     }
     const [tag, attributes, ...children] = node
     if (tag === "code" || tag === "pre" || tag === null) return
-    // Autolinks expose their destination as a label, unlike authored link text.
-    if (tag === "a" && children.length === 1 && children[0] === attributes.href && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(String(attributes.href))) {
+    // GitHub linkifies scheme URLs and www. URLs, including quote characters
+    // and entities in their paths. Fuzzy bare domains remain ordinary text.
+    if (tag === "a" && children.length === 1) {
       const label = String(children[0])
-      const boundary = label.search(/["']|&(?:quot|apos|#0*34|#x0*22|#0*39|#x0*27);/i)
-      if (boundary >= 0) collectMentions(label.slice(boundary))
-      return
+      if (attributes["data-github-autolink"] === "true" && /^(?:[A-Za-z][A-Za-z0-9+.-]*:|www\.)/i.test(label)) return
+      if (label === attributes.href && /^[A-Za-z][A-Za-z0-9+.-]*:/.test(label)) return
     }
     children.forEach(collectMentions)
   }

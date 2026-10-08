@@ -127,6 +127,16 @@ describe("native auto-merge", () => {
     "Contact ops@example.com to restore service.",
     "Contact ops+alerts@example.com to restore service.",
     "Open https://example.com/@someone for details.",
+    'See https://example.com/"@other-user',
+    "See https://example.com/'@other-user",
+    'See www.example.com/"@other-user',
+    'See https://example.com/&quot;@other-user',
+    "See www.example.com/@other-user",
+    "See https://example.com/&#34;@other-user",
+    "See https://example.com/&#x22;@other-user",
+    "See https://example.com/&apos;@other-user",
+    "See https://example.com/&#39;@other-user",
+    "See https://example.com/&#x27;@other-user",
     "Use @@someone as the delimiter.",
     "Use @ as the delimiter.",
     "Contact ops+@example.com to restore service.",
@@ -159,10 +169,12 @@ describe("native auto-merge", () => {
 
   it.each([
     "-@other-user", "+@other-user", ".@other-user", "/@other-user",
-    'See https://example.com/"@other-user',
-    "See https://example.com/'@other-user",
-    'See www.example.com/"@other-user',
-    'See https://example.com/&quot;@other-user',
+    "See https://example.com/ @other-user",
+    "See www.example.com/ @other-user",
+    'See https://example.com/"@inside @other-user',
+    "See https://example.com/'@inside @other-user",
+    'See www.example.com/"@inside @other-user',
+    "See example.com/@other-user",
     "@acme/ent:platform-sre",
     '<span title="ignored @example">@other-user</span>',
     "<!-- @example --> @other-user",
@@ -357,9 +369,19 @@ describe("native auto-merge", () => {
 })
 
 describe("host-owned repair operations", () => {
-  it("rejects a body mention after a URL quote delimiter", async () => {
+  it.each([
+    'See https://example.com/"@other-user',
+    "See www.example.com/@other-user",
+    "See https://example.com/&quot;@other-user",
+  ])("allows URL-only labels in pull request body updates: %s", async (body) => {
     const f = fixture({ restrictCommentMentions: true })
-    await expect(f.operations.updateMetadata({ body: 'See https://example.com/"@other-user' })).rejects.toThrow(/cannot add GitHub mentions/)
+    await f.operations.updateMetadata({ body })
+    expect(f.command).toHaveBeenCalledWith(["api", "/repos/acme/app/issues/12", "--method", "PATCH", "-f", `body=${body}`], expect.anything())
+  })
+
+  it("rejects a body mention outside a URL", async () => {
+    const f = fixture({ restrictCommentMentions: true })
+    await expect(f.operations.updateMetadata({ body: "See https://example.com/ @other-user" })).rejects.toThrow(/cannot add GitHub mentions/)
     expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
   })
   it("binds comments and metadata to the selected PR, treating content as literal fields", async () => {
