@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -54,6 +55,36 @@ describe("trusted-host resource snapshots", () => {
       expect(close).toHaveBeenCalledTimes(2);
     } finally {
       await first.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains initialized state and its lease until failed-open teardown succeeds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "box-failed-open-state-"));
+    const key = "failed-open-state";
+    const persistent = join(root, createHash("sha256").update(key).digest("hex"));
+    let populated = true;
+    const close = vi.fn(async () => {
+      if (populated) throw new Error("cgroup remains populated");
+      // State must still exist until all descendants have exited.
+      expect(await readFile(join(persistent, "value"), "utf8")).toBe("seed");
+    });
+    vi.mocked(createSessionMemory).mockResolvedValueOnce({ assertHealthy: async () => {}, close, kill: async () => {}, spawn: vi.fn() });
+    const box = await resolveBox({
+      home: { state: { ".state": { key, seed: { value: { contents: "seed" } } } } },
+      runtime: createTrustedHostRuntime({ stateRoot: root, resources: { cgroupParent: "/delegated", memoryMaxBytes: 1024 } }),
+    }, {});
+    try {
+      await expect(box.open({ initialize: async () => { throw new Error("initialization failed"); } })).rejects.toThrow("initialization failed");
+      expect(await readFile(join(persistent, "value"), "utf8")).toBe("seed");
+      await expect(box.open({ signal: AbortSignal.timeout(100) })).rejects.toThrow();
+      populated = false;
+      await expect.poll(async () => stat(persistent).then(() => true, () => false)).toBe(false);
+      const next = await box.open({ signal: AbortSignal.timeout(1000) });
+      await next.close();
+      expect(close.mock.calls.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      populated = false;
       await rm(root, { recursive: true, force: true });
     }
   });

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { access, mkdir, readFile, readdir, rm, rmdir, statfs, writeFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import { setTimeout as delay } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSessionMemory } from "../src/internal/session-memory.ts";
@@ -39,7 +40,7 @@ beforeEach(() => {
 const open = () => createSessionMemory({ cgroupParent: "/delegated", memoryMaxBytes: 1024 });
 
 describe("session memory events", () => {
-  it.each(["/bin/sh", "/bin/bash"])("restores readonly environment names through a %s launcher", async (shell) => {
+  it("restores readonly environment names and loader hooks after admission", async () => {
     const fs = await vi.importActual<typeof import("node:fs")>("node:fs");
     const { spawnSync } = await vi.importActual<typeof import("node:child_process")>("node:child_process");
     const { tmpdir } = await import("node:os");
@@ -55,12 +56,10 @@ describe("session memory events", () => {
       fs.writeFileSync(`${directory}/memory.events.local`, "oom 0\n");
       args[3] = directory;
       args[4] = `${directory}/no-oom-marker`;
-      args[5] = `${directory}/memory.events.local`;
-      for (let i = 6; i < args.length; i++) {
-        if (args[i]?.includes("vitehub-box-env-")) args[i] = environmentFile;
-      }
+      args[5] = environmentFile;
       expect(args.join(" ")).not.toContain(env.TOKEN);
-      const result = spawnSync(shell, args, { env: {}, encoding: "utf8" });
+      const result = spawnSync(process.execPath, args, { env: {}, encoding: "utf8" });
+      expect(result.error).toBeUndefined();
       expect(result.stderr).toBe("");
       expect(result.status).toBe(0);
       // The final command shell sets PPID itself, just as in an unbounded session.
@@ -73,6 +72,38 @@ describe("session memory events", () => {
     } finally {
       await group.close();
       fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+  it.each(["oom 0\n", "oom 1\n", ""])("prepares the environment before admission and fences local events %j", async (events) => {
+    const group = await open();
+    try {
+      group.spawn("echo hello", { env: { TOKEN: "secret" } });
+      const args = vi.mocked(spawn).mock.calls[0]![1] as string[];
+      const steps: string[] = [];
+      const execve = vi.fn(() => steps.push("exec"));
+      const exit = vi.fn(() => { throw new Error("launch refused"); });
+      const run = () => runInNewContext(args[2]!, {
+        require: () => ({
+          readFileSync: (path: string) => {
+            if (path === args[5]) { steps.push("environment"); return '{"TOKEN":"secret"}'; }
+            steps.push("events"); return events;
+          },
+          writeFileSync: () => { steps.push("join"); },
+          existsSync: () => false,
+        }),
+        process: { argv: [process.execPath, ...args.slice(3)], pid: 123, execve, exit },
+      });
+      if (events === "oom 0\n") {
+        run();
+        expect(steps).toEqual(["environment", "join", "events", "exec"]);
+        expect(execve).toHaveBeenCalledWith("/bin/sh", ["/bin/sh", "-c", "echo hello"], { TOKEN: "secret" });
+      } else {
+        expect(run).toThrow("launch refused");
+        expect(execve).not.toHaveBeenCalled();
+        expect(exit).toHaveBeenCalledWith(125);
+      }
+    } finally {
+      await group.close();
     }
   });
   it("allows later close listeners to complete when environment-file removal fails", async () => {
@@ -187,12 +218,10 @@ describe("session memory events", () => {
   it("starts the launcher with no caller environment and restores it after joining", async () => {
     const group = await open();
     group.spawn("echo hello", { env: { LD_PRELOAD: "/hook.so", ENV: "/hook.sh", PATH: "/untrusted" } });
-    expect(spawn).toHaveBeenCalledWith("/bin/sh", [
-      "-c", expect.stringContaining('shift 3; exec "$@"'),
-      "/bin/sh", expect.stringMatching(/^\/delegated\/vitehub-box-/),
+    expect(spawn).toHaveBeenCalledWith(process.execPath, [
+      "--input-type=commonjs", "-e", expect.stringContaining("process.execve"),
+      expect.stringMatching(/^\/delegated\/vitehub-box-/),
       expect.stringMatching(/vitehub-box-oom-/),
-      expect.stringMatching(/^\/delegated\/vitehub-box-.*\/memory\.events\.local$/),
-      process.execPath, "--input-type=commonjs", "-e", expect.stringContaining("process.execve"),
       expect.stringMatching(/vitehub-box-env-/), "echo hello",
     ], { env: {} });
     expect(access).toHaveBeenCalled();

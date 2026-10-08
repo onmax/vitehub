@@ -129,24 +129,23 @@ export async function createSessionMemory(resources: TrustedHostResources): Prom
       const environment = Object.entries(options.env ?? process.env).filter((entry): entry is [string, string] => entry[1] !== undefined);
       const environmentFile = join(tmpdir(), `vitehub-box-env-${randomUUID()}`);
       try {
-        // execve restores values without shell assignments or secret-bearing argv.
-        // The controller's Node runs with an empty environment inside the group.
+        // Prepare the trusted helper under the controller budget. Linux keeps
+        // existing memory charges there on migration, so Node startup does not
+        // consume the session's tight budget. Admission and exec happen below.
+        // No caller environment (including loader hooks) is installed until exec.
         writeFileSync(environmentFile, JSON.stringify(Object.fromEntries(environment)), { mode: 0o600 });
         chmodSync(environmentFile, 0o600);
-        const child = spawn("/bin/sh", [
-        "-c",
-        'printf "%s" "$$" > "$1/cgroup.procs" || exit 125; test ! -e "$2" || exit 125; oom=; while IFS=" " read -r key value _; do if test "$key" = oom; then oom=$value; fi; done < "$3" || exit 125; test "$oom" = 0 || exit 125; shift 3; exec "$@"',
-        "/bin/sh",
-        path,
-        healthMarker,
-        join(path, "memory.events.local"),
-        process.execPath,
-        "--input-type=commonjs",
-        "-e",
-        'const fs = require("node:fs"); const env = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.execve("/bin/sh", ["/bin/sh", "-c", process.argv[2]], env);',
-        environmentFile,
-        command,
-      ], { ...options, env: {} });
+        const child = spawn(process.execPath, [
+          "--input-type=commonjs", "-e",
+          `const fs = require("node:fs");
+const [group, marker, environmentFile, command] = process.argv.slice(1);
+const env = JSON.parse(fs.readFileSync(environmentFile, "utf8"));
+const args = ["/bin/sh", "-c", command];
+fs.writeFileSync(group + "/cgroup.procs", String(process.pid));
+if (fs.existsSync(marker) || !/^oom 0$/m.test(fs.readFileSync(group + "/memory.events.local", "utf8"))) process.exit(125);
+process.execve("/bin/sh", args, env);`,
+          path, healthMarker, environmentFile, command,
+        ], { ...options, env: {} });
         child?.once("close", () => {
           try {
             rmSync(environmentFile, { force: true });

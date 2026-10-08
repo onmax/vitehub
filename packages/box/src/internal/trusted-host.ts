@@ -220,6 +220,7 @@ async function createSession(
   let root: string | undefined;
   let session: TrustedHostSession | undefined;
   const initializedState: string[] = [];
+  let initializationFailed = false;
   try {
     root = await realpath(await mkdtemp(join(tmpdir(), "vitehub-box-")));
     const home = join(root, "home");
@@ -249,7 +250,14 @@ async function createSession(
     session = await createTrustedHostSession({
       env,
       home,
-      release: releases,
+      async release() {
+        // Roll back only after destroy has confirmed process and cgroup teardown,
+        // while the state lease is still held, including on background retries.
+        if (initializationFailed) {
+          await Promise.all(initializedState.map(path => rm(path, { force: true, recursive: true }).catch(() => undefined)));
+        }
+        await releases();
+      },
       resources: options.resources,
       root,
       sessionId: createOptions.sessionId,
@@ -272,16 +280,11 @@ async function createSession(
     return session;
   } catch (error) {
     if (session) {
-      await Promise.resolve(session.stop()).catch(() => undefined);
-      await Promise.all(
-        initializedState.map((path) =>
-          rm(path, { force: true, recursive: true }).catch(() => undefined)
-        ),
-      );
+      initializationFailed = true;
       try {
         await session.destroy?.();
       } catch {
-        // Keep the session and its lease owned by a bounded retry loop. This
+        // Keep the session, state and lease owned across cleanup retries. This
         // covers cgroup teardown failures during failed initialization.
         void retrySessionDestroy(session);
       }

@@ -26,6 +26,22 @@ describe("trusted-host session memory", () => {
     } }, {})).rejects.toThrow(/must not exceed/);
   });
 
+  it.skipIf(process.env.VITEHUB_TEST_DELEGATED_MEMORY !== "1")("starts a shell with its environment under a tight memory budget", async () => {
+    const member = (await readFile("/proc/self/cgroup", "utf8")).split("\n").find(line => line.startsWith("0::"))!.slice(3);
+    const parent = dirname(join("/sys/fs/cgroup", member));
+    const before = await readdir(parent);
+    const box = await limitedBox(parent, 8 * MiB);
+    const session = await box.open();
+    try {
+      const result = await session.exec("sh", ["-c", 'printf "%s" "$TOKEN"'], { env: { TOKEN: "tight budget" } });
+      expect(result.code).toBe(0);
+      expect(result.stdout).toBe("tight budget");
+    } finally {
+      await session.close();
+    }
+    expect((await readdir(parent)).sort()).toEqual(before.sort());
+  }, 10_000);
+
   it.skipIf(process.env.VITEHUB_TEST_DELEGATED_MEMORY !== "1")("contains an OOM, keeps siblings alive, and reclaims groups", async () => {
     const member = (await readFile("/proc/self/cgroup", "utf8")).split("\n").find(line => line.startsWith("0::"))!.slice(3);
     const parent = dirname(join("/sys/fs/cgroup", member));
