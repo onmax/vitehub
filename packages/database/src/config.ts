@@ -291,7 +291,7 @@ function cloudflareOptions(
   options: DBModulePublicOptions | undefined,
   definitionConfigured: boolean,
 ): CloudflareD1BindingConfig | undefined {
-  if (definitionConfigured || options?.driver !== "d1") return
+  if (definitionConfigured || !options || options === false || options.driver !== "d1") return
   const value: CloudflareD1BindingConfig = {}
   if (options.binding !== undefined) value.binding = options.binding
   if (options.databaseId !== undefined) value.databaseId = options.databaseId
