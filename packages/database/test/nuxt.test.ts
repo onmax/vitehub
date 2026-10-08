@@ -890,12 +890,18 @@ describe("Database Nuxt integration", () => {
     }
   })
 
-  it("keeps Database generation rooted at Nuxt projectRoot when Vite uses another root", async () => {
+  it.each(["inherited", "configured"])("keeps Database generation rooted at Nuxt projectRoot for a %s resource when Vite uses another root", async (resource) => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-db-nuxt-project-root-"))
     const projectRoot = join(rootDir, "packages", "db")
     const definition = join(projectRoot, "server", "databases", "config.ts")
     await mkdir(dirname(definition), { recursive: true })
-    await writeFile(definition, "export default defineDatabase({ schema: {} })\n")
+    await writeFile(definition, `export default defineDatabase({ ${resource === "configured" ? "cloudflare: { databaseName: 'application-db' }," : ""} schema: {} })\n`)
+    if (resource === "configured") {
+      await mkdir(join(rootDir, "app", ".vitehub"), { recursive: true })
+      await writeFile(join(rootDir, "app", ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "application-id" } } }))
+      await mkdir(join(projectRoot, ".vitehub"))
+      await writeFile(join(projectRoot, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "unrelated-nested-id" } } }))
+    }
 
     try {
       const { hooks, nuxt } = createNuxt({
@@ -927,7 +933,17 @@ describe("Database Nuxt integration", () => {
         "#vitehub/database/definition-defaults": join(projectRoot, ".vitehub/database/definition-defaults.mjs"),
         "@vite-hub/database/drizzle": join(projectRoot, ".vitehub/database/cloudflare-runtime.mjs"),
       })
-      expect(nitroConfig.modules).toHaveLength(1)
+      expect(nitroConfig.modules).toHaveLength(resource === "inherited" ? 1 : 0)
+      if (resource === "inherited") return
+      const defaultsFile = join(projectRoot, ".vitehub/database/definition-defaults.mjs")
+      const { default: defaults } = await import(pathToFileURL(defaultsFile).href)
+      expect(defaults.cloudflareProjections.default).toEqual({ binding: "DB", provisionedId: "application-id", resource: "configured" })
+      expect(plugin.api.getConfig()?.databases.default?.cloudflare?.databaseId).toBe("application-id")
+
+      await rm(join(rootDir, "app", ".vitehub/provision.json"))
+      await callHook(hooks, "nitro:config", { alias: {}, modules: [], preset: "cloudflare_module" })
+      const { default: unprovisionedDefaults } = await import(`${pathToFileURL(defaultsFile).href}?unprovisioned`)
+      expect(unprovisionedDefaults.cloudflareProjections.default).toEqual({ resource: "configured" })
     }
     finally {
       await rm(rootDir, { force: true, recursive: true })

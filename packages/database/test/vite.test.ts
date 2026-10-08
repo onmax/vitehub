@@ -331,15 +331,34 @@ describe("hubDb", () => {
 
   it("reads provision state from the Vite root when projectRoot is nested", async () => {
     const rootDir = await createTempProject()
-    await writeDefinition(join(rootDir, "packages", "db"), "server/databases/config.ts", "notes", { cloudflare: "databaseName: 'database-name'," })
+    const databaseRoot = join(rootDir, "packages", "db")
+    await writeDefinition(databaseRoot, "server/databases/config.ts", "notes", { cloudflare: "databaseName: 'database-name'," })
     await mkdir(join(rootDir, ".vitehub"))
     await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "provisioned-database-id" } } }))
+    await mkdir(join(databaseRoot, ".vitehub"))
+    await writeFile(join(databaseRoot, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "unrelated-nested-id" } } }))
 
     const plugin = hubDb({ projectRoot: "packages/db" })
     const configResolved = resolveConfigResolved(plugin)
     await configResolved({ database: undefined, root: rootDir })
 
     expect(plugin.vitehub?.inspect?.()?.providerOutput?.map(output => output.description)).toEqual(["Generated Cloudflare Database worker"])
+    expect(plugin.api.getConfig()?.databases.default?.cloudflare?.databaseId).toBe("provisioned-database-id")
+    expect(plugin.api.getConfig()?.definitionDefaults.cloudflareProjections.default).toEqual({
+      binding: "DB",
+      provisionedId: "provisioned-database-id",
+      resource: "configured",
+    })
+
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "refreshed-database-id" } } }))
+    expect((await plugin.api.refresh())?.databases.default?.cloudflare?.databaseId).toBe("refreshed-database-id")
+
+    await rm(join(rootDir, ".vitehub/provision.json"))
+    const unprovisioned = await plugin.api.refresh()
+    expect(unprovisioned?.databases.default?.cloudflare?.databaseId).toBeUndefined()
+    expect(unprovisioned?.definitionDefaults.cloudflareProjections.default?.provisionedId).toBeUndefined()
+    expect(unprovisioned?.definitionDefaults.cloudflareProjections.default?.binding).toBeUndefined()
+    expect(plugin.vitehub?.inspect?.()?.providerOutput).toEqual([])
   })
 
   it("writes one Drizzle config per named database migrations directory", async () => {

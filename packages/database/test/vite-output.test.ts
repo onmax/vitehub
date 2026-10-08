@@ -439,11 +439,17 @@ describe("Vite db provider outputs", () => {
     await assertOutput(join(rootDir, ".vercel", "output", "functions", "__server.func", "index.mjs"), "vercel")
   })
 
-  it.each(["integration", "definition"])("uses a provisioned D1 ID fallback in direct Vite Vercel output from %s configuration", { timeout: 60_000 }, async (source) => {
+  it.each([
+    { source: "integration", projectRoot: "." },
+    { source: "definition", projectRoot: "." },
+    { source: "integration", projectRoot: "packages/db" },
+    { source: "definition", projectRoot: "packages/db" },
+  ])("uses a provisioned D1 ID fallback in direct Vite output from $source configuration at $projectRoot", { timeout: 60_000 }, async ({ source, projectRoot }) => {
     const rootDir = await createDbBuildProject("vitehub-db-vite-provisioned-http-")
+    const databaseRoot = join(rootDir, projectRoot)
     await rm(join(rootDir, "server/databases"), { recursive: true })
-    await mkdir(join(rootDir, "server/databases"), { recursive: true })
-    await writeFile(join(rootDir, "server/databases/config.ts"), [
+    await mkdir(join(databaseRoot, "server/databases"), { recursive: true })
+    await writeFile(join(databaseRoot, "server/databases/config.ts"), [
       "import { defineDatabase } from '@vite-hub/database'",
       "import { sqliteTable, integer, text } from 'drizzle-orm/sqlite-core'",
       "const notes = sqliteTable('notes', { id: integer('id'), title: text('title') })",
@@ -452,8 +458,12 @@ describe("Vite db provider outputs", () => {
     ].join("\n"))
     await mkdir(join(rootDir, ".vitehub"), { recursive: true })
     await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "provisioned-id" } } }))
+    if (projectRoot !== "." && source === "integration") {
+      await mkdir(join(databaseRoot, ".vitehub"))
+      await writeFile(join(databaseRoot, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "unrelated-nested-id" } } }))
+    }
     await writeFile(join(rootDir, "src/server.ts"), [
-      "import definition from '../server/databases/config.ts'",
+      `import definition from ${JSON.stringify(`../${projectRoot}/server/databases/config.ts`)}`,
       "import { useDatabase } from '@vite-hub/database/drizzle'",
       "export default { fetch: async () => Response.json({",
       "  definition: await definition.select().from(definition.schema.notes),",
@@ -468,11 +478,32 @@ describe("Vite db provider outputs", () => {
       "export default defineConfig({",
       "  appType: 'custom',",
       "  build: { outDir: 'dist/client', rolldownOptions: { input: resolve(import.meta.dirname, 'src/server.ts') }, ssr: true },",
-      `  plugins: [hubDb({ driver: 'd1', ${source === "integration" ? "cloudflare: { http: true }, databaseId: { kind: 'env-variable', source: { kind: 'env', name: 'VITEHUB_PROVISIONED_HTTP_ID' } }, databaseName: 'application-db'," : ""} })],`,
+      `  plugins: [hubDb({ driver: 'd1', projectRoot: ${JSON.stringify(projectRoot)}, ${source === "integration" ? "cloudflare: { http: true }, databaseId: { kind: 'env-variable', source: { kind: 'env', name: 'VITEHUB_PROVISIONED_HTTP_ID' } }, databaseName: 'application-db'," : ""} })],`,
       "})",
       "",
     ].join("\n"))
     await runDbBuild(rootDir)
+    const wrangler = await readCloudflareConfig(rootDir)
+    expect(wrangler.d1_databases).toMatchObject([{ binding: "DB", database_id: "provisioned-id", database_name: "application-db" }])
+    const outputDir = (await readdir(join(rootDir, "dist"))).find(entry => entry !== "client")!
+    const workerRunner = join(rootDir, "run-provisioned-cloudflare.mjs")
+    await writeFile(workerRunner, [
+      `import worker from ${JSON.stringify(pathToFileURL(join(rootDir, "dist", outputDir, "index.js")).href)}`,
+      "const queries = []",
+      "const binding = { prepare(query) { queries.push(query); return { bind: () => ({ raw: async () => [[1, 'application']] }) } } }",
+      "const response = await worker.fetch(new Request('https://example.com'), { DB: binding }, {})",
+      "console.log(JSON.stringify({ rows: await response.json(), queries }))",
+      "",
+    ].join("\n"))
+    const workerEnv = { ...process.env }
+    delete workerEnv.VITEHUB_PROVISIONED_HTTP_ID
+    delete workerEnv.CLOUDFLARE_ACCOUNT_ID
+    delete workerEnv.CLOUDFLARE_API_TOKEN
+    const { stdout: workerStdout } = await execFileAsync(process.execPath, [workerRunner], { cwd: rootDir, env: workerEnv })
+    expect(JSON.parse(workerStdout)).toEqual({
+      queries: Array(2).fill('select "id", "title" from "notes"'),
+      rows: { definition: [{ id: 1, title: "application" }], registry: [{ id: 1, title: "application" }] },
+    })
     const runner = join(rootDir, "run-provisioned-vercel.mjs")
     await writeFile(runner, [
       "import { createServer } from 'node:http'",

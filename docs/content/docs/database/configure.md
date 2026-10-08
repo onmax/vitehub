@@ -88,6 +88,6 @@ For native D1 provider output, use a Cloudflare block that ViteHub can read as a
 
 An opaque Definition that selects its own resource uses HTTP or libSQL access. Native bindings are not used, even when the Definition supplies the integration binding name.
 
-Direct Vite and Nuxt output retain provisioned IDs as fallbacks for unset runtime Env values. Runtime values take precedence. Opaque Definitions that select their own resource do not receive integration provision IDs.
+Direct Vite and Nuxt output retain provisioned IDs as fallbacks for unset runtime Env values. Runtime values take precedence. Opaque Definitions that select their own resource do not receive integration provision IDs. Provision state is read from the Vite root even when `projectRoot` sets another root for Definitions and generated files.
 
 ViteHub currently exposes `sqlite` as the only public `DatabaseDialect`.

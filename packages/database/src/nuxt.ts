@@ -60,7 +60,7 @@ type NuxtLike = {
     rootDir?: string
     serverDir?: string
     srcDir?: string
-    vite?: Record<string, unknown>
+    vite?: Record<string, unknown> & { root?: string }
   }
 }
 
@@ -86,6 +86,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
       projectRoot: resolvedOptions.projectRoot,
     })
     const viteConfig = ensureRecord(nuxtOptions, "vite")
+    const provisionRoot = resolve(nuxtOptions.rootDir || process.cwd(), nuxtOptions.vite?.root ?? ".")
     const generatedRoot = resolveViteHubGeneratedRoot({
       [VITEHUB_GENERATED_ROOT]: typeof viteConfig[VITEHUB_GENERATED_ROOT] === "string"
         ? viteConfig[VITEHUB_GENERATED_ROOT]
@@ -98,7 +99,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
       ? [resolve(root, "server")]
       : nuxtOptions.serverDir ? [nuxtOptions.serverDir] : undefined
     const databaseConfig = resolvedOptions.driver === "d1"
-      ? resolveDBViteConfig(resolvedOptions, root, { serverDirs })
+      ? resolveDBViteConfig(resolvedOptions, root, { provisionRoot, serverDirs })
       : undefined
     const sourceMigrationsDir = databaseConfig && databaseConfig.definitionDefaults.cloudflareProjections.default?.resource === "inherited"
       ? databaseConfig.databases.default?.migrationsDir
@@ -108,7 +109,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
       nuxtOptions,
       sourceMigrationsDir ? generatedNitroMigrationsDir : undefined,
       resolveDatabaseNuxtProvisionState(
-        readProvisionStateSync(resolve(nuxtOptions.rootDir || process.cwd(), typeof viteConfig.root === "string" ? viteConfig.root : ".")),
+        readProvisionStateSync(provisionRoot),
         resolvedOptions.databaseName,
       ),
     )
@@ -141,13 +142,14 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
           await installNitroLocalDatabaseRuntime(
             config,
             root,
+            provisionRoot,
             generatedRoot,
             runtimeOptions,
             serverDirs,
           )
         }
         if (!nuxtOptions.dev) {
-          const runtime = resolveDBViteConfig(runtimeOptions, root, { serverDirs })
+          const runtime = resolveDBViteConfig(runtimeOptions, root, { provisionRoot, serverDirs })
           const d1Only = runtime && usesD1HttpOnly(runtime)
           const runtimeProvider = provider === "vercel" ? "vercel" : provider === "cloudflare" || d1 || d1Only ? "cloudflare" : provider
           if (d1Only) {
@@ -203,6 +205,7 @@ export default nuxtModule
 async function installNitroLocalDatabaseRuntime(
   config: Record<string, unknown>,
   root: string,
+  provisionRoot: string,
   generatedRoot: string,
   options: ResolvedDatabaseNuxtIntegrationOptions,
   serverDirs?: string[],
@@ -215,7 +218,7 @@ async function installNitroLocalDatabaseRuntime(
     return
   }
 
-  const runtime = resolveDBViteConfig(options, root, { serverDirs })
+  const runtime = resolveDBViteConfig(options, root, { provisionRoot, serverDirs })
   if (!runtime?.definitions.length) {
     await rm(file, { force: true })
     if (alias && existingAlias === file) {

@@ -88,7 +88,7 @@ Native D1 output requires a Cloudflare block that ViteHub can read as a literal.
 
 An opaque Definition that selects its own resource uses remote HTTP or libSQL access. It does not use a native binding, including an explicit binding that matches the integration resource.
 
-Provisioned IDs remain fallbacks for runtime Env values in direct Vite and Nuxt output. A value supplied at runtime takes precedence. An opaque Definition that selects its own resource does not receive the integration resource's provisioned ID.
+Provisioned IDs remain fallbacks for runtime Env values in direct Vite and Nuxt output. A value supplied at runtime takes precedence. An opaque Definition that selects its own resource does not receive the integration resource's provisioned ID. Provision state is read from the Vite root even when `projectRoot` sets another root for Definitions and generated files.
 
 When a libSQL connection URL or auth token changes at runtime, the next database
 access creates a client with the new credentials and closes the previous client.

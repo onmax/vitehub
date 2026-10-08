@@ -365,18 +365,18 @@ function createGeneratedDrizzleConfigFile(rootDir: string, name: string) {
 export function resolveDBViteConfig(
   options?: DBModulePublicOptions,
   rootDir = process.cwd(),
-  discovery: { serverDirs?: string[] } = {},
+  context: { provisionRoot?: string, serverDirs?: string[] } = {},
 ): ResolvedDBViteConfig | undefined {
   if (options === false) return
 
-  const definitions = discoverDatabaseDefinitions(rootDir, discovery)
+  const definitions = discoverDatabaseDefinitions(rootDir, context)
   if (!definitions.length) return
 
   const databases: Record<string, ResolvedDrizzleDatabaseConfig> = {}
   const cloudflareProjections: Record<string, CloudflareD1Projection> = {}
   const generatedDrizzleConfigFilesByDatabase: Record<string, string> = {}
   const generatedSchemaFilesByDatabase: Record<string, string> = {}
-  const provisionState = readProvisionStateSync(rootDir)
+  const provisionState = readProvisionStateSync(context.provisionRoot ?? rootDir)
   for (const definition of definitions) {
     const migrationsDir = getDefaultMigrationsDir(rootDir, definition)
     const definitionCloudflare = readDefinitionCloudflareConfig(definition.handler)
