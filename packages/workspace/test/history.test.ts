@@ -217,6 +217,30 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { 
     expect((await blob.list())[1]?.blobs).toEqual([])
   })
 
+  it("rejects a staged write that resumes after another instance deletes the workspace", async () => {
+    const { store, blob, fresh } = await setup(driver)
+    await store.history.commit({ ifHead: null, files: rawFiles({ "a.txt": "base" }) })
+    const originalGet = blob.get.bind(blob)
+    let release!: () => void
+    let reached!: () => void
+    const paused = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { reached = resolve })
+    vi.spyOn(blob, "get").mockImplementationOnce(async (...args) => {
+      const result = await originalGet(...args)
+      reached()
+      await paused
+      return result
+    })
+    const candidate = fresh()
+    const write = candidate.writeFile("a.txt", { path: "a.txt", content: "late" })
+    const rejected = expect(write).rejects.toMatchObject({ code: "WORKSPACE_NOT_FOUND" })
+    await started
+    await store.delete()
+    release()
+    await rejected
+    await expect(candidate.history.head()).resolves.toBeNull()
+  })
+
   it("supports staged Workspace writes, checkpoint, Session commit, and metadata across Store instances", async () => {
     const { store, fresh, facade } = await setup(driver)
     const workspace = facade()

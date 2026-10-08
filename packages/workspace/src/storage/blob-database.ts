@@ -283,6 +283,10 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
   }
 
   async delete(): Promise<void> {
+    await this.#mutate(() => this.#delete())
+  }
+
+  async #delete(): Promise<void> {
     const workspace = await this.#key()
     await this.options.database.update(refs).set({ deleted: true, head: null }).where(eq(refs.workspace, workspace))
     // The tombstone fences publishers before cleanup. Keep it after cleanup so late writers cannot resurrect this namespace.
@@ -346,6 +350,7 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
       this.#dirty = true
       try {
         await operation(draft.store)
+        await this.#assertActive()
       }
       catch (error) {
         this.#dirty = dirty
