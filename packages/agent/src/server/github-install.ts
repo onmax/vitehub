@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validateGitHubInstallInputs } from "./github-install-inputs.ts";
+import { createGitHubInstallSnapshot, publishGitHubInstallSnapshot } from "./github-install-snapshot.ts";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import * as v from "valibot";
@@ -25,9 +26,12 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
   let command: string | undefined;
   let args: string[] = [];
   let yarnConfig: string | undefined;
+  let snapshot: Awaited<ReturnType<typeof createGitHubInstallSnapshot>> | undefined;
   try {
-    const fingerprint = await validateGitHubInstallInputs(target);
-    const { packageManager } = v.parse(manifest, await exists(join(target, "package.json")) ? JSON.parse(await readFile(join(target, "package.json"), "utf8")) : {});
+    snapshot = await createGitHubInstallSnapshot(target);
+    const source = snapshot.directory;
+    const fingerprint = await validateGitHubInstallInputs(source);
+    const { packageManager } = v.parse(manifest, await exists(join(source, "package.json")) ? JSON.parse(await readFile(join(source, "package.json"), "utf8")) : {});
     // Corepack must not execute a PR-supplied URL, devEngines override or yarnPath.
     // Select an official package-manager version and disable repository extensions.
     const version = (name: string, fallback: string) => {
@@ -36,17 +40,17 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
       if (!match || match[1] !== name) throw new Error("packageManager must select an official matching package-manager version.");
       return match[2]!;
     };
-    if (await exists(join(target, "pnpm-lock.yaml"))) {
+    if (await exists(join(source, "pnpm-lock.yaml"))) {
       command = "corepack";
       args = [`pnpm@${version("pnpm", "10.34.6")}`, "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--config.manage-package-manager-versions=false"];
     }
-    else if (await exists(join(target, "package-lock.json")) || await exists(join(target, "npm-shrinkwrap.json"))) {
+    else if (await exists(join(source, "package-lock.json")) || await exists(join(source, "npm-shrinkwrap.json"))) {
       const npmVersion = version("npm", "11.6.3");
       if (Number(npmVersion.split(".")[0]) < 7) throw new Error("Host installation requires npm 7 or newer; older npm can execute repository onload scripts.");
       command = "corepack";
       args = [`npm@${npmVersion}`, "ci", "--ignore-scripts", "--no-audit", "--no-fund"];
     }
-    else if (await exists(join(target, "yarn.lock"))) {
+    else if (await exists(join(source, "yarn.lock"))) {
       command = "corepack";
       const yarnVersion = version("yarn", "1.22.22");
       args = [`yarn@${yarnVersion}`, "install"];
@@ -55,13 +59,16 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
         // A fresh rc filename ignores every checkout/ancestor plugin and yarnPath.
         // skip-build also suppresses workspace scripts, unlike enableScripts alone.
         env.YARN_RC_FILENAME = `.vitehub-install-${randomUUID()}.yml`;
-        yarnConfig = join(target, env.YARN_RC_FILENAME);
+        yarnConfig = join(source, env.YARN_RC_FILENAME);
         await writeFile(yarnConfig, "enableScripts: false\nignorePath: true\n", { flag: "wx" });
         args.push("--immutable", "--mode=skip-build");
       }
     }
     else throw new Error("Frozen dependency installation requires a supported lockfile.");
-    await exec(command, args, { cwd: target, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
+    await exec(command, args, { cwd: source, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
+    const current = await validateGitHubInstallInputs(target).catch(() => undefined);
+    if (current !== fingerprint) throw new Error("Dependency inputs changed during installation. Call refreshDependencies again before validation.");
+    await publishGitHubInstallSnapshot(snapshot, signal);
     await writeFile(record, JSON.stringify({ status: "installed", fingerprint, command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: false }));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -70,6 +77,7 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
     throw new GitHubWorkspaceInstallError(error);
   } finally {
     if (yarnConfig) await rm(yarnConfig, { force: true });
+    await snapshot?.close();
   }
 }
 

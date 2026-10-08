@@ -11,7 +11,7 @@ async function fixture() {
   await mkdir(join(root, ".git")); await mkdir(join(root, "bin"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6" }));
   await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
-  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > args.txt\nif [ -n "$GITHUB_APP_PRIVATE_KEY" ]; then exit 99; fi\nif [ "$COREPACK_ENV_FILE" != 0 ] || [ "$COREPACK_NPM_REGISTRY" != https://registry.npmjs.org ]; then exit 98; fi\nmkdir -p node_modules\n', { mode: 0o755 });
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/../args.txt"\nif [ -n "$GITHUB_APP_PRIVATE_KEY" ]; then exit 99; fi\nif [ "$COREPACK_ENV_FILE" != 0 ] || [ "$COREPACK_NPM_REGISTRY" != https://registry.npmjs.org ]; then exit 98; fi\nmkdir -p node_modules\n', { mode: 0o755 });
   vi.stubEnv("PATH", `${join(root, "bin")}:${process.env.PATH}`);
   vi.stubEnv("GITHUB_APP_PRIVATE_KEY", "host-secret");
   return root;
@@ -19,7 +19,7 @@ async function fixture() {
 it("installs on the host with a frozen lockfile and no host secrets or lifecycle scripts", async () => {
   const root = await fixture();
   await installGitHubPullRequestWorkspace(root);
-  expect(await readFile(join(root, "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
+  expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false });
 });
 it("records a reproduced installation failure for durable retry", async () => {
@@ -33,20 +33,20 @@ it("rejects checkout-selected package-manager executables before running Corepac
   const root = await fixture();
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@https://example.com/untrusted.tgz" }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/official matching/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 it.each(["1.22.22", "4.9.2"])("suppresses Yarn %s delegation, plugins and workspace scripts", async version => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: `yarn@${version}` }));
   await writeFile(join(root, "yarn.lock"), "");
-  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > args.txt\nprintf "%s\\n" "$YARN_RC_FILENAME" "$COREPACK_ENABLE_PROJECT_SPEC" "$YARN_IGNORE_PATH" > env.txt\n', { mode: 0o755 });
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/../args.txt"\nprintf "%s\\n" "$YARN_RC_FILENAME" "$COREPACK_ENABLE_PROJECT_SPEC" "$YARN_IGNORE_PATH" > "$HOME/../env.txt"\n', { mode: 0o755 });
   await installGitHubPullRequestWorkspace(root);
-  const args = await readFile(join(root, "args.txt"), "utf8");
+  const args = await readFile(join(root, ".git", "args.txt"), "utf8");
   if (version.startsWith("1.")) expect(args).toContain("--ignore-scripts\n--ignore-path\n--no-default-rc");
   else {
     expect(args).toContain("--immutable\n--mode=skip-build");
-    const [config] = (await readFile(join(root, "env.txt"), "utf8")).split("\n");
+    const [config] = (await readFile(join(root, ".git", "env.txt"), "utf8")).split("\n");
     expect(config).toMatch(/^\.vitehub-install-[a-f\d-]+\.yml$/);
     await expect(readFile(join(root, config!))).rejects.toThrow();
   }
@@ -62,7 +62,7 @@ it.each([
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@1.22.22" }));
   await writeFile(join(root, "yarn.lock"), `${header}\n"unsafe@1.0.0":\n  version "1.0.0"\n  resolved ${JSON.stringify(source)}\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it.each(["classic", "modern"])("accepts safe %s Yarn lockfile sources", async format => {
@@ -85,13 +85,14 @@ it.each([
   "http://127.0.0.1/private.tgz", "https://10.0.0.1/private.tgz", "https://[::1]/private.tgz",
   "https://registry.npmjs.org.attacker.example/package.tgz", "https://registry.npmjs.org@127.0.0.1/package.tgz",
   "https://registry.npmjs.org:4443/package.tgz", "git+ssh://git@127.0.0.1/private.git",
+  "https:\\127.0.0.1\\private.tgz", "https:/127.0.0.1/private.tgz", "https:%5c%5c127.0.0.1%5cprivate.tgz",
 ])("rejects untrusted dependency URL %s in manifests and lockfiles before execution", async source => {
   for (const input of ["manifest", "lockfile"]) {
     const root = await fixture();
     if (input === "manifest") await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { unsafe: source } }));
     else await writeFile(join(root, "pnpm-lock.yaml"), `packages:\n  unsafe:\n    resolution:\n      tarball: ${JSON.stringify(source)}\n`);
     await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/trusted HTTPS/);
-    await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+    await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
   }
 });
 
@@ -107,7 +108,7 @@ it.each(["packages/*", "packages/*/*"])("rejects an external symlink matched by 
   await symlink(tmpdir(), join(root, "packages", "outside"));
   await writeFile(join(root, "pnpm-workspace.yaml"), `packages:\n  - '${pattern}'\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it.each(["pnpm", "manifest"])("rejects escaped negated %s workspace globs before execution", async manager => {
@@ -116,7 +117,7 @@ it.each(["pnpm", "manifest"])("rejects escaped negated %s workspace globs before
   if (manager === "pnpm") await writeFile(join(root, "pnpm-workspace.yaml"), `packages: ${JSON.stringify(packages)}\n`);
   else await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: packages }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it("preserves literal exclamation marks in file dependencies and safe workspace exclusions", async () => {
@@ -133,7 +134,7 @@ it("uses the declared npm version rather than the host npm binary", async () => 
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.1.0" }));
   await writeFile(join(root, "package-lock.json"), "{}");
   await installGitHubPullRequestWorkspace(root);
-  expect(await readFile(join(root, "args.txt"), "utf8")).toBe("npm@11.1.0\nci\n--ignore-scripts\n--no-audit\n--no-fund\n");
+  expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toBe("npm@11.1.0\nci\n--ignore-scripts\n--no-audit\n--no-fund\n");
 });
 
 it("rejects legacy npm versions with repository onload scripts before execution", async () => {
@@ -142,21 +143,21 @@ it("rejects legacy npm versions with repository onload scripts before execution"
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@6.14.18" }));
   await writeFile(join(root, "package-lock.json"), "{}");
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/npm 7 or newer/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it.each(["cache", "cafile"])("rejects project npm %s paths before execution", async setting => {
   const root = await fixture();
   await writeFile(join(root, ".npmrc"), `${setting}=/srv/outside\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local|Unsupported project/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it.each(["modulesDir", "storeDir", "cacheDir"])("rejects project pnpm %s paths before execution", async setting => {
   const root = await fixture();
   await writeFile(join(root, "pnpm-workspace.yaml"), `${setting}: /srv/outside\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local|Unsupported project/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it("fingerprints supported project npm settings for dependency refresh", async () => {
@@ -173,20 +174,20 @@ it("installs npm shrinkwrap-only projects", async () => {
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.1.0" }));
   await writeFile(join(root, "npm-shrinkwrap.json"), "{}");
   await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
-  expect(await readFile(join(root, "args.txt"), "utf8")).toContain("npm@11.1.0\nci\n");
+  expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toContain("npm@11.1.0\nci\n");
 });
 
 it.each(["file:/srv/app", "file:../../outside.tgz", "/srv/app", "file:%2fetc"])("rejects host dependency %s before execution", async source => {
   const root = await fixture();
   await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { unsafe: source } }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 it("validates decoded lockfile-only sources and workspace manifests", async () => {
   const root = await fixture();
   await writeFile(join(root, "pnpm-lock.yaml"), 'packages:\n  unsafe:\n    resolution:\n      tarball: "file:\\u002fsrv/app.tgz"\n');
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 it("allows internal workspace links but rejects links through an external symlink", async () => {
   const root = await fixture();
@@ -213,13 +214,13 @@ it("rejects local sources in nested workspace manifests", async () => {
   await mkdir(join(root, "packages", "local"), { recursive: true });
   await writeFile(join(root, "packages", "local", "package.json"), JSON.stringify({ dependencies: { unsafe: "file:../../../outside" } }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 it("requires dependency conflicts to be resolved before refreshing the merged graph", async () => {
   const root = await fixture();
   await writeFile(join(root, "pnpm-lock.yaml"), "<<<<<<< HEAD\nlockfileVersion: '9.0'\n=======\nlockfileVersion: '9.0'\n>>>>>>> main\n");
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Resolve dependency conflicts/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
   await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   await installGitHubPullRequestWorkspace(root);
   await assertGitHubDependenciesCurrent(root);
@@ -231,7 +232,7 @@ it.each(["manifest", "lockfile"])("rejects Yarn executable fetch protocols in th
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", dependencies: { unsafe: location === "manifest" ? "exec:./script.js" : "1.0.0" } }));
   await writeFile(join(root, "yarn.lock"), '__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: "unsafe@exec:./script.js"\n');
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 it.each([
   "git+https://github.com/acme/unsafe.git",
@@ -247,7 +248,7 @@ it.each([
     await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", ...(location === "manifest" ? { dependencies: { unsafe: source } } : {}) }));
     await writeFile(join(root, "yarn.lock"), location === "manifest" ? "" : `__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: ${JSON.stringify(`unsafe@${source}`)}\n`);
     await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol|Git dependencies/);
-    await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+    await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
   }
 });
 it("installs and fingerprints pnpm workspaces without a root manifest", async () => {
@@ -257,7 +258,7 @@ it("installs and fingerprints pnpm workspaces without a root manifest", async ()
   await mkdir(join(root, "packages/member"), { recursive: true });
   await writeFile(join(root, "packages/member/package.json"), '{}');
   await installGitHubPullRequestWorkspace(root);
-  expect(await readFile(join(root, "args.txt"), "utf8")).toContain("pnpm@10.34.6");
+  expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toContain("pnpm@10.34.6");
   await assertGitHubDependenciesCurrent(root);
   await writeFile(join(root, "packages/member/package.json"), '{"dependencies":{"example":"1.0.0"}}');
   await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
@@ -286,7 +287,7 @@ it.each(["file:./local", "./local"])("validates referenced local packages from %
   await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: source } }));
   await writeFile(join(root, "local/package.json"), '{"dependencies":{"unsafe":"exec:./script.js"}}');
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 
@@ -308,7 +309,7 @@ it.each(["/srv/unsafe.patch", "../../unsafe.patch", "patches/external/unsafe.pat
   await symlink(tmpdir(), join(root, "patches", "external"));
   await writeFile(join(root, "pnpm-workspace.yaml"), `patchedDependencies:\n  safe@1.0.0: ${path}\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it.each(["optional!builtin<compat/typescript>", "~/patches/safe.patch", "%7E%2Fpatches%2Fsafe.patch"])("accepts safe Yarn patch locator %s", async patchPath => {
@@ -346,7 +347,7 @@ it("rejects workspace extglobs that select an external symlink", async () => {
   await symlink(outside, join(root, "packages", "external"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: ["packages/@(local|external)"] }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it("accepts a trusted GitHub release archive instead of preparing a Git repository", async () => {
@@ -377,7 +378,7 @@ it.each([
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", dependencies: { safe: locator } }));
   await writeFile(join(root, "yarn.lock"), "__metadata:\n  version: 8\n");
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Unsupported|Host-local/);
-  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it("fingerprints executable mode changes in local file directory dependencies", async () => {
@@ -432,4 +433,36 @@ it("rejects symlinks inside copied local dependency contents", async () => {
   await symlink(tmpdir(), join(root, "vendor", "pkg", "external"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:./vendor/pkg" } }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/regular files and directories/);
+});
+
+it("installs a private validated snapshot while the provider changes its checkout", async () => {
+  const root = await fixture();
+  await writeFile(join(root, ".npmrc"), "hoist=false\n");
+  await writeFile(join(root, "bin", "corepack"), `#!/usr/bin/env node
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const checkout = ${JSON.stringify(root)};
+writeFileSync(join(checkout, ".npmrc"), "cache=/srv/target\\n");
+writeFileSync(join(checkout, "observed-config.txt"), readFileSync(".npmrc", "utf8"));
+mkdirSync("node_modules", { recursive: true });
+writeFileSync("node_modules/installed.txt", "snapshot dependencies");
+`, { mode: 0o755 });
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Dependency inputs changed/);
+  expect(await readFile(join(root, "observed-config.txt"), "utf8")).toBe("hoist=false\n");
+  await expect(readFile(join(root, "node_modules", "installed.txt"))).rejects.toThrow();
+  expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "failed" });
+});
+
+it("publishes refreshed dependencies and keeps workspace source links live", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "packages", "local"), { recursive: true });
+  await writeFile(join(root, "packages", "local", "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
+  await writeFile(join(root, "packages", "local", "index.js"), "export const value = 1;");
+  await writeFile(join(root, "pnpm-workspace.yaml"), "packages: [packages/*]\n");
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nmkdir -p node_modules packages/local/node_modules\nprintf installed > packages/local/node_modules/installed.txt\nln -s ../packages/local node_modules/local\n');
+  await installGitHubPullRequestWorkspace(root);
+  expect(await readFile(join(root, "packages", "local", "node_modules", "installed.txt"), "utf8")).toBe("installed");
+  await writeFile(join(root, "packages", "local", "index.js"), "export const value = 2;");
+  expect(await readFile(join(root, "node_modules", "local", "index.js"), "utf8")).toBe("export const value = 2;");
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
 });
