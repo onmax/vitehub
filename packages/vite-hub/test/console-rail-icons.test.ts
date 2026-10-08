@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 // @vitest-environment happy-dom
 import { createApp, defineComponent, h, nextTick } from "vue"
 import { describe, expect, it, vi } from "vitest"
