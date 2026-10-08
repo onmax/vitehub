@@ -44,6 +44,19 @@ describe("Chat SDK citation delivery", () => {
     );
   });
 
+  it("does not leak a native marker prefix when generation ends halfway through it", async () => {
+    const marker = "citeturn0view0";
+    for (let end = 1; end < marker.length; end++) {
+      const truncated = `Answer. ${marker.slice(0, end)}`;
+      const expected = "Answer. [source link unavailable]";
+      expect(formatChannelCitationText(truncated)).toBe(expected);
+      const chunks = (async function* () {
+        for (const character of truncated) yield character;
+      })();
+      expect(await collect(formatChannelCitationStream(chunks))).toBe(expected);
+    }
+  });
+
   it("preserves ordinary Markdown, code, Unicode, and message attachments", () => {
     const markdown =
       "**Résumé**\n\n```css\n.rgh-filter { display: none; }\n```\n\n[Source](https://example.com)";

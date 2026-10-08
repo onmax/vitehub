@@ -1,4 +1,5 @@
 import { isAsyncIterable } from "./stream-result.ts";
+import { isRuntimeString } from "./runtime-value.ts";
 import type { AgentChatMessage } from "../types.ts";
 
 const citationStart = "\uE200cite\uE202";
@@ -33,13 +34,14 @@ function createCitationFormatter() {
         continue;
       }
       let held = 0;
-      if (!final) {
-        for (let length = 1; length < citationStart.length; length++) {
-          if (pending.endsWith(citationStart.slice(0, length))) held = length;
-        }
+      for (let length = 1; length < citationStart.length; length++) {
+        if (pending.endsWith(citationStart.slice(0, length))) held = length;
       }
       output += pending.slice(0, pending.length - held);
-      pending = pending.slice(pending.length - held);
+      if (final) {
+        if (held) output += unavailableCitation;
+        pending = "";
+      } else pending = pending.slice(pending.length - held);
       break;
     }
     if (final && insideCitation) {
@@ -67,7 +69,7 @@ export async function* formatChannelCitationStream(
 }
 
 export function formatChannelCitationMessage(message: AgentChatMessage): AgentChatMessage {
-  if (typeof message === "string") return formatChannelCitationText(message);
+  if (isRuntimeString(message)) return formatChannelCitationText(message);
   if (isAsyncIterable(message)) {
     // SAFETY: AgentChatMessage streams yield string chunks at this delivery boundary.
     return formatChannelCitationStream(message as AsyncIterable<string>);
