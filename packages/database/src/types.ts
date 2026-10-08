@@ -16,8 +16,8 @@ export interface RuntimeEnvDeclarationLike {
 export type DatabaseConfigValue = string | RuntimeEnvDeclarationLike
 
 export interface CloudflareD1HttpConfig {
-  authToken: DatabaseConfigValue
-  url: DatabaseConfigValue
+  authToken?: DatabaseConfigValue
+  url?: DatabaseConfigValue
 }
 
 export interface CloudflareD1BindingConfig {

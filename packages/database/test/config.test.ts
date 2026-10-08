@@ -5,6 +5,9 @@ import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { discoverDatabaseDefinitions, resolveDBViteConfig } from "../src/config.ts"
+import { resolveCloudflareD1Bindings, resolveRuntimeCloudflareConfig } from "../src/internal/cloudflare.ts"
+import { renderDatabaseConfigExpression } from "../src/internal/runtime-config-expression.ts"
+import { runtimeConfig } from "../src/runtime/definition-config.ts"
 
 const tempDirs: string[] = []
 
@@ -431,6 +434,72 @@ describe("resolveDBViteConfig", () => {
       migrationsTable: "__nuxt_migrations",
       previewDatabaseId: "preview-id",
     })
+  })
+
+  it.each([
+    { access: "build", field: "databaseId" },
+    { access: "build", field: "databaseName" },
+    { access: "definition", field: "databaseId" },
+    { access: "definition", field: "databaseName" },
+    { access: "registry", field: "databaseId" },
+    { access: "registry", field: "databaseName" },
+  ] as const)("keeps a one-field $field resource separate from host identifiers in $access configuration", async ({ access, field }) => {
+    const rootDir = await createTempProject()
+    const resource = field === "databaseId" ? { databaseId: "application-id" } : { databaseName: "application-name" }
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: `${field}: ${JSON.stringify(resource[field])},` })
+    const resolved = resolveDBViteConfig({
+      binding: "HOST_DB",
+      cloudflare: { http: true },
+      databaseId: "host-id",
+      databaseName: "host-name",
+      driver: "d1",
+      previewDatabaseId: "host-preview-id",
+    }, rootDir)!
+    const definition = { cloudflare: resource, drizzle: {}, name: "default", schema: {} }
+    const config = access === "build" ? resolved.databases.default
+      : access === "definition" ? runtimeConfig(definition, resolved.definitionDefaults)
+        : Function("definition", "resolveRuntimeCloudflareConfig", `return (${renderDatabaseConfigExpression("default", resolved, "definition")})`)(definition, resolveRuntimeCloudflareConfig)
+
+    expect(config.cloudflare?.databaseId).toBe(resource.databaseId)
+    expect(config.cloudflare?.databaseName).toBe(resource.databaseName)
+    expect(config.cloudflare?.previewDatabaseId).toBeUndefined()
+    if (access !== "build") expect(config.cloudflare?.binding).toBeUndefined()
+  })
+
+  it("preserves D1 HTTP credentials for a one-field URL override", async () => {
+    const rootDir = await createTempProject()
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: "http: { url: 'https://application-proxy.example/raw' }," })
+    const resolved = resolveDBViteConfig({
+      cloudflare: { http: { authToken: "host-token", url: "https://host-proxy.example/raw" } },
+      databaseId: "host-id",
+      databaseName: "host-name",
+      driver: "d1",
+    }, rootDir)!
+    const definition = { cloudflare: { http: { url: "https://application-proxy.example/raw" } }, drizzle: {}, name: "default", schema: {} }
+    const expression = renderDatabaseConfigExpression("default", resolved, "definition")
+    const registry = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)(definition, resolveRuntimeCloudflareConfig)
+    for (const config of [resolved.databases.default, runtimeConfig(definition, resolved.definitionDefaults), registry]) {
+      expect(config.cloudflare?.http).toEqual({ authToken: "host-token", url: "https://application-proxy.example/raw" })
+    }
+  })
+
+  it("uses the binding for a name-only Definition after its own resource is provisioned", async () => {
+    const rootDir = await createTempProject()
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: "databaseName: 'application-name'," })
+    const provisionState = { cloudflare: { d1: { default: "application-id" } } }
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify(provisionState))
+    const resolved = resolveDBViteConfig({ binding: "HOST_DB", databaseId: "host-id", databaseName: "host-name", driver: "d1" }, rootDir)!
+    const definition = { cloudflare: { databaseName: "application-name" }, drizzle: {}, name: "default", schema: {} }
+    const expression = renderDatabaseConfigExpression("default", resolved, "definition")
+    const registry = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)(definition, resolveRuntimeCloudflareConfig)
+
+    expect(resolved.databases.default?.cloudflare?.databaseId).toBeUndefined()
+    expect(resolveCloudflareD1Bindings(resolved, { provisionState }).d1Databases).toMatchObject([{
+      binding: "HOST_DB", database_id: "application-id", database_name: "application-name",
+    }])
+    expect(runtimeConfig(definition, resolved.definitionDefaults).cloudflare?.binding).toBe("HOST_DB")
+    expect(registry.cloudflare?.binding).toBe("HOST_DB")
   })
 
   it("preserves explicit D1 HTTP proxy declarations without resolving their secrets", async () => {

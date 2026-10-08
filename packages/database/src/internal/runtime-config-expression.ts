@@ -11,7 +11,7 @@ function serializeDatabaseConfig({ cloudflare: _cloudflare, connection: _connect
 export function renderDatabaseConfigExpression(name: string, config: ResolvedDBViteConfig, definitionVariable: string) {
   const base = config.databases[name]!
   const cloudflare = base.cloudflare ?? config.definitionDefaults.cloudflare
-  const cloudflareOptions = { binding: base.cloudflare?.binding, migrationsDir: base.migrationsDir, name }
+  const cloudflareOptions = { binding: config.definitionDefaults.cloudflareBindings?.[name], migrationsDir: base.migrationsDir, name }
   return [
     "{",
     `      ...${serializeDatabaseConfig(base)},`,

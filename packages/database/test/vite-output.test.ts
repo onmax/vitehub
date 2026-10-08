@@ -304,7 +304,7 @@ describe("Vite db provider outputs", () => {
     { form: "spread", resource: "application" },
     { form: "identifier", resource: "inherited" },
     { form: "spread", resource: "inherited" },
-  ])("uses the evaluated $resource resource for an opaque $form D1 configuration", { timeout: 60_000 }, async ({ form, resource }) => {
+  ])("uses the evaluated $resource resource for an opaque $form D1 configuration in prepared and Vite outputs", { timeout: 60_000 }, async ({ form, resource }) => {
     const rootDir = await createDbBuildProject("vitehub-db-vite-opaque-resource-")
     await rm(join(rootDir, "server/databases"), { recursive: true })
     await mkdir(join(rootDir, "server/databases"), { recursive: true })
@@ -319,6 +319,7 @@ describe("Vite db provider outputs", () => {
     ].join("\n"))
     const runtimeConfig = resolveDBViteConfig({
       binding: "HOST_DB",
+      cloudflare: { http: true },
       databaseId: "host-id",
       databaseName: "host-db",
       driver: "d1",
@@ -330,7 +331,7 @@ describe("Vite db provider outputs", () => {
       rootDir,
       runtimeConfig,
     }, async (output) => { projectedCloudflare = Boolean(output.cloudflare) })
-    expect(projectedCloudflare).toBe(false)
+    expect(projectedCloudflare).toBe(true)
 
     await writeFile(join(rootDir, "src/server.ts"), [
       "import definition from '../server/databases/config.ts'",
@@ -355,33 +356,66 @@ describe("Vite db provider outputs", () => {
       outfile: workerFile,
       platform: "neutral",
     })
-    const workerRunner = join(rootDir, "run-opaque-worker.mjs")
-    await writeFile(workerRunner, [
-      `import worker from ${JSON.stringify(pathToFileURL(workerFile).href)}`,
-      "const requests = [], nativeQueries = []",
-      "const binding = { prepare(query) {",
-      "  nativeQueries.push(query)",
-      "  return { bind: () => ({ raw: async () => [[0, 'host']] }) }",
-      "} }",
-      "process.env.CLOUDFLARE_ACCOUNT_ID = 'test-account'",
-      "process.env.CLOUDFLARE_API_TOKEN = 'test-token'",
-      "globalThis.fetch = async (url) => {",
-      "  requests.push(String(url))",
-      "  return Response.json({ success: true, result: [{ success: true, results: { rows: [[1, 'application']] } }] })",
-      "}",
-      "const response = await worker.fetch(new Request('https://example.com'), { HOST_DB: binding }, {})",
-      "console.log(JSON.stringify({ rows: await response.json(), requests, nativeQueries }))",
+    async function assertOutput(file: string, provider: "cloudflare" | "vercel") {
+      const runner = join(rootDir, "run-opaque-output.mjs")
+      await writeFile(runner, [
+        "import { createServer } from 'node:http'",
+        `import worker from ${JSON.stringify(pathToFileURL(file).href)}`,
+        "const requests = [], nativeQueries = []",
+        "const binding = { prepare(query) {",
+        "  nativeQueries.push(query)",
+        "  return { bind: () => ({ raw: async () => [[0, 'host']] }) }",
+        "} }",
+        "process.env.CLOUDFLARE_ACCOUNT_ID = 'test-account'",
+        "process.env.CLOUDFLARE_API_TOKEN = 'test-token'",
+        "const requestApp = globalThis.fetch",
+        "globalThis.fetch = async (url) => {",
+        "  requests.push(String(url))",
+        "  const rows = String(url).includes('/application-id/') ? [[1, 'application']] : [[0, 'host']]",
+        "  return Response.json({ success: true, result: [{ success: true, results: { rows } }] })",
+        "}",
+        ...(provider === "cloudflare" ? [
+          "const response = await worker.fetch(new Request('https://example.com'), { HOST_DB: binding }, {})",
+          "console.log(JSON.stringify({ rows: await response.json(), requests, nativeQueries }))",
+        ] : [
+          "const app = createServer((request, response) => void Promise.resolve(worker(request, response)).catch(error => { response.statusCode = 500; response.end(String(error)) }))",
+          "await new Promise(resolve => app.listen(0, '127.0.0.1', resolve))",
+          "try {",
+          "  const response = await requestApp('http://127.0.0.1:' + app.address().port)",
+          "  if (!response.ok) throw new Error(await response.text())",
+          "  console.log(JSON.stringify({ rows: await response.json(), requests, nativeQueries }))",
+          "} finally { await new Promise(resolve => app.close(resolve)) }",
+        ]),
+        "",
+      ].join("\n"))
+      const { stdout } = await execFileAsync(process.execPath, [runner], { cwd: rootDir })
+      const result = JSON.parse(stdout)
+      const expectedRows = resource === "application" ? [{ id: 1, title: "application" }] : [{ id: 0, title: "host" }]
+      expect(result.rows).toEqual({ definition: expectedRows, registry: expectedRows })
+      const usesHttp = resource === "application" || provider === "vercel"
+      const databaseId = resource === "application" ? "application-id" : "host-id"
+      expect(result.requests).toEqual(usesHttp ? Array(2).fill(`https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/${databaseId}/raw`) : [])
+      expect(result.nativeQueries).toHaveLength(usesHttp ? 0 : 2)
+    }
+    await assertOutput(workerFile, "cloudflare")
+
+    await writeFile(join(rootDir, "vite.config.ts"), [
+      "import { resolve } from 'node:path'",
+      "import { defineConfig } from 'vite'",
+      "import { hubDb } from '@vite-hub/database/vite'",
+      "export default defineConfig({",
+      "  appType: 'custom',",
+      "  build: { outDir: 'dist/client', rolldownOptions: { input: resolve(import.meta.dirname, 'src/server.ts') }, ssr: true },",
+      "  plugins: [hubDb({ binding: 'HOST_DB', cloudflare: { http: true }, databaseId: 'host-id', databaseName: 'host-db', driver: 'd1' })],",
+      "})",
       "",
     ].join("\n"))
-    const { stdout: workerStdout } = await execFileAsync(process.execPath, [workerRunner], { cwd: rootDir })
-    const workerResult = JSON.parse(workerStdout)
-    const expectedRows = resource === "application" ? [{ id: 1, title: "application" }] : [{ id: 0, title: "host" }]
-    expect(workerResult.rows).toEqual({ definition: expectedRows, registry: expectedRows })
-    expect(workerResult.requests).toEqual(resource === "application" ? [
-      "https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/application-id/raw",
-      "https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/application-id/raw",
-    ] : [])
-    expect(workerResult.nativeQueries).toHaveLength(resource === "application" ? 0 : 2)
+    await runDbBuild(rootDir)
+    const wrangler = await readCloudflareConfig(rootDir)
+    expect(wrangler.d1_databases).toMatchObject([{ binding: "HOST_DB", database_id: "host-id", database_name: "host-db" }])
+    const outputDir = (await readdir(join(rootDir, "dist"))).find(entry => entry !== "client")!
+    await assertOutput(join(rootDir, "dist", outputDir, "index.js"), "cloudflare")
+    await assertOutput(join(rootDir, ".vercel", "output", "functions", "__server.func", "index.mjs"), "vercel")
   })
 
   it.each(["registry", "definition"])("queries a named D1 database through the binding emitted by Vite for %s access", { timeout: 60_000 }, async (access) => {

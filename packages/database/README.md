@@ -78,7 +78,9 @@ export default defineDatabase({
 })
 ```
 
-Remote access is explicit. Omitting `cloudflare.http` keeps the local SQLite default, and a Cloudflare deployment still prefers its D1 binding.
+Remote access is explicit. Local development uses SQLite when neither the Definition nor its integration configures `cloudflare.http`. Cloudflare output prefers a matching D1 binding.
+
+A Definition inherits the integration resource when it omits both `databaseId` and `databaseName`. Setting either selects its own resource, so it inherits no integration database ID, name, or preview ID. Other D1 settings still inherit their defaults. HTTP proxy URLs and tokens inherit by field. Both must be available after inheritance for HTTP access to work.
 
 When a libSQL connection URL or auth token changes at runtime, the next database
 access creates a client with the new credentials and closes the previous client.

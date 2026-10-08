@@ -23,12 +23,24 @@ export function mergeCloudflareConfig(
   if (!defaults) return definition
   if (!definition) return defaults
   const value: CloudflareD1BindingConfig = { ...defaults }
+  const ownsResource = definition.databaseId !== undefined || definition.databaseName !== undefined
   if (definition.binding !== undefined) value.binding = definition.binding
-  if (definition.databaseId !== undefined) value.databaseId = definition.databaseId
-  if (definition.databaseName !== undefined) value.databaseName = definition.databaseName
-  if (definition.http !== undefined) value.http = definition.http
+  if (ownsResource) {
+    value.databaseId = definition.databaseId
+    value.databaseName = definition.databaseName
+  }
+  const defaultHttp = defaults.http
+  const definitionHttp = definition.http
+  if (definitionHttp !== undefined) {
+    value.http = definitionHttp !== true && defaultHttp && defaultHttp !== true
+      ? {
+          authToken: definitionHttp.authToken ?? defaultHttp.authToken,
+          url: definitionHttp.url ?? defaultHttp.url,
+        }
+      : definitionHttp
+  }
   if (definition.migrationsTable !== undefined) value.migrationsTable = definition.migrationsTable
-  if (definition.previewDatabaseId !== undefined) value.previewDatabaseId = definition.previewDatabaseId
+  if (ownsResource || definition.previewDatabaseId !== undefined) value.previewDatabaseId = definition.previewDatabaseId
   return value
 }
 
@@ -42,15 +54,7 @@ export function resolveRuntimeCloudflareConfig(
   const inheritsResource = definition?.databaseId === undefined && definition?.databaseName === undefined
   const binding = definition?.binding?.trim() || options.binding
     || (inheritsResource || !defaults ? resolveCloudflareD1BindingName(options.name, defaults?.binding) : undefined)
-  const defaultHttp = defaults?.http
-  const definitionHttp = definition?.http
-  const http = definitionHttp && definitionHttp !== true && defaultHttp && defaultHttp !== true
-    ? {
-        authToken: definitionHttp.authToken ?? defaultHttp.authToken,
-        url: definitionHttp.url ?? defaultHttp.url,
-      }
-    : value.http
-  const config: CloudflareD1BindingConfig & { migrationsDir?: string } = { ...value, binding, http }
+  const config: CloudflareD1BindingConfig & { migrationsDir?: string } = { ...value, binding }
   if (options.migrationsDir) config.migrationsDir = options.migrationsDir
   return config
 }

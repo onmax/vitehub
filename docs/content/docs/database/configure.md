@@ -76,10 +76,12 @@ export default defineDatabase({
 | `connection.authToken` | `DatabaseConfigValue` | No | Hosted database auth token. |
 | `cloudflare.binding` | `string` | No | D1 binding. Defaults to `DB` for a Default Database and `DB_<NAME>` for a Named Database. |
 | `cloudflare.databaseId` | `DatabaseConfigValue` | No | D1 database id. |
-| `cloudflare.http` | `true \| { url, authToken }` | No | Selects authenticated D1 raw HTTP access for local and hosted runtimes. `true` uses Cloudflare's API. An object selects a compatible proxy. |
+| `cloudflare.http` | `true \| { url?, authToken? }` | No | Selects authenticated D1 raw HTTP access for local and hosted runtimes. `true` uses Cloudflare's API. An object selects a compatible proxy. |
 | `cloudflare.previewDatabaseId` | `DatabaseConfigValue` | No | D1 preview database id. |
 | `cloudflare.databaseName` | `DatabaseConfigValue` | No | D1 database name. |
 | `cloudflare.migrationsTable` | `string` | No | D1 migrations table. |
 | `drizzle.casing` | `DrizzleCasing` | No | Drizzle casing option. Values: `snake_case`, `camelCase`. |
+
+A Definition inherits the integration resource when it omits both `cloudflare.databaseId` and `cloudflare.databaseName`. Setting either selects its own resource, so it inherits no integration database ID, name, or preview ID. Other D1 settings still inherit their defaults. HTTP proxy URLs and tokens inherit by field. Both must be available after inheritance for HTTP access to work.
 
 ViteHub currently exposes `sqlite` as the only public `DatabaseDialect`.

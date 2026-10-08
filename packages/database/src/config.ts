@@ -10,9 +10,10 @@ import {
   sanitizeDefinitionFilename,
 } from "@vite-hub/internal/definition-catalog"
 import { findIdentifierCalls, findMatching, splitTopLevel } from "@vite-hub/internal/source-scanner"
+import { readProvisionStateSync } from "@vite-hub/internal/provision-state"
 
 import { createRuntimeEnvConfigValue, resolveConfigValue } from "./config-value.ts"
-import { cloudflareOptions, mergeCloudflareConfig, resolveCloudflareD1BindingName } from "./internal/cloudflare.ts"
+import { cloudflareOptions, mergeCloudflareConfig, resolveCloudflareD1Binding, resolveCloudflareD1BindingName } from "./internal/cloudflare.ts"
 
 import type {
   CloudflareD1BindingConfig,
@@ -187,16 +188,16 @@ function readDefinitionCloudflareConfig(file: string): { resource: DefinitionClo
       ? {
           authToken: readConfigValue(httpBody, "authToken"),
           url: readConfigValue(httpBody, "url"),
-        } satisfies Partial<CloudflareD1HttpConfig>
+        } satisfies CloudflareD1HttpConfig
       : undefined
-  const value = {
+  const value: CloudflareD1BindingConfig = {
     binding: readStringValue(body, "binding"),
     databaseId: readConfigValue(body, "databaseId"),
     databaseName: readConfigValue(body, "databaseName"),
-    ...(http && (http === true || http.authToken || http.url) ? { http: http as true | CloudflareD1HttpConfig } : {}),
     migrationsTable: readStringValue(body, "migrationsTable"),
     previewDatabaseId: readConfigValue(body, "previewDatabaseId"),
-  } satisfies CloudflareD1BindingConfig
+  }
+  if (http && (http === true || http.authToken || http.url)) value.http = http
   return {
     resource,
     ...(Object.values(value).some(item => typeof item !== "undefined") ? { value } : {}),
@@ -350,9 +351,11 @@ export function resolveDBViteConfig(
   if (!definitions.length) return
 
   const databases: Record<string, ResolvedDrizzleDatabaseConfig> = {}
+  const cloudflareBindings: Record<string, string> = {}
   const definitionCloudflareResourceConfigured: Record<string, boolean> = {}
   const generatedDrizzleConfigFilesByDatabase: Record<string, string> = {}
   const generatedSchemaFilesByDatabase: Record<string, string> = {}
+  const provisionState = readProvisionStateSync(rootDir)
   for (const definition of definitions) {
     const migrationsDir = getDefaultMigrationsDir(rootDir, definition)
     const definitionCloudflare = readDefinitionCloudflareConfig(definition.handler)
@@ -360,11 +363,13 @@ export function resolveDBViteConfig(
     const generatedSchemaFile = createGeneratedSchemaFile(rootDir, definition.name)
     generatedDrizzleConfigFilesByDatabase[definition.name] = createGeneratedDrizzleConfigFile(rootDir, definition.name)
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
-    const cloudflare = definitionCloudflare.resource === "opaque"
-      ? undefined
-      : mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value)
+    const cloudflare = normalizeCloudflareConfig(mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value), definition.name, migrationsDir)
+    if (cloudflare && definitionCloudflare.resource !== "opaque") {
+      const projection = resolveCloudflareD1Binding({ ...cloudflare, database: definition.name }, { provisionState })
+      if (projection.d1Database) cloudflareBindings[definition.name] = projection.bindingName
+    }
     databases[definition.name] = {
-      cloudflare: normalizeCloudflareConfig(cloudflare, definition.name, migrationsDir),
+      cloudflare,
       connection: resolveDefinitionConnection(definition.handler, definition.name, options?.connection),
       dialect: "sqlite",
       drizzle: {},
@@ -376,10 +381,6 @@ export function resolveDBViteConfig(
     }
   }
 
-  const cloudflareBindings: Record<string, string> = {}
-  for (const [name, database] of Object.entries(databases)) {
-    if (database.cloudflare) cloudflareBindings[name] = database.cloudflare.binding
-  }
   const definitionDefaults: ResolvedDBViteConfig["definitionDefaults"] = {}
   if (Object.keys(cloudflareBindings).length) definitionDefaults.cloudflareBindings = cloudflareBindings
   if (options && options.driver === "d1") definitionDefaults.cloudflare = cloudflareOptions(options) ?? {}
