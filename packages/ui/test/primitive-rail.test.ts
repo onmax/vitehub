@@ -1,5 +1,6 @@
 import { createSSRApp, defineComponent, h } from "vue";
 import { renderToString } from "@vue/server-renderer";
+import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { PrimitiveIcon, PrimitiveRail, PrimitiveRailGroup, PrimitiveRailItem, primitiveIconNames } from "../src/primitive-rail.ts";
 
@@ -31,10 +32,20 @@ describe("primitive rail", () => {
       ],
       footer: () => [h(PrimitiveRailItem, { label: "Retry" }, () => h("i", "retry"))],
     }));
-    expect(html).toContain('<nav aria-label="Docs sections" class="vh-primitive-rail">');
-    expect(html).toMatch(/<a href="\/docs\/kv" aria-current="page" aria-label="KV" class="vh-primitive-rail__item"><svg[^>]*data-icon="kv"/);
-    expect(html).toMatch(/<a href="\/docs\/queue" aria-label="Queue" class="vh-primitive-rail__item">/);
+    const root = new Window().document.createElement("div");
+    root.innerHTML = html;
+    expect(root.querySelector('nav[aria-label="Docs sections"]')).not.toBeNull();
+    const kv = root.querySelector('a[href="/docs/kv"]');
+    expect(kv?.getAttribute("aria-current")).toBe("page");
+    expect(kv?.getAttribute("aria-label")).toBe("KV");
+    expect(kv?.querySelector("svg")?.getAttribute("data-icon")).toBe("kv");
+    expect(kv?.querySelector(".vh-primitive-rail__label")?.textContent).toBe("KV");
+    expect(root.querySelector('a[href="/docs/queue"]')?.getAttribute("aria-label")).toBe("Queue");
     // A plain item is a button that does not submit a surrounding form, and its slot replaces the icon.
-    expect(html).toContain('<button aria-label="Retry" class="vh-primitive-rail__item" type="button"><i>retry</i></button>');
+    const retry = root.querySelector('button[aria-label="Retry"]');
+    expect(retry?.getAttribute("type")).toBe("button");
+    expect(retry?.querySelector("i")?.textContent).toBe("retry");
+    expect(retry?.querySelector("svg")).toBeNull();
+    expect(retry?.querySelector(".vh-primitive-rail__label")?.textContent).toBe("Retry");
   });
 });

@@ -16,11 +16,10 @@ defineProps<{
 </template>
 
 <style scoped>
-/* The parent sets the height. The rail and the panel each scroll inside it. */
+/* The parent sets the height. The rail and the panel each scroll inside it. Nothing here clips, so the expanded rail can cover the panel. */
 .vh-docs-sidebars {
   display: flex;
   min-height: 0;
-  overflow: hidden;
 }
 
 .vh-docs-panel {
@@ -30,6 +29,7 @@ defineProps<{
   min-height: 0;
   flex: 0 1 auto;
   flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--ui-border);
   background: var(--ui-bg-muted);
 }

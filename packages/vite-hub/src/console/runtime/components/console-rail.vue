@@ -190,9 +190,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- The expanded rail shows each label, so the tooltips turn off while it is open. -->
   <PrimitiveRail class="vitehub-console__rail" label="Console">
-    <template #header>
-      <UTooltip :text="`${projectName} overview`" :kbds="[...consoleOverviewShortcut]" :content="{ side: 'right' }">
+    <template #header="{ expanded }">
+      <UTooltip :text="`${projectName} overview`" :kbds="[...consoleOverviewShortcut]" :content="{ side: 'right' }" :disabled="expanded">
         <PrimitiveRailItem
           class="vitehub-console__rail-home"
           :current="!active"
@@ -204,56 +205,65 @@ onBeforeUnmount(() => {
       </UTooltip>
     </template>
 
-    <template v-if="!navigation && !navigationFailed">
-      <USkeleton v-for="index in 5" :key="index" class="my-px size-9 rounded-md" />
-    </template>
-    <UTooltip v-if="navigationFailed && !navigation" text="Retry loading primitives" :content="{ side: 'right' }">
-      <PrimitiveRailItem label="Retry loading primitives" @click="loadNavigation">
-        <UIcon name="i-ph-arrows-clockwise-light" class="size-[1.125rem]" />
-      </PrimitiveRailItem>
-    </UTooltip>
-    <PrimitiveRailGroup v-for="(group, index) in groups" :key="index">
-      <UTooltip
-        v-for="section in group"
-        :key="section.id"
-        :text="section.label"
-        :kbds="section.shortcut ? [...section.shortcut] : undefined"
-        :content="{ side: 'right' }"
-      >
-        <PrimitiveRailItem
-          :current="section.id === active"
-          :label="section.label"
-          @click="open(section.routeName)"
-        >
-          <!-- Known primitives use the shared icon family. A contributed section keeps the icon of its descriptor. -->
-          <PrimitiveIcon v-if="section.railIcon" :name="section.railIcon" />
-          <UIcon v-else :name="section.icon" class="size-[1.125rem]" />
+    <template #default="{ expanded }">
+      <template v-if="!navigation && !navigationFailed">
+        <USkeleton v-for="index in 5" :key="index" class="my-px size-9 rounded-md" />
+      </template>
+      <UTooltip v-if="navigationFailed && !navigation" text="Retry loading primitives" :content="{ side: 'right' }" :disabled="expanded">
+        <PrimitiveRailItem label="Retry loading primitives" @click="loadNavigation">
+          <UIcon name="i-ph-arrows-clockwise-light" class="size-[1.125rem]" />
         </PrimitiveRailItem>
       </UTooltip>
-    </PrimitiveRailGroup>
+      <PrimitiveRailGroup v-for="(group, index) in groups" :key="index">
+        <UTooltip
+          v-for="section in group"
+          :key="section.id"
+          :text="section.label"
+          :kbds="section.shortcut ? [...section.shortcut] : undefined"
+          :content="{ side: 'right' }"
+          :disabled="expanded"
+        >
+          <PrimitiveRailItem
+            :current="section.id === active"
+            :label="section.label"
+            @click="open(section.routeName)"
+          >
+            <!-- Known primitives use the shared icon family. A contributed section keeps the icon of its descriptor. -->
+            <PrimitiveIcon v-if="section.railIcon" :name="section.railIcon" />
+            <UIcon v-else :name="section.icon" class="size-[1.125rem]" />
+          </PrimitiveRailItem>
+        </UTooltip>
+      </PrimitiveRailGroup>
+    </template>
 
-    <template #footer>
-      <!-- The search icon matches the size of the other footer icons. -->
-      <UDashboardSearchButton
-        class="vh-primitive-rail__item vitehub-console__rail-search"
-        collapsed
-        :tooltip="{ content: { side: 'right' } }"
-        :ui="{ leadingIcon: 'size-4' }"
-        label="Search"
-      />
+    <template #footer="{ expanded }">
+      <!--
+        The search button stays collapsed, because a change to that prop mounts a new button and keyboard focus is lost.
+        Its slots give it the same icon box and label as a rail item.
+      -->
+      <UTooltip text="Search" :content="{ side: 'right' }" :disabled="expanded">
+        <UDashboardSearchButton class="vh-primitive-rail__item vitehub-console__rail-search" collapsed label="Search">
+          <template #leading>
+            <span class="vh-primitive-rail__icon" aria-hidden="true">
+              <UIcon name="i-lucide-search" class="size-4" />
+            </span>
+          </template>
+          <span class="vh-primitive-rail__label">Search</span>
+        </UDashboardSearchButton>
+      </UTooltip>
       <UDropdownMenu
         v-if="appearance"
         :items="appearanceItems"
         :content="{ side: 'right', align: 'end', sideOffset: 8 }"
         :ui="{ content: 'min-w-40' }"
       >
-        <UTooltip :text="appearanceLabel" :content="{ side: 'right' }">
+        <UTooltip :text="appearanceLabel" :content="{ side: 'right' }" :disabled="expanded">
           <PrimitiveRailItem :label="appearanceLabel">
             <UIcon :name="currentAppearance.icon" class="size-4" />
           </PrimitiveRailItem>
         </UTooltip>
       </UDropdownMenu>
-      <UTooltip v-if="signedIn" :text="signOutFailed ? 'Could not sign out. Try again.' : signOutLabel" :content="{ side: 'right' }">
+      <UTooltip v-if="signedIn" :text="signOutFailed ? 'Could not sign out. Try again.' : signOutLabel" :content="{ side: 'right' }" :disabled="expanded">
         <PrimitiveRailItem
           :label="signOutFailed ? 'Retry sign out' : signOutLabel"
           :disabled="signingOut"
@@ -271,9 +281,10 @@ onBeforeUnmount(() => {
   color: var(--ui-text-highlighted);
 }
 
-/* The search button is a Nuxt UI button. The rail item class sets its size and states. */
+/* The search button is a Nuxt UI button. The rail item class sets its size and states, and its slots set the icon box and label. */
 .vitehub-console .vitehub-console__rail-search {
   box-shadow: none !important;
+  gap: 0 !important;
   padding: 0 !important;
 }
 

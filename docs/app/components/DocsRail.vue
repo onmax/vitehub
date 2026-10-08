@@ -18,7 +18,8 @@ const groups = [
 </script>
 
 <template>
-  <PrimitiveRail label="Docs sections">
+  <!-- The expanded rail shows each label, so the tooltips turn off while it is open. -->
+  <PrimitiveRail v-slot="{ expanded }" label="Docs sections">
     <PrimitiveRailGroup v-for="(sections, index) in groups" :key="index">
       <UTooltip
         v-for="section in sections"
@@ -26,6 +27,7 @@ const groups = [
         :text="section.title"
         :content="{ side: 'right', sideOffset: 6 }"
         :delay-duration="150"
+        :disabled="expanded"
       >
         <PrimitiveRailItem
           :as="NuxtLink"

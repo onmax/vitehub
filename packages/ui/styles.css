@@ -3362,45 +3362,67 @@ button.vh-agent-tool-list__count:focus-visible {
   overflow-wrap: anywhere;
 }
 
-/* Primitive rail: the narrow icon column that ViteHub docs and the Console share. */
+/*
+ * Primitive rail: the narrow icon column that ViteHub docs and the Console share.
+ * The rail always takes 3.5rem of the layout. Its surface expands over the next element to show the labels,
+ * so the page never moves. Icons keep their position: each item starts with an icon box the size of the collapsed square.
+ */
 .vh-primitive-rail {
-  align-items: center;
+  /* The inset centers the square in the rail width minus the 1px border. */
+  --vh-primitive-rail-inset: calc((3.5rem - 1px - var(--vh-primitive-rail-item)) / 2);
+  --vh-primitive-rail-item: 2.25rem;
+  box-sizing: border-box;
+  flex: none;
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  width: 3.5rem;
+  /* Above the next element in the page, below the site header and the popovers. */
+  z-index: 10;
+}
+
+.vh-primitive-rail__surface {
   background: var(--vh-ui-bg-muted);
   border-inline-end: 1px solid var(--vh-ui-border);
   box-sizing: border-box;
   display: flex;
-  flex: none;
   flex-direction: column;
   gap: 0.25rem;
-  height: 100%;
-  min-height: 0;
+  inset-block: 0;
+  inset-inline-start: 0;
+  overflow: hidden;
   padding-block: 0.5rem;
-  width: 3.5rem;
+  position: absolute;
+  width: 100%;
 }
 
-.dark .vh-primitive-rail {
+.vh-primitive-rail[data-expanded] .vh-primitive-rail__surface {
+  width: 13.5rem;
+}
+
+.dark .vh-primitive-rail__surface {
   background: #000;
 }
 
 .vh-primitive-rail__header,
 .vh-primitive-rail__footer {
-  align-items: center;
   display: flex;
   flex: none;
   flex-direction: column;
   gap: 0.125rem;
+  padding-inline: var(--vh-primitive-rail-inset);
 }
 
 .vh-primitive-rail__body {
-  align-items: center;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-inline: var(--vh-primitive-rail-inset);
   scrollbar-width: none;
-  width: 100%;
 }
 
 .vh-primitive-rail__body::-webkit-scrollbar {
@@ -3409,26 +3431,26 @@ button.vh-agent-tool-list__count:focus-visible {
 
 /* Items in a group are 0.125rem apart. Groups are 1rem apart, with the rule in the middle. */
 .vh-primitive-rail__group {
-  align-items: center;
   display: flex;
   flex: none;
   flex-direction: column;
   gap: 0.125rem;
   padding-block: 0.5rem;
   position: relative;
-  width: 100%;
 }
 
+/* The rule stays centered under the icons when the rail expands. */
 .vh-primitive-rail__group + .vh-primitive-rail__group::before {
   background: var(--vh-ui-border);
   content: "";
   height: 1px;
   inset-block-start: 0;
-  inset-inline-start: calc(50% - 0.625rem);
+  inset-inline-start: calc(var(--vh-primitive-rail-item) / 2 - 0.625rem);
   position: absolute;
   width: 1.25rem;
 }
 
+/* The item fills the column, so it is a square when the rail is collapsed and a row when it is expanded. */
 .vh-primitive-rail__item {
   align-items: center;
   appearance: none;
@@ -3438,18 +3460,60 @@ button.vh-agent-tool-list__count:focus-visible {
   box-sizing: border-box;
   color: var(--vh-ui-muted);
   cursor: pointer;
-  display: inline-flex;
+  display: flex;
   flex: none;
   font: inherit;
-  height: 2.25rem;
-  justify-content: center;
+  height: var(--vh-primitive-rail-item);
+  justify-content: flex-start;
   margin: 0;
+  overflow: hidden;
   padding: 0;
   text-decoration: none;
   transition:
     background-color 150ms ease,
     color 150ms ease;
-  width: 2.25rem;
+  width: 100%;
+}
+
+.vh-primitive-rail__icon {
+  align-items: center;
+  display: flex;
+  flex: none;
+  height: 100%;
+  justify-content: center;
+  width: var(--vh-primitive-rail-item);
+}
+
+/* The label shows only when the rail is expanded. The item's aria-label holds the same text. */
+.vh-primitive-rail__label {
+  flex: 1 1 auto;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  min-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  padding-inline-end: 0.5rem;
+  text-align: start;
+  text-overflow: ellipsis;
+  transition: opacity 150ms ease;
+  white-space: nowrap;
+}
+
+.vh-primitive-rail[data-expanded] .vh-primitive-rail__label {
+  opacity: 1;
+}
+
+/* Under reduced motion the surface opens and closes at once. The labels still fade. */
+@media (prefers-reduced-motion: no-preference) {
+  .vh-primitive-rail__surface {
+    transition: width 150ms cubic-bezier(0.2, 0, 0, 1);
+  }
+}
+
+/* Escape and a menu trigger close the rail at once, so a menu opens next to an icon that does not move. */
+.vh-primitive-rail[data-dismissed] .vh-primitive-rail__surface {
+  transition: none;
 }
 
 .vh-primitive-rail__item:focus-visible {
@@ -3481,9 +3545,8 @@ button.vh-agent-tool-list__count:focus-visible {
 
 /* Touch targets grow to 2.75rem. The icon keeps its size, and the rail keeps its width. */
 @media (pointer: coarse) {
-  .vh-primitive-rail__item {
-    height: 2.75rem;
-    width: 2.75rem;
+  .vh-primitive-rail {
+    --vh-primitive-rail-item: 2.75rem;
   }
 }
 
