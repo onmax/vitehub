@@ -51,7 +51,8 @@ const docsPageUi = computed(() =>
         right: "hidden",
       }
     : {
-        root: "lg:!grid-cols-[minmax(0,1fr)_var(--vh-toc-width)] lg:!gap-12",
+        // The page body padding is the gutter before the table of contents. A grid gap would double it.
+        root: "lg:!grid-cols-[minmax(0,1fr)_var(--vh-toc-width)] lg:!gap-0",
         center: "lg:!col-span-1",
         right: "hidden lg:block lg:!col-span-1 lg:w-[var(--vh-toc-width)]",
       },
@@ -84,11 +85,7 @@ const mobileTocUi = {
       :ui="mobileTocUi"
     />
 
-    <UPageHeader
-      :title="page.title"
-      :description="page.description"
-      :class="{ 'docs-ui-page-shell': isUiPage }"
-    >
+    <UPageHeader :title="page.title" :description="page.description">
       <template #links>
         <DocsPageHeaderLinks />
       </template>
@@ -96,13 +93,7 @@ const mobileTocUi = {
 
     <UPageBody
       prose
-      :class="[
-        'docs-content pb-0',
-        {
-          'docs-reference-content': isReferencePage,
-          'docs-ui-content docs-ui-page-shell': isUiPage,
-        },
-      ]"
+      :class="['docs-content pb-0', { 'docs-reference-content': isReferencePage }]"
     >
       <ContentRenderer :value="page" />
     </UPageBody>

@@ -97,12 +97,12 @@ function isActive(path: string) {
 </template>
 
 <style scoped>
-/* Rows match the Console context panel: inset square tiles, no rules between groups. */
+/* Rows match the Console context panel and the rail: inset tiles 0.125rem apart, no rules between groups. */
 .vh-docs-sidebar-nav {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
-  gap: 0.0625rem;
+  gap: 0.125rem;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
@@ -114,7 +114,7 @@ function isActive(path: string) {
 .vh-docs-sidebar-related {
   display: flex;
   flex-direction: column;
-  gap: 0.0625rem;
+  gap: 0.125rem;
 }
 
 .vh-docs-sidebar-page-group-heading,
@@ -129,7 +129,7 @@ function isActive(path: string) {
 .vh-docs-sidebar-link {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
+  gap: 0.5rem;
   min-height: 2rem;
   border-radius: 0.375rem;
   padding: 0.25rem 0.5rem;

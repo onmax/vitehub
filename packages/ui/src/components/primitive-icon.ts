@@ -16,8 +16,8 @@ const path = (d: string): Shape => ["path", { d }];
 /** Square 24px icons, one for each Server Primitive and docs area. Strokes use currentColor. */
 export const primitiveIcons = {
   agent: {
-    base: [rect(4.5, 8, 15, 11, 3), path("M12 5v3"), ["circle", { cx: 12, cy: 4, r: 1 }]],
-    motion: [path("M9.5 12.5v2M14.5 12.5v2")],
+    base: [rect(4.5, 9, 15, 11, 3), path("M12 6v3"), ["circle", { cx: 12, cy: 5, r: 1 }]],
+    motion: [path("M9.5 13.5v2M14.5 13.5v2")],
   },
   auth: {
     base: [rect(5, 10.5, 14, 10, 2), path("M12 14.5v2")],
@@ -108,8 +108,8 @@ export const primitiveIcons = {
     motion: [rect(13.5, 13.5, 7, 7)],
   },
   usage: {
-    base: [path("M4 20h16")],
-    motion: [rect(6, 11, 3, 6, 0.5), rect(10.5, 6, 3, 11, 0.5), rect(15, 9, 3, 8, 0.5)],
+    base: [path("M4 19h16")],
+    motion: [rect(6, 10, 3, 6, 0.5), rect(10.5, 5, 3, 11, 0.5), rect(15, 8, 3, 8, 0.5)],
   },
   workflow: {
     base: [rect(3, 3, 6, 6), rect(3, 15, 6, 6), path("M9 6h2.5a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9M12.5 12H15")],

@@ -233,10 +233,12 @@ onBeforeUnmount(() => {
     </PrimitiveRailGroup>
 
     <template #footer>
+      <!-- The search icon matches the size of the other footer icons. -->
       <UDashboardSearchButton
         class="vh-primitive-rail__item vitehub-console__rail-search"
         collapsed
         :tooltip="{ content: { side: 'right' } }"
+        :ui="{ leadingIcon: 'size-4' }"
         label="Search"
       />
       <UDropdownMenu

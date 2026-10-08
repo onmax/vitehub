@@ -4,7 +4,7 @@ import { getDocsSectionForPath, isDocsLandingPath } from "~~/modules/vitehub-doc
 
 const route = useRoute();
 const isSupportMatrix = computed(() => normalizeDocsPath(route.path) === "/docs/frameworks-hosts/support-matrix");
-// The catalog and every product Overview are landing pages: one wide centered column without a table of contents.
+// The catalog and every product Overview are landing pages: one full-width column without a table of contents.
 const isLanding = computed(() => isDocsLandingPath(docsManifest.sections, route.path));
 // The rail is on every docs page. The page panel opens next to it inside a section, including its Overview.
 // The support matrix keeps the full width for its table.
@@ -23,14 +23,12 @@ const hasPanel = computed(
         <slot />
       </UContainer>
 
-      <div v-else-if="isLanding" class="vh-docs-landing">
-        <slot />
-      </div>
+      <slot v-else-if="isLanding" />
 
-      <div v-else class="vh-docs-main">
+      <template v-else>
         <AnnouncementBanner />
         <slot />
-      </div>
+      </template>
     </div>
   </UMain>
 </template>
@@ -41,32 +39,12 @@ const hasPanel = computed(
   display: none;
 }
 
+/* The content fills the space next to the sidebars. The page header, the page body, and the table of contents set their own insets. */
 .vh-docs-content {
   min-width: 0;
 }
 
-.vh-docs-main,
-.vh-docs-landing {
-  margin: 0 auto;
-  padding: 0 1rem;
-}
-
-.vh-docs-main {
-  max-width: calc(var(--vh-content-width) + var(--vh-toc-width) + 4rem);
-}
-
-.vh-docs-landing {
-  max-width: var(--vh-landing-width);
-}
-
-@media (min-width: 40rem) {
-  .vh-docs-main,
-  .vh-docs-landing {
-    padding: 0 2rem;
-  }
-}
-
-/* On wide screens the rail and the page panel stay at the left edge. The page centers in the remaining space. */
+/* On wide screens the rail and the page panel stay at the left edge. The page fills the remaining space. */
 @media (min-width: 64rem) {
   .vh-docs-shell {
     display: flex;

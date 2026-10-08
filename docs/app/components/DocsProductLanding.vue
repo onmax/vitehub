@@ -25,8 +25,21 @@ defineProps<{
 </template>
 
 <style scoped>
+/* The landing has no page header or page body padding, so it sets the same insets itself. */
 .vh-product-landing {
-  padding-bottom: 4rem;
+  padding: 0 1rem 4rem;
+}
+
+@media (min-width: 40rem) {
+  .vh-product-landing {
+    padding-inline: 2rem;
+  }
+}
+
+@media (min-width: 80rem) {
+  .vh-product-landing {
+    padding-inline: 3rem;
+  }
 }
 
 .vh-product-actions {
@@ -35,9 +48,8 @@ defineProps<{
   padding-top: 1rem;
 }
 
-/* The landing body spans the full landing width. Its sections manage their own measure. */
+/* Its sections manage their own measure. */
 .vh-product-body {
-  max-width: none;
   padding-bottom: 0;
 }
 </style>
