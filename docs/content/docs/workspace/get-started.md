@@ -1,35 +1,52 @@
 ---
-title: Workspace get started
+
+title: Build your first Workspace
 description: Install Workspace, register the Vite integration, define a Workspace, and read and write files from server code.
-navigation.title: Get started
+layout: tutorial
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
 Install the Workspace package, register the Vite integration, and make the first call from server code.
 
-## Quick start
+Workspace is a persistent file tree with explicit path rules. This tutorial
+defines a local read-only Source, lists its files from a route, and then writes
+one draft with a separate write request.
 
-::steps{level="3"}
+::note
+You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
+default local store is for development. Read [Hosts](/docs/workspace/hosts) for
+Cloudflare Artifacts, Vercel Blob, and GitHub stores.
+::
 
-### Install
+::tutorial-step{title="Install"}
+## Install
 
-```bash [Terminal]
-pnpm add @vite-hub/workspace
+```bash [commands/install]
+pnpm add @vite-hub/workspace nitro h3
+pnpm add -D vite
 ```
 
-### Configure
+::
+
+::tutorial-step{title="Configure"}
+## Configure
 
 ```ts [vite.config.ts]
 import { hubWorkspace } from '@vite-hub/workspace/vite'
 import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
 
 export default defineConfig({
-  plugins: [hubWorkspace()],
+  plugins: [hubWorkspace(), nitro() as never],
 })
 ```
 
-### Start using it
+::
+
+::tutorial-step{title="Define the Workspace"}
+## Define the Workspace
 
 ```ts [server/workspaces/docs.ts]
 import { defineWorkspace, glob } from '@vite-hub/workspace'
@@ -43,11 +60,14 @@ export default defineWorkspace({
 
 ::
 
+
+::tutorial-step{title="Use it at runtime"}
 ## Use it at runtime
 
 Read files from server code with `useWorkspace()`.
 
 ```ts [server/api/docs.get.ts]
+import { defineEventHandler } from 'h3'
 import { useWorkspace } from '@vite-hub/workspace'
 
 export default defineEventHandler(async () => {
@@ -59,6 +79,7 @@ export default defineEventHandler(async () => {
 Request write access only at the call site that needs mutation.
 
 ```ts [server/api/drafts.post.ts]
+import { defineEventHandler, readBody } from 'h3'
 import { useWorkspace } from '@vite-hub/workspace'
 
 export default defineEventHandler(async (event) => {
@@ -72,3 +93,34 @@ export default defineEventHandler(async (event) => {
   return workspace.diff()
 })
 ```
+
+::
+
+::tutorial-step{title="Read and write the tree"}
+## Read and write the tree
+
+Start Vite and call the read route:
+
+```bash [commands/start]
+pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
+curl http://localhost:5173/api/docs
+```
+
+The response lists Markdown files from the `docs` mount. Send a draft to the
+write route when you need mutation:
+
+```bash [commands/write]
+curl -X POST http://localhost:5173/api/drafts \
+  -H 'content-type: application/json' \
+  -d '{"text":"# Draft"}'
+```
+
+The write response is a Workspace diff. Read [Server API](/docs/workspace/server-api)
+for snapshots, commits, and Source sync.
+
+::

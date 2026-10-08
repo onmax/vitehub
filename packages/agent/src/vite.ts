@@ -18,10 +18,10 @@ import { summarizeDefinitions } from "@vite-hub/internal/inspect"
 import { getHostingProvider } from "@vite-hub/internal/hosting"
 import { validateWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } from "@vite-hub/workspace/server"
 
-import { registerAgentInvocationStreamEndpoint } from "./vite/invocation-stream-endpoint.ts"
 import {
   agentInvocationsDevGuard,
   agentInvocationsDevRoute,
+  agentInvocationsDevRuntimeNamespace,
   agentInvocationsDevRuntimeRoute,
   agentInvocationsDevRuntimeUnavailableCode,
   agentInvocationsDevRuntimeUnavailableMessage,
@@ -63,7 +63,7 @@ function invalidateAgentDevModules(server: ViteDevServer, ids: readonly string[]
 }
 
 export { readColocatedAgentSkills } from "./vite/colocated-agent-skills.ts"
-export { discoverAgentChannelEnv } from "./channel-env-discovery.ts"
+export { discoverAgentChannelEnv, discoverAgentGatewayEnv } from "./channel-env-discovery.ts"
 export type { AgentChannelEnv } from "./channel-env-discovery.ts"
 
 import type { Plugin, ResolvedConfig, UserConfig, ViteDevServer } from "vite"
@@ -383,7 +383,8 @@ function transformGeneratedAgentWorkflowRegistry(
         ]
       : []
   if (!capabilityLoaders.imports.length && !stateImports.length) return code
-  return [...capabilityLoaders.imports, ...stateImports, "", ...capabilityLoaders.setup, ...stateSetup, code].join("\n")
+  const preamble = [...capabilityLoaders.imports, ...stateImports, "", ...capabilityLoaders.setup, ...stateSetup, ""].join("\n")
+  return code.startsWith(preamble) ? code : preamble + code
 }
 
 function isGeneratedAgentWorkflowRegistryId(id: string): boolean {
@@ -862,7 +863,7 @@ function guardAgentDevelopmentRoutes(nitro: NitroConfig, handlers: Array<{ route
         runtime.hooks.hook("build:before", () => {
           const scanned = runtime.scannedHandlers.flatMap(handler =>
             hasRuntimeType(handler.route, "string") ? [{ route: handler.route, middleware: handler.middleware }] : [])
-          for (const handler of handlers) validateAgentStaticRoute(handler.route, scanned, "development invocation")
+          for (const handler of handlers) validateAgentStaticRoute(handler.route, scanned, "development invocation", agentInvocationsDevRuntimeNamespace)
         })
       },
     }],
@@ -1576,20 +1577,22 @@ export async function transformEveExtensionCapabilities(
   return applyCodeReplacements(code, replacements)
 }
 
-const supportedEveExtensionContracts: Record<number, Record<string, number>> = {
+const supportedEveExtensionContracts = {
   1: {
-    config: 1,
-    dynamicTool: 8,
-    extension: 1,
-    tool: 5,
+    config: [1],
+    dynamicTool: [8],
+    extension: [1],
+    tool: [5],
   },
   2: {
-    config: 1,
-    dynamicTool: 20,
-    extension: 1,
-    tool: 20,
+    config: [1],
+    // Preserve ViteHub's accepted epochs alongside GitHub Tools 0.8.0.
+    // This adapter-specific list is independent of Eve's runtime support table.
+    dynamicTool: [20, 52],
+    extension: [1],
+    tool: [20, 54],
   },
-}
+} satisfies Record<number, Record<string, readonly number[]>>
 
 async function resolveEveExtensionPackage(
   config: Pick<ResolvedConfig, "createResolver">,
@@ -1615,14 +1618,14 @@ async function resolveEveExtensionPackage(
         const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"))
         const formatVersion = isRecord(manifest) ? manifest.formatVersion : undefined
         const requires = isRecord(manifest) && isRecord(manifest.requires) ? manifest.requires : undefined
-        const contracts = hasRuntimeType(formatVersion, "number")
-          ? supportedEveExtensionContracts[formatVersion]
-          : undefined
-        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !contracts || !requires) {
-          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported manifest.` })
+        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !requires
+          || (formatVersion !== 1 && formatVersion !== 2)) {
+          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
+        const contracts = supportedEveExtensionContracts[formatVersion]
         for (const [contract, version] of Object.entries(requires)) {
-          if (contracts[contract] !== version) {
+          const versions = Object.entries(contracts).find(([name]) => name === contract)?.[1]
+          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || !versions?.includes(version)) {
             throw agentDiagnostics.AGENT_B0015({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} requires unsupported ${contract}@${String(version)}.` })
           }
         }
@@ -1827,8 +1830,10 @@ async function writeAgentRuntimeRegistry(
     workspaceRegistry: false,
   })
   await writeFile(catalogPath, [...aggregateCatalog.imports, "", ...aggregateCatalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
+  // Use a non-cyclic alias reset entry: server internals also import this registry,
+  // so their reset re-export can be uninitialized during an internal-first reload.
   await writeFile(registryPath, [
-    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/internal"))}`,
+    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/registry"))}`,
     "resetPublicUrlAgentNames()",
     `export default {${entries.length ? `\n  ${entries.join(",\n  ")}\n` : ""}}`,
     `export const metadata = {${generatedAgentIdentityEntries(definitions)}}`,
@@ -2177,18 +2182,13 @@ async function generateAgentNetlifyFunctionRouteHandler(
   return [
     ...deploymentCatalog.imports,
     ...(options.libsqlState ? [`import { createLibsqlAgentState } from ${JSON.stringify(subpath(agentImportBase, "state/sqlite"))}`] : []),
-    `import { createDiscordGatewayRouteHandler } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
+    `import { createDiscordGatewayRouteHandler, isViteHubBearerSecretEqual } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
     ...workflowRuntime.imports,
     ...workspaceDependencyRuntime.imports,
     ...routeCapabilities.imports,
     "",
     ...workflowRuntime.setup,
     ...workspaceDependencyRuntime.setup,
-    "function bearerToken(value) {",
-    "  const match = /^Bearer\\s+(.+)$/i.exec(value || '')",
-    "  return match?.[1]",
-    "}",
-    "",
     "function routePath(route, values) {",
     "  return route",
     "    .replace(/\\[([^\\]]+)\\]/g, (_, key) => encodeURIComponent(Object.hasOwn(values, key) ? values[key] : ''))",
@@ -2239,7 +2239,7 @@ async function generateAgentNetlifyFunctionRouteHandler(
     "    if (!secret && !localDevelopment) {",
     "      return Response.json({ message: 'Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.', status: 500 }, { status: 500 })",
     "    }",
-    "    if (secret && bearerToken(request.headers.get('authorization')) !== secret) {",
+    "    if (secret && !isViteHubBearerSecretEqual(request.headers.get('authorization'), secret)) {",
     "      return Response.json({ message: 'Unauthorized', status: 401 }, { status: 401 })",
     "    }",
     "    const requestUrl = new URL(request.url)",
@@ -2422,6 +2422,7 @@ async function generateAgentDiscordGatewayRouteHandler(
   return [
     ...deploymentCatalog.imports,
     `import { createDiscordGatewayRouteHandler } from ${JSON.stringify(subpath(agentImportBase, "server"))}`,
+    `import { isViteHubBearerSecretEqual } from ${JSON.stringify(subpath(agentImportBase, "server/internal"))}`,
     ...workflowRuntime.imports,
     ...workspaceDependencyRuntime.imports,
     ...routeCapabilities.imports,
@@ -2431,11 +2432,6 @@ async function generateAgentDiscordGatewayRouteHandler(
     ...workspaceDependencyRuntime.setup,
     ...deploymentCatalog.setup,
     ...generatedRuntimeHelpers(),
-    "",
-    "function bearerToken(value) {",
-    "  const match = /^Bearer\\s+(.+)$/i.exec(value || '')",
-    "  return match?.[1]",
-    "}",
     "",
     "function runtimeEnvValue(cloudflare, key) {",
     "  return cloudflare?.env?.[key] ?? (typeof process === 'object' ? process.env[key] : undefined)",
@@ -2459,7 +2455,7 @@ async function generateAgentDiscordGatewayRouteHandler(
     "  if (!secret && !localDevelopment) {",
     "    throw createError({ statusCode: 500, statusMessage: 'Discord Gateway route requires VITEHUB_DISCORD_GATEWAY_SECRET.' })",
     "  }",
-    "  if (secret && bearerToken(getRequestHeader(event, 'authorization')) !== secret) {",
+    "  if (secret && !isViteHubBearerSecretEqual(getRequestHeader(event, 'authorization'), secret)) {",
     "    throw createError({ statusCode: 401, statusMessage: 'Unauthorized' })",
     "  }",
     "  const agent = getRouterParam(event, 'agent') || (agentNames.length === 1 ? agentNames[0] : undefined)",
@@ -3027,6 +3023,8 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       server.watcher?.on("add", refreshDiscovery)
       server.watcher?.on("unlink", refreshDiscovery)
       if (agent !== false) {
+        // The Dev Loop runs Agents in this process. Load the Agent runtime with the dev server, not with the Vite config.
+        const { registerAgentInvocationStreamEndpoint } = await import("./vite/invocation-stream-endpoint.ts")
         await registerAgentInvocationStreamEndpoint(server, {
           runtimeCapabilities,
           schedule: hasScheduleVitePlugin(resolved ?? server.config),
@@ -3312,7 +3310,13 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       ]
       // `vitehub agent invocations cancel` runs in the Nitro runtime, so it reaches the application's journals.
       // The handler exists only for the Development Server.
-      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && environment?.command === "serve"
+      // CLI discovery resolves the application config to collect contributors; it does not start Nitro.
+      // The Console's discovery config intentionally includes its broad /_vitehub/** route, so do not
+      // install or validate the development-only invocation handler in that mode.
+      // SAFETY: Vite preserves the optional discovery flag; both flags are checked against true.
+      const cliDiscovery = (config as { server?: { middlewareMode?: unknown }, vitehubCliDiscovery?: unknown }).vitehubCliDiscovery === true
+        || (config as { server?: { middlewareMode?: unknown } }).server?.middlewareMode === true
+      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && !cliDiscovery && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
       const nitro = installCloudflareState
@@ -3350,7 +3354,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             ...routes,
             ...nitroHandlers,
             ...devNitroHandlers.filter(candidate => candidate !== handler),
-          ], "development invocation")
+          ], "development invocation", agentInvocationsDevRuntimeNamespace)
         }
       }
       const mergedAgentNitro = (nitroContext ? mergeAgentNitroExternals : cloneNitroConfig)(mergeNitroPlugins(

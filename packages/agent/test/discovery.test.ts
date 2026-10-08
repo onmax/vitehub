@@ -75,6 +75,14 @@ function createFakeServer(root: string, module: unknown) {
   return { handlers, server }
 }
 
+/** Headers with the private Agent Dev Loop token, as `vitehub agent dev` sends them. */
+async function devLoopTokenHeaders(root: string): Promise<Record<string, string>> {
+  const { readWorkspaceDevToken, workspaceDevTokenHeader, workspaceDevTokenServerId } = await import("@vite-hub/workspace/server")
+  const token = await readWorkspaceDevToken(root, { serverId: workspaceDevTokenServerId(3000) })
+  if (!token) throw new Error("The Agent Dev Loop endpoint must write its private token.")
+  return { [workspaceDevTokenHeader]: token }
+}
+
 async function configurePluginServer(plugin: { configureServer?: unknown }, server: unknown) {
   const hook = plugin.configureServer
   if (hasRuntimeType(hook, "function")) {
@@ -539,6 +547,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -576,6 +585,7 @@ describe("agent chat capability discovery", () => {
       }, agentInvocationStreamRoute, {
         "content-type": "application/json",
         [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+        ...await devLoopTokenHeaders(root),
       })
       const events = response.body.trim().split("\n").map(line => JSON.parse(line))
 
@@ -630,6 +640,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -690,6 +701,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(200)
@@ -756,6 +768,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     }, "POST", {
       onResponse(res) {
         // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
@@ -816,6 +829,7 @@ describe("agent chat capability discovery", () => {
       }, agentInvocationStreamRoute, {
         "content-type": "application/json",
         [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+        ...await devLoopTokenHeaders(root),
       })
 
       expect(response.statusCode).toBe(200)
@@ -882,6 +896,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(200)
@@ -941,6 +956,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(200)
@@ -991,6 +1007,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(200)
@@ -1046,6 +1063,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(200)
@@ -1097,6 +1115,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(409)
@@ -1142,6 +1161,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.statusCode).toBe(504)
@@ -1178,6 +1198,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -1218,6 +1239,7 @@ describe("agent chat capability discovery", () => {
 
     const discovery = await invokeMiddleware(handlers, {}, agentInvocationStreamRoute, {
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     }, "GET")
     expect(JSON.parse(discovery.body)).toMatchObject({
       agents: [{
@@ -1237,7 +1259,7 @@ describe("agent chat capability discovery", () => {
         parts: [{ text: "/summary", type: "text" }],
         role: "user",
       }],
-    }, agentInvocationStreamRoute, headers)
+    }, agentInvocationStreamRoute, { ...headers, ...await devLoopTokenHeaders(root) })
     const events = response.body
       .trim()
       .split("\n")
@@ -1284,6 +1306,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -1351,6 +1374,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -1410,6 +1434,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(triggerInputs).toHaveLength(1)
@@ -1466,6 +1491,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(triggerInputs).toEqual([{ prompt: "review this" }])
@@ -1522,6 +1548,7 @@ describe("agent chat capability discovery", () => {
       }, agentInvocationStreamRoute, {
         "content-type": "application/json",
         [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+        ...await devLoopTokenHeaders(root),
       })
       const events = response.body.trim().split("\n").map(line => JSON.parse(line))
       if ("unexpected" in payload) {
@@ -1582,6 +1609,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -1619,6 +1647,7 @@ describe("agent chat capability discovery", () => {
 
     const discovery = await invokeMiddleware(handlers, {}, agentInvocationStreamRoute, {
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     }, "GET")
     expect(JSON.parse(discovery.body)).toMatchObject({
       agents: [{
@@ -1635,7 +1664,7 @@ describe("agent chat capability discovery", () => {
           parts: [{ text: "hello", type: "text" }],
           role: "user",
         }],
-      }, agentInvocationStreamRoute, headers)
+      }, agentInvocationStreamRoute, { ...headers, ...await devLoopTokenHeaders(root) })
       const events = response.body
         .trim()
         .split("\n")
@@ -1687,7 +1716,7 @@ describe("agent chat capability discovery", () => {
         parts: [{ text: "hello", type: "text" }],
         role: "user",
       }],
-    }, agentInvocationStreamRoute, headers)
+    }, agentInvocationStreamRoute, { ...headers, ...await devLoopTokenHeaders(root) })
     const events = response.body
       .trim()
       .split("\n")
@@ -1767,6 +1796,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -1816,6 +1846,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()
@@ -1908,7 +1939,7 @@ describe("agent chat capability discovery", () => {
       handlers,
       {},
       `${agentInvocationStreamRoute}?inspect=1&agent=support`,
-      { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue },
+      { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue, ...await devLoopTokenHeaders(root) },
       "GET",
     )
 
@@ -2022,6 +2053,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
 
     expect(response.body.trim().split("\n").map(line => JSON.parse(line))).toEqual([
@@ -2042,6 +2074,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     expect(runtimeDbs).toEqual([initialAgentDb, refreshedAgentDb])
     expect(setScheduleRuntimeRegistry).toHaveBeenCalledTimes(2)
@@ -2077,6 +2110,7 @@ describe("agent chat capability discovery", () => {
     }, agentInvocationStreamRoute, {
       "content-type": "application/json",
       [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue,
+      ...await devLoopTokenHeaders(root),
     })
     const events = response.body
       .trim()

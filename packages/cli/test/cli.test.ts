@@ -378,6 +378,28 @@ describe("ViteHub CLI", () => {
     expect(stderr.output()).toBe("")
   })
 
+  it("runs a runtime feature without the project config and loads it for the other features", async () => {
+    const stdout = stream()
+    const runtime = vi.fn(() => 0)
+    const project = vi.fn(() => 0)
+    const loadConfig = vi.fn(async () => ({
+      plugins: [{ vitehub: { cli: { namespaces: [{ features: [{ name: "invocations", run: project }, { name: "info", run: project }], name: "agent" }] } } }],
+      root: "/repo",
+    }))
+    const runtimeFeatures = [{ features: [{ name: "invocations", run: runtime }], name: "agent" }]
+
+    expect(await runViteHubCli({ args: ["agent", "invocations", "list"], cwd: "/app", loadConfig, runtimeFeatures, stdout })).toBe(0)
+    expect(runtime).toHaveBeenCalledWith(["list"], expect.objectContaining({ cwd: "/app", rootDir: "/app" }))
+    expect(loadConfig).not.toHaveBeenCalled()
+
+    expect(await runViteHubCli({ args: ["agent", "info"], cwd: "/app", loadConfig, runtimeFeatures, stdout })).toBe(0)
+    expect(project).toHaveBeenCalledOnce()
+    expect(await runViteHubCli({ args: ["agent", "--help"], cwd: "/app", loadConfig, runtimeFeatures, stdout })).toBe(0)
+    expect(loadConfig).toHaveBeenCalledTimes(2)
+    expect(stdout.output()).toContain("Usage: vitehub agent <feature>")
+    expect(runtime).toHaveBeenCalledOnce()
+  })
+
   it.each([{ args: [] }, { args: ["--help"] }, { args: ["-h"] }])("loads project namespaces for root help with runtime commands ($args)", async ({ args }) => {
     const stdout = stream()
     const loadConfig = vi.fn(async () => ({

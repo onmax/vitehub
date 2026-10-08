@@ -9,16 +9,13 @@ const exec = promisify(execFile)
 /** Restore PR checkout history in a separate materialized provider workspace. */
 export async function prepareGitHubPullRequestWorkspace(checkout: string, target: string, options: { signal?: AbortSignal } = {}): Promise<void> {
   options.signal?.throwIfAborted()
-  const resolvedSource = await realpath(checkout)
-  // Descriptor paths retain custody of the directory even when its visible
-  // pathname changes. Resolve only for overlap checks, not for source reads.
-  const source = checkout
+  const source = await realpath(checkout)
   const destination = await realpath(target)
   const overlaps = (left: string, right: string) => {
     const relation = relative(left, right)
     return !relation || (relation !== '..' && !relation.startsWith(`..${sep}`) && !isAbsolute(relation))
   }
-  if (overlaps(resolvedSource, destination) || overlaps(destination, resolvedSource)) {
+  if (overlaps(source, destination) || overlaps(destination, source)) {
     throw new Error('Provider workspace must be separate from prepared checkout.')
   }
   if (!(await lstat(join(source, '.git'))).isDirectory()) {

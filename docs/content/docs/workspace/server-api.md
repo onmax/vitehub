@@ -64,7 +64,7 @@ Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRe
 | `movePath(from, to, options?)` | `overwrite?: boolean` | Moves a path. Existing destinations fail unless `overwrite` is enabled. |
 | `copyPath(from, to, options?)` | `overwrite?: boolean` | Copies a path. Existing destinations fail unless `overwrite` is enabled. |
 | `snapshot(options?)` | `name?: string` | Captures the current Workspace tree with an optional snapshot name. |
-| `history.rebase(options?)` | `takeRemote?: string[]` | Reloads a remote Store while preserving staged paths. A listed path takes its remote version only when both sides changed; any other overlapping change remains a conflict. |
+| `history.rebase(options?)` | `takeRemote?: string[]` | Reloads a remote Store while preserving staged paths. A listed path takes its remote version only when both sides changed; any other overlapping change remains a conflict. Each listed path must be writable, so a Source-backed path fails. |
 | `diff(options?)` | `from?: WorkspaceSnapshot` | Compares the current tree with the supplied snapshot or the Store baseline. |
 | `materializeSources(options?)` | `abortSignal?`, `details?: 'paths'`, `onProgress?`, `sources?`, `path?` | Materializes every Source or a selected Source/path subset, with cancellation and progress reporting. |
 | `getMeta(key)` / `setMeta(key, value)` | Store-defined | Reads or writes optional Workspace Store metadata when the configured Store implements it. |
@@ -103,7 +103,7 @@ Build and development integrations materialize Sources at build time. Runtime `s
 | --- | --- | --- | --- |
 | `sync` | `boolean \| WorkspaceSourceSyncPolicy` | `false` | `true` enables sync with default policy; an object configures concurrency and stale paths. |
 | `sync.concurrency` | `skip \| queue` | `queue` | Queues behind an active sync for the same Source, or reports the overlapping Source as skipped. |
-| `sync.stale` | `keep \| remove` | `keep` | Keeps files no longer returned by the Source, or removes them during reconciliation. |
+| `sync.stale` | `keep \| remove` | `keep` | Keeps files no longer returned by the Source, or removes them during reconciliation. Removal changes only paths inside the current Source mount. |
 
 ### `workspace.sync()` options
 
@@ -148,7 +148,7 @@ export async function testDocs() {
 
 Custom hosts copy Workspace files serially unless they declare a positive `materializationConcurrency` that they can safely support for independent file operations. The local Node host declares a limit of `8`.
 
-Set `writeBack.exclude` to Workspace-relative paths owned by the runtime rather than the invocation. Excluded paths remain usable in the host tree, but their changes are omitted from `diff()` and `commit()` and their pre-Session state is restored by `close()`. Set `writeBack: false` when the runtime must remain writable but its changes must never be published. That mode disables `diff()` and `commit()` and restores the authoritative Workspace on close without first scanning the runtime tree. Read-only Agent Workspaces select it automatically. ViteHub always applies the same excluded-path behavior to `.agent-runs`, `.git`, and `.vitehub`. Integrations that already own a live materialized tree can set `attach: true`; the Session preserves pre-existing live edits, never rematerializes the whole tree, and rolls back only its own uncommitted changes on close.
+Set `writeBack.exclude` to Workspace-relative paths owned by the runtime rather than the invocation. Excluded paths remain usable in the host tree, but their changes are omitted from `diff()` and `commit()` and their pre-Session state is restored by `close()`. Set `writeBack: false` when the runtime must remain writable but its changes must never be published. That mode disables `diff()` and `commit()` and restores the authoritative Workspace on close without first scanning the runtime tree. Read-only Agent Workspaces select it automatically. ViteHub always applies the same excluded-path behavior to `.agent-runs`, `.git`, and `.vitehub`. Integrations that already own a live materialized tree can set `attach: true`; the Session preserves pre-existing live edits, never rematerializes the whole tree, and rolls back only its own uncommitted changes on close. Set `disposableTarget: true` only when the caller owns `target` and deletes it after `close()`; `close()` and failed setup then leave the target as it is, and `commit()` is unchanged. It can't be combined with `attach`.
 
 | Method | Options | Behavior |
 | --- | --- | --- |

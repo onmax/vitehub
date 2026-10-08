@@ -11,8 +11,8 @@ export interface WorkspaceSourceSyncState {
   source: string
 }
 
-export function sourceSyncMetaKey(sourceKey: string) {
-  return `source:${sourceKey}:sync`
+export function sourceSyncMetaKey(sourceKey: string, workspace?: string) {
+  return workspace ? `workspace:${workspace}:source:${sourceKey}:sync` : `source:${sourceKey}:sync`
 }
 
 export function readWorkspaceSourceSyncState(value: unknown): WorkspaceSourceSyncState | undefined {

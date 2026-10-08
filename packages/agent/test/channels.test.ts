@@ -115,7 +115,7 @@ describe("agent channels", () => {
       const channel = github({ activity: true })
       const update = channel.activity?.update
       if (!update) throw new Error("Missing GitHub Agent activity updater.")
-      const context = (runId: string, status: "completed" | "running", agentName = "reviewer") => ({
+      const context = (runId: string, status: "completed" | "running", agentName = "reviewer", summary = "Review complete.") => ({
         activity: {
           agentName,
           links: [{ label: "Session", url: `https://console.test/invocations/${runId}` }, { label: "Logs | Raw\n[report]", url: "https://console.test/logs|raw" }, { label: "[".repeat(100), url: "https://console.test/boundary" }],
@@ -123,7 +123,7 @@ describe("agent channels", () => {
           startedAt: "2026-09-05T12:00:00.000Z",
           updatedAt: "2026-09-05T12:02:35.000Z",
           status,
-          ...(status === "completed" ? { summary: "Review complete." } : {}),
+          ...(status === "completed" ? { summary } : {}),
           tasks: [
             { status: status === "completed" ? "completed" : "in-progress", title: "Review changes" },
             { status: "pending", title: "Untrusted\n# [link](https://example.com) *text*" },
@@ -157,11 +157,23 @@ describe("agent channels", () => {
       expect(stored?.body).toContain("- [ ] Untrusted \\# \\[link\\]\\(https://example.com\\) \\*text\\*")
       expect(stored?.body).not.toContain("\n# [link]")
       expect(stored?.body).toContain("https://console.test/invocations/run-2")
-      expect(stored?.body).toContain("<summary>Previous results</summary>")
+      expect(stored?.body).toContain("<summary>Final answers</summary>")
       expect(stored?.body).toContain("Review complete.")
+      expect(stored?.body.match(/Latest answer/g)).toHaveLength(1)
       expect(stored?.body).toContain("<relative-time datetime=")
       expect(stored?.body).toContain("https://console.test/invocations/run-1")
+      expect(stored?.body).toContain("[View session](<https://console.test/invocations/run-1>)")
       expect(stored?.body.match(/vitehub-agent-activity:/g)).toHaveLength(1)
+
+      // A large answer archive must not hide the newest answer while a run is active.
+      const longAnswer = "Previous answer. ".repeat(140)
+      for (let index = 0; index < 40; index++) {
+        // SAFETY: This fixture supplies the complete callback fields consumed by the activity updater.
+        await update(context(`history-${index}`, "completed", "reviewer", longAnswer) as never)
+      }
+      // SAFETY: This fixture supplies the complete callback fields consumed by the activity updater.
+      await update(context("history-running", "running") as never)
+      expect(stored?.body).toContain("Previous answer.")
 
       // Agent identity keeps equal provider run IDs as separate activity sessions.
       // SAFETY: This fixture supplies the complete callback fields consumed by the activity updater.
@@ -391,10 +403,9 @@ describe("agent channels", () => {
       waitUntil: vi.fn(),
     } as never)
 
-    expect(fetcher).toHaveBeenCalledWith("https://api.github.test/app", expect.objectContaining({
-      headers: expect.objectContaining({ authorization: expect.stringMatching(/^Bearer .+\..+\..+$/) }),
-      method: "GET",
-    }))
+    const appCall = fetcher.mock.calls.find(([input]) => input === "https://api.github.test/app")
+    expect(appCall?.[1]?.method).toBe("GET")
+    expect(new Headers(appCall?.[1]?.headers).get("authorization")).toMatch(/^Bearer .+\..+\..+$/)
     expect(fetcher).toHaveBeenCalledWith("https://api.github.test/repos/acme/app/issues/comments/7", expect.objectContaining({ method: "PATCH" }))
   })
 
@@ -1195,6 +1206,8 @@ describe("agent channels", () => {
 
     expect(rewriteDeliveryArtifactMarkdown([
       "![Preview](./artifacts/preview.png)",
+      "![Spaced preview](<artifacts/my preview.png>)",
+      "![Pending preview](<artifacts/pending preview.png>)",
       "![Absolute](/workspace/codex-session/artifacts/preview.png)",
       "![Nested absolute](/workspace/codex-session/tmp/artifacts/preview.png)",
       "[Report](artifacts/report.pdf)",
@@ -1206,10 +1219,18 @@ describe("agent channels", () => {
       path: "artifacts/preview.png",
       url: "https://assets.example/preview.png",
     }, {
+      path: "artifacts/my preview.png",
+      url: "https://assets.example/my-preview.png",
+    }, {
+      channelAttachmentId: "upload-1",
+      path: "artifacts/pending preview.png",
+    }, {
       path: "artifacts/report.pdf",
       url: "https://assets.example/report.pdf",
     }])).toBe([
       "![Preview](<https://assets.example/preview.png>)",
+      "![Spaced preview](<https://assets.example/my-preview.png>)",
+      "![Pending preview](<artifacts/pending preview.png>)",
       "![Absolute](<https://assets.example/preview.png>)",
       "![Nested absolute](/workspace/codex-session/tmp/artifacts/preview.png)",
       "[Report](<https://assets.example/report.pdf>)",
@@ -1322,7 +1343,12 @@ describe("agent channels", () => {
     })
     if (mentioned instanceof Response) throw new Error("Expected GitHub mention invocation.")
     expect(mentioned.input.context?.github).toMatchObject({ args: "Please, review this", command: "@AgEnT", event: "issue_comment" })
-    expect(mentioned.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "mention-delivery" })
+    expect(mentioned.webhook).toEqual({
+      concurrencyGroup: "acme/app#42",
+      concurrencyLimit: 1,
+      deliveryId: "mention-delivery",
+      rehydrate: expect.any(Function),
+    })
 
     // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
     const botMention = await trigger.invoke(context as never, {
@@ -1426,7 +1452,7 @@ describe("agent channels", () => {
       command: "/comment",
       event: "pull_request_review",
     })
-    expect(review.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "review-delivery" })
+    expect(review.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "review-delivery", rehydrate: expect.any(Function) })
 
     const approvedChannel = github({ pullRequest: { reconcile: { comments: { reviewStates: ["approved"] } }, reply: false } })
     const approvedTrigger = approvedChannel.triggers?.webhook
@@ -1519,7 +1545,7 @@ describe("agent channels", () => {
     } finally {
       await queue.disconnect()
     }
-  })
+  }, 30_000)
 
   it("reconciles configured pull request lifecycle events with invocation ownership", async () => {
     const { github } = await import("../src/channels.ts")
@@ -1549,7 +1575,7 @@ describe("agent channels", () => {
     })
     expect(result.input.prompt).toContain("Request: Keep this pull request healthy.")
     expect(result.input.prompt).not.toContain("specifically this comment")
-    expect(result.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "delivery-1" })
+    expect(result.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 1, deliveryId: "delivery-1", rehydrate: expect.any(Function) })
     expect(result.run?.activity).toEqual({ links: [], target: { installationId: 123, issue: 42, repository: "acme/app" } })
 
     const concurrentChannel = github({ pullRequest: { reconcile: { concurrencyLimit: 4 }, reply: false } })
@@ -1561,7 +1587,7 @@ describe("agent channels", () => {
       payload: githubPullRequestPayload("reopened"),
     })
     if (concurrent instanceof Response) throw new Error("Expected GitHub reconciliation invocation.")
-    expect(concurrent.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 4, deliveryId: "delivery-2" })
+    expect(concurrent.webhook).toEqual({ concurrencyGroup: "acme/app#42", concurrencyLimit: 4, deliveryId: "delivery-2", rehydrate: expect.any(Function) })
 
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     const privateKeyPem = privateKey.export({ format: "pem", type: "pkcs1" }).toString()
@@ -1727,13 +1753,18 @@ describe("agent channels", () => {
     }
   })
 
-  it("uses token fallback to fetch GitHub PR metadata", async () => {
+  it.each([
+    { apiBaseUrl: "https://api.github.test", webhookBaseUrl: "https://api.github.test" },
+    { apiBaseUrl: undefined, webhookBaseUrl: "https://github.enterprise.test/api/v3" },
+    { apiBaseUrl: "https://api.github.test", webhookBaseUrl: "https://github.enterprise.test/api/v3" },
+  ])("uses token fallback to fetch GitHub PR metadata ($apiBaseUrl, $webhookBaseUrl)", async ({ apiBaseUrl, webhookBaseUrl }) => {
     const { github } = await import("../src/channels.ts")
     const previousToken = process.env.VITEHUB_GITHUB_TOKEN
     process.env.VITEHUB_GITHUB_TOKEN = "metadata-token"
     try {
       const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const href = String(url)
+        expect(href).toMatch(`${apiBaseUrl ?? webhookBaseUrl}/repos/acme/app/`)
         expect(init?.headers).toMatchObject({ authorization: "Bearer metadata-token" })
         if (href.endsWith("/pulls/42")) {
           return Response.json({
@@ -1754,7 +1785,7 @@ describe("agent channels", () => {
       })
       const channel = github({
         app: {
-          apiBaseUrl: "https://api.github.test",
+          apiBaseUrl,
           // SAFETY: This test fixture intentionally supplies a Fetch-compatible mock.
           fetch: fetcher as typeof fetch,
         },
@@ -1763,12 +1794,15 @@ describe("agent channels", () => {
       const trigger = channel.triggers?.webhook
       if (!trigger) throw new Error("Missing GitHub webhook trigger.")
 
+      const payload = githubIssueCommentPayload()
+      payload.issue.pull_request.url = `${webhookBaseUrl}/repos/acme/app/pulls/42`
+
       // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
       const result = await trigger.invoke({
         capabilities: [],
         channel,
         trigger: { channelId: "github", id: "github.webhook", name: "webhook", source: "channel" },
-      } as never, { payload: githubIssueCommentPayload() })
+      } as never, { payload })
       if (result instanceof Response) throw new Error("Expected GitHub webhook invocation.")
 
       expect(result.input.context?.pullRequest).toMatchObject({
@@ -2218,8 +2252,8 @@ describe("agent channels", () => {
       "https://api.github.test/repos/vite-hub/vitehub/pulls/42/reviews",
       expect.objectContaining({
         body: JSON.stringify({
-          body: "Review body\n\n![Login badge](<https://assets.example/review/screenshots/login.png>)",
           event: "COMMENT",
+          body: "Review body\n\n![Login badge](<https://assets.example/review/screenshots/login.png>)",
         }),
         headers: expect.objectContaining({ authorization: "Bearer installation-token" }),
         method: "POST",

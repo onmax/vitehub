@@ -29,6 +29,8 @@ export default defineAgent({
 
 Built-in helpers include `discord()`, `github()`, [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
 
+`teams()` instructs the Agent to cite sources with descriptive Markdown links to verified URLs. Chat SDK Channel delivery labels unresolved native web citations as `[source link unavailable]`, including during streaming. Codex app-server does not supply a citation-ID-to-URL map, so ViteHub cannot recover those links from the IDs. Ordinary source links remain intact.
+
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
 ## Act on the Channel message in hooks
@@ -213,7 +215,7 @@ Set `webhooks: []` on the trigger that only receives dispatched items, so the Ch
 
 ## Publish Agent activity without opening a chat
 
-Enable `activity` when an invocation should project its lifecycle into a Channel without treating that Channel as the Agent's conversation transport. With GitHub App webhooks enabled, ViteHub creates the authenticated app-owned comment on `pull_request.opened` unless `pullRequest.reconcile.events` explicitly excludes `opened`; later invocations reuse it. If that event is excluded, the first later invocation creates the comment. The comment claims work with a “Starting” row. One table lists the current and recent sessions, newest first, with links, status, GitHub relative start times, and completed durations. Normalized harness task checkboxes and the latest iteration result appear below it. Previous results stay under a collapsed section. The full transcript stays in the linked session when one is configured.
+Enable `activity` when an invocation should project its lifecycle into a Channel without treating that Channel as the Agent's conversation transport. With GitHub App webhooks enabled, ViteHub creates the authenticated app-owned comment on `pull_request.opened` unless `pullRequest.reconcile.events` explicitly excludes `opened`; later invocations reuse it. If that event is excluded, the first later invocation creates the comment. The comment claims work with a “Starting” row. One table lists the current and recent sessions, newest first, with links, status, GitHub relative start times, and completed durations. Normalized harness task checkboxes and the newest available session's final answer appear below it. All session answers stay in one collapsed section, newest first, with one session link and one paragraph per answer. The full transcript stays in the linked session when one is configured.
 
 Enable the GitHub App webhook for `pull_request` events and route it to the Agent’s generated webhook endpoint to claim the comment when the PR opens, unless `pullRequest.reconcile.events` explicitly excludes `opened`. If it is excluded or the webhook is not delivered, the first later invocation creates the comment.
 
@@ -290,6 +292,10 @@ export default defineAgent({
 ```
 
 Reconciled deliveries use `pullRequest.reconcile.concurrencyLimit` concurrent invocation slots per repository and pull request. The default is `1`. Set a positive integer such as `4` to allow up to four deliveries for the same pull request to run together. Other pull requests have separate limits. ViteHub ignores bot-authored `synchronize` events to prevent a bot push from immediately triggering itself. Existing slash commands still work when reconciliation is enabled. Reconciliation starts work; merge policy and any required human consent remain application-owned instructions or Capabilities.
+
+Persisted inline webhook executions have a 15-minute default deadline. Set `messages.timeout` in milliseconds to change it, for example `30 * 60_000`. A timeout on the persisted Invocation input takes precedence. The selected timeout must be positive, finite, and at most `2_147_483_647` milliseconds; invalid values use the 15-minute default. Replayed or rehydrated Invocation input can override the deadline after setup, with elapsed setup time deducted. Setup remains bounded by the initial deadline. The deadline includes workspace preparation and cancels the Invocation when it expires.
+
+Queued GitHub reconciliation reloads the PR head, comments, and files before the Driver starts, so each Invocation uses the current PR state. Eligibility is decided when the delivery is accepted and is preserved while queued. Use the default `concurrencyLimit: 1` for tasks that write to the same PR branch.
 
 Set `pullRequest.workspace.mount` to the repository path inside the Workspace. Omitting `workspace` mounts at `portal`. Both `workspace: true` and `workspace: {}` mount at the Workspace root. Set `workspace: false` to disable the pull request Workspace contribution.
 
@@ -407,6 +413,8 @@ Install the matching `@chat-adapter/*` package when a built-in Channel uses prov
 ### Channel Env
 
 Built-in Channels read credentials from Server Env under `env.server.<channel>`. ViteHub discovers built-in Channel factories in Agent definitions and declares their fields automatically, so applications usually need no separate Env declaration. Explicit Channel options take precedence over Env values. Declare a field yourself when the host variable name or provider differs from the default.
+
+Each field first reads its canonical name, `VITEHUB_` and the path in upper snake case, then its vendor names. `telegram()` reads `VITEHUB_TELEGRAM_BOT_TOKEN`, then `TELEGRAM_BOT_TOKEN`. Use the canonical name when the vendor name is taken, for example `VITEHUB_GITHUB_TOKEN` in CI. See [Server Env variable names](/docs/env/configure).
 
 Use [Server Env](/docs/env) to inspect the discovered fields and their required or secret status. When a Channel is defined outside a discovered Agent file, declare its Env fields explicitly.
 

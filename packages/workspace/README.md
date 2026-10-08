@@ -218,6 +218,8 @@ Use `startSession({ attach: true, host })` only when another integration already
 
 Use `startSession({ host, writeBack: false })` for a private writable runtime that must never publish its changes. `diff()` and `commit()` are unavailable in this mode, and `close()` restores the authoritative Workspace without first scanning the runtime tree. Agent Definitions select this mode automatically for read-only Workspaces.
 
+Use `startSession({ disposableTarget: true, host, target })` only when the caller owns `target` and deletes it after `close()`. `close()` and failed setup then leave the target as it is instead of restoring the Workspace tree there. `commit()` is unchanged. This option cannot be combined with `attach`. The Provider Agent Driver sets it for its temporary root.
+
 Basic Sessions started without a host also honor `writeBack: false`. Their private overlay remains writable, while `diff()` and `commit()` are unavailable.
 
 Custom `WorkspaceSessionHost` implementations copy Workspace files serially by default. A host can set `materializationConcurrency` to a positive integer when it supports that many independent file reads and writes safely. ViteHub's local Node host uses `8`.
@@ -370,7 +372,11 @@ Learn more at [vitehub.dev](https://vitehub.dev).
 
 Startup and build Source cleanup track ownership by Workspace name. When definitions share a Store, removing or refreshing one definition does not remove files last materialized by another definition. Cleanup also preserves files without a recorded Workspace owner, including files from legacy snapshots. Shared paths still contain the most recent write.
 
-`metadata.source` is reserved for internal Source materialization. Public Workspace writes and write validators cannot assign this ownership marker. Explicit loaders write through `ctx.store`; when multiple build Sources share a mount, these writes must preserve the input item's `metadata.source` or set it to the owning Source key for derived output within that Source's mount. Ambiguous writes fail before storing the file.
+Source Sync and runtime Source materialization change files only inside the mount of the Source that they process. A Source with an empty mount owns the Workspace root. Source Sync with `stale: "remove"` removes only stale paths inside the current mount. If you move a Source mount, the files in the old mount stay. Remove them yourself if you do not need them.
+
+`history.rebase({ takeRemote })` replaces local content at each listed path, so each path must be writable. A Source-backed path fails with a read-only error before the Store rebases.
+
+`metadata.source` is reserved for internal Source materialization. Public Workspace writes and write validators cannot assign this ownership marker. Write validators and `write:before` hooks can change the write path. ViteHub checks the final path again, so a changed path cannot write into a Source mount or a Source-backed file. Explicit loaders write through `ctx.store`; when multiple build Sources share a mount, these writes must preserve the input item's `metadata.source` or set it to the owning Source key for derived output within that Source's mount. Ambiguous writes fail before storing the file.
 
 File metadata must be a JSON-safe plain object containing only plain objects, dense arrays, strings, booleans, null, and finite numbers except negative zero. Omit optional properties instead of assigning `undefined`. Bigints, cycles, class instances, accessors, symbols, and functions are rejected. Workspace writes validate this contract before provider dispatch; direct local and memory Store writes also validate before changing file content. This keeps accepted metadata values consistent after a local Store restart.
 

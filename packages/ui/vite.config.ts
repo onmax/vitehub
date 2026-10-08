@@ -1,4 +1,5 @@
 import { defineConfig } from "vite-plus";
+import { componentEntryName, componentNames } from "./src/component-entries.ts";
 
 export default defineConfig({
   pack: {
@@ -21,9 +22,11 @@ export default defineConfig({
       onlyBundle: false,
     },
     entry: [
+      ...componentNames.map((name) => `src/${componentEntryName(name)}.ts`),
       "src/index.ts",
       "src/headless.ts",
       "src/nuxt.ts",
+      "src/primitive-rail.ts",
       "src/runtime/nuxt-plugin.ts",
       "src/vite.ts",
     ],

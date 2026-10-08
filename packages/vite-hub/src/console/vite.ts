@@ -15,7 +15,7 @@ import { isConsoleConnectionsEnabled, type ConsoleSectionId } from "./runtime/se
 
 import { discoverConsoleBuildCatalog } from "./build.ts"
 import { consoleConnectionsActorId, writeConsoleConnectionsActor, registeredConsoleAuthMode, resolveConsoleAuthConfig, writeConsoleAuthHandlers, type ConsoleAuthConfig, type ConsoleAuthHandlers } from "./auth-build.ts"
-import { writeConsoleNitroPlugin } from "./plugin.ts"
+import { writeConsoleNitroPlugin, type ConsoleAccessBuild } from "./plugin.ts"
 import { serializeConsoleRefresh } from "./refresh.ts"
 import { createConsoleCliNamespace } from "./cli.ts"
 import { consoleFixtureEnvironmentVariable, consoleFixtureRevision, readConsoleFixture } from "./fixture.ts"
@@ -56,8 +56,14 @@ type ConsoleNitroConfig = {
 }
 
 export type ConsoleOptions = (
-  | { access: "auth", auth?: ConsoleAuthConfig, exposure?: never, invoke?: boolean }
-  | { access?: never, exposure: "host-managed", invoke?: boolean }
+  | { access: "auth", auth?: ConsoleAuthConfig, authorize?: never, exposure?: never, invoke?: boolean }
+  | {
+    access?: never
+    /** Server file that default-exports `defineConsoleAuthorize()`. Every Console data route calls it. */
+    authorize: string
+    exposure: "host-managed"
+    invoke?: boolean
+  }
 ) & { databaseUrl?: string, observations?: AgentInvocationsOptions["observations"], retention?: AgentInvocationRetentionOptions }
 
 interface ConsoleVitePluginOptions {
@@ -129,10 +135,15 @@ export function updateConsoleInvocationRootState(
   bindConsoleInvocationsIdentity(state.binding, identity, projectRoot)
 }
 
-const consoleAccessRoutes = [
-  { route: "/_vitehub/**" },
-  { method: "GET", route: "/api/_vitehub/console/**" },
-] satisfies Array<{ method?: string; route: string }>
+function consoleAccessTargets(base: string | undefined, sections?: readonly ConsoleSectionId[]): Array<{ method?: string; route: string }> {
+  return [
+    { route: consoleMountPath(base, "/_vitehub/**") },
+    { method: "GET", route: consoleMountPath(base, "/api/_vitehub/console/status") },
+    ...(sections?.includes("agents") && sections.includes("usage")
+      ? [{ method: "GET", route: consoleMountPath(base, "/api/_vitehub/console/usage") }]
+      : []),
+  ]
+}
 
 function consoleMountBase(base: string | undefined): string {
   if (!base || base === "./") return ""
@@ -225,13 +236,58 @@ function authRouteProtects(
   target: { method?: string; route: string },
 ): boolean {
   if (!route.authorize || (route.method && route.method.toUpperCase() !== target.method)) return false
-  if (!route.route.endsWith("/**")) return false
-  const routeBase = route.route.slice(0, -3)
-  const targetBase = target.route.slice(0, -3)
-  return targetBase === routeBase || targetBase.startsWith(`${routeBase}/`)
+  const recursive = route.route.endsWith("/**")
+  const routeBase = recursive ? route.route.slice(0, -3) : route.route
+  const targetRecursive = target.route.endsWith("/**")
+  // An exact Auth rule protects only its exact endpoint. It cannot satisfy a recursive Console namespace target.
+  if (targetRecursive && !recursive) return false
+  const targetBase = targetRecursive ? target.route.slice(0, -3) : target.route
+  return targetBase === routeBase || (recursive && targetBase.startsWith(`${routeBase}/`))
 }
 
-export const consoleHostManagedCloudflareWarning = '[vitehub] console: { exposure: "host-managed" } does not verify requests. On Cloudflare, use console: { access: "auth", auth: { provider: "cloudflare-access" } } so the Worker verifies the Cloudflare Access token.'
+export const consoleHostManagedCloudflareWarning = '[vitehub] console: { exposure: "host-managed" } trusts console.authorize to verify requests. On Cloudflare, use console: { access: "auth", auth: { provider: "cloudflare-access" } } so the Worker verifies the Cloudflare Access token.'
+
+/** Resolve the `host-managed` authorize file. A configured path must exist. */
+export function resolveConsoleAuthorizeFile(root: string, authorize: unknown): string | undefined {
+  if (authorize === undefined) return
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- console.authorize crosses the open Vite config boundary.
+  if (typeof authorize !== "string" || !authorize.trim()) throw new TypeError("[vitehub] console.authorize must be a path to a server file.")
+  const file = resolve(root, authorize)
+  if (!existsSync(file)) throw new TypeError(`[vitehub] console.authorize file does not exist: ${file}`)
+  return file
+}
+
+function consoleAppAuthRouteIndexes(auth: ResolvedAuthViteConfig, base: string | undefined, sections?: readonly ConsoleSectionId[]): Array<{ authorize: boolean, index: number, method?: string, route: string }> {
+  const targets = consoleAccessTargets(base, sections)
+  return auth.access.routes.flatMap((route, index) => targets.some(target => authRouteProtects(route, target) || route.route.startsWith(target.route.replace(/\/\*\*$/, "")))
+    ? [{ authorize: route.authorize === true, index, method: route.method?.toUpperCase(), route: route.route }]
+    : [])
+}
+
+/**
+ * Resolve the access policy that generated output installs for every Console data route.
+ * - `console: true`, and Cloudflare Access in development, use the local development server.
+ * - Console Auth checks its Session or Cloudflare Access token with the generated middleware module.
+ * - Primary Auth checks the Session and the access routes that protect the Console.
+ * - `host-managed` calls `console.authorize`. Without it, the routes fail closed.
+ */
+export function resolveConsoleAccessBuild(
+  configured: true | ConsoleOptions,
+  options: { appAuth?: ResolvedAuthViteConfig, base?: string, handlers?: Pick<ConsoleAuthHandlers, "auth" | "middleware">, root: string, sections?: readonly ConsoleSectionId[] },
+): ConsoleAccessBuild {
+  if (configured === true) return { mode: "local" }
+  if (configured.exposure === "host-managed") {
+    return { mode: "host-managed", authorize: resolveConsoleAuthorizeFile(options.root, configured.authorize) }
+  }
+  if (configured.auth) {
+    return options.handlers
+      ? { mode: options.handlers.auth === true ? "auth" : "cloudflare-access", check: { module: options.handlers.middleware } }
+      : { mode: "local" }
+  }
+  return options.appAuth
+    ? { mode: "auth", check: { appRoutes: consoleAppAuthRouteIndexes(options.appAuth, options.base, options.sections) } }
+    : { mode: "auth" }
+}
 
 export function assertConsoleProductionAccess(
   configured: true | ConsoleOptions,
@@ -240,13 +296,19 @@ export function assertConsoleProductionAccess(
     auth?: ResolvedAuthViteConfig
     base?: string
     consoleAuth?: boolean
+    sections?: readonly ConsoleSectionId[]
   },
 ): void {
   if (options.development) return
   if (configured === true) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0003({ message: '[vitehub] console: true is development-only. Production Console builds require console: { access: "auth" } or console: { exposure: "host-managed" }.' })
   }
-  if (configured.exposure === "host-managed") return
+  if (configured.exposure === "host-managed") {
+    if (!configured.authorize) {
+      throw viteHubErrorDiagnostics.VITE_HUB_B0014({ message: '[vitehub] console: { exposure: "host-managed" } requires console.authorize. Set it to a server file that default-exports defineConsoleAuthorize() from "vite-hub/console/auth".' })
+    }
+    return
+  }
   if (configured.access !== "auth") {
     throw viteHubErrorDiagnostics.VITE_HUB_B0004({ message: '[vitehub] Console production access must use access: "auth" or exposure: "host-managed".' })
   }
@@ -254,7 +316,7 @@ export function assertConsoleProductionAccess(
   if (!options.auth) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0005({ message: '[vitehub] console: { access: "auth" } requires a discovered ViteHub Auth Definition.' })
   }
-  const accessRoutes = consoleAccessRoutes.map(target => ({ ...target, route: consoleMountPath(options.base, target.route) }))
+  const accessRoutes = consoleAccessTargets(options.base, options.sections)
   const missing = accessRoutes.filter(target => !options.auth?.access.routes.some(route => authRouteProtects(route, target)))
   if (missing.length) {
     throw viteHubErrorDiagnostics.VITE_HUB_B0006({ message: `[vitehub] Console Auth access must configure an authorize callback for ${missing.map(target => target.route).join(" and ")}.` })
@@ -298,10 +360,15 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
   let hostManagedCloudflareBuild = false
   let baseURL = "/"
 
+  function consoleAccess(): ConsoleAccessBuild | undefined {
+    if (!resolvedConsoleConfiguration || !root) return
+    return resolveConsoleAccessBuild(resolvedConsoleConfiguration, { appAuth: resolvedAppAuth, base: baseURL, handlers: consoleAuthHandlers, root, sections })
+  }
+
   const refreshConsoleCatalog = serializeConsoleRefresh(async () => {
     if (!generatedPlugin || !projectRoot || !root) return
     const catalog = await discoverConsoleBuildCatalog({ databaseDiscoveryRoot, discoveryRoot: root, projectRoot, rateLimitDiscoveryRoot, rateLimitScanDirs, sandboxDiscoveryRoot: root, scheduleDiscoveryRoot, sections, serverDirs, workspaceDiscoveryRoot })
-    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthMode, retention)
+    const identity = await writeConsoleNitroPlugin(generatedPlugin, projectRoot, sections, catalog.agents, catalog, blobStores, kvStores, fixture, options.invocationRootState?.binding, invoke, observations, () => !options.invocationRootState?.closed, journal, consoleAuthMode, retention, consoleAccess())
     if (options.invocationRootState) updateConsoleInvocationRootState(options.invocationRootState, projectRoot, identity)
   })
 
@@ -396,6 +463,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
         auth: appAuth,
         base: baseURL,
         consoleAuth: configured !== true && configured.access === "auth" && Boolean(configured.auth),
+        sections,
         development: environment.command !== "build",
       })
       hostManagedCloudflareBuild = environment.command === "build" && !cliDiscovery && options.preset === "cloudflare" && configured !== true && configured.exposure === "host-managed"
@@ -449,6 +517,7 @@ export function consoleVitePlugin(options: ConsoleVitePluginOptions = {}): Plugi
           journal,
           consoleAuthMode,
           retention,
+          consoleAccess(),
         )
       }
       // SAFETY: Nitro extends Vite's user config with this documented top-level configuration object.

@@ -315,6 +315,19 @@ function commandReplacementText(targetText: string, invocation: InputCommandInvo
   return invocation.text
 }
 
+// An empty replacement also removes the whitespace after the command, or before
+// it at the end of the text. Otherwise each removed command leaves a separator,
+// and a long expansion grows the text that every later step must copy and scan.
+function commandReplacementRange(targetText: string, invocation: InputCommandInvocation, replacement: string): { start: number, end: number } {
+  if (replacement) return { start: invocation.start, end: invocation.end }
+  let end = invocation.end
+  while (end < targetText.length && /\s/.test(targetText[end]!)) end++
+  if (end > invocation.end) return { start: invocation.start, end }
+  let start = invocation.start
+  while (start > 0 && /\s/.test(targetText[start - 1]!)) start--
+  return { start, end }
+}
+
 function mergeInputCommandResult(input: AgentRunInput, result: Partial<AgentRunInput>): AgentRunInput {
   const next: AgentRunInput = {
     ...input,
@@ -771,9 +784,10 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
             continue
           }
           const replacement = commandReplacementText(text, invocation, result)
-          const nextText = `${text.slice(0, invocation.start)}${replacement}${text.slice(invocation.end)}`
+          const range = commandReplacementRange(text, invocation, replacement)
+          const nextText = `${text.slice(0, range.start)}${replacement}${text.slice(range.end)}`
           if (budgetText === text && nextText !== text) {
-            budgetReplacementRange = { start: invocation.start, end: invocation.start + replacement.length }
+            budgetReplacementRange = { start: range.start, end: range.start + replacement.length }
             // The invocation has whitespace boundaries, so only its replacement
             // can add or remove commands. Preserve counts for unchanged siblings.
             const previousCounts = getInvocationCounts(text)
@@ -790,16 +804,16 @@ export function inputCommands(options: InputCommandsOptions): AgentCapabilityDef
           }
           text = nextText
           input = replaceTargetText(input, target, text, {
-            end: invocation.end,
+            end: range.end,
             replacement,
-            start: invocation.start,
+            start: range.start,
           })
           context.input.set(input)
           target = getInputCommandTarget(input)
           if (!target) return
           // SAFETY: Input command parsing establishes the asserted command contract.
           await runInputCommandInputHook(command, context as AgentCapabilityRuntimeContext, invocation)
-          cursor = replacement === invocation.text ? invocation.end : invocation.start
+          cursor = replacement === invocation.text ? invocation.end : range.start
           continue
         }
 

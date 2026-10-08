@@ -3,9 +3,10 @@ import { redactInspectionText, redactInspectionValue } from "@vite-hub/internal/
 import { ViteHubError } from "@vite-hub/runtime"
 
 import { isScheduleDevOperation, scheduleDevHeader, scheduleDevHeaderValue } from "../dev.ts"
+import { createScheduleError } from "../errors.ts"
 import { schedules } from "./client.ts"
 import { nextRuntimeScheduleRunAt } from "./due.ts"
-import { toRunId } from "./execute.ts"
+import { executeRuntimeSchedule } from "./execute.ts"
 import { getRuntimeScheduleStore, getScheduleRunStore, getScheduleRuntimeRegistry, isScheduleWakeDriverActive } from "./state.ts"
 import { ScheduleHistoryIncompleteError } from "./store.ts"
 
@@ -396,12 +397,10 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
     case "run": {
       const scheduledAt = new Date()
       try {
-        return json({ run: summarizeScheduleRun(await schedules.run(id, { scheduledAt })) })
+        return json({ run: summarizeScheduleRun(await executeRuntimeSchedule({ id, scheduledAt, captureHandlerFailure: true })) })
       }
       catch (error) {
-        // The handler failed after the run started. Return the stored failed run.
-        const run = await getScheduleRunStore().getRun(toRunId("runtime", id, scheduledAt))
-        return run ? json({ run: summarizeScheduleRun(run) }) : scheduleFailure(error)
+        return scheduleFailure(error)
       }
     }
     case "enable":
@@ -437,9 +436,13 @@ async function runOperation(body: ScheduleDevRequestBody): Promise<Response> {
  * The owner authorization callback is required. The Node dev entry supplies private project-token verification.
  */
 export async function handleScheduleDevRequest(request: Request, options: { authorize?: (request: Request) => Promise<boolean> } = {}): Promise<Response> {
-  const rejection = validateViteHubNitroDevRequest(request, { header: scheduleDevHeader, headerValue: scheduleDevHeaderValue, label: "Schedule Dev" })
+  const { rejection } = await validateViteHubNitroDevRequest(request, {
+    authorize: async request => await options.authorize?.(request) ? undefined : new Response("Forbidden Schedule Dev token.", { status: 403 }),
+    header: scheduleDevHeader,
+    headerValue: scheduleDevHeaderValue,
+    label: "Schedule Dev",
+  })
   if (rejection) return rejection
-  if (!await options.authorize?.(request)) return new Response("Forbidden Schedule Dev token.", { status: 403 })
   const body = await readBody(request)
   if (!body) return failure("The Schedule Dev request body is invalid.", 400)
   try {

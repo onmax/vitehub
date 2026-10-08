@@ -6,10 +6,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import { appendUniqueConsoleKeys, requestConsole } from "../client/request";
 import { rememberConsoleSection } from "../sections";
-import ConsoleBrand from "./console-brand.vue";
 import ConsoleFrame from "./console-frame.vue";
-import ConsolePrimitiveSwitcher from "./console-primitive-switcher.vue";
-import ConsoleSectionNav from "./console-section-nav.vue";
 import ConsoleSearch from "./console-search.vue";
 import { viteHubErrorDiagnostics } from "../../../error-diagnostics";
 
@@ -49,7 +46,6 @@ const props = defineProps<{
 
 const route = useRoute();
 const router = useRouter();
-const sidebarOpen = ref(false);
 const stores = ref<string[]>([]);
 const selectedStore = ref("default");
 const keys = ref<string[]>([]);
@@ -239,7 +235,6 @@ async function loadKeys(
 
 async function selectKey(key: string): Promise<void> {
   selectedKey.value = key;
-  sidebarOpen.value = false;
   syncRouteSelection();
   await loadValue(key);
 }
@@ -336,39 +331,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ConsoleFrame>
-    <UDashboardSidebar
-      id="console-navigation"
-      class="vitehub-console__nav"
-      v-model:open="sidebarOpen"
-      :default-size="16"
-      :collapsed-size="4"
-      :min-size="13"
-      :max-size="26"
-      :menu="{ title: 'KV', description: 'Inspect configured KV stores.' }"
-      :ui="{ body: 'gap-0 overflow-hidden p-0', footer: 'shrink-0 border-t border-default px-2 py-1.5' }"
-      resizable
-    >
-      <template #header="{ collapsed }">
-        <ConsoleBrand :collapsed="collapsed" :sections-base="sectionsBase" />
-      </template>
-
-      <template #default="{ collapsed }">
-        <div class="flex shrink-0 items-center gap-0.5 px-2 pb-1.5">
-          <UDashboardSearchButton
-            :collapsed="collapsed"
-            block
-            class="vitehub-console__search min-w-0 flex-1 rounded-md bg-transparent px-2 ring-0 hover:bg-elevated/60"
-            label="Search"
-          />
-        </div>
-        <ConsoleSectionNav active="kv" :collapsed="collapsed" :sections-base="sectionsBase" @navigate="sidebarOpen = false" />
-      </template>
-      <template #footer>
-        <ConsolePrimitiveSwitcher auth-only :sections-base="sectionsBase" />
-      </template>
-
-    </UDashboardSidebar>
+  <ConsoleFrame active="kv" :sections-base="sectionsBase">
 
     <ConsoleSearch
       :agents-base="agentsBase"
@@ -382,7 +345,7 @@ onBeforeUnmount(() => {
       <template #header>
         <UDashboardNavbar
           title="KV"
-          :toggle="{ 'aria-label': 'Open sidebar' }"
+          :toggle="false"
           :ui="{ root: 'border-b border-default' }"
         >
           <template #right>

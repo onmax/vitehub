@@ -715,6 +715,8 @@ export interface AgentChannelStateBinding {
 export interface AgentChannelTriggerContext<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > extends AgentCallbackContext<TRuntimeConfig> {
+  /** The accepted Invocation when a durable webhook delivery is replayed for rehydration. */
+  queuedInvocation?: Pick<AgentTriggerRunInvokeResult, "input" | "run">
   actor?: AgentActor
   agentCapabilities: readonly AgentCapabilityDefinition<TRuntimeConfig>[]
   agentName?: string
@@ -741,11 +743,39 @@ export interface AgentTriggerDefinition<
   CALL_OPTIONS = unknown,
   TContext extends AgentCallbackContext<TRuntimeConfig> = AgentTriggerContext<TRuntimeConfig, Name>,
 > {
+  /**
+   * Dispatched at most once when the webhook queue stops retrying a delivery:
+   * the last attempt failed, or the delivery used all its execution leases.
+   * An error from this callback is logged and does not change the delivery outcome.
+   * A process exit after dispatch leaves an uncertain outcome; the callback is not replayed.
+   */
+  failed?: (event: AgentTriggerFailedEvent<CALL_OPTIONS>) => MaybePromise<void>
   health?: AgentHealthDescriptor
   input?: string | StandardSchemaV1<unknown, TInput>
   invoke: (context: TContext, input: TInput) => MaybePromise<AgentTriggerInvokeResult<CALL_OPTIONS>>
   output?: "events" | "ui-message-stream" | (string & {})
   webhooks?: AgentWebhookRegistrationDefinition<TRuntimeConfig>[]
+}
+
+/** One Agent Invocation, as the Console shows it. */
+export interface AgentInvocationReference {
+  /** The Console URL of the Invocation. Present when the Agent has a public URL. */
+  consoleUrl?: string
+  id: string
+}
+
+/** The terminal failure of one queued webhook delivery. */
+export interface AgentTriggerFailedEvent<CALL_OPTIONS = unknown> {
+  /** The number of execution attempts, including the last one. */
+  attempts: number
+  deliveryId: string
+  error: unknown
+  /** Present when the queue stored the Invocation input. */
+  input?: AgentRunInput<CALL_OPTIONS>
+  /** Present when the delivery has a run ID. */
+  invocation?: AgentInvocationReference
+  publicError: AgentPublicError
+  run?: AgentRunMetadata
 }
 
 export interface ResolvedAgentTriggerDefinition<
@@ -1443,7 +1473,7 @@ export interface AgentModelExecutionOptions<
   }
 }
 
-export type AgentProviderPermissions = "allow-all" | "allow-edits" | "ask"
+export type AgentProviderPermissions = "allow-all" | "allow-edits" | "allow-edits-unattended" | "ask"
 
 type SingleAttemptAgentOutputDefinition<TOutput> = Omit<AgentOutputDefinition<TOutput>, "maxAttempts"> & {
   maxAttempts?: never
@@ -1493,11 +1523,17 @@ export interface AgentProviderDriverOptions<
   execution?: {
     attachments?: AgentAttachmentExecutionOptions
   }
+  /**
+   * Send model requests to an LLM proxy or gateway, such as `cliproxy({ url })` from `@vite-hub/agent/gateways`.
+   * ViteHub writes the provider configuration and passes the key and headers in the provider environment.
+   * A gateway replaces Codex `credentials`.
+   */
+  gateway?: AgentDriverGateway
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   launch?: AgentProviderLaunchResolver<TRuntimeConfig>
   model?: string
   output?: SingleAttemptAgentOutputDefinition<TOutput>
-  /** Provider approval policy. Defaults to `"ask"`; `"allow-all"` requires an explicit opt-in. */
+  /** Provider approval policy. Defaults to `"ask"`. `"allow-edits-unattended"` denies escalation without prompting; `"allow-all"` removes provider restrictions. */
   permissions?: AgentProviderPermissions
   providerSettings?: Record<string, unknown>
   /**
@@ -1575,6 +1611,35 @@ export type AgentProviderCredentialResolver<
   TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig,
 > = MaybeResolvable<AgentProviderCredentialValue, AgentProviderCredentialContext<TRuntimeConfig>>
 
+/**
+ * A gateway API key or header value: a string, a sealed Server Env value, or an invocation-time resolver.
+ * `undefined` or an empty string fails the invocation, so optional Server Env values can be passed directly.
+ */
+export type AgentDriverGatewaySecret = MaybeResolvable<AgentProviderCredentialValue | undefined, AgentProviderCredentialContext>
+
+/**
+ * An HTTP endpoint that receives the model requests of a provider Driver, such as an LLM proxy or gateway.
+ * Build one with a preset from `@vite-hub/agent/gateways` or with `defineGateway()`.
+ */
+export interface AgentDriverGateway {
+  /** Name shown in Agent inspection and diagnostics. */
+  name: string
+  /**
+   * Base URL for each Driver. Codex sends OpenAI Responses requests to `<url>/responses`.
+   * Claude Code sends Anthropic Messages requests to `<url>/v1/messages`.
+   * A Driver without an entry cannot use this gateway. A resolver runs for each invocation, so the URL can come from Server Env.
+   */
+  baseURL: Partial<Record<BuiltInAgentDriverName, MaybeResolvable<string, AgentProviderCredentialContext>>>
+  /** API key. When it is not set, ViteHub reads the first non-empty variable in `apiKeyEnv`. */
+  apiKey?: AgentDriverGatewaySecret
+  /** Process environment variables that supply the API key, in lookup order. */
+  apiKeyEnv?: readonly string[]
+  /** How the gateway receives the API key. `"bearer"` (default) sends `Authorization: Bearer`. `"x-api-key"` sends `x-api-key`. */
+  auth?: "bearer" | "x-api-key"
+  /** Extra request headers, such as Cloudflare Access service-token headers. Values are treated as secrets. */
+  headers?: Record<string, AgentDriverGatewaySecret>
+}
+
 type KnownCodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
 /** A non-empty reasoning effort advertised by the selected Codex model. */
 export type CodexReasoningEffort = KnownCodexReasoningEffort | (string & Record<never, never>)
@@ -1615,6 +1680,7 @@ export interface AgentModelDriver<
   execution?: AgentModelExecutionOptions<TRuntimeConfig, CALL_OPTIONS>
   instructions?: AgentAdapterInstructions<TRuntimeConfig>
   kind?: never
+  gateway?: never
   launch?: never
   maxRetries?: number
   model: AgentModelResolver<TRuntimeConfig>
@@ -1645,6 +1711,7 @@ export interface AgentRunDriver<
   execution?: never
   instructions?: never
   kind?: never
+  gateway?: never
   launch?: never
   model?: never
   output?: SingleAttemptAgentOutputDefinition<TOutput>
@@ -1692,6 +1759,7 @@ export interface AgentAskDriver<
   execution?: never
   instructions?: never
   kind?: never
+  gateway?: never
   launch?: never
   model?: never
   permissionMode?: never
@@ -2060,6 +2128,8 @@ export interface AgentChatAgentHookArgs<_TRuntimeConfig extends AgentRuntimeConf
 
 export interface AgentChatErrorHookArgs<_TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> extends AgentChatAgentHookArgs<_TRuntimeConfig> {
   error: unknown
+  /** The failed Invocation, when the error belongs to a run. */
+  invocation?: AgentInvocationReference
   publicError: AgentPublicError
   toolResults: AgentToolStepItem[]
 }
@@ -2159,6 +2229,11 @@ export interface AgentMessageChannelSettings<TRuntimeConfig extends AgentRuntime
   dedupeTtlMs?: number
   delivery?: "automatic" | "manual"
   durable?: boolean
+  /**
+   * Add the Console URL of the failed Invocation to each error reply.
+   * Off by default, because the link shows internal details to the people in the conversation.
+   */
+  errorConsoleLink?: boolean
   errorFallbackText?: string | null | ((context: AgentChatErrorHookArgs<TRuntimeConfig> & {
     /** The text ViteHub sends when `errorFallbackText` is not set. */
     defaultText: string
@@ -2574,6 +2649,8 @@ export interface AgentInspectionProviderMetadata {
   /** Present when driver.cwd runs the provider in an existing directory. The path is not exposed. */
   cwd?: "dynamic" | "static"
   environment?: "dynamic" | "static"
+  /** Name of the gateway that receives model requests. */
+  gateway?: string
   launch?: "dynamic" | "static"
   model?: string
   permissions: AgentProviderPermissions
