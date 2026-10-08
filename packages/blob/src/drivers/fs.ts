@@ -1,6 +1,6 @@
 import type { BigIntStats } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 import { object, optional, parse, record, safeParse, string } from "valibot"
 
@@ -139,8 +139,8 @@ function generationMetaPrefix(root: string, pathname: string) {
 }
 
 function generationMetaPath(root: string, pathname: string, stats: BigIntStats) {
-  // Inode and birth time survive rename; ctime does not. Never reuse another
-  // generation's metadata, even when an inode number is recycled.
+  // Inode and birth time survive rename; ctime does not. Deletion pins the
+  // inode until sidecar cleanup finishes, even when birth time is unavailable.
   return resolve(root, ".vitehub", "blob-meta", `${generationMetaPrefix(root, pathname)}${stats.dev}-${stats.ino}-${stats.birthtimeNs}.json`)
 }
 
@@ -411,12 +411,20 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await Promise.all((Array.isArray(pathnames) ? pathnames : [pathnames]).map(async pathname => {
         const path = resolveBlobPath(root, pathname)
         await assertNoSymlinkPath(root, path)
-        const generation = await stat(path, { bigint: true }).catch((error) => {
+        const payload = await open(path, "r").catch((error) => {
           if (isNotFound(error)) return undefined
           throw error
         })
-        await rm(path, { force: true })
-        await removeMetadata(root, pathname, generation)
+        try {
+          // Keep the observed inode allocated through cleanup. A writer starting
+          // after unlink must not reuse its generation sidecar identity.
+          const generation = await payload?.stat({ bigint: true })
+          await rm(path, { force: true })
+          await removeMetadata(root, pathname, generation)
+        }
+        finally {
+          await payload?.close()
+        }
       }))
     },
     async get(pathname) {

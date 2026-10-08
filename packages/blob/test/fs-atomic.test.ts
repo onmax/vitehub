@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
@@ -6,13 +6,15 @@ import { createDriver } from "../src/drivers/fs.ts"
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>()
-  return { ...actual, readFile: vi.fn(actual.readFile), rename: vi.fn(actual.rename), writeFile: vi.fn(actual.writeFile) }
+  return { ...actual, open: vi.fn(actual.open), rm: vi.fn(actual.rm), readFile: vi.fn(actual.readFile), rename: vi.fn(actual.rename), writeFile: vi.fn(actual.writeFile) }
 })
 
 const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
 const roots: string[] = []
 
 afterEach(async () => {
+  vi.mocked(open).mockReset().mockImplementation(actual.open)
+  vi.mocked(rm).mockReset().mockImplementation(actual.rm)
   vi.mocked(readFile).mockReset().mockImplementation(actual.readFile)
   vi.mocked(rename).mockReset().mockImplementation(actual.rename)
   vi.mocked(writeFile).mockReset().mockImplementation(actual.writeFile)
@@ -163,4 +165,49 @@ it.each(["_vitehub", "_vitehub/derived"])("treats descendants of legacy file %s 
   expect(await driver.get(`${pathname}/missing`)).toBeNull()
   expect(await driver.head(`${pathname}/missing`)).toBeNull()
   expect(await (await driver.get(pathname))?.text()).toBe("legacy data")
+})
+
+
+it("pins the deleted inode while a post-unlink writer publishes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "blob-atomic-"))
+  roots.push(root)
+  const driver = createDriver({ driver: "fs", base: root })
+  const writer = createDriver({ driver: "fs", base: root })
+  await driver.put("file.txt", "old", { contentType: "text/plain" })
+  let pinned: Awaited<ReturnType<typeof open>> | undefined
+  let closed = false
+  vi.mocked(open).mockImplementation(async (...args) => {
+    const handle = await actual.open(...args)
+    if (args[0] === join(root, "file.txt")) {
+      pinned = handle
+      const close = handle.close.bind(handle)
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        closed = true
+        await close()
+      })
+    }
+    return handle
+  })
+  let published = false
+  vi.mocked(rm).mockImplementation(async (path, options) => {
+    await actual.rm(path, options)
+    if (path === join(root, "file.txt") && !published) {
+      published = true
+      expect(pinned).toBeDefined()
+      expect(closed).toBe(false)
+      expect((await pinned!.stat()).nlink).toBe(0)
+      await writer.put("file.txt", "new bytes", { contentType: "text/html", customMetadata: { version: "new" } })
+      expect((await pinned!.stat()).nlink).toBe(0)
+      expect(closed).toBe(false)
+    }
+  })
+  await driver.delete("file.txt")
+  expect(published).toBe(true)
+  expect(closed).toBe(true)
+  const blob = await driver.get("file.txt")
+  expect(await blob?.text()).toBe("new bytes")
+  expect(blob?.type).toBe("text/html")
+  const expected = { size: 9, contentType: "text/html", customMetadata: { version: "new" } }
+  expect(await driver.head("file.txt")).toMatchObject(expected)
+  expect((await driver.list()).blobs).toEqual([expect.objectContaining(expected)])
 })
