@@ -15,7 +15,7 @@ and entrypoint below are a separate package project, not another server route.
 ::tutorial-step{title="Install and choose a provider"}
 ## Install and choose a provider
 
-This tutorial uses Vercel Sandbox:
+Use Node.js 24.15 or newer and an existing Vite application. This tutorial uses a Vercel project with Sandbox access. Before starting the server, export `VERCEL_TOKEN`, `VERCEL_TEAM_ID`, and `VERCEL_PROJECT_ID` in its terminal, or use the project's Vercel environment. Execution uses remote, potentially billed infrastructure.
 
 ```bash [commands/install]
 pnpm add @vite-hub/sandbox @vercel/sandbox nitro h3
@@ -32,7 +32,7 @@ export default defineConfig({
 })
 ```
 
-For Cloudflare, install `@cloudflare/sandbox` and change `provider` to `cloudflare`. The package project and route stay the same.
+For Cloudflare, install `@cloudflare/sandbox` and use the [Cloudflare host integration](/docs/frameworks-hosts/cloudflare) to generate the required Container, Durable Object binding, migration, and Worker exports. Changing the provider alone does not supply these resources.
 
 ::
 
@@ -91,7 +91,21 @@ export default defineEventHandler(async (event) => {
 })
 ```
 
-You should see:
+Start the Nitro development server with the credentials available in this terminal:
+
+```bash [commands/dev]
+pnpm vite dev
+```
+
+Keep it running. In another terminal, send the input to the route:
+
+```bash [commands/request]
+curl -X POST http://localhost:5173/api/image-optimizer \
+  -H 'content-type: application/json' \
+  -d '{"width":1024,"height":768}'
+```
+
+With Vercel Sandbox access configured, you should see:
 
 ```json [output/image-optimizer.json]
 { "pixels": 786432, "format": "webp" }
