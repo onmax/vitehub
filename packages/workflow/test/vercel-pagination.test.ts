@@ -80,3 +80,13 @@ it.each([undefined, ""])("rejects an unfinished page with cursor %j", async (cur
     details: { operation: "list-steps", provider: "vercel" },
   })
 })
+
+it("rejects a step page with a non-boolean hasMore flag", async () => {
+  installStepsList(async () => ({ data: [], hasMore: 0 } as unknown as { data: unknown[], hasMore: boolean }))
+
+  await expect(inspectVercelWorkflowRun("pagination", definition, "run-pagination")).rejects.toMatchObject({
+    cause: { code: "WORKFLOW_R0026" },
+    code: "WORKFLOW_PROVIDER_OPERATION_FAILED",
+    details: { operation: "list-steps", provider: "vercel" },
+  })
+})
