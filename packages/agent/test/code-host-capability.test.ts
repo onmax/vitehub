@@ -13,6 +13,8 @@ import type { ForgeOptionsBase, ForgeProvider } from "forges"
 const stores = new Map<CodeHostKind, ReturnType<typeof fake>["store"]>()
 const requests: Array<{ host: CodeHostKind, options: ForgeOptionsBase & { auth?: { type: string, token?: string } } }> = []
 let useRealGitLab = false
+let useRealHost = false
+let pendingEnv: Promise<Partial<Record<string, unknown>>> | undefined
 let lastProvider: ForgeProvider | undefined
 
 async function mockHost(host: CodeHostKind, options: ForgeOptionsBase & { auth?: { type: string, token?: string } }) {
@@ -22,7 +24,7 @@ async function mockHost(host: CodeHostKind, options: ForgeOptionsBase & { auth?:
       (options: ForgeOptionsBase & { auth?: { type: string, token?: string } }) => { create: () => ForgeProvider }
     >
   >(`forges/${host}`)
-  if ((host === "gitlab" && useRealGitLab) || options.auth?.type === "app") return actual[host](options)
+  if (useRealHost || (host === "gitlab" && useRealGitLab) || options.auth?.type === "app") return actual[host](options)
   requests.push({ host, options })
   const real = actual[host](options).create()
   let store = stores.get(host)
@@ -78,7 +80,7 @@ vi.mock("../src/internal/builtin-env.ts", async (importOriginal) => {
     ...actual,
     readBuiltInEnv: (...args: Parameters<typeof actual.readBuiltInEnv>) => {
       envContexts.push(args[3])
-      return actual.readBuiltInEnv(...args)
+      return pendingEnv ?? actual.readBuiltInEnv(...args)
     },
   }
 })
@@ -91,10 +93,10 @@ async function tools(
   // SAFETY: Code Host reads only the context fields provided by this fixture.
   return (await capability.tools({ context: new Map(), ...context } as AgentCapabilityContext)) as AgentToolSet
 }
-async function run(set: AgentToolSet, name: string, input: unknown) {
+async function run(set: AgentToolSet, name: string, input: unknown, execution?: Parameters<NonNullable<AgentToolSet[string]["execute"]>>[1]) {
   const tool = set[`code_host_${name}`]
   if (!tool?.execute) throw new Error(`Missing tool ${name}`)
-  return await tool.execute(input)
+  return await tool.execute(input, execution)
 }
 const base = { repositories: ["acme/app"] } as const
 
@@ -103,6 +105,8 @@ beforeEach(() => {
   requests.length = 0
   lastProvider = undefined
   useRealGitLab = false
+  useRealHost = false
+  pendingEnv = undefined
   for (const name of [
     "GITHUB_APP_ID",
     "GITHUB_APP_INSTALLATION_ID",
@@ -177,6 +181,103 @@ describe("Code Host capability", () => {
     )
   })
 
+  it.each(["baseURL", "operation", "polciy"])("rejects unknown option %s", key => {
+    expect(() => codeHost({ ...base, [key]: "typo" })).toThrow("codeHost() requires valid")
+  })
+
+  it("requires pull request branches and a merge SHA before any host request", async () => {
+    const set = await tools(codeHost({ ...base, mode: "write", operations: ["open_thread", "merge"] }))
+    const before = requests.length
+    for (const branches of [{}, { head: "feature" }, { base: "main" }]) {
+      await expect(run(set, "open_thread", { kind: "pull_request", title: "PR", ...branches }))
+        .rejects.toMatchObject({ code: "AGENT_R0945" })
+    }
+    await expect(run(set, "merge", { number: 1 })).rejects.toMatchObject({ code: "AGENT_R0945" })
+    expect(requests).toHaveLength(before)
+  })
+
+  it.each([undefined, "https://api.github.com/", "https://github.example.com/api/v3"])(
+    "scopes the Agent identity to the public API (%s)",
+    async baseUrl => {
+      const access = vi.fn(async () => ({ token: "identity-token", env: {} }))
+      const set = await tools(codeHost({ ...base, baseUrl }), {
+        runtimeContext: { githubIdentity: { access } } as never,
+      })
+      await run(set, "read_thread", { number: 1 })
+      const enterprise = baseUrl?.includes("example.com")
+      expect(access).toHaveBeenCalledTimes(enterprise ? 0 : 1)
+      expect(requests.at(-1)?.options.auth?.token).toBe(enterprise ? "github-token" : "identity-token")
+    },
+  )
+
+  it("cancels an Env waiter without replacing the shared context or cancelling its snapshot", async () => {
+    let resolveEnv!: (env: Partial<Record<string, unknown>>) => void
+    pendingEnv = new Promise(resolve => { resolveEnv = resolve })
+    envContexts.length = 0
+    const controller = new AbortController()
+    const set = await tools(codeHost(base))
+    const cancelled = run(set, "read_thread", { number: 1 }, { abortSignal: controller.signal })
+    const assertion = expect(cancelled).rejects.toThrow("tool cancelled")
+    controller.abort(new Error("tool cancelled"))
+    await assertion
+    const next = run(set, "read_thread", { number: 1 })
+    resolveEnv({ token: "shared-token" })
+    await expect(next).resolves.toBeDefined()
+    expect(envContexts[0]).toBe(envContexts[1])
+    expect(requests.at(-1)?.options.auth?.token).toBe("shared-token")
+  })
+
+  it.each(["github", "gitlab", "forgejo"] as const)("sends the approved SHA to %s and rejects a moved head", async host => {
+    useRealHost = true
+    const fetcher = vi.fn(async (_url: Parameters<typeof fetch>[0], _init?: RequestInit) => new Response(JSON.stringify({ message: "head moved" }), {
+      status: 409, headers: { "content-type": "application/json" },
+    }))
+    vi.stubGlobal("fetch", fetcher)
+    const set = applyAgentToolPolicies(await tools(codeHost({ ...base, host, mode: "write", operations: ["merge"] })))!
+    const input = { number: 1, sha: "a".repeat(40), method: "squash" }
+    const error = await run(set, "merge", input).catch((caught: unknown) => caught)
+    expect(error).toMatchObject({ code: "APPROVAL_REQUIRED" })
+    expect(fetcher).not.toHaveBeenCalled()
+    const request = (error as Error).cause as { input: { sha: string } }
+    expect(request.input.sha).toBe(input.sha)
+    const reviewedSha = input.sha
+    request.input.sha = "b".repeat(40)
+    input.sha = "c".repeat(40)
+    const grant = approveAgentToolRequest(request)!
+    request.input.sha = "d".repeat(40)
+    await expect(executeApprovedAgentTool(set.code_host_merge!, grant)).rejects.toMatchObject({ code: "AGENT_R0944" })
+    const init = fetcher.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toMatchObject({ [host === "forgejo" ? "head_commit_id" : "sha"]: reviewedSha })
+  })
+
+  it.each([
+    ["comment", { number: 1, body: "hello" }],
+    ["label", { number: 1, add: ["bug"] }],
+    ["review", { number: 1, event: "comment", body: "review" }],
+    ["report_check", { sha: "a".repeat(40), name: "test", state: "success" }],
+    ["rerun_check", { check: { id: 1, type: "check_run" } }],
+    ["open_thread", { kind: "pull_request", title: "PR", head: "feature", base: "main" }],
+    ["close", { number: 1 }],
+    ["merge", { number: 1, sha: "a".repeat(40), method: "squash" }],
+  ])("cancels the in-flight %s transport", async (operation, input) => {
+    useRealHost = true
+    let markStarted!: (signal: AbortSignal) => void
+    const started = new Promise<AbortSignal>(resolve => { markStarted = resolve })
+    vi.stubGlobal("fetch", (_url: unknown, init: RequestInit) => new Promise((_resolve, reject) => {
+      const signal = init.signal!
+      markStarted(signal)
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true })
+    }))
+    const controller = new AbortController()
+    const set = await tools(codeHost({ ...base, mode: "write", operations: [operation] } as never))
+    const result = run(set, String(operation), input, { abortSignal: controller.signal })
+    const assertion = expect(result).rejects.toThrow("tool cancelled")
+    const transportSignal = await started
+    controller.abort(new Error("tool cancelled"))
+    await assertion
+    expect(transportSignal.aborted).toBe(true)
+  })
+
   it("shows the approval policy in metadata", () => {
     expect(codeHost({ ...base, mode: "write", operations: ["review", "merge"] }).metadata).toMatchObject({ approval: ["review:approve", "merge"] })
     expect(codeHost({ ...base, mode: "write", policy: "deny" }).metadata).toMatchObject({ approval: "deny" })
@@ -237,7 +338,7 @@ describe("Code Host capability", () => {
     await run(set, "report_check", { sha: "abc", name: "agent", state: "success" })
     await run(set, "open_thread", { kind: "issue", title: "Follow up" })
     await run(set, "close", { number: 1 })
-    await run(set, "merge", { number: 1 })
+    await run(set, "merge", { number: 1, sha: "a".repeat(40) })
     const store = stores.get("github")!
     const repo = [...store.repos.values()].find(repo => repo.repo.ref.name === "app")!
     const pull = [...repo.threads.values()].find(thread => thread.thread.kind === "pull_request")!
@@ -271,7 +372,7 @@ describe("Code Host capability", () => {
     "requires approval for %s and executes an approved call once",
     async operation => {
       const set = applyAgentToolPolicies(await tools(codeHost({ ...base, mode: "write", operations: [operation] })))!
-      const input = { number: 1, event: "approve", body: "Approved" }
+      const input = { number: 1, sha: "a".repeat(40), event: "approve", body: "Approved" }
       let request: unknown
       try {
         await run(set, operation, input)

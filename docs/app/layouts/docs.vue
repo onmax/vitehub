@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { docsManifest, normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
-import { isDocsLandingPath } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
+import { normalizeDocsPath } from "~~/modules/vitehub-docs/runtime/utils/docs";
 
 const route = useRoute();
 const isSupportMatrix = computed(() => normalizeDocsPath(route.path) === "/docs/frameworks-hosts/support-matrix");
-// The catalog and every product Overview are landing pages: no sidebar, one centered column.
-const isLanding = computed(() => isDocsLandingPath(docsManifest.sections, route.path));
+// The catalog is the only centered landing page. Product overviews keep the package selector and sidebar.
+const isCatalog = computed(() => normalizeDocsPath(route.path) === "/docs");
 
 // On docs pages the sidebar sits on the left edge of the viewport. The page content centers in the remaining space.
 const docsShellUi = {
@@ -22,7 +21,7 @@ const docsShellUi = {
       <slot />
     </UContainer>
 
-    <div v-else-if="isLanding" class="vh-docs-landing">
+    <div v-else-if="isCatalog" class="vh-docs-landing">
       <slot />
     </div>
 
@@ -50,7 +49,8 @@ const docsShellUi = {
 }
 
 .vh-docs-main {
-  max-width: calc(var(--vh-content-width) + var(--vh-toc-width) + 4rem);
+  width: 100%;
+  max-width: none;
 }
 
 .vh-docs-landing {
@@ -66,6 +66,14 @@ const docsShellUi = {
 
 @media (min-width: 64rem) {
   .vh-docs-aside {
+    position: sticky;
+    top: var(--ui-header-height);
+    display: flex;
+    height: calc(100dvh - var(--ui-header-height));
+    max-height: calc(100dvh - var(--ui-header-height));
+    min-height: calc(100dvh - var(--ui-header-height));
+    flex-direction: column;
+    overflow: hidden;
     border-right: 1px solid var(--ui-border);
   }
 }

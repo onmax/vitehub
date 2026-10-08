@@ -726,6 +726,43 @@ describe("schedule provider output", () => {
     expect(JSON.parse(await readFile(join(cloudflareRoot, "wrangler.json"), "utf8")).triggers.crons).toEqual(["0 1 * * *", "0 0 * * *"])
   })
 
+  it("filters malformed provider cron entries before publishing output", async () => {
+    const rootDir = await createTempProject("vitehub-schedule-output-cron-shapes-")
+    const cloudflareRoot = createDefaultCloudflareOutputRoot(rootDir)
+    const vercelRoot = join(rootDir, ".vercel", "output")
+    await mkdir(cloudflareRoot, { recursive: true })
+    await mkdir(vercelRoot, { recursive: true })
+    await writeFile(join(cloudflareRoot, "wrangler.json"), JSON.stringify({
+      main: "index.js",
+      triggers: { crons: ["0 1 * * *", null, 42] },
+    }), "utf8")
+    await writeFile(join(vercelRoot, "config.json"), JSON.stringify({
+      crons: [
+        { path: "/api/user-cron", schedule: "0 1 * * *" },
+        { path: "/api/vitehub/schedules/vercel/stale", schedule: "0 2 * * *" },
+        { path: "/api/invalid" },
+        "invalid",
+        null,
+      ],
+      version: 3,
+    }), "utf8")
+
+    await generateProviderOutputs({ clientOutDir: "dist/client", rootDir })
+
+    expect(JSON.parse(await readFile(join(cloudflareRoot, "wrangler.json"), "utf8")).triggers.crons).toEqual(["0 1 * * *", "0 0 * * *"])
+    expect(JSON.parse(await readFile(join(vercelRoot, "config.json"), "utf8")).crons).toEqual([
+      { path: "/api/user-cron", schedule: "0 1 * * *" },
+      { path: "/api/vitehub/schedules/vercel/cleanup", schedule: "0 0 * * *" },
+    ])
+
+    await generateProviderOutputs({ clientOutDir: "dist/client", definitions: [], rootDir })
+
+    expect(JSON.parse(await readFile(join(cloudflareRoot, "wrangler.json"), "utf8")).triggers.crons).toEqual(["0 1 * * *"])
+    expect(JSON.parse(await readFile(join(vercelRoot, "config.json"), "utf8")).crons).toEqual([
+      { path: "/api/user-cron", schedule: "0 1 * * *" },
+    ])
+  })
+
   it("avoids empty Netlify output and cleans stale files without static schedules", async () => {
     const rootDir = await createTempProject("vitehub-schedule-output-empty-netlify-")
     const outputRoot = createDefaultNetlifyOutputRoot(rootDir)

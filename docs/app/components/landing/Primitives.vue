@@ -14,6 +14,12 @@ useIntersectionObserver(grid, ([entry]) => {
 function offset(index: number) {
   return (index * 0.37) % 1;
 }
+
+function primitiveKind(id: string) {
+  if (id === "agent") return "Agent runtime";
+  if (id === "ui") return "UI components";
+  return "Server Primitive";
+}
 </script>
 
 <template>
@@ -23,17 +29,17 @@ function offset(index: number) {
         class="grid gap-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(22rem,0.6fr)] lg:items-end lg:gap-20"
       >
         <div>
-          <p class="mb-5 font-mono text-xs uppercase tracking-[0.14em] text-dimmed">Server primitives</p>
+          <p class="mb-5 font-mono text-xs uppercase tracking-[0.14em] text-dimmed">Build with ViteHub</p>
           <h1
             class="max-w-[16ch] text-3xl/9 font-semibold tracking-[-0.03em] text-highlighted text-balance sm:text-4xl/10"
           >
-            One server API, Agents included.
+            Server pieces, Agents, and UI in one place.
           </h1>
         </div>
         <div class="max-w-[40ch] lg:justify-self-end">
           <p class="text-base/7 text-muted">
-            The Agent is one primitive among the others. Call any primitive from a route, a job, or
-            an Agent. Each one works without the others.
+            Pick the building block that matches the work. Call server APIs from routes and jobs,
+            add Agent runtimes when you need them, and use UI components to inspect what is running.
           </p>
           <NuxtLink
             to="/docs/getting-started/server-primitives"
@@ -54,7 +60,7 @@ function offset(index: number) {
         class="mt-12 grid grid-cols-2 gap-px border border-default bg-[var(--ui-border)] sm:grid-cols-4 lg:mt-16 lg:grid-cols-5"
         role="list"
       >
-        <!-- The Agent tile spans two cells, so 20 cells fill every row at 2, 4, and 5 columns. -->
+        <!-- The Agent tile spans two cells, so the catalog still reads as a dense package grid. -->
         <li
           v-for="(primitive, index) in landingPrimitives"
           :key="primitive.id"
@@ -71,6 +77,9 @@ function offset(index: number) {
               <LandingPrimitiveMotion :name="primitive.id" :play="visible" :offset="offset(index)" />
             </div>
             <div>
+              <p class="text-[0.625rem] font-semibold uppercase tracking-[0.06em] text-dimmed">
+                {{ primitiveKind(primitive.id) }}
+              </p>
               <h2 class="text-sm font-medium text-highlighted">
                 {{ primitive.name }}
               </h2>

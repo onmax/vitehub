@@ -19,6 +19,19 @@ export type DocsCatalogGroup = {
   sections: DocsSection[];
 };
 
+const primitiveCategories = new Set(["Data", "Compute", "Access", "Delivery", "Files"]);
+
+/** Stable task order for Server Primitive sidebar lanes. */
+const primitiveSidebarGroupOrder: Array<string | null> = [
+  null,
+  "Tutorial",
+  "Concepts",
+  "Guides",
+  "Reference",
+  "Deploy",
+  "Operate",
+];
+
 /** The section whose pages fill the Start row of the catalog. */
 export const docsRootSectionId = "getting-started";
 
@@ -36,6 +49,16 @@ export function getDocsCatalog(sections: DocsSection[]): DocsCatalogGroup[] {
         .sort((left, right) => left.order - right.order || left.title.localeCompare(right.title)),
     }))
     .filter(group => group.sections.length > 0);
+}
+
+/** Short label shown beside a product in the catalog. Keep the package name as the primary title. */
+export function getDocsSectionKind(section: DocsSection) {
+  if (section.id === "agents") return "Agent runtime";
+  if (section.id === "ui") return "UI components";
+  if (primitiveCategories.has(section.category || "")) return "Server Primitive";
+  if (section.category === "Start") return "Getting started";
+  if (section.category === "Platform") return "Platform";
+  return section.category || "Documentation";
 }
 
 export function getUncategorizedDocsSections(sections: DocsSection[]) {
@@ -56,38 +79,48 @@ export type DocsSidebarGroup = {
   pages: DocsPage[];
 };
 
+/** The user task lane for a page in a Server Primitive section. Explicit frontmatter wins. */
+function primitivePageGroup(section: DocsSection, page: DocsPage) {
+  if (page.group?.trim()) return page.group.trim();
+  if (!primitiveCategories.has(section.category || "")) return null;
+  if (page.kind?.trim()) return page.kind.trim();
+
+  switch (page.id) {
+    case "get-started": return "Tutorial";
+    case "configure": return "Guides";
+    case "server-api": return "Reference";
+    case "agent-capability": return "Guides";
+    case "hosts": return "Deploy";
+    case "limits-and-errors": return "Operate";
+    case "index": return null;
+    default: return "Guides";
+  }
+}
+
 /** Sidebar rows for one section: navigable pages in order, grouped by `navigation.group`. */
 export function getDocsSidebarGroups(section: DocsSection): DocsSidebarGroup[] {
   const groups = new Map<string | null, DocsPage[]>();
 
   for (const page of section.pages) {
     if (page.navigation === false) continue;
-    const label = page.group?.trim() || null;
+    const label = primitivePageGroup(section, page);
     groups.set(label, [...(groups.get(label) || []), page]);
   }
 
-  return [...groups].map(([label, pages]) => ({ label, pages }));
-}
+  const entries = [...groups].map(([label, pages], index) => ({ label, pages, index }));
+  if (!primitiveCategories.has(section.category || "")) {
+    return entries.map(({ label, pages }) => ({ label, pages }));
+  }
 
-export type DocsSectionSelectItem = {
-  type?: "label";
-  label: string;
-  value?: string;
-  icon?: string | null;
-  to?: string;
-};
-
-/** Grouped items for the product select: one label row per category, then its sections. */
-export function getDocsSectionSelectItems(sections: DocsSection[]): DocsSectionSelectItem[][] {
-  return getDocsCatalog(sections).map(group => [
-    { type: "label", label: group.category },
-    ...group.sections.map(section => ({
-      label: section.title,
-      value: section.id,
-      icon: section.icon,
-      to: section.path,
-    })),
-  ]);
+  return entries
+    .sort((left, right) => {
+      const leftOrder = primitiveSidebarGroupOrder.indexOf(left.label);
+      const rightOrder = primitiveSidebarGroupOrder.indexOf(right.label);
+      const normalizedLeft = leftOrder === -1 ? primitiveSidebarGroupOrder.length : leftOrder;
+      const normalizedRight = rightOrder === -1 ? primitiveSidebarGroupOrder.length : rightOrder;
+      return normalizedLeft - normalizedRight || left.index - right.index;
+    })
+    .map(({ label, pages }) => ({ label, pages }));
 }
 
 /** Sections listed under Related in a section's sidebar, in the order `.navigation.yml` declares them. */

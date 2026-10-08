@@ -2,7 +2,7 @@
 title: Sandbox limits and errors
 description: Sandbox timeouts, Box reuse, and production checks.
 navigation.title: Limits and errors
-navigation.order: 7
+navigation.order: 8
 icon: i-lucide-circle-alert
 ---
 

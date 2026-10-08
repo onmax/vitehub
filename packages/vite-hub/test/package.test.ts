@@ -117,6 +117,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/database/runtime/agent",
   "@vite-hub/database/runtime/cloudflare-env",
   "@vite-hub/database/runtime/cloudflare-vite",
+  "@vite-hub/database/runtime/d1",
   "@vite-hub/database/runtime/hosted",
   "@vite-hub/database/runtime/state",
   "@vite-hub/database/runtime/vercel-vite",
@@ -366,10 +367,13 @@ describe("framework package contract", () => {
     expect(existsSync(`${packageRoot}/dist/console/runtime/client/request.d.ts`)).toBe(true);
     expect(existsSync(`${packageRoot}/dist/console/runtime/client/time.js`)).toBe(true);
     expect(existsSync(`${packageRoot}/dist/console/runtime/client/time.d.ts`)).toBe(true);
+    expect(existsSync(`${packageRoot}/dist/console/runtime/client/appearance.js`)).toBe(true);
+    expect(existsSync(`${packageRoot}/dist/console/runtime/client/appearance.d.ts`)).toBe(true);
     expect(manifest.exports).not.toHaveProperty("./console/runtime/console-route");
     expect(manifest.exports).not.toHaveProperty("./console/runtime/sections");
     expect(manifest.exports).not.toHaveProperty("./console/runtime/client/request");
     expect(manifest.exports).not.toHaveProperty("./console/runtime/client/time");
+    expect(manifest.exports).not.toHaveProperty("./console/runtime/client/appearance");
     expect(consolePage).toContain("AgentInvocationList");
     expect(consolePage).toContain('aria-label="Filter sessions"');
     expect(consolePage).toContain("selectedCapabilityId");
@@ -723,6 +727,9 @@ describe("framework package contract", () => {
     expect(consoleClient).toContain('"folder-tree":{"width":24');
     expect(consoleClient).toContain("prefers-color-scheme: dark");
     expect(consoleClient).toMatch(/classList\.toggle\(["`]dark["`]/);
+    // The Console appearance module is the only color scheme writer. Nuxt UI color mode stays off.
+    expect(consoleClient).toContain("vitehub-console:appearance");
+    expect(consoleClient).not.toContain("vueuse-color-scheme");
     expect(consoleClient).toContain("ViteHub");
     expect(consoleClient).toContain("/agents/:agent/invocations/:invocation");
     expect(consoleClient).toContain("/blob");
