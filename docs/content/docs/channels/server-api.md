@@ -45,6 +45,8 @@ The events include `deliveryId`, Channel, connector, and, when available, a prov
 
 Configure the application's log drain to retain received events. This outbound-only package has no State Adapter. Use Agent Channels when inbound custody and recovery are required.
 
+Channels passes the original options object to the selected connector, including the `connector` selector when supplied. It preserves object identity, methods, and private state.
+
 ## Add another connector
 
 Add another entry to `connectors` when the same logical destination can deliver through more than one provider. Each entry defines its own options, so Telegram can require `chatId` while Slack requires `channelId` and optionally accepts `threadTs`.

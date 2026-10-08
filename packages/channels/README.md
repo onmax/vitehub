@@ -42,7 +42,7 @@ const [error, receipt] = await alerts.send("Build finished.", {
 if (error) throw error;
 ```
 
-The connector receives `Build finished.` and `{ label: "release" }`. The call adds the Channel name, selected connector, and a new delivery ID to the connector result:
+The connector receives `Build finished.` and the original options object, including `connector: "log"` and `label: "release"`. Channels preserves object identity, methods, and private state. The call adds the Channel name, selected connector, and a new delivery ID to the connector result:
 
 ```json
 {

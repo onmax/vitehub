@@ -80,6 +80,25 @@ defineOutboundChannel({
   },
 })
 
+defineOutboundChannel({
+  connectors: {
+    // @ts-expect-error Callable receipts are rejected by runtime dispatch after delivery.
+    callableResult: { send: (_text: string) => () => {} },
+    // @ts-expect-error Async callable receipts must also be rejected statically.
+    asyncCallableResult: { send: async (_text: string) => () => {} },
+    // @ts-expect-error Constructor-function receipts are rejected by runtime dispatch.
+    constructorResult: { send: (_text: string) => ConstructorOptions },
+    // @ts-expect-error Unions containing callable receipts cannot guarantee an object receipt.
+    unionResult: { send: (_text: string): { id: string } | (() => void) => ({ id: "accepted" }) },
+  },
+})
+
+const dynamicCallableConnectors: Record<string, { send: (text: string) => () => void }> = {
+  webhook: { send: (_text: string) => () => {} },
+}
+// @ts-expect-error Dynamic maps must reject statically known callable receipts.
+defineOutboundChannel({ connectors: dynamicCallableConnectors })
+
 async function checkSendTuple() {
   const [error, receipt] = await channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
   if (error) {

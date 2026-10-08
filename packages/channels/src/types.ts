@@ -17,18 +17,16 @@ export interface ChannelConnector<TOptions extends object = Record<string, unkno
 
 export type ChannelConnectorMap = Record<string, ChannelConnector<never, object>>
 
-type ChannelOptionsConstraint<TOptions extends object> = Extract<
-  TOptions,
+type ChannelObjectConstraint<TObject extends object> = Extract<
+  TObject,
   ((...args: never[]) => unknown) | (abstract new (...args: never[]) => unknown)
 > extends never ? unknown : never
 
-type ValidatedChannelConnectors<TConnectors extends ChannelConnectorMap> = string extends keyof TConnectors
-  ? TConnectors
-  : {
-      [TName in keyof TConnectors]: TConnectors[TName] extends ChannelConnector<infer TOptions, infer _TResult>
-        ? ChannelOptionsConstraint<TOptions> extends never ? never : TConnectors[TName]
-        : never
-    }
+type ValidatedChannelConnectors<TConnectors extends ChannelConnectorMap> = {
+  [TName in keyof TConnectors]: TConnectors[TName] extends ChannelConnector<infer TOptions, infer TResult>
+    ? ChannelObjectConstraint<TOptions | TResult> extends never ? never : TConnectors[TName]
+    : never
+}
 
 export interface ChannelDefinition<
   TConnectors extends ChannelConnectorMap = ChannelConnectorMap,
@@ -83,7 +81,7 @@ export interface ChannelClient<
   send: <TOptions extends object>(
     text: string,
     options: string extends keyof TConnectors
-      ? TOptions & ChannelOptionsConstraint<TOptions> & ChannelSendOptions<TConnectors, TDefault>
+      ? TOptions & ChannelObjectConstraint<TOptions> & ChannelSendOptions<TConnectors, TDefault>
       : ChannelSendOptions<TConnectors, TDefault>,
   ) => Promise<ChannelSendOutcome>
 }

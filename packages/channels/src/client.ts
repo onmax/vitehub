@@ -109,12 +109,10 @@ export function createChannel<
           throw channelError(`Channel "${name}" does not define connector "${connectorName}".`)
         }
 
-        // SAFETY: The object check above establishes that options can be copied into connector options.
-        const connectorOptions = { ...(options as Record<string, unknown>) }
-        delete connectorOptions.connector
         deliveryId = globalThis.crypto.randomUUID()
         logDelivery("outbound.started", deliveryId, name, connectorName)
-        const result = await connector.send(text, connectorOptions as never)
+        // SAFETY: ChannelSendOptions carries the selected connector's options; selector validation above resolves that connector.
+        const result = await connector.send(text, options as never)
         if (!result || typeof result !== "object") {
           throw channelError(`Channel connector "${connectorName}" returned an invalid result.`)
         }

@@ -4,6 +4,31 @@ import { createChannel, defineOutboundChannel, useChannel } from "../src/index.t
 import { setChannelRuntimeRegistry } from "../src/runtime/state.ts"
 
 describe("createChannel", () => {
+  it("preserves connector option instances and their private state", async () => {
+    class Destination {
+      #id = "room-1"
+
+      getId() {
+        return this.#id
+      }
+    }
+    const options = Object.assign(new Destination(), { connector: "configured" as const })
+    const send = vi.fn((_text: string, options: Destination) => ({ id: options.getId() }))
+    const channel = createChannel("instances", { connectors: { configured: { send } } })
+
+    await expect(channel.send("message", options)).resolves.toMatchObject([null, { id: "room-1" }])
+    expect(send.mock.calls[0]?.[1]).toBe(options)
+  })
+
+  it("preserves array connector options", async () => {
+    const options = Object.assign(["room-1", "room-2"], { connector: "configured" as const })
+    const send = vi.fn((_text: string, options: string[]) => ({ id: options.join(",") }))
+    const channel = createChannel("arrays", { connectors: { configured: { send } } })
+
+    await expect(channel.send("message", options)).resolves.toMatchObject([null, { id: "room-1,room-2" }])
+    expect(send.mock.calls[0]?.[1]).toBe(options)
+  })
+
   it("selects the connector through send options and normalizes the result", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     const send = vi.fn(async (text: string, options: { chatId: string }) => ({ id: `${text}:${options.chatId}` }))
@@ -15,7 +40,7 @@ describe("createChannel", () => {
       deliveryId: expect.any(String),
       id: "Build finished.:chat-1",
     }])
-    expect(send).toHaveBeenCalledWith("Build finished.", { chatId: "chat-1" })
+    expect(send).toHaveBeenCalledWith("Build finished.", { connector: "telegram", chatId: "chat-1" })
     info.mockRestore()
   })
 
