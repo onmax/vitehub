@@ -22,6 +22,7 @@ export type Snapshot = {
   progressBudget?: ProgressBudget
   recoveryHead?: string
   sourcePushHead?: string
+  sourcePushHeads?: string[]
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
@@ -66,6 +67,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
     throw new TypeError('Invalid inbox snapshot')
   }
+  if (input.sourcePushHeads !== undefined) v.parse(v.array(v.string()), input.sourcePushHeads)
   if (input.sourcePushHead !== undefined) v.parse(v.string(), input.sourcePushHead)
   if (input.recoveryHead !== undefined) v.parse(v.string(), input.recoveryHead)
   if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
@@ -872,7 +874,13 @@ export class PullRequestInbox {
         if (event === 'push') {
           // Preserve source-branch evidence before synchronize updates the PR head.
           // A same-named branch in the base repository is not a fork's source.
-          if (payload.ref === `refs/heads/${s.pr?.head?.ref}` && (s.pr?.head?.repo?.full_name ?? repository).toLowerCase() === repository.toLowerCase()) s.sourcePushHead = sha ?? 'unknown'
+          if (payload.ref === `refs/heads/${s.pr?.head?.ref}` && (s.pr?.head?.repo?.full_name ?? repository).toLowerCase() === repository.toLowerCase()) {
+            s.sourcePushHead = sha ?? 'unknown'
+            if (s.lease) {
+              const heads = s.sourcePushHeads ??= []
+              if (!heads.includes(s.sourcePushHead) && heads.length <= 64) heads.push(heads.length < 64 ? s.sourcePushHead : 'source-push-overflow')
+            }
+          }
           s.refresh = true; s.feedbackRefresh = true; changed = true
         }
         // Pending CI is evidence to retain, not another repair task. Terminal
@@ -924,7 +932,7 @@ export class PullRequestInbox {
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
         if (options.only && !options.only(s)) continue
         if (options.skip && options.skip(s)) continue
-        s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
+        s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'; s.sourcePushHeads = []
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
       return claims
@@ -1002,7 +1010,8 @@ export class PullRequestInbox {
         // verified publication chain, and fence a different source push even
         // while the PR snapshot still exposes its original head.
         if (s.status === 'terminal' || !published.has(s.pr?.head?.sha)
-          || s.sourcePushHead !== claim.snapshot.sourcePushHead && !published.has(s.sourcePushHead)) {
+          || s.sourcePushHead !== claim.snapshot.sourcePushHead && !published.has(s.sourcePushHead)
+          || s.sourcePushHeads?.some(head => !published.has(head))) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
           await this.put(tx, s)

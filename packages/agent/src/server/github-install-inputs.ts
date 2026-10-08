@@ -35,7 +35,7 @@ function checkDownloadSource(value: string): void {
     if (/\.git\/?$/i.test(url.pathname) || url.hostname === "github.com" && !githubArchive) throw new Error("Git dependencies require preparation inside the provider sandbox.");
   } else if (/(?:^|@)git@/i.test(decoded)) throw new Error("Dependency downloads require a trusted HTTPS registry or code host.");
 }
-const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict"]);
+const booleanSettings = new Set(["auto-install-peers", "strict-peer-dependencies", "hoist", "shamefully-hoist", "link-workspace-packages", "prefer-workspace-packages", "shared-workspace-lockfile", "package-manager-strict", "legacy-peer-deps", "install-links"]);
 const patternSettings = new Set(["hoist-pattern", "public-hoist-pattern"]);
 const workspaceFields = new Set(["packages", "catalog", "catalogs", "catalogMode", "overrides", "packageExtensions", "patchedDependencies", "onlyBuiltDependencies", "ignoredBuiltDependencies", "neverBuiltDependencies", "allowBuilds"]);
 
@@ -96,8 +96,9 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
     let current = path;
     for (;;) {
       try {
-        if (!inside(await realpath(current))) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
-        break;
+        const canonical = await realpath(current);
+        if (!inside(canonical)) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
+        return canonical;
       } catch (error) {
         if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
         const parent = dirname(current);
@@ -264,9 +265,9 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
     if (!targets) throw new Error("Linked dependency bin targets must be file paths.");
     for (const target of targets) {
       if (!hasRuntimeType(target, "string") || !target) throw new Error("Linked dependency bin targets must be file paths.");
-      await checkPath(encodeURIComponent(target), directory);
+      const canonical = await checkPath(encodeURIComponent(target), directory);
       const path = resolve(directory, target);
-      if (relative(root, path).split(/[\\/]/).includes(".git")) throw new Error("Linked dependency bin targets must not read Git metadata.");
+      if ([path, canonical].some(candidate => relative(root, candidate).split(/[\\/]/).includes(".git"))) throw new Error("Linked dependency bin targets must not read Git metadata.");
       linkedBinFiles.add(path);
     }
   }

@@ -775,16 +775,18 @@ export default defineAgent({
 default) or `"claude-code"`. Set its model and other provider settings with the
 ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
 
-`install` defaults to `true`. The host installs dependencies from the frozen
-pnpm, npm, or Yarn lockfile before starting the provider. Installers run one at a
-time per host process to bound dependency setup memory. Lifecycle scripts and
+`install` defaults to `true`. This mode requires Git and Corepack in the trusted
+host PATH. Install Corepack separately on Node 25 and newer. The package Node
+engine does not install these host tools. The host installs dependencies from the
+frozen pnpm, npm, or Yarn lockfile before starting the provider. Installers run one
+at a time per host process to bound dependency setup memory. Lifecycle scripts and
 repository package-manager hooks, plugins, and binary delegation stay disabled.
 The package manager must name an official version, rather than a URL. Corepack
 uses the trusted npm registry and ignores checkout environment files. npm must
 be version 7 or newer. A manifest without a package-manager version uses a pinned
 default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
-Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
+Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`, and the boolean lockfile-shaping settings `legacy-peer-deps` and `install-links`.
 Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:`, Git dependencies that prepare remote projects, and unsupported source protocols are rejected before Corepack runs. Use registry packages or HTTPS archives instead, or set `install: false` when dependencies must be prepared in the provider sandbox.
 Local package source files, archives, and patch files contribute their contents and executable mode to the dependency fingerprint. Local package source trees require regular files and directories; installed modules and Git metadata are excluded. Host installation reads a validated snapshot inside protected Git metadata, so provider writes cannot alter package-manager configuration or dependency sources after validation. The package-manager cache has its own CommonJS scope even in an ESM checkout. The host reconciles generated dependency outputs and rejects a refresh if the live dependency inputs changed. Workspace links continue to point to the live checkout.
 Refresh reconciles all managed outputs. Switching to Yarn PnP removes obsolete root and workspace `node_modules`; switching away removes generated `.pnp.*` and Yarn cache state while preserving Yarn source configuration. Provider quota cooldowns pause model dispatch until their recorded deadline. Host merges and stack retargets continue during that cooldown.

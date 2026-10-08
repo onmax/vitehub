@@ -2,6 +2,7 @@ import { chmod, symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { validateGitHubInstallInputs } from "../src/server/github-install-inputs.ts";
 import { assertGitHubDependenciesCurrent, installGitHubPullRequestWorkspace, GitHubWorkspaceInstallError } from "../src/server/github-install.ts";
 
 const roots: string[] = [];
@@ -22,6 +23,22 @@ it("installs on the host with a frozen lockfile and no host secrets or lifecycle
   expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false });
 });
+it("reports the trusted host Corepack prerequisite when Node does not provide it", async () => {
+  const root = await fixture();
+  vi.stubEnv("PATH", join(root, "missing-host-tools"));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/requires Corepack in PATH/);
+  expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "failed" });
+});
+
+it.each(["true", "false"])("accepts lockfile-shaping npm peer settings: %s", async legacyPeerDeps => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3" }));
+  await writeFile(join(root, "package-lock.json"), "{}");
+  await writeFile(join(root, ".npmrc"), `legacy-peer-deps=${legacyPeerDeps}\ninstall-links=true\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
 it("records a reproduced installation failure for durable retry", async () => {
   const root = await fixture();
   await writeFile(join(root, "bin", "corepack"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
@@ -635,6 +652,16 @@ it("rejects a Yarn patch relative to an unvalidated parent package filesystem", 
   const locator = "safe@patch:safe@npm%3A1.0.0#./patches/safe.patch::locator=parent%40npm%3A1.0.0";
   await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n${JSON.stringify(locator)}:\n  version: 1.0.0\n  resolution: ${JSON.stringify(locator)}\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/project.relative/);
+});
+
+it.each(["config", "missing/generated.js"])("rejects linked command targets inside canonical Git metadata: %s", async target => {
+  const root = await fixture();
+  await mkdir(join(root, "packages/local"), { recursive: true });
+  await writeFile(join(root, ".git/config"), "protected Git configuration\n");
+  await symlink("../../.git", join(root, "packages/local/meta"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "link:./packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: `meta/${target}` }));
+  await expect(validateGitHubInstallInputs(root)).rejects.toThrow(/Git metadata/);
 });
 
 it("rejects symlinks inside copied local dependency contents", async () => {
