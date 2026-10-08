@@ -389,7 +389,10 @@ function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
 }
 
 function isResourceContent(value: unknown): value is McpResourceContent {
-  if (!isRecord(value) || !isOwnMcpString(value, "uri") || !hasOptionalMcpString(value, "mimeType")) return false
+  if (!isRecord(value)
+    || !isOwnMcpString(value, "uri")
+    || !hasOptionalMcpString(value, "mimeType")
+    || !hasOptionalMcpField(value, "_meta", isRecord)) return false
   const hasTextKey = Object.hasOwn(value, "text")
   const hasBlobKey = Object.hasOwn(value, "blob")
   const hasText = hasTextKey && isMcpString(Reflect.get(value, "text"))

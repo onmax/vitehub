@@ -397,6 +397,30 @@ describe("mcpResources", () => {
     await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
   })
 
+  it.each([
+    { _meta: [] },
+    { _meta: null },
+    { _meta: "invalid" },
+    Object.create({ _meta: { inherited: true } }),
+  ])("rejects malformed content metadata before serializing multiple contents", async metadata => {
+    const content = Object.assign(metadata, { text: "first", uri: "resource://example/item.txt" })
+    const source = mcpResources({ server: malformedReadClient({
+      contents: [content, { text: "second", uri: "resource://example/second.txt" }],
+    }) })
+
+    await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
+  })
+
+  it("preserves valid content metadata when serializing multiple contents", async () => {
+    const contents = [
+      { _meta: { custom: true }, text: "first", uri: "resource://example/item.txt" },
+      { text: "second", uri: "resource://example/second.txt" },
+    ]
+    const source = mcpResources({ server: malformedReadClient({ contents }) })
+
+    await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).resolves.toMatchObject({ content: JSON.stringify(contents, null, 2) })
+  })
+
   it("rejects inherited MCP response members", async () => {
     const descriptor = Object.create({ name: "item.txt", uri: "resource://example/item.txt" })
     const inheritedResources = Object.create({ resources: [descriptor] })
