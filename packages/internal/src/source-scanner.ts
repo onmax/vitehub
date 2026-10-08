@@ -15,6 +15,42 @@ function isQuote(char: string | undefined) {
 }
 
 type ControlFlowRegexCache = Map<number, boolean | undefined>
+type JsxElement = { end: number, expressions: { start: number, end: number }[] }
+const jsxElements = new WeakMap<ControlFlowRegexCache, { source: string, results: Map<number, JsxElement | undefined> }>()
+const sourceSyntaxes = new WeakMap<ControlFlowRegexCache, "jsx" | "tsx">()
+
+function createControlFlowRegexCache(parent?: "jsx" | "tsx" | ControlFlowRegexCache): ControlFlowRegexCache {
+  const context: ControlFlowRegexCache = new Map()
+  const syntax = typeof parent === "string" ? parent : parent && sourceSyntaxes.get(parent)
+  if (syntax) sourceSyntaxes.set(context, syntax)
+  return context
+}
+
+/** Bind file grammar once and retain it while scanning source fragments. */
+export function createSourceScanner(file = "") {
+  const syntax = /\.(?:c|m)?tsx$/i.test(file) ? "tsx" : /\.(?:c|m)?jsx$/i.test(file) ? "jsx" : undefined
+  return {
+    stripBoundaryComments: (source: string) => stripBoundaryCommentsWithContext(source, createControlFlowRegexCache(syntax)),
+    maskSourceLiterals: (source: string) => maskSourceLiteralsWithContext(source, createControlFlowRegexCache(syntax)),
+    findMatching: (source: string, index: number, open: string, close: string) => findMatchingWithContext(source, index, open, close, createControlFlowRegexCache(syntax)),
+    splitTopLevel: (source: string, separator = ",") => splitTopLevelWithContext(source, separator, createControlFlowRegexCache(syntax)),
+    findIdentifierCalls: (source: string, name: string) => findIdentifierCallsWithContext(source, name, createControlFlowRegexCache(syntax)),
+    findDefaultExportCall: (source: string, names: string[], options: { positionalOptionsIndex?: number } = {}) => findDefaultExportCallWithContext(source, names, options, createControlFlowRegexCache(syntax)),
+    readObjectPropertyNames: (source: string) => readObjectPropertyNamesWithContext(source, createControlFlowRegexCache(syntax)),
+    readObjectProperty: (source: string, property: string) => readObjectPropertyWithContext(source, property, createControlFlowRegexCache(syntax)),
+  }
+}
+
+export const {
+  stripBoundaryComments,
+  maskSourceLiterals,
+  findMatching,
+  splitTopLevel,
+  findIdentifierCalls,
+  findDefaultExportCall,
+  readObjectPropertyNames,
+  readObjectProperty,
+} = createSourceScanner()
 
 function skipQuoted(source: string, index: number, controlFlowRegexes = new Map<number, boolean | undefined>()) {
   const quote = source[index]
@@ -53,6 +89,12 @@ function skipTemplateLiteral(source: string, index: number, controlFlowRegexes: 
         continue
       }
       index += 1
+      continue
+    }
+    const jsxEnd = skipJsxLiteral(source, index, previousSignificant, controlFlowRegexes)
+    if (jsxEnd !== undefined) {
+      index = jsxEnd
+      previousSignificant = "literal"
       continue
     }
     if (char === "\"" || char === "'") {
@@ -138,7 +180,7 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
   const start = end - keyword.length + 1
   return source.slice(start, end + 1) === keyword
     && !/[$\p{ID_Continue}\u200C\u200D]$/u.test(source.slice(0, start))
-    && source[previousCodeIndex(source, start - 1, controlFlowRegexes)] !== "."
+    && !/[.#]/.test(source[previousCodeIndex(source, start - 1, controlFlowRegexes)] ?? "")
 }
 
 function endsWithPostfixUpdate(source: string, index: number, sign: string) {
@@ -170,7 +212,7 @@ function isForOfRegexStart(source: string, index: number, controlFlowRegexes: Co
     const open = char === ")" ? "(" : char === "]" ? "[" : char === "}" ? "{" : undefined
     if (open) {
       let start = current - 1
-      while (start >= 0 && (source[start] !== open || findMatching(source, start, open, char, controlFlowRegexes) !== current)) start -= 1
+      while (start >= 0 && (source[start] !== open || findMatchingWithContext(source, start, open, char, controlFlowRegexes) !== current)) start -= 1
       if (start < 0) return false
       current = start
     }
@@ -247,11 +289,11 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
 
     for (let current = closeParen; current >= 0; current--) {
       if (source[current] !== "(") continue
-      if (findMatching(source, current, "(", ")", controlFlowRegexes) !== closeParen) continue
+      if (findMatchingWithContext(source, current, "(", ")", controlFlowRegexes) !== closeParen) continue
       const head = source.slice(0, current).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ")
       const keywordEnd = previousCodeIndex(source, current - 1, controlFlowRegexes)
       const keyword = /(?:^|[^$\p{ID_Continue}\u200C\u200D])(catch|for|if|while|with|switch)$/u.exec(source.slice(0, keywordEnd + 1))?.[1]
-      const controlHead = keyword && source[previousCodeIndex(source, keywordEnd - keyword.length, controlFlowRegexes)] !== "."
+      const controlHead = keyword && !/[.#]/.test(source[previousCodeIndex(source, keywordEnd - keyword.length, controlFlowRegexes)] ?? "")
       const result = !!controlHead && (keyword !== "switch" || source[index] === "{")
         || source[index] === "{" && /(?:^|[;{}])\s*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*$/u.test(head)
       controlFlowRegexes.set(index, result)
@@ -304,7 +346,7 @@ function isModuleDeclarationRegexStart(source: string, index: number, previous: 
 
 function isStatementBlockRegexStart(source: string, closeBrace: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
   for (let openBrace = closeBrace - 1; openBrace >= 0; openBrace--) {
-    if (source[openBrace] !== "{" || findMatching(source, openBrace, "{", "}", controlFlowRegexes) !== closeBrace) continue
+    if (source[openBrace] !== "{" || findMatchingWithContext(source, openBrace, "{", "}", controlFlowRegexes) !== closeBrace) continue
     const previous = previousCodeIndex(source, openBrace - 1, controlFlowRegexes)
     if (source[previous] === "{" && source[previous - 1] === "$") return false
     if (previous < 0 || /[;{}]/.test(source[previous] ?? "")) return true
@@ -348,11 +390,13 @@ function declarationPrefix(source: string, head: string, offset: number, control
 function findDecoratorStart(source: string, head: string, end: number, controlFlowRegexes: ControlFlowRegexCache): number | undefined {
   let current = end
   while (current >= 0) {
-    if (source[current] === ")") {
-      let openParen = current - 1
-      while (openParen >= 0 && (source[openParen] !== "(" || findMatching(source, openParen, "(", ")", controlFlowRegexes) !== current)) openParen -= 1
-      if (openParen < 0) return
-      current = previousCodeIndex(source, openParen - 1, controlFlowRegexes)
+    if (source[current] === ")" || source[current] === ">") {
+      const close = source[current]
+      const open = close === ")" ? "(" : "<"
+      let start = current - 1
+      while (start >= 0 && (source[start] !== open || findMatchingWithContext(source, start, open, close, controlFlowRegexes) !== current)) start -= 1
+      if (start < 0) return
+      current = previousCodeIndex(source, start - 1, controlFlowRegexes)
       if (source[current] === "@") return current
       continue
     }
@@ -406,6 +450,89 @@ function skipRegexLiteral(source: string, index: number) {
   return index
 }
 
+function skipJsxLiteral(source: string, index: number, previousSignificant: string, controlFlowRegexes: ControlFlowRegexCache): number | undefined {
+  if (source[index] !== "<") return
+  const syntax = sourceSyntaxes.get(controlFlowRegexes)
+  if (!syntax) return
+  if (!isRegexLiteralStart(source, index, previousSignificant, controlFlowRegexes) && !isControlFlowRegexStart(source, index, controlFlowRegexes)) return
+  if (syntax === "tsx" && isTypeParameterHead(source, index)) return
+  return skipJsxElement(source, index, controlFlowRegexes)
+}
+
+function isTypeParameterHead(source: string, index: number): boolean {
+  let start = index + 1
+  if (/^const(?![$\p{ID_Continue}\u200C\u200D])/u.test(source.slice(start))) start = skipWhitespaceAndComments(source, start + "const".length)
+  const name = /^[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*/u.exec(source.slice(start))
+  if (!name) return false
+  const next = skipWhitespaceAndComments(source, start + name[0].length)
+  if (source[next] === "=" || source[next] === ",") return true
+  if (!/^extends(?![$\p{ID_Continue}\u200C\u200D])/u.test(source.slice(next))) return false
+  const constraint = skipWhitespaceAndComments(source, next + "extends".length)
+  return constraint < source.length && source[constraint] !== "=" && source[constraint] !== ">" && source[constraint] !== "/"
+}
+
+function skipJsxElement(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): number | undefined {
+  let cached = jsxElements.get(controlFlowRegexes)
+  // Prefix rescans share the context, but JSX offsets belong to one source.
+  if (!cached || cached.source !== source) {
+    cached = { source, results: new Map() }
+    jsxElements.set(controlFlowRegexes, cached)
+  }
+  if (cached.results.has(index)) return cached.results.get(index)?.end
+  const element = readJsxElement(source, index, controlFlowRegexes)
+  cached.results.set(index, element)
+  jsxElements.set(controlFlowRegexes, cached)
+  return element?.end
+}
+
+function readJsxElement(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): JsxElement | undefined {
+  const tag = /^<([$_\p{ID_Start}][-$.:\p{ID_Continue}\u200C\u200D]*)?(?=[\s/>])/u.exec(source.slice(index))
+  if (!tag) return
+  const name = tag[1] ?? ""
+  const expressions: JsxElement["expressions"] = []
+  let current = index + tag[0].length
+  if (!name && source[current] !== ">") return
+  while (current < source.length && source[current] !== ">") {
+    if (source[current] === "\"" || source[current] === "'") {
+      const end = source.indexOf(source[current], current + 1)
+      if (end === -1) return
+      current = end + 1
+    }
+    else if (source[current] === "{") {
+      const end = findMatchingWithContext(source, current, "{", "}", controlFlowRegexes)
+      if (end === undefined) return
+      expressions.push({ start: current, end })
+      current = end + 1
+    }
+    else if (source[current] === "/" && source[current + 1] === ">") return { end: current + 2, expressions }
+    else if (source[current] === "<") return
+    else current += 1
+  }
+  if (source[current] !== ">") return
+  current += 1
+  if (!source.includes(`</${name}`, current)) return
+  while (current < source.length) {
+    if (source.startsWith("</", current)) {
+      const closing = /^<\/([$_\p{ID_Start}][-$.:\p{ID_Continue}\u200C\u200D]*)?\s*>/u.exec(source.slice(current))
+      return closing && (closing[1] ?? "") === name ? { end: current + closing[0].length, expressions } : undefined
+    }
+    if (source[current] === "<") {
+      const end = skipJsxElement(source, current, controlFlowRegexes)
+      if (end === undefined) return
+      const child = jsxElements.get(controlFlowRegexes)
+      if (child?.source === source) expressions.push(...child.results.get(current)?.expressions ?? [])
+      current = end
+    }
+    else if (source[current] === "{") {
+      const end = findMatchingWithContext(source, current, "{", "}", controlFlowRegexes)
+      if (end === undefined) return
+      expressions.push({ start: current, end })
+      current = end + 1
+    }
+    else current += 1
+  }
+}
+
 function trackSignificant(previousSignificant: string, char: string | undefined) {
   if (/[a-z$]/i.test(char ?? "")) {
     return /[\w$]$/.test(previousSignificant) || previousSignificant === "."
@@ -454,9 +581,8 @@ function skipWhitespaceAndComments(source: string, index: number) {
   return index
 }
 
-export function stripBoundaryComments(source: string): string {
+function stripBoundaryCommentsWithContext(source: string, controlFlowRegexes: ControlFlowRegexCache): string {
   const start = skipWhitespaceAndComments(source, 0)
-  const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let end = start
   let previousSignificant = ""
   for (let index = start; index < source.length;) {
@@ -475,7 +601,12 @@ export function stripBoundaryComments(source: string): string {
       index = skipBlockComment(source, index)
       continue
     }
-    if (isQuote(char)) {
+    const jsxEnd = skipJsxLiteral(source, index, previousSignificant, controlFlowRegexes)
+    if (jsxEnd !== undefined) {
+      index = jsxEnd
+      previousSignificant = "literal"
+    }
+    else if (isQuote(char)) {
       index = skipQuoted(source, index, controlFlowRegexes)
       previousSignificant = "literal"
     }
@@ -492,10 +623,6 @@ export function stripBoundaryComments(source: string): string {
   return source.slice(start, end)
 }
 
-export function maskSourceLiterals(source: string): string {
-  return maskSourceLiteralsWithContext(source, new Map<number, boolean | undefined>())
-}
-
 function maskSourceLiteralsWithContext(source: string, controlFlowRegexes: ControlFlowRegexCache): string {
   const output = source.split("")
   let previousSignificant = ""
@@ -508,8 +635,9 @@ function maskSourceLiteralsWithContext(source: string, controlFlowRegexes: Contr
   for (let index = 0; index < source.length;) {
     const char = source[index]
     const next = source[index + 1]
-    let end: number | undefined
-    if (isQuote(char)) {
+    let end = skipJsxLiteral(source, index, previousSignificant, controlFlowRegexes)
+    if (end !== undefined) previousSignificant = "literal"
+    else if (isQuote(char)) {
       end = skipQuoted(source, index, controlFlowRegexes)
       previousSignificant = "literal"
     }
@@ -520,7 +648,8 @@ function maskSourceLiteralsWithContext(source: string, controlFlowRegexes: Contr
       previousSignificant = "literal"
     }
     if (end !== undefined) {
-      mask(index, end)
+      if (sourceSyntaxes.has(controlFlowRegexes) && source[index] === "<") maskJsxElement(source, index, end, output, controlFlowRegexes)
+      else mask(index, end)
       index = end
       continue
     }
@@ -528,6 +657,21 @@ function maskSourceLiteralsWithContext(source: string, controlFlowRegexes: Contr
     index += 1
   }
   return output.join("")
+}
+
+function maskJsxElement(source: string, start: number, end: number, output: string[], controlFlowRegexes: ControlFlowRegexCache) {
+  const cached = jsxElements.get(controlFlowRegexes)
+  const element = cached?.source === source ? cached.results.get(start) : undefined
+  if (!element) return
+  for (let index = start; index < end; index++) {
+    if (!isLineTerminator(source[index])) output[index] = " "
+  }
+  for (const expression of element.expressions) {
+    output[expression.start] = "{"
+    const masked = maskSourceLiteralsWithContext(source.slice(expression.start + 1, expression.end), createControlFlowRegexCache(controlFlowRegexes))
+    for (let offset = 0; offset < masked.length; offset++) output[expression.start + 1 + offset] = masked[offset]
+    output[expression.end] = "}"
+  }
 }
 
 function isMethodDeclarationName(source: string, index: number, closeParen: number) {
@@ -543,12 +687,18 @@ function isMemberAccessName(source: string, index: number) {
   return previousNonWhitespace(source, index) === "."
 }
 
-export function findMatching(source: string, index: number, open: string, close: string, controlFlowRegexes = new Map<number, boolean | undefined>()): number | undefined {
+function findMatchingWithContext(source: string, index: number, open: string, close: string, controlFlowRegexes: ControlFlowRegexCache): number | undefined {
   let depth = 0
   let previousSignificant = ""
   for (let current = index; current < source.length; current++) {
     const char = source[current]
     const next = source[current + 1]
+    const jsxEnd = open === "<" ? undefined : skipJsxLiteral(source, current, previousSignificant, controlFlowRegexes)
+    if (jsxEnd !== undefined) {
+      current = jsxEnd - 1
+      previousSignificant = "literal"
+      continue
+    }
     if (isQuote(char)) {
       current = skipQuoted(source, current, controlFlowRegexes) - 1
       previousSignificant = "literal"
@@ -582,15 +732,20 @@ export function findMatching(source: string, index: number, open: string, close:
   }
 }
 
-export function splitTopLevel(source: string, separator = ",") {
+function splitTopLevelWithContext(source: string, separator: string, controlFlowRegexes: ControlFlowRegexCache) {
   const parts: string[] = []
-  const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let depth = 0
   let previousSignificant = ""
   let start = 0
   for (let index = 0; index < source.length; index++) {
     const char = source[index]
     const next = source[index + 1]
+    const jsxEnd = skipJsxLiteral(source, index, previousSignificant, controlFlowRegexes)
+    if (jsxEnd !== undefined) {
+      index = jsxEnd - 1
+      previousSignificant = "literal"
+      continue
+    }
     if (isQuote(char)) {
       index = skipQuoted(source, index, controlFlowRegexes) - 1
       previousSignificant = "literal"
@@ -610,7 +765,7 @@ export function splitTopLevel(source: string, separator = ",") {
       continue
     }
     if (char === "<") {
-      const genericEnd = findMatching(source, index, "<", ">", controlFlowRegexes)
+      const genericEnd = findMatchingWithContext(source, index, "<", ">", controlFlowRegexes)
       if (genericEnd !== undefined && nextNonWhitespace(source, genericEnd + 1) === "(") {
         index = genericEnd
         previousSignificant = ">"
@@ -638,13 +793,18 @@ export function splitTopLevel(source: string, separator = ",") {
   return parts
 }
 
-export function findIdentifierCalls(source: string, name: string): IdentifierCall[] {
+function findIdentifierCallsWithContext(source: string, name: string, controlFlowRegexes: ControlFlowRegexCache): IdentifierCall[] {
   const calls: IdentifierCall[] = []
-  const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let previousSignificant = ""
   for (let index = 0; index < source.length; index++) {
     const char = source[index]
     const next = source[index + 1]
+    const jsxEnd = skipJsxLiteral(source, index, previousSignificant, controlFlowRegexes)
+    if (jsxEnd !== undefined) {
+      index = jsxEnd - 1
+      previousSignificant = "literal"
+      continue
+    }
     if (isQuote(char)) {
       index = skipQuoted(source, index, controlFlowRegexes) - 1
       previousSignificant = "literal"
@@ -676,7 +836,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
 
     let openParen = skipWhitespaceAndComments(source, index + name.length)
     if (source[openParen] === "<") {
-      const genericEnd = findMatching(source, openParen, "<", ">", controlFlowRegexes)
+      const genericEnd = findMatchingWithContext(source, openParen, "<", ">", controlFlowRegexes)
       if (genericEnd === undefined) {
         previousSignificant = trackSignificant(previousSignificant, char)
         continue
@@ -688,7 +848,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
       continue
     }
 
-    const closeParen = findMatching(source, openParen, "(", ")", controlFlowRegexes)
+    const closeParen = findMatchingWithContext(source, openParen, "(", ")", controlFlowRegexes)
     if (closeParen === undefined) {
       previousSignificant = trackSignificant(previousSignificant, char)
       continue
@@ -698,7 +858,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
       continue
     }
     calls.push({
-      arguments: splitTopLevel(source.slice(openParen + 1, closeParen)),
+      arguments: splitTopLevelWithContext(source.slice(openParen + 1, closeParen), ",", createControlFlowRegexCache(controlFlowRegexes)),
       closeParen,
       name,
       openParen,
@@ -710,10 +870,10 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
   return calls
 }
 
-export function findDefaultExportCall(source: string, names: string[], options: { positionalOptionsIndex?: number } = {}): DefaultExportCall | undefined {
-  const masked = maskSourceLiterals(source)
+function findDefaultExportCallWithContext(source: string, names: string[], options: { positionalOptionsIndex?: number }, controlFlowRegexes: ControlFlowRegexCache): DefaultExportCall | undefined {
+  const masked = maskSourceLiteralsWithContext(source, controlFlowRegexes)
   const calls = names
-    .flatMap(name => findIdentifierCalls(source, name))
+    .flatMap(name => findIdentifierCallsWithContext(source, name, controlFlowRegexes))
     .sort((left, right) => left.start - right.start)
 
   for (const call of calls) {
@@ -762,24 +922,24 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       if (/\b[A-Za-z_$][\w$]*\s*\(/.test(value)) return false
       return true
     }
-    const firstArgument = stripBoundaryComments(call.arguments[0] || "")
+    const firstArgument = stripBoundaryCommentsWithContext(call.arguments[0] || "", createControlFlowRegexCache(controlFlowRegexes))
     let callArgument = !firstArgument.startsWith("{") && options.positionalOptionsIndex !== undefined
-      ? stripBoundaryComments(call.arguments[options.positionalOptionsIndex] || "{}")
+      ? stripBoundaryCommentsWithContext(call.arguments[options.positionalOptionsIndex] || "{}", createControlFlowRegexCache(controlFlowRegexes))
       : firstArgument
     // Positional options are often wrapped in parentheses (and may contain a
     // trailing type assertion). Unwrap only complete boundary parentheses so
     // nested expressions remain intact for object matching below.
     while (callArgument.startsWith("(")) {
-      const boundaryEnd = findMatching(callArgument, 0, "(", ")")
+      const boundaryEnd = findMatchingWithContext(callArgument, 0, "(", ")", createControlFlowRegexCache(controlFlowRegexes))
       if (boundaryEnd === undefined) break
-      const trailing = stripBoundaryComments(callArgument.slice(boundaryEnd + 1))
+      const trailing = stripBoundaryCommentsWithContext(callArgument.slice(boundaryEnd + 1), createControlFlowRegexCache(controlFlowRegexes))
       if (trailing && !isCompleteAssertion(trailing)) break
-      callArgument = stripBoundaryComments(callArgument.slice(1, boundaryEnd))
+      callArgument = stripBoundaryCommentsWithContext(callArgument.slice(1, boundaryEnd), createControlFlowRegexCache(controlFlowRegexes))
     }
     if (!callArgument.startsWith("{")) continue
-    const objectEnd = findMatching(callArgument, 0, "{", "}")
+    const objectEnd = findMatchingWithContext(callArgument, 0, "{", "}", createControlFlowRegexCache(controlFlowRegexes))
     if (objectEnd === undefined) continue
-    const suffix = stripBoundaryComments(callArgument.slice(objectEnd + 1))
+    const suffix = stripBoundaryCommentsWithContext(callArgument.slice(objectEnd + 1), createControlFlowRegexCache(controlFlowRegexes))
     if (suffix && !isCompleteAssertion(suffix)) continue
     const argument = callArgument.slice(0, objectEnd + 1)
     if (/\bexport\s+default\s*(?:\(\s*)*$/.test(masked.slice(0, call.start))) {
@@ -810,10 +970,10 @@ function readObjectMemberKey(source: string, offset: number) {
   }
 }
 
-function* readObjectMembers(objectSource: string) {
-  const normalized = stripBoundaryComments(objectSource)
+function* readObjectMembers(objectSource: string, controlFlowRegexes: ControlFlowRegexCache) {
+  const normalized = stripBoundaryCommentsWithContext(objectSource, controlFlowRegexes)
   if (!normalized.startsWith("{") || !normalized.endsWith("}")) return
-  for (const source of splitTopLevel(normalized.slice(1, -1))) {
+  for (const source of splitTopLevelWithContext(normalized.slice(1, -1), ",", createControlFlowRegexCache(controlFlowRegexes))) {
     if (skipWhitespaceAndComments(source, 0) === source.length) continue
     let key = readObjectMemberKey(source, 0)
     if (key?.name === "get" || key?.name === "set" || key?.name === "async") {
@@ -824,14 +984,14 @@ function* readObjectMembers(objectSource: string) {
 }
 
 /** Names are undefined for spread, computed, or escaped keys. */
-export function readObjectPropertyNames(objectSource: string): (string | undefined)[] {
-  return Array.from(readObjectMembers(objectSource), member => member.name)
+function readObjectPropertyNamesWithContext(objectSource: string, controlFlowRegexes: ControlFlowRegexCache): (string | undefined)[] {
+  return Array.from(readObjectMembers(objectSource, controlFlowRegexes), member => member.name)
 }
 
-export function readObjectProperty(objectSource: string, propertyName: string): string | undefined {
-  for (const member of readObjectMembers(objectSource)) {
+function readObjectPropertyWithContext(objectSource: string, propertyName: string, controlFlowRegexes: ControlFlowRegexCache): string | undefined {
+  for (const member of readObjectMembers(objectSource, controlFlowRegexes)) {
     if (member.name !== propertyName) continue
     const colon = skipWhitespaceAndComments(member.source, member.end)
-    if (member.source[colon] === ":") return stripBoundaryComments(member.source.slice(colon + 1))
+    if (member.source[colon] === ":") return stripBoundaryCommentsWithContext(member.source.slice(colon + 1), createControlFlowRegexCache(controlFlowRegexes))
   }
 }

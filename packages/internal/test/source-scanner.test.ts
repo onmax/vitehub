@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  createSourceScanner,
   findDefaultExportCall,
   findIdentifierCalls,
   readObjectProperty,
@@ -9,7 +10,131 @@ import {
   stripBoundaryComments,
 } from "../src/source-scanner.ts"
 
+const jsxScanner = createSourceScanner("source.tsx")
+
 describe("source scanner", () => {
+  it.each(['const text = "</Email>";', "/* </Email> */", "/* </Email> */\nconst pattern = /Email/;"])("preserves a definition between a type assertion and later JSX text: %s", (after) => {
+    const source = `const first = <Email>value;\nexport default defineThing({ value: "real" });\n${after}`
+    expect(findDefaultExportCall(source, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(stripBoundaryComments(`${source} /* after */`)).toBe(after === "/* </Email> */" ? source.slice(0, source.lastIndexOf("\n")) : source)
+  })
+
+  it.each(["*", " * "])("preserves a regex operand after JSX multiplication: %s", (separator) => {
+    const source = `const result = <Email></Email>${separator}/['"]/u;\nexport default defineThing({ value: "real" });`
+    expect(jsxScanner.findDefaultExportCall(source, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(jsxScanner.stripBoundaryComments(`${source} /* after */`)).toBe(source)
+  })
+
+  it.each(["/ /", "/a/*value", "/a/*value*/b/", "/a/*value + 1 /* after */"])("preserves a closed regex and its multiplication continuation after JSX: %s", (operand) => {
+    const source = `const result = <Email></Email>*${operand};\nexport default defineThing({ value: "real" });`
+    expect(jsxScanner.findDefaultExportCall(source, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(jsxScanner.stripBoundaryComments(`${source} /* after */`)).toBe(source)
+  })
+
+  it.each(["/* </Email> */ /* after; */", '/* </Email> */ /* after" */'])("preserves a definition before punctuation in trailing comments: %s", (after) => {
+    const source = `const definition = <Email>value;\nexport default defineThing({ value: "real" });`
+    expect(findDefaultExportCall(`${source}\n${after}`, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(stripBoundaryComments(`${source}\n${after}`)).toBe(source)
+  })
+
+  it("preserves a regex statement after a closing tag in a TypeScript comment", () => {
+    const source = 'const first = <Email>value;\nexport default defineThing({ value: "real" });\n/* </Email> */ / /;'
+    expect(findDefaultExportCall(source, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(stripBoundaryComments(`${source} /* after */`)).toBe(source)
+  })
+
+  it("preserves a JSX expression before an automatic semicolon boundary", () => {
+    const source = 'const first = <Email></Email>\n"after";\nexport default defineThing({ value: "real" });'
+    expect(jsxScanner.findDefaultExportCall(source, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(jsxScanner.stripBoundaryComments(`${source} /* after */`)).toBe(source)
+  })
+
+  it.each([
+    "<T extends Email>(value: T) => value",
+    "<T = Email>(value: T) => value",
+    "<T extends () => Email>(value: T) => value",
+    "<T extends Email>(value: T): Email => value",
+    "<const T extends Email>(value: T) => value",
+  ])("preserves a definition after a TSX generic arrow: %s", (arrow) => {
+    const source = `const first = ${arrow};\nexport default defineThing({ value: "real" });\nconst text = "</T></const>";`
+    expect(jsxScanner.findDefaultExportCall(source, ["defineThing"])?.argument).toBe('{ value: "real" }')
+    expect(jsxScanner.stripBoundaryComments(`${source} /* after */`)).toBe(source)
+  })
+
+  it.each([
+    "<Email></Email>",
+    "<Email />",
+    "<T extends />",
+    "<T>(value) =&gt; value</T>",
+    "<T extends={Email}>(value) {() => value}</T>",
+    String.raw`<Email subject="C:\"></Email>`,
+    "<>message, 'quoted' // text<Email /></>",
+    '<Email subject="hello" {...props}>{value < /Email>/g ? <Email /> : null}</Email>',
+    '<Email><Email />{`hello ${"x"}`}</Email>',
+    `<Email>{(() => { function task() {} /['"]/u.test(value); return null })()}</Email>`,
+  ])("preserves metadata after JSX in a definition: %s", (jsx) => {
+    const object = `{ handler: () => ${jsx}, manual: true, allowRuntimeSchedules: true }`
+    const source = `export default defineThing(${object})`
+    const definition = jsxScanner.findDefaultExportCall(source, ["defineThing"])
+    expect(definition?.argument).toBe(object)
+    expect(jsxScanner.readObjectProperty(object, "manual")).toBe("true")
+    expect(jsxScanner.readObjectPropertyNames(object)).toEqual(["handler", "manual", "allowRuntimeSchedules"])
+    expect(jsxScanner.stripBoundaryComments(`${source} /* after */`)).toBe(source)
+    const masked = jsxScanner.maskSourceLiterals(source)
+    expect(masked).toHaveLength(source.length)
+    expect(masked).toContain("manual: true, allowRuntimeSchedules: true")
+    expect(masked).not.toContain("<Email")
+  })
+
+  it.each([
+    ['<Email>{import(target)}</Email>', '{import(target)}'],
+    ['<Email value={import(target)} />', '{import(target)}'],
+    ['<Email><Email>{import(target)}</Email></Email>', '{import(target)}'],
+    ['<Email>{<Email>{import(target)}</Email>}</Email>', '{       {import(target)}        }'],
+  ])("keeps executable JSX expressions while masking raw text: %s", (jsx, expression) => {
+    const source = `const view = () => ${jsx};`
+    const masked = jsxScanner.maskSourceLiterals(source)
+    expect(masked).toHaveLength(source.length)
+    expect(masked).toContain(expression)
+    expect(masked).not.toContain("<Email")
+  })
+
+  it("masks braces and fake requests inside quoted JSX attributes", () => {
+    const source = '<Email label="{import(fake)}">import(fake)</Email>'
+    expect(jsxScanner.maskSourceLiterals(source)).toBe(" ".repeat(source.length))
+  })
+
+  it("keeps JSX expression ranges after a control-flow regex prefix rescan", () => {
+    const source = '<Email>{(() => { if (ready) {} /pattern/.test(value); return import(target) })()} import(fake)</Email>'
+    const masked = jsxScanner.maskSourceLiterals(source)
+    expect(masked).toHaveLength(source.length)
+    expect(masked).toContain("return import(target)")
+    expect(masked).not.toContain("pattern")
+    expect(masked).not.toContain("import(fake)")
+    expect(masked).not.toContain("<Email")
+  })
+
+  it.each(["value < /Email>/g", "value</Email>/g", "factory<Email>()", "<Email>value"])("preserves comparison regexes and type syntax: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])?.argument).toBe('{ value: "real" }')
+  })
+
+  it.each([
+    ...["if", "for", "while", "with", "catch"].map(name => `class Task { #${name}(handler) {} run() { return this.#${name}(handler) / total } }`),
+    "class Task { #extends = 1; run() { return this.#extends / total } }",
+    'import value from "x" with { type: "json" }\n/[\'"]/u.test(value)',
+    'export { value } from "x" with { type: "json" }\n/[\'"]/u.test(value)',
+    'interface Task<T> {}\n/[\'"]/u.test(value)',
+    'type Task<T> = {}\n/[\'"]/u.test(value)',
+    "const Task = @factory<string>() class {} / total",
+    "const Task = @factory<string>()\nclass {} / total",
+    '@factory<string>() class Task {}\n/[\'"]/u.test(value)',
+    '@factory<string>()\nclass Task {}\n/[\'"]/u.test(value)',
+  ])("scans accepted private-name and generic declaration contexts: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])?.argument).toBe('{ value: "real" }')
+  })
+
   it.each([
     'import "x"\n',
     'import value from "x"\n',
