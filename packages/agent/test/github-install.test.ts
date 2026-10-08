@@ -90,6 +90,23 @@ it.each(["packages/*", "packages/*/*"])("rejects an external symlink matched by 
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
 
+it.each(["pnpm", "manifest"])("rejects escaped negated %s workspace globs before execution", async manager => {
+  const root = await fixture();
+  const packages = ["**", "!../../outside"];
+  if (manager === "pnpm") await writeFile(join(root, "pnpm-workspace.yaml"), `packages: ${JSON.stringify(packages)}\n`);
+  else await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: packages }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it("preserves literal exclamation marks in file dependencies and safe workspace exclusions", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "!local"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "file:!local" } }));
+  await writeFile(join(root, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n  - '!packages/excluded'\n");
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
 it("uses the declared npm version rather than the host npm binary", async () => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
