@@ -101,6 +101,7 @@ function readEntryValue(entry: string): string | undefined {
 function readObjectEntries(body: string | undefined): Array<{ key: string; value: string | undefined }> {
   if (!body) return []
   return splitTopLevel(body)
+    .map(entry => entry.replace(/^(?:\s*(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$)))*\s*/, ""))
     .filter(entry => entry.length > 0)
     .map((entry) => ({ key: readEntryKey(entry) ?? "", value: readEntryValue(entry) }))
 }
