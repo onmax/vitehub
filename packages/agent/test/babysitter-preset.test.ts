@@ -965,8 +965,11 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
-  it.each(["commitRepair", "pushRepair"] as const)("keeps %s available after same-head metadata changes", async operation => {
-    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+  it.each([
+    ["commitRepair", "title"], ["commitRepair", "body"],
+    ["pushRepair", "title"], ["pushRepair", "body"],
+  ] as const)("fences %s after same-head PR %s requirements change", async (operation, field) => {
+    const f = await fixture(true);
     f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
     let edited = false;
     f.onAdmission(async () => {
@@ -975,13 +978,14 @@ describe("Babysitter preset runtime", () => {
       await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
         repository: { full_name: "acme/app" },
         action: "edited",
-        pull_request: { ...f.pr(), body: "Updated validation evidence." },
+        pull_request: { ...f.pr(), [field]: "Updated validation requirements." },
       });
     });
     try {
       await f.reconcile();
       expect(edited).toBe(true);
-      expect(operation === "commitRepair" ? f.commit : f.push).toHaveBeenCalledOnce();
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
       expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
@@ -1058,7 +1062,7 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
-  it("renews a slow repair push against validated same-head metadata", async () => {
+  it("renews a slow repair push against a validated same-head base advance", async () => {
     const f = await fixture(true, false, { allowOperationAfterAdmission: true });
     f.choose("pushRepair");
     let changed = false;
@@ -1067,7 +1071,7 @@ describe("Babysitter preset runtime", () => {
       changed = true;
       await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
         repository: { full_name: "acme/app" }, action: "edited",
-        pull_request: { ...f.pr(), body: "Updated validation evidence." },
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40) } },
       });
     });
     const timers = vi.spyOn(globalThis, "setInterval");
@@ -1102,7 +1106,7 @@ describe("Babysitter preset runtime", () => {
     renew.mockImplementationOnce(async (...args) => {
       await f.runtime.inbox.ingest("renewal-metadata-edited", "pull_request", {
         repository: { full_name: "acme/app" }, action: "edited",
-        pull_request: { ...f.pr(), body: "Validation details arrived during renewal." },
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40) } },
       });
       return await originalRenew(...args);
     });
