@@ -52,6 +52,42 @@ it.each(["1.22.22", "4.9.2"])("suppresses Yarn %s delegation, plugins and worksp
   }
 });
 
+it.each(["node-modules", "pnpm", "pnp"])("preserves the Yarn %s linker without loading project extensions", async linker => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), "");
+  await writeFile(join(root, ".yarnrc.yml"), `nodeLinker: ${linker}\nyarnPath: ./untrusted.cjs\nplugins:\n  - path: ./untrusted-plugin.cjs\n`);
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\ncat "$YARN_RC_FILENAME" > "$HOME/../yarn-config.txt"\n', { mode: 0o755 });
+  await installGitHubPullRequestWorkspace(root);
+  const config = await readFile(join(root, ".git", "yarn-config.txt"), "utf8");
+  expect(config).toContain(`nodeLinker: ${linker}\n`);
+  expect(config).toContain("enableScripts: false\nignorePath: true\n");
+  expect(config).not.toMatch(/yarnPath|plugins|untrusted/);
+});
+
+it("invalidates installed dependencies when the Yarn linker changes", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), "");
+  await writeFile(join(root, ".yarnrc.yml"), "nodeLinker: node-modules\n");
+  await installGitHubPullRequestWorkspace(root);
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+  await writeFile(join(root, ".yarnrc.yml"), "nodeLinker: pnpm\n");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+
+it.each(["invalid", ["node-modules"], { path: "/outside" }])("rejects an unsupported Yarn linker %j before execution", async linker => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), "");
+  await writeFile(join(root, ".yarnrc.yml"), JSON.stringify({ nodeLinker: linker }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toBeInstanceOf(GitHubWorkspaceInstallError);
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
+});
+
 it.each([
   ["file:/srv/outside.tgz", "# yarn lockfile v1\n"],
   ["file:%2fsrv/outside.tgz", "# yarn lockfile v1\n"],

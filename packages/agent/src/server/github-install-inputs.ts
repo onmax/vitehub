@@ -6,7 +6,7 @@ import { parse } from "yaml";
 import { parseSyml } from "@yarnpkg/parsers";
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 
-const inputNames = new Set([".npmrc", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock"]);
+const inputNames = new Set([".npmrc", ".yarnrc.yml", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "yarn.lock"]);
 const dependencyFields = new Set(["dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "resolutions", "overrides", "catalog", "catalogs", "patchedDependencies"]);
 const sourceFields = new Set(["resolved", "tarball", "resolution", "version", "specifier", "repo"]);
 const downloadHosts = new Set(["registry.npmjs.org", "registry.yarnpkg.com", "pkg.pr.new", "github.com", "codeload.github.com"]);
@@ -200,6 +200,9 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
         if (/^<{7} /m.test(source)) throw new GitHubDependencyConflictError(`Resolve dependency conflicts in ${relative(root, path)} and call refreshDependencies before validation.`);
         hash.update(relative(root, path)).update("\0").update(source).update("\0");
         if (entry.name === ".npmrc") { validateNpmConfig(source); continue; }
+        // Yarn reads only the validated linker from this file. Other settings
+        // are omitted from the host configuration and cannot select executables.
+        if (entry.name === ".yarnrc.yml") continue;
         let data: unknown;
         if (entry.name === "yarn.lock") {
           // Classic fields have no YAML separators. The native legacy grammar
