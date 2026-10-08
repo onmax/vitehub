@@ -1,5 +1,6 @@
 import { providerCallbackMetadata, withProviderCallbackMetadata } from "./internal/provider-callback-metadata.ts"
 import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
+import { preparedProviderCheckoutHead } from "./internal/prepared-provider-checkout.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
 import { resolveAgentDriverGateway, withAgentDriverGatewayEnvironment } from "./internal/agent-gateway.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
@@ -3199,16 +3200,22 @@ async function* runProvider<
       providerLaunchDiagnosticPath = materializedLauncher.diagnosticPath
     }
     // Launch may restore source Git ancestry after Workspace initialization.
-    // Preserve a committed root checkout, but still baseline a fresh outer
-    // Workspace when the provider uses a nested source repository.
+    // Only host-prepared checkout ancestry owns an otherwise ordinary Workspace root.
     let pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
       || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
     if (!pullRequestRoot && workspaceSession && !preparedWorkspace?.projectRoot) {
-      const head = await waitForProviderOperation(
-        workspaceSession.exec("git", ["rev-parse", "--verify", "HEAD"], { abortSignal: effectiveSignal }),
+      const expected = await waitForProviderOperation(
+        preparedProviderCheckoutHead(root),
         effectiveSignal,
       )
-      pullRequestRoot = head.exitCode === 0 && /^[\da-f]{40}(?:[\da-f]{24})?$/i.test(head.stdout.trim())
+      if (expected) {
+        const head = await waitForProviderOperation(
+          workspaceSession.exec("git", ["rev-parse", "--verify", "HEAD"], { abortSignal: effectiveSignal }),
+          effectiveSignal,
+        )
+        if (head.exitCode !== 0 || head.stdout.trim() !== expected) throw new Error("Host-prepared provider checkout HEAD changed during launch.")
+        pullRequestRoot = true
+      }
     }
     // Host launch preparation must see source-authored instruction files.
     let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
