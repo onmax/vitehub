@@ -680,6 +680,21 @@ describe("Database Nuxt integration", () => {
     expect(nuxt.options.nitro).toBeUndefined()
   })
 
+  it("rejects a whitespace-only D1 name even when Nitro provides a matching blank name", async () => {
+    const { hooks, nuxt } = createNuxt({
+      database: { databaseId: "content-id", databaseName: "   ", driver: "d1" },
+      dev: false,
+      rootDir: join(tmpdir(), "vitehub-db-nuxt-blank-name"),
+      vite: {},
+    })
+    await hubDb()(undefined, nuxt)
+
+    await expect(callHook(hooks, "nitro:config", {
+      cloudflare: { wrangler: { d1_databases: [{ binding: "DB", database_id: "content-id", database_name: "   " }] } },
+      preset: "cloudflare_module",
+    })).rejects.toMatchObject({ code: "DATABASE_B0001" })
+  })
+
   it("accepts a complete matching D1 binding from Nitro Wrangler config", async () => {
     const { hooks, nuxt } = createNuxt({
       database: {

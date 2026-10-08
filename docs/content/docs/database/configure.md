@@ -30,7 +30,7 @@ export default defineConfig({
 | `database.cli.migrate` | `false` | enabled | Disables the package-owned `db migrate` command. |
 | `database.connection` | `DatabaseConnectionConfig` | local SQLite | Supplies a hosted libSQL connection for Database Definitions that do not declare one. Definition connection values override matching integration values. |
 | `database.driver` | `DatabaseRuntimeD1Options['driver']` | none | Selects Cloudflare D1 runtime output at integration level. Value: `d1`. |
-| `database.binding` | `string` | `DB` or `DB_<NAME>` | Cloudflare D1 binding for integration-level runtime output. |
+| `database.binding` | `string` | `DB` | Integration D1 binding used by the Default Database. Named Databases infer their own binding names. |
 | `database.databaseId` | `DatabaseConfigValue` | Provision State | Cloudflare D1 database id. |
 | `database.previewDatabaseId` | `DatabaseConfigValue` | none | Cloudflare D1 preview database id. |
 | `database.databaseName` | `DatabaseConfigValue` | none | Cloudflare D1 database name. |
@@ -84,11 +84,11 @@ export default defineDatabase({
 
 A Definition inherits the integration resource when it omits both `cloudflare.databaseId` and `cloudflare.databaseName`. Setting either selects its own resource, so it inherits no integration database ID, name, or preview ID. Other D1 settings still inherit their defaults. HTTP proxy URLs and tokens inherit by field. Both must be available after inheritance for HTTP access to work.
 
-For native D1 provider output, use a Cloudflare block that ViteHub can read as a literal. An identifier, top-level spread, or other opaque resource expression fails the provider build when no D1 HTTP or remote libSQL connection is known, even if the evaluated block would inherit the integration resource. A known HTTP or libSQL connection keeps opaque Definitions supported.
+Owned native resources need a nonblank database ID and name at build time. For native D1 provider output, use a Cloudflare block that ViteHub can read as a literal. An identifier, top-level spread, or other opaque resource expression fails the provider build when no D1 HTTP or remote libSQL connection is known, even if the evaluated block would inherit the integration resource. A known HTTP or libSQL connection keeps opaque Definitions supported.
 
 Keep an explicit `cloudflare` property when its value is opaque. For a wholly hidden Definition, declare D1 intent with `hubDb({ driver: 'd1' })` in Vite or set `database.driver` to `'d1'` in Nuxt. Without that intent, ViteHub does not project native D1 output. Opaque local SQLite Definitions remain supported.
 
-An owned Named Definition without an explicit `cloudflare.binding` uses its per-name binding. An owned Default Definition without an explicit binding keeps the integration binding. Generated native D1 binding names must be unique. Set distinct binding values when explicit bindings or normalized names collide.
+A Named Definition without an explicit `cloudflare.binding` uses its per-name binding. A Default Definition without an explicit binding keeps the integration binding. Named Definitions can inherit the integration resource through different binding names. Generated native D1 binding names must be unique, including bindings for identical resources. Set distinct binding values when explicit bindings or normalized names collide.
 
 An opaque Definition that selects its own resource uses HTTP or libSQL access. Native bindings are not used, even when the Definition supplies the integration binding name.
 

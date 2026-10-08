@@ -579,6 +579,29 @@ describe("Vite db provider outputs", () => {
     }
   })
 
+  it.each([
+    { field: "databaseId", literal: "'   '" },
+    { field: "databaseName", literal: "'   '" },
+    { field: "databaseId", literal: String.raw`'\t'` },
+    { field: "databaseName", literal: String.raw`"\u0020"` },
+  ] as const)("rejects whitespace-only owned native $field $literal before hosted Vite output", { timeout: 60_000 }, async ({ field, literal }) => {
+    const rootDir = await createDbBuildProject("vitehub-db-vite-blank-native-")
+    await rm(join(rootDir, "server/databases"), { recursive: true })
+    await mkdir(join(rootDir, "server/databases"), { recursive: true })
+    const databaseId = field === "databaseId" ? literal : "'application-id'"
+    const databaseName = field === "databaseName" ? literal : "'application-db'"
+    await writeFile(join(rootDir, "server/databases/config.ts"), [
+      "import { defineDatabase } from '@vite-hub/database'",
+      `export default defineDatabase({ cloudflare: { databaseId: ${databaseId}, databaseName: ${databaseName} }, schema: {} })`,
+      "",
+    ].join("\n"))
+    await writeFile(join(rootDir, "src/server.ts"), "export default { fetch: () => new Response('ok') }\n")
+
+    await expect(runDbBuild(rootDir)).rejects.toThrow("DATABASE_B0005")
+    expect(existsSync(join(rootDir, ".vitehub/database/cloudflare-runtime.mjs"))).toBe(false)
+    expect(existsSync(join(rootDir, ".vercel/output/functions/__server.func/index.mjs"))).toBe(false)
+  })
+
   it.each(["identifier", "spread"] as const)("supports opaque local SQLite %s Definitions without D1 defaults", { timeout: 60_000 }, async (form) => {
     const rootDir = await createDbBuildProject("vitehub-db-vite-opaque-local-")
     await rm(join(rootDir, "server/databases"), { recursive: true })
@@ -748,7 +771,7 @@ describe("Vite db provider outputs", () => {
     expect(config.cloudflare?.binding).toBe("DB_ANALYTICS")
   })
 
-  it("preserves effective Nuxt D1 identifiers when a definition only opts into Cloudflare", async () => {
+  it("preserves inherited Nuxt D1 identifiers with the named Definition binding", async () => {
     const rootDir = "/tmp/vitehub-d1-runtime-expression"
     const runtimeConfig = createRuntimeConfig(rootDir, {
       cloudflare: {
@@ -765,7 +788,7 @@ describe("Vite db provider outputs", () => {
     const config = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)({ cloudflare: {}, connection: undefined, drizzle: {}, schema: {} }, resolveRuntimeCloudflareConfig)
 
     expect(config.cloudflare).toMatchObject({
-      binding: "NUXT_DB",
+      binding: "DB_PRIMARY",
       databaseId: "nuxt-d1-id",
       databaseName: "nuxt-d1-name",
       migrationsTable: "__nuxt_migrations",

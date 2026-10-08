@@ -90,6 +90,14 @@ describe("discoverDatabaseDefinitions", () => {
     expect(() => discoverDatabaseDefinitions(rootDir)).toThrow('must set `name: "analytics"`')
   })
 
+  it("decodes a static escaped Definition name", async () => {
+    const rootDir = await createTempProject()
+    const file = await writeDefinition(rootDir, "server/databases/alpha/config.ts")
+    await writeFile(file, String.raw`export default defineDatabase({ name: '\u0061lpha', schema: {} })`)
+
+    expect(discoverDatabaseDefinitions(rootDir)).toEqual([expect.objectContaining({ name: "alpha" })])
+  })
+
   it("discovers Vite default and suffix database definitions", async () => {
     const rootDir = await createTempProject()
     const analytics = await writeDefinition(rootDir, "src/analytics.database.ts", "events")
@@ -199,6 +207,63 @@ describe("resolveDBViteConfig", () => {
     ].join("\n"))
 
     expect(resolveDBViteConfig(undefined, rootDir)?.definitionDefaults.cloudflareProjections.default?.resource).toBe("inherited")
+  })
+
+  it.each([
+    { literal: String.raw`'\t\n\r\v\f\x20\u0020\u{A0}'`, value: "\t\n\r\v\f  \u00A0" },
+    { literal: String.raw`"\\t"`, value: String.raw`\t` },
+    { literal: String.raw`'app\'"\\id'`, value: `app'"\\id` },
+    { literal: String.raw`"\u{1F4BE}"`, value: "💾" },
+    { literal: String.raw`'\uD83D\uDCBE'`, value: "💾" },
+    { literal: String.raw`"\0"`, value: "\0" },
+    { literal: String.raw`'\z'`, value: "z" },
+    { literal: "'app\\\r\nid'", value: "appid" },
+  ])("decodes the complete static resource literal $literal", async ({ literal, value }) => {
+    const rootDir = await createTempProject()
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: `databaseId: ${literal}, databaseName: 'application-db',` })
+    const resolved = resolveDBViteConfig(undefined, rootDir)!
+
+    expect(resolved.databases.default.cloudflare?.databaseId).toBe(value)
+    expect(resolved.definitionDefaults.cloudflareProjections.default?.resource).toBe("configured")
+    expect(resolveCloudflareD1Bindings(resolved).d1Databases.map(binding => binding.database_id)).toEqual(value.trim() ? [value] : [])
+  })
+
+  it.each([
+    "'",
+    String.raw`'application-id"`,
+    String.raw`'application-id' + ''`,
+    String.raw`'\u00GG'`,
+    String.raw`'\u{110000}'`,
+    String.raw`'\01'`,
+    String.raw`"\8"`,
+  ])("keeps an invalid or dynamic resource literal %s opaque", async (literal) => {
+    const rootDir = await createTempProject()
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: `databaseId: ${literal}, databaseName: 'application-db',` })
+
+    expect(resolveDBViteConfig(undefined, rootDir)?.definitionDefaults.cloudflareProjections.default?.resource).toBe("opaque")
+  })
+
+  it.each([
+    { expression: String.raw`process.env.VITEHUB_TEST_ESCAPED_D1_ID || '\x20'`, value: " " },
+    { expression: String.raw`env({ source: env.source('VITEHUB_TEST_ESCAPED_D1_\u0049D'), default: "\t" })`, value: "\t" },
+  ])("decodes escaped Env sources and defaults in $expression", async ({ expression, value }) => {
+    const rootDir = await createTempProject()
+    const originalId = process.env.VITEHUB_TEST_ESCAPED_D1_ID
+    delete process.env.VITEHUB_TEST_ESCAPED_D1_ID
+    try {
+      await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: `databaseId: ${expression}, databaseName: 'application-db',` })
+      const resolved = resolveDBViteConfig(undefined, rootDir)!
+      const databaseId = resolved.databases.default.cloudflare?.databaseId
+
+      expect(resolveConfigValue(databaseId)).toBe(value)
+      expect(resolved.definitionDefaults.cloudflareProjections.default?.binding).toBeUndefined()
+      process.env.VITEHUB_TEST_ESCAPED_D1_ID = "runtime-id"
+      expect(resolveConfigValue(databaseId)).toBe("runtime-id")
+    }
+    finally {
+      if (originalId === undefined) delete process.env.VITEHUB_TEST_ESCAPED_D1_ID
+      else process.env.VITEHUB_TEST_ESCAPED_D1_ID = originalId
+    }
   })
 
   it("recognizes a static computed Definition Cloudflare property", async () => {
@@ -507,6 +572,48 @@ describe("resolveDBViteConfig", () => {
     finally {
       if (originalValue === undefined) delete process.env.VITEHUB_TEST_OWNED_RESOURCE
       else process.env.VITEHUB_TEST_OWNED_RESOURCE = originalValue
+    }
+  })
+
+  it("assigns per-name bindings to inherited D1 resources", async () => {
+    const rootDir = await createTempProject()
+    for (const name of ["alpha", "beta"]) await writeDefinition(rootDir, `server/databases/${name}/config.ts`)
+    const resolved = resolveDBViteConfig({ binding: "HOST_DB", databaseId: "host-id", databaseName: "host-db", driver: "d1" }, rootDir)!
+
+    expect(resolveCloudflareD1Bindings(resolved).d1Databases).toMatchObject([
+      { binding: "DB_ALPHA", database_id: "host-id", database_name: "host-db" },
+      { binding: "DB_BETA", database_id: "host-id", database_name: "host-db" },
+    ])
+  })
+
+  it.each(["default", "alpha"] as const)("uses the inferred binding for inherited D1 HTTP with missing Env in %s direct and registry access", async (name) => {
+    const rootDir = await createTempProject()
+    const originalId = process.env.VITEHUB_TEST_INHERITED_D1_ID
+    delete process.env.VITEHUB_TEST_INHERITED_D1_ID
+    try {
+      await writeDefinition(rootDir, name === "default" ? "server/databases/config.ts" : `server/databases/${name}/config.ts`)
+      const resolved = resolveDBViteConfig({
+        binding: "HOST_DB",
+        cloudflare: { http: true },
+        databaseId: { kind: "env-variable", source: { kind: "env", name: "VITEHUB_TEST_INHERITED_D1_ID" } },
+        databaseName: "host-db",
+        driver: "d1",
+      }, rootDir)!
+      const definition = { drizzle: {}, name, schema: {} }
+      const expression = renderDatabaseConfigExpression(name, resolved, "definition")
+      const registry = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)(definition, resolveRuntimeCloudflareConfig)
+      const direct = runtimeConfig(definition, resolved.definitionDefaults)
+      expect(resolved.definitionDefaults.cloudflareProjections[name]?.binding).toBeUndefined()
+      for (const config of [registry, direct]) {
+        expect(config.cloudflare?.binding).toBe(name === "default" ? "HOST_DB" : "DB_ALPHA")
+        expect(config.cloudflare?.databaseName).toBe("host-db")
+        expect(config.cloudflare?.http).toBe(true)
+        expect(resolveConfigValue(config.cloudflare?.databaseId)).toBeUndefined()
+      }
+    }
+    finally {
+      if (originalId === undefined) delete process.env.VITEHUB_TEST_INHERITED_D1_ID
+      else process.env.VITEHUB_TEST_INHERITED_D1_ID = originalId
     }
   })
 

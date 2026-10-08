@@ -54,10 +54,11 @@ export function resolveRuntimeCloudflareConfig(
   const inheritsResource = options.resource !== "configured" && definition?.databaseId === undefined && definition?.databaseName === undefined
   const value = mergeCloudflareConfig(defaults, definition, !inheritsResource)
   if (!value) return
+  const inheritedBinding = options.name === "default" ? defaults?.binding : undefined
   const binding = options.resource === "opaque" && !inheritsResource
     ? undefined
     : definition?.binding?.trim() || options.binding
-      || (inheritsResource || !defaults ? resolveCloudflareD1BindingName(options.name, defaults?.binding) : undefined)
+      || (inheritsResource || !defaults ? resolveCloudflareD1BindingName(options.name, inheritedBinding) : undefined)
   const config: CloudflareD1BindingConfig & { migrationsDir?: string } = { ...value, binding }
   if (inheritsResource || options.resource !== "opaque") config.databaseId = withConfigValueFallback(config.databaseId, options.provisionedId)
   if (options.migrationsDir) config.migrationsDir = options.migrationsDir
@@ -145,15 +146,16 @@ function createUnresolvedBinding(
 ): CloudflareD1UnresolvedBinding {
   const databaseName = resolveConfigValue(database.databaseName)
   const previewDatabaseId = resolveConfigValue(database.previewDatabaseId)
-  return {
+  const unresolved: CloudflareD1UnresolvedBinding = {
     binding,
     database: name,
-    ...(databaseName ? { databaseName } : {}),
     ...(database.migrationsDir ? { migrationsDir: database.migrationsDir } : {}),
     ...(database.migrationsTable ? { migrationsTable: database.migrationsTable } : {}),
     ...(previewDatabaseId ? { previewDatabaseId } : {}),
     reason,
   }
+  if (databaseName?.trim()) unresolved.databaseName = databaseName
+  return unresolved
 }
 
 export function resolveCloudflareD1Binding(
@@ -166,13 +168,13 @@ export function resolveCloudflareD1Binding(
   const databaseName = resolveConfigValue(input.databaseName)
   const previewDatabaseId = resolveConfigValue(input.previewDatabaseId)
 
-  if (!databaseId) {
+  if (!databaseId?.trim()) {
     return {
       bindingName,
       unresolved: createUnresolvedBinding(database, bindingName, input, "missing-database-id"),
     }
   }
-  if (!databaseName) {
+  if (!databaseName?.trim()) {
     return {
       bindingName,
       unresolved: createUnresolvedBinding(database, bindingName, input, "missing-database-name"),

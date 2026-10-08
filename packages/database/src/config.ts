@@ -126,8 +126,46 @@ function readRuntimeEnvDeclaration(expression: string): DatabaseConfigValue | un
   return createRuntimeEnvConfigValue(names as string[], defaultValue)
 }
 
-function readStaticStringLiteral(expression: string) {
-  return /^["']([^"']*)["']$/.exec(expression)?.[1]
+const staticStringEscapes = new Map([["b", "\b"], ["f", "\f"], ["n", "\n"], ["r", "\r"], ["t", "\t"], ["v", "\v"]])
+
+function readStaticStringLiteral(expression: string): string | undefined {
+  const quote = expression[0]
+  if (expression.length < 2 || (quote !== "'" && quote !== '"') || expression.at(-1) !== quote) return
+  let value = ""
+  for (let index = 1; index < expression.length - 1; index += 1) {
+    const char = expression[index]!
+    if (char === quote || char === "\n" || char === "\r") return
+    if (char !== "\\") {
+      value += char
+      continue
+    }
+    const escaped = expression[++index]!
+    if (index >= expression.length - 1) return
+    if (escaped === "\r") {
+      if (expression[index + 1] === "\n") index += 1
+      continue
+    }
+    if (escaped === "\n" || escaped === "\u2028" || escaped === "\u2029") continue
+    if (escaped === "u" && expression[index + 1] === "{") {
+      const match = /^\{([\da-f]+)\}/i.exec(expression.slice(index + 1, -1))
+      const codePoint = match ? Number.parseInt(match[1]!, 16) : Number.NaN
+      if (!match || codePoint > 0x10FFFF) return
+      value += String.fromCodePoint(codePoint)
+      index += match[0].length
+      continue
+    }
+    if (escaped === "u" || escaped === "x") {
+      const length = escaped === "u" ? 4 : 2
+      const hex = expression.slice(index + 1, index + 1 + length)
+      if (hex.length !== length || !/^[\da-f]+$/i.test(hex)) return
+      value += String.fromCharCode(Number.parseInt(hex, 16))
+      index += length
+      continue
+    }
+    if (/\d/.test(escaped) && (escaped !== "0" || /\d/.test(expression[index + 1] || ""))) return
+    value += escaped === "0" ? "\0" : staticStringEscapes.get(escaped) ?? escaped
+  }
+  return value
 }
 
 function readProcessEnvName(expression: string) {
@@ -391,7 +429,7 @@ export function resolveDBViteConfig(
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
     const cloudflare = normalizeCloudflareConfig(mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value), definition.name, migrationsDir)
     if (cloudflare) {
-      if (definitionCloudflare.resource === "configured" && definition.name !== "default" && !definitionCloudflare.value?.binding) {
+      if (definitionCloudflare.resource !== "opaque" && definition.name !== "default" && !definitionCloudflare.value?.binding) {
         cloudflare.binding = resolveCloudflareD1BindingName(definition.name, undefined)
       }
       projection.provisionedId = provisionState.cloudflare?.d1?.[definition.name]
