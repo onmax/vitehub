@@ -337,25 +337,39 @@ function isDenseArray(value: unknown): value is unknown[] {
   return true
 }
 
+function isOwnMcpString(value: object, key: PropertyKey): boolean {
+  return Object.hasOwn(value, key) && isMcpString(Reflect.get(value, key))
+}
+
+function hasOptionalMcpString(value: object, key: PropertyKey): boolean {
+  return !Reflect.has(value, key) || isOwnMcpString(value, key)
+}
+
 function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
   return isRecord(value)
-    && isMcpString(Reflect.get(value, "name"))
-    && isMcpString(Reflect.get(value, "uri"))
+    && isOwnMcpString(value, "name")
+    && isOwnMcpString(value, "uri")
+    && hasOptionalMcpString(value, "mimeType")
 }
 
 function isResourceContent(value: unknown): value is McpResourceContent {
-  if (!isRecord(value) || !isMcpString(Reflect.get(value, "uri"))) return false
-  const hasText = Object.hasOwn(value, "text") && isMcpString(Reflect.get(value, "text"))
-  const hasBlob = Object.hasOwn(value, "blob") && isMcpString(Reflect.get(value, "blob"))
-  return hasText !== hasBlob
+  if (!isRecord(value) || !isOwnMcpString(value, "uri") || !hasOptionalMcpString(value, "mimeType")) return false
+  const hasTextKey = Object.hasOwn(value, "text")
+  const hasBlobKey = Object.hasOwn(value, "blob")
+  const hasText = hasTextKey && isMcpString(Reflect.get(value, "text"))
+  const hasBlob = hasBlobKey && isMcpString(Reflect.get(value, "blob"))
+  return hasText !== hasBlob && (!hasTextKey || hasText) && (!hasBlobKey || hasBlob)
 }
 
 function parseResourceListPage(value: unknown): { nextCursor?: string, resources: McpResourceDescriptor[] } {
   if (!isRecord(value)) {
     throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
   }
+  if (!Object.hasOwn(value, "resources")) {
+    throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
+  }
   const resources = Reflect.get(value, "resources")
-  const nextCursor = Reflect.get(value, "nextCursor")
+  const nextCursor = Object.hasOwn(value, "nextCursor") ? Reflect.get(value, "nextCursor") : undefined
   if (!isDenseArray(resources) || resources.some(resource => !isResourceDescriptor(resource)) || (nextCursor !== undefined && !isMcpString(nextCursor))) {
     throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
   }
@@ -365,6 +379,9 @@ function parseResourceListPage(value: unknown): { nextCursor?: string, resources
 
 function parseResourceContents(value: unknown): McpResourceContent[] {
   if (!isRecord(value)) {
+    throw sourceError("[vitehub] mcpResources server returned an invalid readResource response.")
+  }
+  if (!Object.hasOwn(value, "contents")) {
     throw sourceError("[vitehub] mcpResources server returned an invalid readResource response.")
   }
   const contents = Reflect.get(value, "contents")

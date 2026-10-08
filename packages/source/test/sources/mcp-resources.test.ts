@@ -326,6 +326,7 @@ describe("mcpResources", () => {
     { resources: sparseArray() },
     { resources: [undefined] },
     { resources: [{ name: "item.txt" }] },
+    { resources: [{ mimeType: 42, name: "item.txt", uri: "resource://example/item.txt" }] },
     { resources: [], nextCursor: null },
   ])("rejects malformed listResources responses", async response => {
     const source = mcpResources({ server: malformedListClient(response) })
@@ -338,11 +339,33 @@ describe("mcpResources", () => {
     { contents: sparseArray() },
     { contents: [undefined] },
     { contents: [{ uri: "resource://example/item.txt" }] },
+    { contents: [{ blob: undefined, text: "valid", uri: "resource://example/item.txt" }] },
+    { contents: [{ blob: 42, text: "valid", uri: "resource://example/item.txt" }] },
     { contents: [{ blob: "AAAA", text: "both", uri: "resource://example/item.txt" }] },
+    { contents: [{ mimeType: 42, text: "valid", uri: "resource://example/item.txt" }] },
   ])("rejects malformed readResource responses", async response => {
     const source = mcpResources({ server: malformedReadClient(response) })
 
     await expect(source.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
+  })
+
+  it("rejects inherited MCP response members", async () => {
+    const descriptor = Object.create({ name: "item.txt", uri: "resource://example/item.txt" })
+    const inheritedResources = Object.create({ resources: [descriptor] })
+    const listSource = mcpResources({ server: malformedListClient(inheritedResources) })
+    await expect(listSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/invalid listResources response/i)
+
+    const inheritedMimeDescriptor = Object.assign(Object.create({ mimeType: 42 }), {
+      name: "item.txt",
+      uri: "resource://example/item.txt",
+    })
+    const mimeSource = mcpResources({ server: malformedListClient({ resources: [inheritedMimeDescriptor] }) })
+    await expect(mimeSource.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/invalid listResources response/i)
+
+    const content = Object.assign(Object.create({ uri: "resource://example/item.txt" }), { text: "valid" })
+    const inheritedContents = Object.create({ contents: [content] })
+    const readSource = mcpResources({ server: malformedReadClient(inheritedContents) })
+    await expect(readSource.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
   })
 
   it("rejects inherited MCP client and transport discriminators", async () => {
