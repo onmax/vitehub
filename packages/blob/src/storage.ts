@@ -141,7 +141,7 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
   const pendingTransforms = new Map<string, Promise<Blob | undefined | false>>()
   async function clearDerived(pathname: string) {
     try {
-      const prefix = await derivedCachePrefix(pathname)
+      const prefix = await derivedCachePrefix(driver.canonicalPathname?.(pathname) ?? pathname)
       const paths: string[] = []
       let cursor: string | undefined
       do {
@@ -238,16 +238,17 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
           let cachePath: string | undefined
           let originalBody: Blob | null | undefined
           if (options.transform) {
+            const sourcePath = driver.canonicalPathname?.(normalizedPath) ?? normalizedPath
             if (!sourceVersion) {
               originalBody = await driver.get(normalizedPath)
               if (!originalBody) return
               sourceVersion = await hashBlob(originalBody)
             }
             const fingerprint = await hashCacheKey([
-              normalizedPath, sourceVersion, meta.contentType, options.transform.key,
+              sourcePath, sourceVersion, meta.contentType, options.transform.key,
             ])
             etag = `"${fingerprint}"`
-            cachePath = `${await derivedCachePrefix(normalizedPath)}${await hashCacheKey(options.transform.key)}`
+            cachePath = `${await derivedCachePrefix(sourcePath)}${await hashCacheKey(options.transform.key)}`
           }
 
           const cacheControl = options.cacheControl ?? event.res.headers.get("Cache-Control") ?? "private, no-cache"

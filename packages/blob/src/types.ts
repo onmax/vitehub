@@ -110,6 +110,8 @@ export interface BlobMultipartUpload {
 }
 
 export interface BlobDriverAdapter<TOptions> {
+  /** Canonical identity for drivers that resolve pathname aliases. */
+  canonicalPathname?(pathname: string): string
   name: string
   options: TOptions
   createMultipartUpload?(pathname: string, options: BlobMultipartOptions): Promise<BlobDriverMultipartUpload>

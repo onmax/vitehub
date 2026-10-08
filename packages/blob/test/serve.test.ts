@@ -200,6 +200,18 @@ describe("Blob response transforms", () => {
     expect(cache?.blobs).toHaveLength(0)
   })
 
+  it("shares and removes filesystem derivatives across pathname aliases", async () => {
+    const first = event()
+    await storage.serve(first, "alias/../private/original", options)
+    const second = event()
+    await storage.serve(second, "private/original", options)
+    expect(second.res.headers.get("etag")).toBe(first.res.headers.get("etag"))
+    expect(run).toHaveBeenCalledTimes(1)
+    await storage.del("private/original")
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    expect(cache?.blobs).toHaveLength(0)
+  })
+
   it("rejects public writes and multipart uploads into the derived cache", async () => {
     await storage.serve(event(), "private/original", options)
     const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })

@@ -318,6 +318,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
 
   const driver: BlobDriverAdapter<ResolvedFsBlobStoreConfig> = {
     name: "fs",
+    canonicalPathname: pathname => relative(root, resolveBlobPath(root, pathname)).split(sep).join("/"),
     options,
     async createMultipartUpload(pathname: string, multipartOptions: BlobMultipartOptions) {
       resolveBlobPath(root, pathname)
