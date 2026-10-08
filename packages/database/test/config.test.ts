@@ -171,7 +171,7 @@ describe("resolveDBViteConfig", () => {
 
     const resolved = resolveDBViteConfig(undefined, rootDir)
 
-    expect(resolved?.databases.default.cloudflare).toBeUndefined()
+    expect(resolved?.databases.default.cloudflare).toMatchObject({ binding: "DB" })
     expect(resolved?.definitionDefaults.cloudflareProjections.default?.resource).toBe("opaque")
   })
 

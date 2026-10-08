@@ -534,13 +534,17 @@ describe("Vite db provider outputs", () => {
   })
 
   it.each([
-    { access: "native", form: "identifier", resource: "application" },
-    { access: "native", form: "spread", resource: "application" },
-    { access: "native", form: "identifier", resource: "inherited" },
-    { access: "native", form: "spread", resource: "inherited" },
-    { access: "libsql", form: "identifier", resource: "application" },
-    { access: "libsql", form: "spread", resource: "application" },
-  ])("validates opaque $resource D1 output with $access access in $form configuration before deployment", { timeout: 60_000 }, async ({ access, form, resource }) => {
+    { access: "native", defaults: true, form: "identifier", resource: "application" },
+    { access: "native", defaults: true, form: "spread", resource: "application" },
+    { access: "native", defaults: true, form: "identifier", resource: "inherited" },
+    { access: "native", defaults: true, form: "spread", resource: "inherited" },
+    { access: "libsql", defaults: true, form: "identifier", resource: "application" },
+    { access: "libsql", defaults: true, form: "spread", resource: "application" },
+    { access: "native", defaults: false, form: "identifier", resource: "application" },
+    { access: "native", defaults: false, form: "cloudflare-spread", resource: "application" },
+    { access: "native", defaults: false, form: "spread", resource: "application" },
+    { access: "native", defaults: false, form: "definition-identifier", resource: "application" },
+  ])("validates opaque $resource D1 output with $access access in $form configuration with defaults $defaults before deployment", { timeout: 60_000 }, async ({ access, defaults, form, resource }) => {
     const rootDir = await createDbBuildProject("vitehub-db-vite-opaque-native-")
     await rm(join(rootDir, "server/databases"), { recursive: true })
     await mkdir(join(rootDir, "server/databases"), { recursive: true })
@@ -549,7 +553,7 @@ describe("Vite db provider outputs", () => {
       "import { defineDatabase } from '@vite-hub/database'",
       `const cloudflare = { ${resource === "application" ? "databaseId: 'application-id', databaseName: 'application-db'," : ""} migrationsTable: '__application' }`,
       "const settings = { cloudflare, schema: {} }",
-      `export default defineDatabase(${form === "identifier" ? `{ cloudflare, ${connection} schema: {} }` : `{ ...settings, ${connection} }`})`,
+      `export default defineDatabase(${form === "identifier" ? `{ cloudflare, ${connection} schema: {} }` : form === "definition-identifier" ? "settings" : form === "cloudflare-spread" ? "{ cloudflare, ...settings }" : `{ ...settings, ${connection} }`})`,
       "",
     ].join("\n"))
     await writeFile(join(rootDir, "src/server.ts"), "export default { fetch: () => new Response('ok') }\n")
@@ -560,7 +564,7 @@ describe("Vite db provider outputs", () => {
       "export default defineConfig({",
       "  appType: 'custom',",
       "  build: { outDir: 'dist/client', rolldownOptions: { input: resolve(import.meta.dirname, 'src/server.ts') }, ssr: true },",
-      "  plugins: [hubDb({ driver: 'd1', databaseId: 'host-id', databaseName: 'host-db' })],",
+      `  plugins: [hubDb(${defaults ? "{ driver: 'd1', databaseId: 'host-id', databaseName: 'host-db' }" : form === "identifier" || form === "cloudflare-spread" ? "" : "{ driver: 'd1' }"})],`,
       "})",
       "",
     ].join("\n"))
@@ -573,6 +577,22 @@ describe("Vite db provider outputs", () => {
       expect(existsSync(join(rootDir, ".vercel/output/functions/__server.func/index.mjs"))).toBe(true)
       expect((await readCloudflareConfig(rootDir)).d1_databases).toMatchObject([{ database_id: "host-id" }])
     }
+  })
+
+  it.each(["identifier", "spread"] as const)("supports opaque local SQLite %s Definitions without D1 defaults", { timeout: 60_000 }, async (form) => {
+    const rootDir = await createDbBuildProject("vitehub-db-vite-opaque-local-")
+    await rm(join(rootDir, "server/databases"), { recursive: true })
+    await mkdir(join(rootDir, "server/databases"), { recursive: true })
+    await writeFile(join(rootDir, "server/databases/config.ts"), [
+      "import { defineDatabase } from '@vite-hub/database'",
+      "const settings = { connection: { url: 'file:application.db' }, schema: {} }",
+      `export default defineDatabase(${form === "identifier" ? "settings" : "{ ...settings }"})`,
+      "",
+    ].join("\n"))
+    await writeFile(join(rootDir, "src/server.ts"), "export default { fetch: () => new Response('ok') }\n")
+    await runDbBuild(rootDir)
+    expect(await readdir(join(rootDir, "dist"))).toEqual(["client"])
+    expect(existsSync(join(rootDir, ".vercel/output/functions/__server.func/index.mjs"))).toBe(false)
   })
 
   it.each(["registry", "definition"])("queries a named D1 database through the binding emitted by Vite for %s access", { timeout: 60_000 }, async (access) => {

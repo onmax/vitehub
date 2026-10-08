@@ -88,7 +88,11 @@ A literal resource field that reads an Env value remains owned when that value i
 
 Native D1 output requires a Cloudflare block that ViteHub can read as a literal. An identifier, top-level spread, or other opaque resource expression fails the provider build when no D1 HTTP or remote libSQL connection is known. This rule also applies when the evaluated block would inherit the integration resource. Use a literal block for native output, or configure HTTP or libSQL access.
 
+Keep an explicit `cloudflare` property in the Definition when its value is opaque. If the whole Definition hides that property in an identifier or spread, set `hubDb({ driver: 'd1' })` to declare D1 intent. Without that declaration, a wholly hidden Definition does not project native D1 output. Opaque local SQLite Definitions remain supported.
+
 An owned native resource must resolve its database ID and name at build time. Its own provisioned ID can supply the ID. Use D1 HTTP or remote libSQL access when the resource values become available only at runtime.
+
+Owned named Definitions without an explicit binding use their per-name binding, such as `DB_ANALYTICS`, instead of the integration binding. A default Definition retains the integration binding. Generated native D1 bindings must have unique names. Set distinct `cloudflare.binding` values when explicit bindings or normalized names collide.
 
 An opaque Definition that selects its own resource uses remote HTTP or libSQL access. It does not use a native binding, including an explicit binding that matches the integration resource.
 

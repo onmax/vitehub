@@ -134,8 +134,9 @@ export async function writeHostedDatabaseRuntimeModules(
   const unprojectedNativeDatabases = runtimeConfig.databaseNames.filter((name) => {
     const database = runtimeConfig.databases[name]
     const projection = runtimeConfig.definitionDefaults.cloudflareProjections?.[name]
+    const cloudflare = database?.cloudflare ?? runtimeConfig.definitionDefaults.cloudflare
     return (projection?.resource === "opaque" || (projection?.resource === "configured" && !projection.binding))
-      && database?.cloudflare && !database.cloudflare.http && !isRemoteLibsqlConnectionUrl(database.connection?.url)
+      && cloudflare && !cloudflare.http && !isRemoteLibsqlConnectionUrl(database?.connection?.url)
   })
   if (providers.includes("cloudflare") && unprojectedNativeDatabases.length) {
     const opaqueNativeDatabases = unprojectedNativeDatabases.filter(name => runtimeConfig.definitionDefaults.cloudflareProjections[name]?.resource === "opaque")
@@ -144,6 +145,7 @@ export async function writeHostedDatabaseRuntimeModules(
     }
     throw databaseErrorDiagnostics.DATABASE_B0005({ message: `[vitehub] Owned Cloudflare native D1 databases require resolved cloudflare.databaseId and cloudflare.databaseName values: ${unprojectedNativeDatabases.join(", ")}. Set the resource values at build time or provision the database ID. Use D1 HTTP or a remote libSQL connection for resource values that resolve at runtime.` })
   }
+  if (providers.includes("cloudflare")) resolveCloudflareD1Bindings(runtimeConfig)
   const definitionDefaults = normalizeDefinitionDefaults(runtimeConfig.definitionDefaults)
   const normalizedRuntimeConfig = { ...runtimeConfig, definitionDefaults }
   const definitionDefaultsFile = resolve(generatedDir, "definition-defaults.mjs")

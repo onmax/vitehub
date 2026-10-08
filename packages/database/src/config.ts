@@ -180,7 +180,11 @@ function readDefinitionCloudflareConfig(file: string): { resource: DefinitionClo
     }
   }
   const body = objectLiteralBody(expression)
-  if (resource === "opaque" || body === undefined) return { resource }
+  if (resource === "opaque") {
+    if (cloudflareEntries.length && expression?.trim() !== "undefined") return { resource, value: {} }
+    return { resource }
+  }
+  if (body === undefined) return { resource }
   const httpExpression = readObjectPropertyValue(body, "http")?.trim()
   const httpBody = objectLiteralBody(httpExpression)
   const http = httpExpression === "true"
@@ -387,6 +391,9 @@ export function resolveDBViteConfig(
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
     const cloudflare = normalizeCloudflareConfig(mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value), definition.name, migrationsDir)
     if (cloudflare) {
+      if (definitionCloudflare.resource === "configured" && definition.name !== "default" && !definitionCloudflare.value?.binding) {
+        cloudflare.binding = resolveCloudflareD1BindingName(definition.name, undefined)
+      }
       projection.provisionedId = provisionState.cloudflare?.d1?.[definition.name]
       if (definitionCloudflare.resource !== "opaque") {
         cloudflare.databaseId = withConfigValueFallback(cloudflare.databaseId, projection.provisionedId)

@@ -17,7 +17,7 @@ async function createTempProject() {
 
 async function writeDefinition(rootDir: string, name: string, cloudflare: string) {
   const file = join(rootDir, "server", "databases", name, "config.ts")
-  const table = `${name}Items`
+  const table = `${name.replace(/[^a-z0-9_]/gi, "_")}Items`
   await mkdir(dirname(file), { recursive: true })
   await writeFile(file, [
     "import { defineDatabase } from '@vite-hub/database'",
@@ -136,6 +136,30 @@ describe("Cloudflare D1 binding projections", () => {
         reason: "missing-database-name",
       },
     ])
+  })
+
+  it("assigns per-name bindings to owned resources instead of the host binding", async () => {
+    const rootDir = await createTempProject()
+    for (const name of ["alpha", "beta"]) {
+      await writeDefinition(rootDir, name, `databaseId: '${name}-id', databaseName: '${name}-db',`)
+    }
+    const config = resolveDBViteConfig({ driver: "d1", binding: "HOST_DB", databaseId: "host-id", databaseName: "host-db" }, rootDir)!
+
+    expect(resolveCloudflareD1Bindings(config).d1Databases).toMatchObject([
+      { binding: "DB_ALPHA", database_id: "alpha-id", database_name: "alpha-db" },
+      { binding: "DB_BETA", database_id: "beta-id", database_name: "beta-db" },
+    ])
+  })
+
+  it.each(["explicit", "normalized"] as const)("rejects duplicate generated native bindings from %s names", async (form) => {
+    const rootDir = await createTempProject()
+    const names = form === "normalized" ? ["alpha-beta", "alpha.beta"] : ["alpha", "beta"]
+    for (const name of names) {
+      await writeDefinition(rootDir, name, `${form === "explicit" ? "binding: 'HOST_DB'," : ""} databaseId: '${name}-id', databaseName: '${name}-db',`)
+    }
+    const config = resolveDBViteConfig(undefined, rootDir)!
+
+    expect(() => resolveCloudflareD1Bindings(config)).toThrowError(expect.objectContaining({ code: "DATABASE_B0006" }))
   })
 
   it("replaces generated D1 bindings by binding name when merging with host config", () => {

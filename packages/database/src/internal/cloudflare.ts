@@ -1,4 +1,5 @@
 import { resolveConfigValue, withConfigValueFallback } from "../config-value.ts"
+import { databaseErrorDiagnostics } from "../error-diagnostics.ts"
 
 import type { CloudflareD1BindingConfig, CloudflareD1Projection, DatabaseConfigValue, DBModulePublicOptions, ResolvedDBViteConfig } from "../types.ts"
 
@@ -197,6 +198,7 @@ export function resolveCloudflareD1Bindings(
 ): ResolvedCloudflareD1Bindings {
   const d1Databases: CloudflareD1WranglerBinding[] = []
   const unresolved: CloudflareD1UnresolvedBinding[] = []
+  const bindingDatabases = new Map<string, string>()
 
   for (const name of config.databaseNames) {
     const database = config.databases[name]?.cloudflare
@@ -211,7 +213,14 @@ export function resolveCloudflareD1Bindings(
       migrationsTable: database.migrationsTable,
       previewDatabaseId: database.previewDatabaseId,
     })
-    if (projection.d1Database) d1Databases.push(projection.d1Database)
+    if (projection.d1Database) {
+      const previous = bindingDatabases.get(projection.bindingName)
+      if (previous) {
+        throw databaseErrorDiagnostics.DATABASE_B0006({ message: `[vitehub] Database Definitions ${JSON.stringify(previous)} and ${JSON.stringify(name)} use the same Cloudflare D1 binding ${JSON.stringify(projection.bindingName)}. Set cloudflare.binding to a distinct name for each Definition.` })
+      }
+      bindingDatabases.set(projection.bindingName, name)
+      d1Databases.push(projection.d1Database)
+    }
     if (projection.unresolved) unresolved.push(projection.unresolved)
   }
 
