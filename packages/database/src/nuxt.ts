@@ -503,7 +503,7 @@ function assertDistinctNuxtD1Bindings(runtime: ReturnType<typeof resolveDBViteCo
     const projection = runtime.definitionDefaults.cloudflareProjections[name]
     if (projection?.resource !== "configured" || projection.binding !== d1.bindingName) continue
     const definition = runtime.databases[name]?.cloudflare
-    if (host && resolveConfigValue(definition?.databaseId) === host.database_id && resolveConfigValue(definition?.databaseName) === host.database_name) continue
+    if (host && definition?.databaseId === host.database_id && definition?.databaseName === host.database_name) continue
     throw databaseErrorDiagnostics.DATABASE_B0004({ message: `[vitehub] Database Definition ${JSON.stringify(name)} requires a distinct Cloudflare D1 binding from the Nuxt host resource ${JSON.stringify(d1.bindingName)}. Set cloudflare.binding on the Definition to a different binding name.` })
   }
 }

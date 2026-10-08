@@ -88,6 +88,8 @@ A literal resource field that reads an Env value remains owned when that value i
 
 Native D1 output requires a Cloudflare block that ViteHub can read as a literal. An identifier, top-level spread, or other opaque resource expression fails the provider build when no D1 HTTP or remote libSQL connection is known. This rule also applies when the evaluated block would inherit the integration resource. Use a literal block for native output, or configure HTTP or libSQL access.
 
+An owned native resource must resolve its database ID and name at build time. Its own provisioned ID can supply the ID. Use D1 HTTP or remote libSQL access when the resource values become available only at runtime.
+
 An opaque Definition that selects its own resource uses remote HTTP or libSQL access. It does not use a native binding, including an explicit binding that matches the integration resource.
 
 Provisioned IDs remain fallbacks for runtime Env values in direct Vite and Nuxt output. A value supplied at runtime takes precedence. An opaque Definition that selects its own resource does not receive the integration resource's provisioned ID. Provision state is read from the Vite root even when `projectRoot` sets another root for Definitions and generated files.
@@ -115,7 +117,7 @@ export default defineNuxtConfig({
 
 Run `vitehub provision run --provider cloudflare` once to create or resolve the database and write its non-secret id to `.vitehub/provision.json`. The bridge reads that state, configures Nuxt Content, merges the D1 binding into `nitro.cloudflare.wrangler.d1_databases`, and stages discovered migrations. Set `databaseId` explicitly when the build cannot access provision state; a complete matching binding already present in Nitro Wrangler config is also preserved.
 
-When a Definition owns a different D1 resource, set its `cloudflare.binding` to a name that differs from the Nuxt host's `database.binding`. Nuxt rejects native bindings that would point Content and the Definition at different resources through the same binding. Definitions that resolve to the same database ID and name can share that binding.
+When a Definition owns a different D1 resource, set its `cloudflare.binding` to a name that differs from the Nuxt host's `database.binding`. Nuxt rejects native bindings that would point Content and the Definition at different resources through the same binding. Definitions with statically fixed database ID and name values that match the host can share that binding. Env declarations require a distinct binding, including declarations with a provisioned default.
 
 Built on [Drizzle ORM](https://orm.drizzle.team/), [Drizzle Kit](https://orm.drizzle.team/docs/kit-overview), [libSQL](https://www.npmjs.com/package/%40libsql/client), and Cloudflare [D1](https://developers.cloudflare.com/d1/) bindings when deployed to Cloudflare.
 

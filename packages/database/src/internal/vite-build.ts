@@ -131,13 +131,18 @@ export async function writeHostedDatabaseRuntimeModules(
   runtimeConfig: ResolvedDBViteConfig,
   providers: readonly DBProvider[] = ["cloudflare", "vercel"],
 ) {
-  const opaqueNativeDatabases = runtimeConfig.databaseNames.filter((name) => {
+  const unprojectedNativeDatabases = runtimeConfig.databaseNames.filter((name) => {
     const database = runtimeConfig.databases[name]
-    return runtimeConfig.definitionDefaults.cloudflareProjections?.[name]?.resource === "opaque"
+    const projection = runtimeConfig.definitionDefaults.cloudflareProjections?.[name]
+    return (projection?.resource === "opaque" || (projection?.resource === "configured" && !projection.binding))
       && database?.cloudflare && !database.cloudflare.http && !isRemoteLibsqlConnectionUrl(database.connection?.url)
   })
-  if (providers.includes("cloudflare") && opaqueNativeDatabases.length) {
-    throw databaseErrorDiagnostics.DATABASE_B0003({ message: `[vitehub] Cloudflare native D1 output requires a literal cloudflare block for databases: ${opaqueNativeDatabases.join(", ")}. Use a literal block so ViteHub can project the resource, or configure D1 HTTP or a remote libSQL connection.` })
+  if (providers.includes("cloudflare") && unprojectedNativeDatabases.length) {
+    const opaqueNativeDatabases = unprojectedNativeDatabases.filter(name => runtimeConfig.definitionDefaults.cloudflareProjections[name]?.resource === "opaque")
+    if (opaqueNativeDatabases.length) {
+      throw databaseErrorDiagnostics.DATABASE_B0003({ message: `[vitehub] Cloudflare native D1 output requires a literal cloudflare block for databases: ${opaqueNativeDatabases.join(", ")}. Use a literal block so ViteHub can project the resource, or configure D1 HTTP or a remote libSQL connection.` })
+    }
+    throw databaseErrorDiagnostics.DATABASE_B0005({ message: `[vitehub] Owned Cloudflare native D1 databases require resolved cloudflare.databaseId and cloudflare.databaseName values: ${unprojectedNativeDatabases.join(", ")}. Set the resource values at build time or provision the database ID. Use D1 HTTP or a remote libSQL connection for resource values that resolve at runtime.` })
   }
   const definitionDefaults = normalizeDefinitionDefaults(runtimeConfig.definitionDefaults)
   const normalizedRuntimeConfig = { ...runtimeConfig, definitionDefaults }
