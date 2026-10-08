@@ -655,6 +655,7 @@ describe("access capability", () => {
     class Workspace {
       readonly fs = new Files()
       readonly tools = base.tools
+      readonly history = base.history
       readonly #value = "workspace"
 
       async startSession() {
@@ -703,6 +704,7 @@ describe("access capability", () => {
     const workspace = Object.freeze({
       fs,
       tools: base.tools,
+      history: base.history,
       async startSession() {
         return session
       },
