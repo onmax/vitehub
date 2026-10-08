@@ -1,4 +1,5 @@
 import { handleCacheHeaders } from "h3"
+import { literal, object, parse, string } from "valibot"
 
 import { toArray } from "@vite-hub/internal/arrays"
 
@@ -74,8 +75,8 @@ async function readDerived(cache: Blob | null, fingerprint: string): Promise<Blo
   const boundary = header.indexOf(10)
   if (boundary < 0) return null
   try {
-    const metadata = JSON.parse(new TextDecoder().decode(header.subarray(0, boundary)))
-    if (metadata.fingerprint !== fingerprint || typeof metadata.type !== "string") return null
+    const metadata = parse(object({ fingerprint: literal(fingerprint), type: string() }),
+      JSON.parse(new TextDecoder().decode(header.subarray(0, boundary))))
     return cache.slice(boundary + 1, cache.size, metadata.type)
   }
   catch {

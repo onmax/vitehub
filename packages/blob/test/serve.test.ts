@@ -327,7 +327,7 @@ describe("Blob response transforms", () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 
-  it("keeps concurrent source versions separate and does not overwrite the newer cache", async () => {
+  it("keeps concurrent source versions separate when they change before cache validation", async () => {
     let started!: () => void
     let finish!: () => void
     const ready = new Promise<void>(resolve => { started = resolve })
@@ -348,6 +348,33 @@ describe("Blob response transforms", () => {
     await older
     const [, cached] = await storage.serve(event(), "private/original", { transform })
     expect(await new Response(cached).text()).toBe("updated")
+  })
+
+  it("recomputes the current version after a cross-runtime cache replacement race", async () => {
+    await storage.serve(event(), "private/original", options)
+    await storage.put("private/original", "older:private")
+    const otherRuntime = createBlobStorage(driver)
+    const remove = driver.delete.bind(driver)
+    let started!: () => void
+    let finish!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    vi.spyOn(driver, "delete").mockImplementationOnce(async (paths) => {
+      started()
+      await new Promise<void>(resolve => { finish = resolve })
+      return remove(paths)
+    })
+    const older = storage.serve(event(), "private/original", options)
+    await ready
+    await otherRuntime.put("private/original", "newer:private")
+    const [, newer] = await otherRuntime.serve(event(), "private/original", options)
+    expect(await new Response(newer).text()).toBe("newer")
+    finish()
+    await older
+    const [, fresh] = await otherRuntime.serve(event(), "private/original", options)
+    expect(await new Response(fresh).text()).toBe("newer")
+    expect(run).toHaveBeenCalledTimes(4)
+    const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
+    expect(cache?.blobs).toHaveLength(1)
   })
 
   it("returns transformation failures through the Blob error contract", async () => {

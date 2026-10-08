@@ -120,6 +120,8 @@ export default defineEventHandler(async (event) => {
 
 `createPreview` is application code that validates and transforms the image. Return a `Blob` with its response MIME type. Transform failures use the normal Blob error tuple. If storing the derived result fails, ViteHub logs the failure and serves the freshly transformed result. Concurrent requests in one runtime share the transformation.
 
+The cache is best effort across runtimes. Concurrent source updates can evict a newer cache entry and cause another transformation. Fingerprint validation prevents returning an entry for the wrong source version. Drivers do not need distributed locks or conditional replacement support.
+
 ## Write options
 
 | Option | Type | Description |
