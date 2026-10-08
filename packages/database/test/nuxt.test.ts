@@ -639,6 +639,43 @@ describe("Database Nuxt integration", () => {
     }
   })
 
+  it("uses provisioned D1 ids in the hosted Vercel runtime", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-db-nuxt-vercel-provisioned-"))
+    const definition = join(rootDir, "server/databases/config.ts")
+    await mkdir(dirname(definition), { recursive: true })
+    await writeFile(definition, [
+      'import { defineDatabase } from "@vite-hub/database"',
+      "export default defineDatabase({ schema: {} })",
+      "",
+    ].join("\n"))
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({
+      cloudflare: { d1Nuxt: { "content-db": "provisioned-id" } },
+    }))
+
+    try {
+      const { hooks, nuxt } = createNuxt({
+        database: {
+          driver: "d1",
+          databaseName: "content-db",
+        },
+        dev: false,
+        nitro: { preset: "vercel" },
+        rootDir,
+        vite: {},
+      })
+
+      await hubDb()(undefined, nuxt)
+      await callHook(hooks, "nitro:config", {})
+
+      await expect(readFile(join(rootDir, ".vitehub/database/vercel-runtime.mjs"), "utf8"))
+        .resolves.toContain('databaseId: definition_0.cloudflare.databaseId ?? "provisioned-id"')
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
   it("does not consume default Definition provision state for the Nuxt resource", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "vitehub-db-nuxt-definition-state-"))
     await mkdir(join(rootDir, ".vitehub"), { recursive: true })

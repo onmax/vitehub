@@ -26,7 +26,7 @@ async function writeDefinition(rootDir: string, path: string, tables = "notes", 
     `const ${tables} = sqliteTable('${tables}', { title: text('title') })`,
     "export default defineDatabase({",
     `  name: ${JSON.stringify(name)},`,
-    ...(options.cloudflare ? ["  cloudflare: {", options.cloudflare, "  },"] : []),
+    ...(options.cloudflare !== undefined ? ["  cloudflare: {", options.cloudflare, "  },"] : []),
     ...(options.connection ? ["  connection: {", options.connection, "  },"] : []),
     `  schema: { ${tables} },`,
     "})",
@@ -408,6 +408,28 @@ describe("resolveDBViteConfig", () => {
       databaseId: "remote-id",
       databaseName: "remote-name",
       http: true,
+    })
+  })
+
+  it("uses Nuxt D1 values as fallbacks for partial Cloudflare definitions", async () => {
+    const rootDir = await createTempProject()
+    await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: "" })
+
+    const resolved = resolveDBViteConfig({
+      driver: "d1",
+      databaseId: "remote-id",
+      databaseName: "remote-name",
+      migrationsTable: "__nuxt_migrations",
+      previewDatabaseId: "preview-id",
+      cloudflare: { http: true },
+    }, rootDir)
+
+    expect(resolved?.databases.default.cloudflare).toMatchObject({
+      databaseId: "remote-id",
+      databaseName: "remote-name",
+      http: true,
+      migrationsTable: "__nuxt_migrations",
+      previewDatabaseId: "preview-id",
     })
   })
 

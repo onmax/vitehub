@@ -140,7 +140,10 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
         if (!nuxtOptions.dev) {
           const runtimeProvider = provider ?? (d1 ? "cloudflare" : undefined)
           if (runtimeProvider === "cloudflare" || runtimeProvider === "vercel") {
-            const runtime = resolveDBViteConfig(resolvedOptions, root, { serverDirs })
+            const runtimeOptions = d1?.d1Database
+              ? { ...resolvedOptions, databaseId: resolvedOptions.databaseId ?? d1.d1Database.database_id }
+              : resolvedOptions
+            const runtime = resolveDBViteConfig(runtimeOptions, root, { serverDirs })
             if (runtime) {
               await writeGeneratedDatabaseArtifacts(runtime)
               await writeHostedDatabaseRuntimeModules(resolve(root, ".vitehub/database"), runtime, [runtimeProvider])

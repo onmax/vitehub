@@ -289,15 +289,32 @@ function normalizeCloudflareConfig(
 
 function cloudflareOptions(
   options: DBModulePublicOptions | undefined,
-  definitionConfigured: boolean,
 ): CloudflareD1BindingConfig | undefined {
-  if (definitionConfigured || !options || options === false || options.driver !== "d1") return
+  if (options === false || !options || options.driver !== "d1") return
   const value: CloudflareD1BindingConfig = {}
   if (options.binding !== undefined) value.binding = options.binding
   if (options.databaseId !== undefined) value.databaseId = options.databaseId
   if (options.databaseName !== undefined) value.databaseName = options.databaseName
   if (options.cloudflare?.http !== undefined) value.http = options.cloudflare.http
+  if (options.migrationsTable !== undefined) value.migrationsTable = options.migrationsTable
+  if (options.previewDatabaseId !== undefined) value.previewDatabaseId = options.previewDatabaseId
   return Object.keys(value).length ? value : undefined
+}
+
+function mergeCloudflareConfig(
+  defaults: CloudflareD1BindingConfig | undefined,
+  definition: CloudflareD1BindingConfig | undefined,
+): CloudflareD1BindingConfig | undefined {
+  if (!defaults) return definition
+  if (!definition) return defaults
+  const value: CloudflareD1BindingConfig = { ...defaults }
+  if (definition.binding !== undefined) value.binding = definition.binding
+  if (definition.databaseId !== undefined) value.databaseId = definition.databaseId
+  if (definition.databaseName !== undefined) value.databaseName = definition.databaseName
+  if (definition.http !== undefined) value.http = definition.http
+  if (definition.migrationsTable !== undefined) value.migrationsTable = definition.migrationsTable
+  if (definition.previewDatabaseId !== undefined) value.previewDatabaseId = definition.previewDatabaseId
+  return value
 }
 
 function getDefaultConnection(name: string) {
@@ -362,10 +379,7 @@ export function resolveDBViteConfig(
     const generatedSchemaFile = createGeneratedSchemaFile(rootDir, definition.name)
     generatedDrizzleConfigFilesByDatabase[definition.name] = createGeneratedDrizzleConfigFile(rootDir, definition.name)
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
-    const optionCloudflare = cloudflareOptions(options, definitionCloudflare.configured)
-    const cloudflare = optionCloudflare
-      ? { ...optionCloudflare, ...definitionCloudflare.value }
-      : definitionCloudflare.value
+    const cloudflare = mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value)
     databases[definition.name] = {
       cloudflare: normalizeCloudflareConfig(cloudflare, definition.name, migrationsDir),
       connection: resolveDefinitionConnection(definition.handler, definition.name, options?.connection),
