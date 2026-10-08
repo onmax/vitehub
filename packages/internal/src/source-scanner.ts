@@ -479,7 +479,7 @@ function hasAssertionTypePrefix(source: string) {
   // Mask completed type regions, including import arguments and comments,
   // before recognizing the continuation of a union or intersection.
   const prefix = maskAssertionTypeArguments(source)
-  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|[.\s()[\]{}&|?:])+$/u.test(prefix)
+  return /(?:^|[^\p{ID_Continue}$.])(?:as|satisfies)\s+(?:[\p{ID_Start}_$][\p{ID_Continue}$]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?n?|[.\s()[\]{}&|?:])+$/u.test(prefix)
 }
 
 function maskAssertionTypeArguments(source: string) {
@@ -490,7 +490,7 @@ function maskAssertionTypeArguments(source: string) {
       // Template-literal types can contain commas in `${...}` expressions.
       // Mask them only when they begin at a type delimiter; a template after
       // a complete assertion remains a runtime suffix and must stay visible.
-      if (source[index] === "`" && /(?:\b(?:as|satisfies)|[?:|&])\s*$/.test(source.slice(0, index))) output.fill(" ", index, end)
+      if (source[index] === "`" && /(?:\b(?:as|satisfies)|=>|[?:|&])\s*$/.test(source.slice(0, index))) output.fill(" ", index, end)
       index = end - 1
       continue
     }
@@ -780,7 +780,7 @@ export function findDefaultExportCall(source: string, names: string[], options: 
       // reject the operator whenever it follows an identifier in the
       // assertion suffix. Hyphens embedded in template-literal types do not
       // have an identifier directly before the operator boundary.
-      if (/\b[A-Za-z_$][\w$]*\s*-\s*(?:[A-Za-z_$\d"'`])/.test(value)) return false
+      if (/\b(?!(?:as|satisfies|extends|is|keyof|readonly|typeof)\b)[A-Za-z_$][\w$]*\s*-\s*(?:[A-Za-z_$\d"'`])/.test(value)) return false
       if (/\b(?:instanceof|in)\b/.test(value)) return false
       // Bitwise operators are runtime expressions; retain type unions and
       // intersections whose right side is a type name, but reject literals.
