@@ -1301,7 +1301,13 @@ const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(in
     if (options.blob) addNitroImports(config, "vite-hub/blob", ["blob"])
     if (options.database) addNitroImports(config, "vite-hub/database/drizzle", ["db", "schema"])
   })
-  if (options.agent) addVueImports(nuxt, "vite-hub/agent/vue", agentVueComposables)
+  if (options.agent) {
+    addVueImports(nuxt, "vite-hub/agent/vue", agentVueComposables)
+    // Nuxt disables dependency discovery; prebundle the AI SDK's CommonJS browser dependencies.
+    const optimizeDeps = (nuxt.options.vite.optimizeDeps ??= {})
+    const include = (optimizeDeps.include ??= [])
+    if (!include.includes("vite-hub/agent/vue")) include.push("vite-hub/agent/vue")
+  }
   addVueImports(nuxt, "vite-hub/source/client", ["useCollection"])
   if (options.auth) {
     const envOptions = options.env || {}

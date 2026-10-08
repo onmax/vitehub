@@ -134,7 +134,10 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
   async appendFile(path: string, content: FileContent, _options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const workspace = this.#requireWritable()
     const relativePath = this.#toRelativePath(path)
-    const existing = await workspace.readFile(relativePath, { encoding: "binary" } satisfies ShellReadFileOptions).catch(() => new Uint8Array())
+    const existing = await workspace.readFile(relativePath, { encoding: "binary" } satisfies ShellReadFileOptions).catch(async (error: unknown) => {
+      if (await workspace.exists(relativePath)) throw error
+      return new Uint8Array()
+    })
     const current = toShellContent(existing)
     const next = toShellContent(content)
     const merged = new Uint8Array(current.byteLength + next.byteLength)
@@ -147,6 +150,7 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
   async exists(path: string): Promise<boolean> {
     try {
       const relativePath = this.#toRelativePath(path)
+      if (!relativePath) return true
       return await this.workspace.exists(relativePath)
     }
     catch {
@@ -155,16 +159,21 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
   }
 
   async stat(path: string): Promise<FsStat> {
-    const absolutePath = this.#resolveFromRoot(path)
-    if (absolutePath === workspaceMountPoint) {
+    const relativePath = this.#toRelativePath(path)
+    if (!relativePath) {
       return statFromEntry({ path: "", type: "directory" })
     }
-    return statFromEntry(await this.workspace.stat(this.#toRelativePath(absolutePath)))
+    return statFromEntry(await this.workspace.stat(relativePath))
   }
 
   async mkdir(path: string, options?: MkdirOptions): Promise<void> {
     const workspace = this.#requireWritable()
-    await workspace.mkdir(this.#toRelativePath(path), { recursive: options?.recursive })
+    const relativePath = this.#toRelativePath(path)
+    if (!relativePath) {
+      if (options?.recursive) return
+      throw shellErrorDiagnostics.SHELL_R0023({ message: `[vitehub] Workspace directory already exists: "${path}".` })
+    }
+    await workspace.mkdir(relativePath, { recursive: options?.recursive })
     await this.#refreshPaths()
   }
 

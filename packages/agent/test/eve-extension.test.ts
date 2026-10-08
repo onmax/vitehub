@@ -119,7 +119,7 @@ describe("Eve extension capabilities", () => {
       peerDependenciesMeta?: Record<string, { optional?: boolean }>
     }
     expect(packageJson.devDependencies?.eve).toBe("0.72.1")
-    expect(packageJson.peerDependencies?.eve).toBe("0.72.1")
+    expect(packageJson.peerDependencies?.eve).toBe("0.46.1 || 0.72.1")
     expect(packageJson.peerDependenciesMeta?.eve).toEqual({ optional: true })
 
     const extensionEntry = fileURLToPath(import.meta.resolve("@github-tools/eve-extension"))
@@ -1449,6 +1449,27 @@ describe("Eve extension capabilities", () => {
 
     await expect((capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext()))
       .resolves.toEqual({})
+  })
+
+  it("supplies a non-aborted signal during static dynamic-tool inspection", async () => {
+    const started = vi.fn((_event: unknown, context: { abortSignal: AbortSignal }) => {
+      context.abortSignal.throwIfAborted()
+      return { run: { execute: async () => "ok" } }
+    })
+    const capability = await eveExtensionCapability(
+      "test-extension",
+      "test",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({ dynamic: { events: { "session.started": started }, kind: "eve:dynamic" } }),
+    )
+    const context = capabilityContext()
+    delete context.invocation
+
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
+
+    expect(started).toHaveBeenCalledOnce()
+    expect(started.mock.calls[0]![1].abortSignal.aborted).toBe(false)
+    expect(tools.test__run).toBeDefined()
   })
 
   it("maps Eve session.started tools to each Agent Invocation", async () => {

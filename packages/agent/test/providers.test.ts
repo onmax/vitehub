@@ -819,6 +819,9 @@ describe("agent Vite plugin", () => {
       expect(providerRegistry).toBe(registry)
       expect(windowsProviderRegistry).toBe(registry)
       expect(nitroRegistry).toBe(registry)
+      if (!registry || !providerRegistry) throw new Error("Expected generated workflow registries")
+      expect(await transform(providerRegistry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(registry)
+      expect(plugin.vitehub?.agent?.transformWorkflowRegistry(registry, join(root, ".vitehub", "workflow", "registry.mjs"))).toBe(registry)
     } finally {
       await rm(root, { force: true, recursive: true })
     }
@@ -854,6 +857,8 @@ describe("agent Vite plugin", () => {
       expect(registry).toContain('import { setAgentChannelDeliveryWorkflowStateResolver } from "@vite-hub/agent/server/internal"')
       expect(registry).toContain('const viteHubChatStateOptions = {"url":"libsql://state.example.test"}')
       expect(registry).toContain("setAgentChannelDeliveryWorkflowStateResolver(() => ({ state: viteHubChatStateResolver }))")
+      if (!registry) throw new Error("Expected a libSQL workflow registry")
+      expect(await transform(registry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(registry)
 
       const cloudflarePlugin = hubAgent()
       const cloudflareConfigResolvedHook: unknown = cloudflarePlugin.configResolved
@@ -874,6 +879,8 @@ describe("agent Vite plugin", () => {
       expect(cloudflareRegistry).toContain('import { createCloudflareAgentState, getActiveCloudflareEnv } from "@vite-hub/agent/cloudflare"')
       expect(cloudflareRegistry).toContain("(context.cloudflare?.env || getActiveCloudflareEnv())?.CHAT_STATE")
       expect(cloudflareRegistry).toContain("setAgentChannelDeliveryWorkflowStateResolver(context =>")
+      if (!cloudflareRegistry) throw new Error("Expected a Cloudflare workflow registry")
+      expect(await cloudflareTransform(cloudflareRegistry, "/virtual/.vitehub/workflow/registry.mjs")).toBe(cloudflareRegistry)
 
       await cloudflareConfigResolved({
         command: "build",
@@ -17636,12 +17643,12 @@ describe("server helpers", () => {
       await blocked
       return "internal output"
     })
-    const createBatch = vi.fn(async ([{ params }]: Array<{ params: { input?: AgentRunInput } }>) => {
+    const createBatch = vi.fn(async ([{ id, params }]: Array<{ id: string; params: { input?: AgentRunInput } }>) => {
       workflowPayloads.push(params)
       if (createBatch.mock.calls.length === 3) {
         recoveredRetryStarted.resolve()
         await recoveredRetryBlocked
-        return [{ id: "recovered-retry", status: async () => ({ status: "queued" }) }]
+        return [{ id, status: async () => ({ status: "queued" }) }]
       }
       throw new Error("provider response was lost")
     })
@@ -18605,13 +18612,17 @@ describe("server helpers", () => {
     }
     try {
       await state.connect()
+      vi.useFakeTimers()
       pending.push(ownerHandler(request(91_120), "telegram", context))
       await vi.waitFor(() => expect(runs).toBe(1))
       pending.push(handler(request(91_121), "telegram", context))
       await vi.waitFor(() => expect(sendInput).toHaveBeenCalledTimes(1))
+      // Expire the 1ms delivery dedupe window before the duplicate starts.
+      await vi.advanceTimersByTimeAsync(2)
       pending.push(handler(request(91_121), "telegram", context))
       await vi.waitFor(() => expect(admitted).toHaveBeenCalledTimes(3))
       expect(sendInput).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(500)
       await Promise.all(pending.slice(1))
       expect(runs).toBe(1)
       acceptance.resolve()
@@ -18629,6 +18640,7 @@ describe("server helpers", () => {
       released.resolve()
       await Promise.allSettled(pending)
       await Promise.allSettled(reconciliation)
+      vi.useRealTimers()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
     }

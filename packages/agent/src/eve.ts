@@ -258,7 +258,7 @@ async function resolveEveTools(
       if (!event || !handler) continue
       const session = eveSession(context)
       const resolved = await handler(eveLifecycleEvent(event, session.turn), {
-        abortSignal: context.abortSignal ?? context.invocation?.input.get().abortSignal,
+        abortSignal: context.abortSignal ?? context.invocation?.input.get().abortSignal ?? new AbortController().signal,
         channel: {
           kind: context.run?.origin,
           metadata: context.invoker.meta,
