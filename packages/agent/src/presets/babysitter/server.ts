@@ -405,7 +405,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return await parkMerge(response.status === "failed" ? `GitHub merge failed: ${response.details.message}` : "GitHub enqueued the pull request; waiting for its merge webhook.");
       }
     } catch (error) {
-      if (!mergeStarted) await pullRequestInbox.release(claim);
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
       // Definite HTTP rejections did not enqueue a merge. Keep the fence for
       // timeouts and transport failures, which may have delivered the request.
