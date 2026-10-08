@@ -451,6 +451,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it.each(["commitRepair", "pushRepair"] as const)("rejects %s after the prepared conflict base changes", async operation => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const f = await fixture(false, false, { mergeableState: "dirty" });
     f.choose(operation, operation === "commitRepair" ? { message: "resolve base conflict", paths: ["source.ts"] } : {});
     f.onAdmission(() => { f.advanceBase("d".repeat(40)); });
@@ -463,10 +464,10 @@ describe("Babysitter preset runtime", () => {
       expect(retry?.status).toBe("ready");
       expect(retry?.refresh).toBe(true);
       f.choose(undefined);
-      const now = vi.spyOn(Date, "now").mockReturnValue(retry!.nextAt + 1);
-      try { await f.reconcile(); } finally { now.mockRestore(); }
+      vi.setSystemTime(retry!.nextAt + 1);
+      await f.reconcile();
       expect((await f.runtime.inbox.get("acme/app", 12))?.pr?.base?.sha).toBe("d".repeat(40));
-    } finally { await f.runtime.inbox.close(); }
+    } finally { await f.runtime.inbox.close(); vi.useRealTimers(); }
   });
 
   it("bounds stalled readiness hooks and propagates rejection and cancellation", async () => {
