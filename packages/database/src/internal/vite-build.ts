@@ -77,6 +77,11 @@ interface CloudflareDBConfig {
   observability: { enabled: true }
 }
 
+export function usesD1HttpOnly(runtimeConfig: ResolvedDBViteConfig) {
+  return runtimeConfig.databaseNames.length > 0
+    && runtimeConfig.databaseNames.every(name => Boolean(runtimeConfig.databases[name]?.cloudflare?.http))
+}
+
 function renderRuntimeModule(file: string, runtimeConfig: ResolvedDBViteConfig) {
   const imports = runtimeConfig.definitions.flatMap((definition, index) => [
     `import definition_${index} from ${JSON.stringify(createImportPath(file, definition.handler))}`,
@@ -93,7 +98,7 @@ function renderRuntimeModule(file: string, runtimeConfig: ResolvedDBViteConfig) 
     createAgentDatabaseImport: createImportPath(file, resolveRuntimeModule("runtime/agent")),
     databaseEntries,
     imports: [
-      `import { createHostedDrizzleDb } from ${JSON.stringify(createImportPath(file, resolveRuntimeModule("runtime/hosted")))}`,
+      `import { createHostedDrizzleDb } from ${JSON.stringify(createImportPath(file, resolveRuntimeModule(usesD1HttpOnly(runtimeConfig) ? "runtime/d1" : "runtime/hosted")))}`,
       "",
       ...imports,
     ],
