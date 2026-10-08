@@ -941,8 +941,10 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
         // Configure only owned persistent files, leaving supplied clients and
         // remote databases under their caller's connection policy.
         // Give legacy readers a startup window to release the exclusive mode-change lock.
-        await retrySqliteBusy(async () => await opened.execute(options.journalMode === "delete"
-          ? "PRAGMA journal_mode = DELETE" : "PRAGMA journal_mode = WAL"), 30_000)
+        const requested = options.journalMode === "delete" ? "delete" : "wal"
+        const result = await retrySqliteBusy(async () => await opened.execute(`PRAGMA journal_mode = ${requested.toUpperCase()}`), 30_000)
+        const actual = rows(result)[0]?.journal_mode
+        if (actual !== requested) throw new Error(`SQLite journal mode ${requested} was requested, but the VFS retained ${String(actual)}.`)
       } catch (error) {
         await opened.close?.()
         throw error
