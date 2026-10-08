@@ -154,7 +154,7 @@ identity and removes its history and objects. Retry deletion after storage error
 or after stopping abandoned uploads. Failed publications can leave reusable
 objects outside retained usage accounting until deletion. Pruning is not supported.
 Use a strongly consistent Blob backend and small folders. See
-[configuration](https://vitehub.dev/docs/workspace/configure#blob--database-store)
+[configuration](https://vitehub.dev/docs/workspace/configure#blob-database-store)
 and [server API](https://vitehub.dev/docs/workspace/server-api#retained-folder-history).
 
 ## JSON collections

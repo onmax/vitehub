@@ -81,7 +81,7 @@ Normal `fs` writes stage changes in the Store instance. Call `snapshot()` or `hi
 
 Call `await dropStore.delete()` after application authorization to delete the workspace and all its history. Deletion first tombstones the identity, then removes objects and catalog rows. It is permanent. Use a new identity to create a replacement workspace. Retry `delete()` after a storage outage or after stopping an abandoned in-flight request. The tombstone prevents late commits from publishing. An interrupted upload can leave bytes that a later deletion sweep removes.
 
-The Store retains every published revision. It has no pruning API. Failed or conflicting uploads can leave reusable objects outside retained usage accounting until workspace deletion. See [host storage behavior](/docs/workspace/hosts#blob--database-history).
+The Store retains every published revision. It has no pruning API. Failed or conflicting uploads can leave reusable objects outside retained usage accounting until workspace deletion. See [host storage behavior](/docs/workspace/hosts#blob-database-history).
 
 ### Local path locks
 

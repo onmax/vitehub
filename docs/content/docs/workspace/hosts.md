@@ -30,7 +30,7 @@ Add generated types when you want `useWorkspace()` to narrow discovered Workspac
 
 ## Blob + Database history
 
-The [Blob + Database Store](/docs/workspace/configure#blob--database-store) uses the same history contract on D1, D1 HTTP, and local or hosted libSQL. Publication uses an atomic batch of conditional SQL statements. It does not use interactive transactions, which D1 does not support.
+The [Blob + Database Store](/docs/workspace/configure#blob-database-store) uses the same history contract on D1, D1 HTTP, and local or hosted libSQL. Publication uses an atomic batch of conditional SQL statements. It does not use interactive transactions, which D1 does not support.
 
 | Table | Stores |
 | --- | --- |

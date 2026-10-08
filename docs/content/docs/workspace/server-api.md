@@ -79,7 +79,7 @@ Each materialized Source reports its provider, cache disposition, revision, dura
 
 ## Retained folder history
 
-Use retained history to publish a complete folder and read earlier versions. It is available when the Store implements `history`, including the [Blob + Database Store](/docs/workspace/configure#blob--database-store).
+Use retained history to publish a complete folder and read earlier versions. It is available when the Store implements `history`, including the [Blob + Database Store](/docs/workspace/configure#blob-database-store).
 
 ```ts
 const workspace = useWorkspace('drop', { mode: 'write' })
