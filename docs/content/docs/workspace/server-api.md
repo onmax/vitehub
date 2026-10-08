@@ -120,6 +120,8 @@ Read mode exposes `head`, `list`, `open`, and `usage`. Commit requires write mod
 
 History covers the Store file tree. It does not capture live Source responses, resumable drafts, or a running Session. Published revisions are immutable until the workspace is deleted. Empty directories are not part of the file-set history contract.
 
+A commit waits for Definition synchronization before checking Source ownership. Synchronization can publish a Source revision and advance the head. If that happens, the commit reports `WORKSPACE_CONFLICT`. Read the new head and retry with the complete file set. Source-owned files cannot be changed or deleted, including materialized files not yet retained in a revision.
+
 Retained history requires access to the complete Workspace. A facade restricted to selected paths or Sources throws `WORKSPACE_R0069` instead of exposing or replacing a complete folder outside that scope.
 
 ## Sync Sources

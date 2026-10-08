@@ -375,6 +375,43 @@ class ViteHubBlobFailure extends ViteHubError<"BLOB_OPERATION_FAILED", { operati
 }
 
 describe("history policy and capabilities", () => {
+  it("rejects stale first-operation heads before build Source synchronization", async () => {
+    const { store } = await setup("libsql")
+    const revision = await store.history.commit({ ifHead: null, files: rawFiles({ "app.txt": "base" }) })
+    const getKeys = vi.fn(async () => { throw new Error("Source must not run") })
+    registerWorkspace("stale-build", defineWorkspace({ store, sources: { locked: {
+      materialize: "build", getKeys,
+      async getItem(key: string) { return { key, content: "owned" } },
+    } } }))
+    await expect(useWorkspace("stale-build", { mode: "write" }).history.commit({ ifHead: null, files: {} })).rejects.toMatchObject({ code: "WORKSPACE_CONFLICT", details: { expected: null, actual: revision.id } })
+    expect(getKeys).not.toHaveBeenCalled()
+  })
+
+  it("syncs build Sources before the first history operation and protects ownership", async () => {
+    const { store } = await setup("libsql")
+    registerWorkspace("build-owned", defineWorkspace({ store, sources: { locked: file({ workspacePath: "locked.txt", content: "owned", materialize: "build" }) } }))
+    const workspace = useWorkspace("build-owned", { mode: "write" })
+    await expect(workspace.history.commit({ ifHead: null, files: { "locked.txt": "unauthorized" } })).rejects.toMatchObject({ code: "WORKSPACE_CONFLICT" })
+    const synced = await store.history.head()
+    expect(synced).not.toBeNull()
+    expect(await (await store.history.open(synced!.id)).readFile("locked.txt")).toBe("owned")
+    await expect(workspace.history.commit({ ifHead: synced!.id, files: { "locked.txt": "unauthorized" } })).rejects.toThrow("read-only")
+    await expect(workspace.history.commit({ ifHead: synced!.id, files: { "app.txt": "new" } })).rejects.toThrow("read-only")
+    expect(await store.history.head()).toEqual(synced)
+  })
+
+  it("preserves staged Source ownership outside the retained head", async () => {
+    const { store, uploads } = await setup("libsql")
+    registerWorkspace("lazy-owned", defineWorkspace({ store, sources: { locked: file({ workspacePath: "locked.txt", content: "owned", materialize: "lazy" }) } }))
+    const workspace = useWorkspace("lazy-owned", { mode: "write" })
+    expect(await workspace.fs.readFile("locked.txt")).toBe("owned")
+    expect(await store.history.head()).toBeNull()
+    await expect(workspace.history.commit({ ifHead: null, files: { "app.txt": "new" } })).rejects.toThrow("read-only")
+    expect(await store.history.head()).toBeNull()
+    expect(await store.readFile("locked.txt")).toMatchObject({ content: "owned", metadata: { source: "locked" } })
+    expect(uploads).not.toHaveBeenCalled()
+  })
+
   it("reports a capability error for Stores without historical bytes", async () => {
     registerWorkspace("no-history", defineWorkspace({ store: createMemoryWorkspaceStore() }))
     const workspace = useWorkspace("no-history", { mode: "write" })

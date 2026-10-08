@@ -767,6 +767,18 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
             throw workspaceError("[vitehub] History publication requires a Source write grant for every affected path.")
           }
           for (const path of paths) await assertWritableCurrentPath(path)
+          // A Store's own history replaces its draft, including materialized Source files.
+          // Overlay Sources live outside the backing Store's retained file tree.
+          if (history === store.history && allSources.length) {
+            for (const entry of await store.list("", { recursive: true })) {
+              if (entry.type !== "file" || !allSources.some(source => source.key === entry.metadata?.source)) continue
+              const file = options.files[entry.path]
+              const digest = entry.digest ?? await sha256((await store.readFile(entry.path))!.content)
+              if (!file || digest !== await sha256(file.content) || entry.mediaType !== file.mediaType || JSON.stringify(entry.metadata) !== JSON.stringify(file.metadata)) {
+                await assertWritableCurrentPath(entry.path)
+              }
+            }
+          }
           return await history.commit(options)
         })
       }

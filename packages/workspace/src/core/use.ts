@@ -10,8 +10,8 @@ import {
 import { useWorkspaceAssets } from "../asset-registry.ts"
 import { getViteHubErrorShape } from "@vite-hub/runtime"
 
-import { workspaceError } from "./errors.ts"
-import { requireWorkspaceHistory } from "./history.ts"
+import { workspaceConflict, workspaceError } from "./errors.ts"
+import { requireWorkspaceHistory, validateHistoryMessage } from "./history.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { normalizeSafeWorkspacePath, normalizeSafeWorkspacePattern } from "./path.ts"
 import { useRegisteredWorkspace } from "./registry.ts"
@@ -311,7 +311,13 @@ function createLazyWorkspace(name: WorkspaceName, definition?: WorkspaceDefiniti
       list: async options => await requireWorkspaceHistory(await resolveWorkspace()).list(options),
       open: async id => await requireWorkspaceHistory(await resolveWorkspace()).open(id),
       usage: async () => await requireWorkspaceHistory(await resolveWorkspace()).usage(),
-      commit: async options => await requireWorkspaceHistory(await resolveWorkspace()).commit(options),
+      commit: async options => {
+        const history = requireWorkspaceHistory(await resolveWorkspace())
+        validateHistoryMessage(options.message)
+        const head = await history.head()
+        if ((head?.id ?? null) !== options.ifHead) throw workspaceConflict("[vitehub] Workspace head changed before the history commit.", { details: { expected: options.ifHead, actual: head?.id ?? null } })
+        return await requireWorkspaceHistory(await resolveSyncedWorkspace()).commit(options)
+      },
     },
     async capabilities() {
       const resolved = await resolveWorkspace()
