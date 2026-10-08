@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 import { object, optional, parse, record, string } from "valibot"
 
@@ -141,7 +141,22 @@ async function writeMetadata(root: string, pathname: string, meta: FsBlobMetadat
   const path = resolveMetaPath(root, pathname)
   await assertNoSymlinkPath(root, path)
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, JSON.stringify(meta), "utf8")
+  await writeAtomic(root, path, JSON.stringify(meta))
+}
+
+async function writeAtomic(root: string, path: string, bytes: Uint8Array | string) {
+  // Keep incomplete bytes outside user listings, then publish one complete file.
+  const temporary = resolve(root, ".vitehub", "blob-writes", randomUUID())
+  await assertNoSymlinkPath(root, temporary)
+  await mkdir(dirname(temporary), { recursive: true })
+  try {
+    await writeFile(temporary, bytes, { flag: "wx" })
+    await assertNoSymlinkPath(root, path)
+    await rename(temporary, path)
+  }
+  finally {
+    await rm(temporary, { force: true })
+  }
 }
 
 async function removeMetadata(root: string, pathname: string) {
@@ -381,7 +396,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await assertNoSymlinkPath(root, path)
       await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, bytes)
+      await writeAtomic(root, path, bytes)
       await writeMetadata(root, pathname, {
         contentType: putOptions.contentType || (body instanceof Blob ? body.type : undefined),
         customMetadata: putOptions.customMetadata,
