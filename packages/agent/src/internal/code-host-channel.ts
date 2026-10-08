@@ -188,6 +188,12 @@ function reactionContent<TRuntimeConfig extends AgentRuntimeConfig>(
   return "eyes"
 }
 
+const reactionContents: ReadonlySet<string> = new Set<ReactionContent>(["+1", "-1", "laugh", "confused", "heart", "hooray", "rocket", "eyes"])
+
+function isReactionContent(value: string): value is ReactionContent {
+  return reactionContents.has(value)
+}
+
 function reactionAction<TRuntimeConfig extends AgentRuntimeConfig>(
   context: AgentChannelDeliveryEffectContext<TRuntimeConfig>,
 ): string | undefined {
@@ -232,13 +238,18 @@ function statusPayload<TRuntimeConfig extends AgentRuntimeConfig>(
   }
 }
 
-export function codeHostDeliveryEffects<TRuntimeConfig extends AgentRuntimeConfig>(options: {
+export interface CodeHostDeliveryEffectsOptions<TRuntimeConfig extends AgentRuntimeConfig> {
   provider: (context: AgentChannelDeliveryEffectContext<TRuntimeConfig>) => Promise<ForgeProvider>
   target: (context: AgentChannelDeliveryEffectContext<TRuntimeConfig>) => CodeHostTarget | undefined
   statusContext: string
+  /** "id": add and delete GitHub reactions by id. "content": use the shared react and unreact verbs. */
   reactions: "id" | "content"
   publishArtifacts?: (context: AgentChannelDeliveryEffectContext<TRuntimeConfig>, body: string | undefined, provider: ForgeProvider) => Promise<string | undefined>
-}): AgentChannelDeliveryEffects<TRuntimeConfig> {
+}
+
+export function codeHostDeliveryEffects<TRuntimeConfig extends AgentRuntimeConfig>(
+  options: CodeHostDeliveryEffectsOptions<TRuntimeConfig>,
+): AgentChannelDeliveryEffects<TRuntimeConfig> {
   const bodyFor = async (context: AgentChannelDeliveryEffectContext<TRuntimeConfig>, provider: ForgeProvider) => {
     const body = messageChannelReplyBody(context)
     const published = options.publishArtifacts ? await options.publishArtifacts(context, body, provider) : body
@@ -252,9 +263,10 @@ export function codeHostDeliveryEffects<TRuntimeConfig extends AgentRuntimeConfi
       const provider = await options.provider(context)
       const content = reactionContent(context)
       if (options.reactions === "content") {
+        if (!isReactionContent(content)) return
         const ref = target.commentId ? commentRef(provider, target, target.commentId) : codeHostThreadRef(provider, target)
         await codeHostChannelWrite(provider, async () => reactionAction(context) === "remove"
-          ? await provider.threads.unreact(ref, content as ReactionContent) : await provider.threads.react(ref, content as ReactionContent))
+          ? await provider.threads.unreact(ref, content) : await provider.threads.react(ref, content))
         return
       }
       const path = target.commentId ? `/repos/${target.repository}/issues/comments/${target.commentId}/reactions` : `/repos/${target.repository}/issues/${target.number}/reactions`

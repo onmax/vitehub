@@ -1,5 +1,6 @@
 import { messageChannelReplyBody, setMessageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
 export { messageChannelReplyBody, messageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
+import type { CodeHostTarget } from "./internal/code-host-channel.ts"
 import { codeHostChannelFetch, codeHostActivityComments, codeHostDeliveryEffects, codeHostIdentity, codeHostPullRequest, codeHostPullRequestMetadata, codeHostThreadRef, codeHostChannelRequest, codeHostChannelRead, codeHostChannelWrite } from "./internal/code-host-channel.ts"
 import { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
 export { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
@@ -2350,9 +2351,11 @@ function githubPullRequestEffects<TRuntimeConfig extends AgentRuntimeConfig = Ag
   })
 }
 
-function githubCodeHostTarget(command: GitHubPullRequestCommand) {
-  return { host: "github" as const, instance: "github.com", repository: command.repository, number: command.issueNumber,
-    ...(command.event !== "pull_request" ? { commentId: command.commentId } : {}), installationId: command.installationId }
+function githubCodeHostTarget(command: GitHubPullRequestCommand): CodeHostTarget {
+  const target: CodeHostTarget = { host: "github", instance: "github.com", repository: command.repository, number: command.issueNumber, installationId: command.installationId }
+  // Lifecycle invocations have no triggering comment.
+  if (command.event !== "pull_request") target.commentId = command.commentId
+  return target
 }
 
 function githubWebhookDefaults<TRuntimeConfig extends AgentRuntimeConfig>(
