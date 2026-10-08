@@ -1,4 +1,4 @@
-import { symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -378,6 +378,18 @@ it.each([
   await writeFile(join(root, "yarn.lock"), "__metadata:\n  version: 8\n");
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Unsupported|Host-local/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it("fingerprints executable mode changes in local file directory dependencies", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "local"));
+  await writeFile(join(root, "package.json"), '{"dependencies":{"local":"file:./local"}}');
+  await writeFile(join(root, "local/package.json"), '{}');
+  const executable = join(root, "local/cli.js");
+  await writeFile(executable, '#!/usr/bin/env node\n', { mode: 0o644 });
+  await installGitHubPullRequestWorkspace(root);
+  await chmod(executable, 0o755);
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
 });
 
 it("fingerprints the source contents of local file directory dependencies", async () => {

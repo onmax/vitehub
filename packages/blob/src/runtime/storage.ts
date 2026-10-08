@@ -179,7 +179,7 @@ function createRuntimeBlobStorage(name = "default"): BlobStorage {
       const [resolutionError, storage] = await resolveStorageResult("head", name)
       if (resolutionError) return [resolutionError, undefined]
       const [error, object] = await storage.head(pathname)
-      return error ? [error, undefined] : [null, await withServedBlobUrl(name, object)]
+      return error ? [error, undefined] : [null, object && await withServedBlobUrl(name, object)]
     },
     async list(options) {
       const [resolutionError, storage] = await resolveStorageResult("list", name)
