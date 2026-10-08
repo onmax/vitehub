@@ -115,6 +115,7 @@ composition and explicit feature subpaths for application APIs.
 | `vite-hub/workflow` | Workflow Definitions and run helpers. |
 | `vite-hub/workspace` and `vite-hub/workspace/runtime` | Workspace Definitions, Sources, history contracts, runtime facades, and registry APIs. |
 | `vite-hub/workspace/cloudflare` | Cloudflare Workspace runtime setup. |
+| `vite-hub/workspace/blob-database` | Content-addressed Workspace history Store and Database schema. Requires `drizzle-orm`. |
 | `vite-hub/workspace/collections` and `vite-hub/workspace/collections/client` | Bounded Workspace Collection queries and optional Vue client composables. |
 | `vite-hub/workspace/loader`, `vite-hub/workspace/publish`, and `vite-hub/workspace/server` | Workspace loader, publisher, and manual server extension APIs. |
 
