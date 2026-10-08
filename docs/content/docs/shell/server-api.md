@@ -22,6 +22,8 @@ Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Wo
 
 `createWritableWorkspaceFs(useWorkspace(name, { mode: "write" }).fs)` accepts the public writable Workspace facade directly. Workspace writes can return revision receipts. The Shell adapter waits for each write and returns `void` from `writeFile()` and `appendFile()`.
 
+Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
+
 ## Use Shell sessions
 
 A Shell Session keeps policy across repeated commands: call budget, output size, timeouts, and process budget.
