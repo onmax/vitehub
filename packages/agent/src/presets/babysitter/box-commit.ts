@@ -38,6 +38,9 @@ export async function importBoxCommit(session: BoxSession, checkout: string, bas
     // replace it with that older HEAD, or overwrite a divergent host repair.
     if (await localGit(["merge-base", "--is-ancestor", head, previous]).then(() => true, () => false)) return;
     await localGit(["merge-base", "--is-ancestor", previous, head]);
+    // A two-tree update preserves unrelated host edits and refuses conflicting
+    // local changes. Keep the protected index aligned with the imported parent.
+    await localGit(["read-tree", "-u", "-m", previous, head]);
     await localGit(["update-ref", "HEAD", head, previous]);
   } finally {
     // Cleanup must not hide an import error or prevent publication of an imported commit.

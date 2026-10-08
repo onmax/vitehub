@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, expect, it, vi } from "vitest";
 import { resolveBox } from "@vite-hub/box";
 import { importBoxCommit } from "../src/presets/babysitter/box-commit.ts";
+import { commitGitHubPullRequestWorkspace } from "../src/server/github-repair.ts";
 import { importBoxRepairFiles, publishBoxDependencies } from "../src/presets/babysitter/box-repair.ts";
 import { chmod, lstat, mkdir, symlink } from "node:fs/promises";
 
@@ -83,9 +84,27 @@ it("imports a remote repair commit before the Box closes, including a second pus
       await importBoxCommit(f.session, f.checkout, f.base, f.signal);
       expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(head);
       expect(await git(f.checkout, "show", "HEAD:source.txt")).toBe(contents.trim());
-      // The host worktree stays intact; publication only needs the imported objects and HEAD.
-      expect(await readFile(join(f.checkout, "source.txt"), "utf8")).toBe("original\n");
+      expect(await readFile(join(f.checkout, "source.txt"), "utf8")).toBe(contents);
     }
+  } finally { await f.session.close(); }
+});
+
+it("commits an uncommitted Box edit after importing a different committed repair", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.remote, "source.txt"), "committed Box repair\n");
+    await git(f.remote, "commit", "-am", "Box repair");
+    const boxHead = await git(f.remote, "rev-parse", "HEAD");
+    await writeFile(join(f.remote, "follow-up.txt"), "uncommitted Box follow-up\n");
+    await writeFile(join(f.checkout, "local-note.txt"), "keep unrelated host file\n");
+    await importBoxCommit(f.session, f.checkout, f.base, f.signal);
+    await importBoxRepairFiles(f.session, f.checkout, ["follow-up.txt"], f.signal);
+    const repaired = await commitGitHubPullRequestWorkspace(f.checkout, { message: "Follow-up", paths: ["follow-up.txt"] }, { expectedHead: f.base, signal: f.signal });
+    expect(await git(f.checkout, "rev-parse", `${repaired}^`)).toBe(boxHead);
+    expect(await git(f.checkout, "show", "HEAD:source.txt")).toBe("committed Box repair");
+    expect(await git(f.checkout, "show", "HEAD:follow-up.txt")).toBe("uncommitted Box follow-up");
+    expect(await git(f.checkout, "diff", "--cached", "--name-only")).toBe("");
+    expect(await readFile(join(f.checkout, "local-note.txt"), "utf8")).toBe("keep unrelated host file\n");
   } finally { await f.session.close(); }
 });
 
