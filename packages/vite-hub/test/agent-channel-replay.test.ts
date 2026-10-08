@@ -7,18 +7,18 @@ import { createClient } from "@libsql/client"
 import { createServer, type PluginOption } from "vite"
 import { expect, it } from "vitest"
 
-import { loadViteAgent } from "../src/vite/runtime-adapter.ts"
-import { runAgentChannelReplayCli } from "../src/internal/channel-replay-cli.ts"
-import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../src/invocation-stream.ts"
+import { loadViteAgent } from "../../agent/src/vite/runtime-adapter.ts"
+import { runAgentChannelReplayCli } from "../../agent/src/internal/channel-replay-cli.ts"
+import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../../agent/src/invocation-stream.ts"
 
 it("journals authenticated Vite SSR dry-run replays in the host Console database", async () => {
   // Load the built host integration, as an application does, without typechecking unrelated primitives here.
-  const hostEntry = fileURLToPath(new URL("../../vite-hub/dist/index.js", import.meta.url))
+  const hostEntry = fileURLToPath(new URL("../dist/index.js", import.meta.url))
   const nitroEntry = createRequire(import.meta.url).resolve("nitro/vite")
   const { nitro } = await import(nitroEntry) as { nitro: () => PluginOption }
   const { vitehub } = await import(hostEntry) as { vitehub: (options: Record<string, unknown>) => PluginOption }
   const root = await mkdtemp(join(tmpdir(), "vitehub-replay-console-"))
-  const packageRoot = fileURLToPath(new URL("..", import.meta.url))
+  const packageRoot = fileURLToPath(new URL("../../agent", import.meta.url))
   const databaseUrl = `file:${join(root, "configured-console.sqlite")}`
   let server: Awaited<ReturnType<typeof createServer>> | undefined
   const client = createClient({ url: databaseUrl })
