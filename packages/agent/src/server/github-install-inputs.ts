@@ -144,7 +144,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       await selectPatch(path, base);
     }
   }
-  async function inspect(value: unknown, base: string, dependency = false, field = ""): Promise<void> {
+  async function inspect(value: unknown, base: string, dependency = false, field = "", npmPackageEntry = false): Promise<void> {
     if (hasRuntimeType(value, "string")) {
       const source = unwrapYarnVirtualSource(value);
       if (source !== value) return await inspect(source, base, dependency, field);
@@ -160,18 +160,22 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
     if (Array.isArray(value)) { for (const entry of value) await inspect(entry, base, dependency, field); return; }
     if (!isRuntimeRecord(value)) return;
-    const npmLink = npm && field.startsWith("node_modules/") && value.link === true;
+    const npmLink = npmPackageEntry && value.link === true;
     if (npmLink) {
       if (!hasRuntimeType(value.resolved, "string") || /^[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(value.resolved))) {
         throw new Error("npm workspace links must reference checkout-relative paths.");
       }
-      await selectLocalPackage(value.resolved, root, false);
+      await selectLocalPackage(value.resolved, root);
     }
     for (const [key, entry] of Object.entries(value)) {
       if (npmLink && key === "resolved") continue;
       if (key === "workspaces" && pnpm) continue;
       if (key === "patchedDependencies") {
         await inspectPnpmPatches(entry, base);
+      } else if (npm && ["package-lock.json", "npm-shrinkwrap.json"].includes(field) && key === "packages" && isRuntimeRecord(entry)) {
+        // npm package locations can be nested below any workspace. Their
+        // link semantics come from the lockfile map, not a path prefix.
+        for (const [location, contents] of Object.entries(entry)) await inspect(contents, base, false, location, true);
       } else if (key === "importers" && isRuntimeRecord(entry)) {
         for (const [importer, contents] of Object.entries(entry)) {
           await checkPath(importer, base);
