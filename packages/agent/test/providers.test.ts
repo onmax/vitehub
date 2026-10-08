@@ -9468,6 +9468,83 @@ describe("server helpers", () => {
     }
   })
 
+  it("completes a handled webhook rehydration without running the saved invocation", async () => {
+    const { github } = await import("../src/channels.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-response-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const enqueue = vi.spyOn(state, "enqueueWebhookDelivery")
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const deferredWork = vi.fn()
+    let releaseDeferredWork!: () => void
+    const deferred = new Promise<void>((resolve) => {
+      releaseDeferredWork = resolve
+    }).then(deferredWork)
+    const run = vi.fn(() => "unexpected saved invocation")
+    const rehydrate = vi.fn((context: { waitUntil: (task: Promise<unknown>) => void }) => {
+      context.waitUntil(deferred)
+      return new Response(null, { status: 204 })
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              invoke: context => ({
+                input: { prompt: "saved source data" },
+                webhook: {
+                  concurrencyLimit: 1,
+                  deliveryId: "delivery-rehydrate-response",
+                  rehydrate: () => rehydrate(context),
+                },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    await state.connect()
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const options = { agentName: "review", webhookState: state }
+    const stop = handler.resume(options)
+
+    try {
+      const response = await handler(new Request("https://example.com/api/github/webhook", {
+        body: "{}",
+        headers: {
+          "content-type": "application/json",
+          "x-github-delivery": "delivery-rehydrate-response",
+          "x-github-event": "pull_request",
+        },
+        method: "POST",
+      }), "github", options)
+
+      expect(response.status).toBe(200)
+      expect(enqueue.mock.calls[0]?.[0]).toMatchObject({
+        invocation: { input: { prompt: "saved source data" } },
+        rehydrate: true,
+      })
+      await vi.waitFor(() => expect(rehydrate).toHaveBeenCalledOnce())
+      expect(complete).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+      releaseDeferredWork()
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce())
+      await Promise.all(complete.mock.results.map(result => result.value))
+      expect(rehydrate).toHaveBeenCalledOnce()
+      expect(deferredWork).toHaveBeenCalledOnce()
+      expect(retry).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+    } finally {
+      releaseDeferredWork()
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
   it.each(["foreign abort", "foreign canceled", "dom abort", "plain abort", "tagged abort", "hostile tag", "unrelated", "unrequested foreign abort", "remote abort", "remote canceled", "remote dom abort"] as const)("settles queued webhook cancellation from its journal for %s", async failureKind => {
     const { defineAgent, defineCapability } = await import("../src/index.ts")
     const { github } = await import("../src/channels.ts")

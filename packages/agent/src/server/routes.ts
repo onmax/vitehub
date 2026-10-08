@@ -1717,6 +1717,9 @@ async function executeQueuedWebhookDelivery(
         }
         invocation = { input: resolved.input, run: resolved.run }
       }
+      else {
+        invocation = undefined
+      }
     }
     if (invocation) {
       failedInvocation = invocation
