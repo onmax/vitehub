@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { createServer, mergeConfig } from 'vite'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import { VITEHUB_NITRO_CONFIG_CONTEXT } from '@vite-hub/internal/build/vite'
 import { hubAgent } from '../src/vite.ts'
 
 const roots: string[] = []
@@ -46,6 +47,8 @@ it.each(['review', '__proto__'])('bundles the published runtime lookup for %s wi
   const aliases = (configured as { resolve: { alias: Record<string, string> } }).resolve.alias
   const registry = aliases['#vitehub/agent/registry']!
   expect(configured).toMatchObject({ nitro: { alias: { '#vitehub/agent/registry': registry } } })
+  expect(await readFile(registry, 'utf8')).toContain('import { resetPublicUrlAgentNames } from "@vite-hub/agent/server/registry"')
+  expect(await readFile(registry, 'utf8')).toContain('\nresetPublicUrlAgentNames()\n')
   expect(await readFile(registry, 'utf8')).toContain('await import(')
   const entry = join(root, 'entry.ts')
   await writeFile(entry, `import { getAgentFromRegistry } from '@vite-hub/agent'
@@ -115,6 +118,34 @@ export async function inspect() {
   } finally { await server.close() }
 }, 30_000)
 
+it('clears external runtime aliases on each internal-first Vite SSR load', async () => {
+  const { root } = await fixture(false)
+  const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+  const probe = join(root, 'runtime-probe.mjs')
+  await writeFile(probe, "export { registerPublicUrlAgentName, resolvePublicUrl } from '@vite-hub/runtime'")
+  await mkdir(join(root, 'node_modules/@vite-hub'), { recursive: true })
+  await symlink(packageRoot, join(root, 'node_modules/@vite-hub/agent'), 'dir')
+  await symlink(join(packageRoot, '../workspace'), join(root, 'node_modules/@vite-hub/workspace'), 'dir')
+  await symlink(join(packageRoot, '../runtime'), join(root, 'node_modules/@vite-hub/runtime'), 'dir')
+  vi.stubGlobal('__VITEHUB_PUBLIC_URL__', { agents: { review: 'https://review.example' } })
+  try {
+    for (let load = 0; load < 2; load++) {
+      const server = await createServer({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { middlewareMode: true, watch: null } })
+      try {
+        const runtime = await server.ssrLoadModule(probe)
+        runtime.registerPublicUrlAgentName('removed-agent', 'review')
+        expect(runtime.resolvePublicUrl({ agentName: 'removed-agent' })).toBe('https://review.example')
+        const internal = await server.ssrLoadModule(join(packageRoot, 'dist/server/internal.js'))
+        expect(typeof internal.resetPublicUrlAgentNames).toBe('function')
+        expect((await server.ssrLoadModule(join(root, '.vitehub/agent/registry.mjs'))).default).toEqual({})
+        expect(runtime.resolvePublicUrl({ agentName: 'removed-agent' })).toBeUndefined()
+      } finally { await server.close() }
+    }
+  } finally {
+    vi.unstubAllGlobals()
+  }
+}, 30_000)
+
 
 it('preserves earlier aliases across lazy loads and clears aliases when the parent registry is replaced', async () => {
   const { root, plugin, config } = await fixture()
@@ -178,5 +209,22 @@ it('refreshes discovered agents and their first instructions when files are adde
     await rm(definition)
     server.watcher.emit('unlink', definition)
     await expect.poll(async () => Object.keys((await server.ssrLoadModule(registryPath)).default)).toEqual([])
+  } finally { await server.close() }
+}, 30_000)
+
+it('starts a real Vite dev server with the Console catch-all and the reserved invocation route', async () => {
+  const { root } = await fixture()
+  const server = await createServer(mergeConfig({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { port: 0, watch: null } }, {
+    [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+    nitro: { handlers: [{ route: '/_vitehub/**', handler: '/console/page.get.js' }] },
+  }))
+  try {
+    await server.listen()
+    const handlers = (server.config as unknown as { nitro: { handlers: Array<{ route: string }> } }).nitro.handlers
+    expect(handlers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ route: '/_vitehub/**' }),
+      expect.objectContaining({ route: '/_vitehub/agent/invocations/dev' }),
+    ]))
+    expect(server.resolvedUrls?.local.length).toBeGreaterThan(0)
   } finally { await server.close() }
 }, 30_000)

@@ -8,6 +8,8 @@ icon: i-lucide-package-open
 
 A Box prepares the process environment for a built-in provider Driver. It declares the working tree, private Home, environment, durable CLI state, and boot checks. The Codex or Claude Code process then starts inside the Box.
 
+For a first working result, follow [Run your first Box](/docs/agents/box-tutorial).
+
 Use a Box when the provider needs more than a temporary local directory. For example, use a Box when it must work in an exact pull request checkout on another host. A Box does not give model-backed Drivers Workspace tools. [Workspace context](/docs/agents/workspace-context) and Capabilities own that boundary. The provider can read and change the Box working tree with its native file and command tools. Treat that tree as model-visible, and rely on the selected Box runtime for isolation.
 
 ## Start on a trusted host

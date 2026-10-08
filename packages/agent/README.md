@@ -37,6 +37,8 @@ ViteHub resolves those project dependencies directly. Production self-hosted Nod
 
 Until T3 publishes the runtime on npm, pnpm consumers must set `blockExoticSubdeps: false` because the pinned runtime is an exact pkg.pr.new tarball.
 
+CLI discovery loads the application Vite config without registering the development invocation route. Middleware stages behave the same way. Normal `vite dev` keeps the development endpoint. The generated registry also handles the first SSR import cycle through Agent server internals.
+
 The Vite integration requires Vite 8. Configure build inputs, output options, and external dependencies under `build.rolldownOptions`.
 
 ## Minimal API
@@ -509,7 +511,7 @@ Import `observability()` and `createAgentEvlog()` from `@vite-hub/agent/evlog`, 
 
 `createPapercutReporter()` from `@vite-hub/agent/capabilities` journals reports in persistent Agent Invocations before delivery and replays pending reports after restart. See [observability](../../docs/content/docs/agents/observability.md) for delivery, privacy and shutdown contracts.
 
-GitHub Channels with `activity: true` keep one managed comment per pull request. A single table lists current and recent session links, status, relative start times, and completed durations. Task checkboxes and the latest result appear below; previous results are collapsed. Full transcripts stay in the linked sessions.
+GitHub Channels with `activity: true` keep one managed comment per pull request. A single table lists current and recent session links, status, relative start times, and completed durations. Task checkboxes and the newest available session's final answer appear below; all session answers are collapsed in newest-first order with one link and one paragraph per answer. Full transcripts stay in the linked sessions.
 
 ### Process-owned agents
 
@@ -695,6 +697,10 @@ hubAgent({
 ```
 
 Aliases use the native webhook handler, retaining the request body and signature headers. The target Channel must be configured on that Agent. Static route collisions fail at build time. Deno and standalone Netlify output do not currently support aliases.
+
+## Code Host capability
+
+`codeHost()` from `@vite-hub/agent/capabilities` gives an Agent repository tools for GitHub, GitLab and Forgejo. Read mode is the default. Write mode adds comments, labels, reviews and checks. Credentials come from Server Env. Repository access is bounded by `repositories` or the triggering pull request context. See [Code Host](../../docs/content/docs/agents/capabilities/code-host.md) for tools, approval and limits.
 
 ## Capability inspection
 

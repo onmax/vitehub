@@ -141,6 +141,9 @@ export default defineAppConfig({
     },
     // SAFETY: Nuxt UI's prose variants accept these custom slot classes.
     prose: {
+      codeIcon: {
+        txt: "i-vscode-icons-file-type-text",
+      },
       a: {
         base: "font-medium underline underline-offset-4 text-default hover:text-primary transition-colors",
       },
