@@ -139,34 +139,46 @@ function readStringValue(body: string | undefined, property: string): string | u
   return typeof resolved === "string" && resolved.trim() ? resolved : undefined
 }
 
-function readDefinitionCloudflareConfig(file: string): { resourceConfigured: boolean, value?: CloudflareD1BindingConfig } {
+type DefinitionCloudflareResource = "inherited" | "configured" | "opaque"
+
+function readDefinitionCloudflareResource(expression: string | undefined): DefinitionCloudflareResource {
+  if (expression?.trim() === "undefined") return "inherited"
+  const body = objectLiteralBody(expression)
+  if (body === undefined) return "opaque"
+  let resource: DefinitionCloudflareResource = "inherited"
+  for (const property of splitTopLevel(body)) {
+    const normalized = stripLeadingEntryComments(property)
+    if (!normalized.trim()) continue
+    const key = readEntryKey(normalized)
+    if (normalized.trimStart().startsWith("...") || !key) return "opaque"
+    if (key !== "databaseId" && key !== "databaseName") continue
+    if (readEntryValue(normalized)?.trim() === "undefined") continue
+    if (readConfigValue(body, key) === undefined) return "opaque"
+    resource = "configured"
+  }
+  return resource
+}
+
+function readDefinitionCloudflareConfig(file: string): { resource: DefinitionCloudflareResource, value?: CloudflareD1BindingConfig } {
   const definitionBody = readDefinitionObjectBody(file)
   const definitionEntries = definitionBody === undefined
     ? []
     : splitTopLevel(definitionBody).map(stripLeadingEntryComments)
   const cloudflareEntries = definitionEntries.filter(entry => readEntryKey(entry) === "cloudflare")
   const expression = cloudflareEntries.length ? readEntryValue(cloudflareEntries.at(-1)!) : undefined
-  let resourceConfigured = definitionBody === undefined
+  let resource: DefinitionCloudflareResource = definitionBody === undefined ? "opaque" : "inherited"
   for (const entry of definitionEntries) {
     if (!entry.trim()) continue
     const key = readEntryKey(entry)
     if (entry.trimStart().startsWith("...") || !key) {
-      resourceConfigured = true
+      resource = "opaque"
     }
     else if (key === "cloudflare") {
-      const value = readEntryValue(entry)?.trim()
-      const body = objectLiteralBody(value)
-      resourceConfigured = value !== "undefined" && (body === undefined || splitTopLevel(body).some((property) => {
-        const normalized = stripLeadingEntryComments(property)
-        if (!normalized.trim()) return false
-        const key = readEntryKey(normalized)
-        return normalized.trimStart().startsWith("...") || !key
-          || ((key === "databaseId" || key === "databaseName") && readEntryValue(normalized)?.trim() !== "undefined")
-      }))
+      resource = readDefinitionCloudflareResource(readEntryValue(entry))
     }
   }
   const body = objectLiteralBody(expression)
-  if (body === undefined) return { resourceConfigured }
+  if (resource === "opaque" || body === undefined) return { resource }
   const httpExpression = readObjectPropertyValue(body, "http")?.trim()
   const httpBody = objectLiteralBody(httpExpression)
   const http = httpExpression === "true"
@@ -186,7 +198,7 @@ function readDefinitionCloudflareConfig(file: string): { resourceConfigured: boo
     previewDatabaseId: readConfigValue(body, "previewDatabaseId"),
   } satisfies CloudflareD1BindingConfig
   return {
-    resourceConfigured,
+    resource,
     ...(Object.values(value).some(item => typeof item !== "undefined") ? { value } : {}),
   }
 }
@@ -344,11 +356,13 @@ export function resolveDBViteConfig(
   for (const definition of definitions) {
     const migrationsDir = getDefaultMigrationsDir(rootDir, definition)
     const definitionCloudflare = readDefinitionCloudflareConfig(definition.handler)
-    definitionCloudflareResourceConfigured[definition.name] = definitionCloudflare.resourceConfigured
+    definitionCloudflareResourceConfigured[definition.name] = definitionCloudflare.resource !== "inherited"
     const generatedSchemaFile = createGeneratedSchemaFile(rootDir, definition.name)
     generatedDrizzleConfigFilesByDatabase[definition.name] = createGeneratedDrizzleConfigFile(rootDir, definition.name)
     generatedSchemaFilesByDatabase[definition.name] = generatedSchemaFile
-    const cloudflare = mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value)
+    const cloudflare = definitionCloudflare.resource === "opaque"
+      ? undefined
+      : mergeCloudflareConfig(cloudflareOptions(options), definitionCloudflare.value)
     databases[definition.name] = {
       cloudflare: normalizeCloudflareConfig(cloudflare, definition.name, migrationsDir),
       connection: resolveDefinitionConnection(definition.handler, definition.name, options?.connection),
@@ -362,16 +376,19 @@ export function resolveDBViteConfig(
     }
   }
 
+  const cloudflareBindings: Record<string, string> = {}
+  for (const [name, database] of Object.entries(databases)) {
+    if (database.cloudflare) cloudflareBindings[name] = database.cloudflare.binding
+  }
+  const definitionDefaults: ResolvedDBViteConfig["definitionDefaults"] = {}
+  if (Object.keys(cloudflareBindings).length) definitionDefaults.cloudflareBindings = cloudflareBindings
+  if (options && options.driver === "d1") definitionDefaults.cloudflare = cloudflareOptions(options) ?? {}
+  if (options && options.connection) definitionDefaults.connection = options.connection
   return {
     databaseNames: definitions.map(definition => definition.name),
     databases,
     definitionCloudflareResourceConfigured,
-    definitionDefaults: {
-      ...(options && options.driver === "d1"
-        ? { cloudflare: cloudflareOptions(options) ?? {} }
-        : {}),
-      ...(options && options.connection ? { connection: options.connection } : {}),
-    },
+    definitionDefaults,
     definitions,
     generatedDrizzleConfigFile: createGeneratedDefinitionPath(rootDir, {
       fileName: "drizzle.config.ts",

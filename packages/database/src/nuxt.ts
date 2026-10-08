@@ -111,15 +111,16 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
         resolvedOptions.databaseName,
       ),
     )
+    const effectiveOptions = d1 ? { ...resolvedOptions, binding: d1.bindingName } : resolvedOptions
     const runtimeOptions = d1?.d1Database
       ? {
-          ...resolvedOptions,
+          ...effectiveOptions,
           // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Keep runtime lookup when a Database ID is an Env declaration.
           databaseId: typeof resolvedOptions.databaseId === "object"
             ? { ...resolvedOptions.databaseId, default: resolvedOptions.databaseId.default ?? d1.d1Database.database_id }
             : resolvedOptions.databaseId ?? d1.d1Database.database_id,
         }
-      : resolvedOptions
+      : effectiveOptions
     const viteOptions = resolveDatabaseViteOptions({ ...runtimeOptions, projectRoot: root })
     if (viteOptions) {
       viteConfig.database = { ...(isRecord(viteConfig.database) ? viteConfig.database : {}), ...viteOptions }

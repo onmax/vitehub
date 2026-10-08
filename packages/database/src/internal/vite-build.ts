@@ -8,7 +8,7 @@ import { readProvisionedId, readProvisionStateSync } from "@vite-hub/internal/pr
 import { resolve } from "pathe"
 
 import { resolveConfigValue } from "../config-value.ts"
-import { resolveCloudflareD1BindingName, resolveCloudflareD1Bindings } from "./cloudflare.ts"
+import { resolveCloudflareD1Bindings } from "./cloudflare.ts"
 import { renderDatabaseRuntimeModule } from "./runtime-module.ts"
 import { renderDatabaseConfigExpression } from "./runtime-config-expression.ts"
 
@@ -57,12 +57,12 @@ interface GeneratedDBArtifacts {
 }
 
 function normalizeDefinitionDefaults(defaults: ResolvedDBViteConfig["definitionDefaults"]): ResolvedDBViteConfig["definitionDefaults"] {
-  if (!defaults.cloudflare) return defaults
+  if (!defaults.cloudflare || defaults.cloudflare.binding === undefined) return defaults
   return {
     ...defaults,
     cloudflare: {
       ...defaults.cloudflare,
-      binding: resolveCloudflareD1BindingName("default", defaults.cloudflare.binding),
+      binding: defaults.cloudflare.binding.trim() || undefined,
     },
   }
 }
@@ -93,7 +93,7 @@ function renderRuntimeModule(file: string, runtimeConfig: ResolvedDBViteConfig) 
     createAgentDatabaseImport: createImportPath(file, resolveRuntimeModule("runtime/agent")),
     databaseEntries,
     imports: [
-      `import { createHostedDrizzleDb } from ${JSON.stringify(createImportPath(file, resolveRuntimeModule("runtime/hosted")))}`,
+      `import { createHostedDrizzleDb, resolveRuntimeCloudflareConfig } from ${JSON.stringify(createImportPath(file, resolveRuntimeModule("runtime/hosted")))}`,
       "",
       ...imports,
     ],

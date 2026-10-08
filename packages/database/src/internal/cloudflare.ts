@@ -32,6 +32,29 @@ export function mergeCloudflareConfig(
   return value
 }
 
+export function resolveRuntimeCloudflareConfig(
+  defaults: CloudflareD1BindingConfig | undefined,
+  definition: CloudflareD1BindingConfig | undefined,
+  options: { binding?: string, migrationsDir?: string, name: string },
+) {
+  const value = mergeCloudflareConfig(defaults, definition)
+  if (!value) return
+  const inheritsResource = definition?.databaseId === undefined && definition?.databaseName === undefined
+  const binding = definition?.binding?.trim() || options.binding
+    || (inheritsResource || !defaults ? resolveCloudflareD1BindingName(options.name, defaults?.binding) : undefined)
+  const defaultHttp = defaults?.http
+  const definitionHttp = definition?.http
+  const http = definitionHttp && definitionHttp !== true && defaultHttp && defaultHttp !== true
+    ? {
+        authToken: definitionHttp.authToken ?? defaultHttp.authToken,
+        url: definitionHttp.url ?? defaultHttp.url,
+      }
+    : value.http
+  const config: CloudflareD1BindingConfig & { migrationsDir?: string } = { ...value, binding, http }
+  if (options.migrationsDir) config.migrationsDir = options.migrationsDir
+  return config
+}
+
 interface CloudflareD1ProvisionState {
   cloudflare?: {
     d1?: Record<string, string>

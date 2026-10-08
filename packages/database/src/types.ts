@@ -124,6 +124,7 @@ export interface ResolvedDBViteConfig {
   definitionCloudflareResourceConfigured: Record<string, boolean>
   definitionDefaults: {
     cloudflare?: CloudflareD1BindingConfig
+    cloudflareBindings?: Record<string, string>
     connection?: DatabaseConnectionConfig
   }
   definitions: DiscoveredDatabaseDefinition[]

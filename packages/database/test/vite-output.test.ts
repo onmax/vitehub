@@ -7,10 +7,13 @@ import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
 import { afterAll, describe, expect, it } from "vitest"
+import { build as buildWorker } from "esbuild"
 import { contributeProviderRuntime, createDefaultCloudflareOutputRoot, createProviderOutputCatalog, getProviderRuntimeModule } from "@vite-hub/internal/build/deployment-output"
 
 import { generateProviderOutputs as generateDatabaseProviderOutputs, prepareProviderOutputs as prepareDatabaseProviderOutputs } from "../src/internal/vite-build.ts"
 import { renderDatabaseConfigExpression } from "../src/internal/runtime-config-expression.ts"
+import { resolveDBViteConfig } from "../src/config.ts"
+import { writeGeneratedDatabaseArtifacts } from "../src/internal/generated.ts"
 
 import type { ResolvedDBViteConfig } from "../src/types.ts"
 
@@ -296,15 +299,102 @@ afterAll(async () => {
 })
 
 describe("Vite db provider outputs", () => {
-  it("queries a named D1 database through the binding emitted by Vite", { timeout: 60_000 }, async () => {
+  it.each([
+    { form: "identifier", resource: "application" },
+    { form: "spread", resource: "application" },
+    { form: "identifier", resource: "inherited" },
+    { form: "spread", resource: "inherited" },
+  ])("uses the evaluated $resource resource for an opaque $form D1 configuration", { timeout: 60_000 }, async ({ form, resource }) => {
+    const rootDir = await createDbBuildProject("vitehub-db-vite-opaque-resource-")
+    await rm(join(rootDir, "server/databases"), { recursive: true })
+    await mkdir(join(rootDir, "server/databases"), { recursive: true })
+    await writeFile(join(rootDir, "server/databases/config.ts"), [
+      "import { defineDatabase } from '@vite-hub/database'",
+      "import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'",
+      "const notes = sqliteTable('notes', { id: integer('id'), title: text('title') })",
+      `const cloudflare = ${resource === "application" ? "{ databaseId: 'application-id', http: true }" : "{ http: true }"}`,
+      "const settings = { cloudflare, schema: { notes } }",
+      `export default defineDatabase(${form === "identifier" ? "{ cloudflare, schema: { notes } }" : "{ ...settings }"})`,
+      "",
+    ].join("\n"))
+    const runtimeConfig = resolveDBViteConfig({
+      binding: "HOST_DB",
+      databaseId: "host-id",
+      databaseName: "host-db",
+      driver: "d1",
+    }, rootDir)!
+    await writeGeneratedDatabaseArtifacts(runtimeConfig)
+    let projectedCloudflare = false
+    const artifacts = await generateDatabaseProviderOutputs({
+      clientOutDir: "dist/client",
+      rootDir,
+      runtimeConfig,
+    }, async (output) => { projectedCloudflare = Boolean(output.cloudflare) })
+    expect(projectedCloudflare).toBe(false)
+
+    await writeFile(join(rootDir, "src/server.ts"), [
+      "import definition from '../server/databases/config.ts'",
+      "import { useDatabase } from '@vite-hub/database/drizzle'",
+      "export default { fetch: async () => Response.json({",
+      "  definition: await definition.select().from(definition.schema.notes),",
+      "  registry: await useDatabase('default').db.select().from(useDatabase('default').schema.notes),",
+      "}) }",
+      "",
+    ].join("\n"))
+    const workerFile = join(rootDir, "opaque-worker.mjs")
+    await buildWorker({
+      alias: {
+        "#vitehub/database/definition-defaults": artifacts.definitionDefaultsFile,
+        "@vite-hub/database/drizzle": artifacts.runtimeModuleFiles.cloudflare,
+      },
+      bundle: true,
+      conditions: ["vitehub-hosted", "workerd", "worker", "browser", "default"],
+      entryPoints: [artifacts.cloudflareWorkerFile],
+      external: ["node:async_hooks"],
+      format: "esm",
+      outfile: workerFile,
+      platform: "neutral",
+    })
+    const workerRunner = join(rootDir, "run-opaque-worker.mjs")
+    await writeFile(workerRunner, [
+      `import worker from ${JSON.stringify(pathToFileURL(workerFile).href)}`,
+      "const requests = [], nativeQueries = []",
+      "const binding = { prepare(query) {",
+      "  nativeQueries.push(query)",
+      "  return { bind: () => ({ raw: async () => [[0, 'host']] }) }",
+      "} }",
+      "process.env.CLOUDFLARE_ACCOUNT_ID = 'test-account'",
+      "process.env.CLOUDFLARE_API_TOKEN = 'test-token'",
+      "globalThis.fetch = async (url) => {",
+      "  requests.push(String(url))",
+      "  return Response.json({ success: true, result: [{ success: true, results: { rows: [[1, 'application']] } }] })",
+      "}",
+      "const response = await worker.fetch(new Request('https://example.com'), { HOST_DB: binding }, {})",
+      "console.log(JSON.stringify({ rows: await response.json(), requests, nativeQueries }))",
+      "",
+    ].join("\n"))
+    const { stdout: workerStdout } = await execFileAsync(process.execPath, [workerRunner], { cwd: rootDir })
+    const workerResult = JSON.parse(workerStdout)
+    const expectedRows = resource === "application" ? [{ id: 1, title: "application" }] : [{ id: 0, title: "host" }]
+    expect(workerResult.rows).toEqual({ definition: expectedRows, registry: expectedRows })
+    expect(workerResult.requests).toEqual(resource === "application" ? [
+      "https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/application-id/raw",
+      "https://api.cloudflare.com/client/v4/accounts/test-account/d1/database/application-id/raw",
+    ] : [])
+    expect(workerResult.nativeQueries).toHaveLength(resource === "application" ? 0 : 2)
+  })
+
+  it.each(["registry", "definition"])("queries a named D1 database through the binding emitted by Vite for %s access", { timeout: 60_000 }, async (access) => {
     const rootDir = await createDbBuildProject("vitehub-db-vite-named-defaults-")
     await rm(join(rootDir, "server/databases/primary"), { recursive: true })
     await writeDatabaseDefinition(rootDir, "analytics")
     await writeFile(join(rootDir, "src/server.ts"), [
       "import { sql } from 'drizzle-orm'",
-      "import { useDatabase } from '@vite-hub/database/drizzle'",
+      access === "registry"
+        ? "import { useDatabase } from '@vite-hub/database/drizzle'"
+        : "import analytics from '../server/databases/analytics/config.ts'",
       "export default {",
-      "  fetch: async () => new Response(JSON.stringify(await useDatabase('analytics').db.all(sql`SELECT 7 AS value`))),",
+      `  fetch: async () => new Response(JSON.stringify(await ${access === "registry" ? "useDatabase('analytics').db" : "analytics"}.all(sql\`SELECT 7 AS value\`))),`,
       "}",
       "",
     ].join("\n"))
@@ -426,7 +516,7 @@ describe("Vite db provider outputs", () => {
     })
   })
 
-  it("applies the effective Nuxt D1 binding to named definition runtimes", async () => {
+  it("uses the Definition name when hosted defaults have an empty binding", async () => {
     const rootDir = await createWorkspaceTempDir("vitehub-db-vite-definition-defaults-")
     const providerOutput = createProviderOutputCatalog()
     const runtimeConfig = createRuntimeConfig(rootDir, {})
@@ -440,13 +530,14 @@ describe("Vite db provider outputs", () => {
     await prepareDatabaseProviderOutputs({ providerOutput, rootDir, runtimeConfig })
 
     await expect(readFile(join(rootDir, ".vitehub/database/definition-defaults.mjs"), "utf8"))
-      .resolves.toBe('export default {"cloudflare":{"binding":"DB"}}\n')
+      .resolves.toBe('export default {"cloudflare":{}}\n')
     const expression = renderDatabaseConfigExpression("analytics", runtimeConfig, "definition")
-    const config = Function("definition", `return (${expression})`)({ connection: undefined, drizzle: {}, schema: {} })
-    expect(config.cloudflare).toEqual({ binding: "DB" })
+    const { resolveRuntimeCloudflareConfig } = await import("../src/internal/cloudflare.ts")
+    const config = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)({ connection: undefined, drizzle: {}, schema: {} }, resolveRuntimeCloudflareConfig)
+    expect(config.cloudflare?.binding).toBe("DB_ANALYTICS")
   })
 
-  it("preserves effective Nuxt D1 identifiers when a definition only opts into Cloudflare", () => {
+  it("preserves effective Nuxt D1 identifiers when a definition only opts into Cloudflare", async () => {
     const rootDir = "/tmp/vitehub-d1-runtime-expression"
     const runtimeConfig = createRuntimeConfig(rootDir, {
       cloudflare: {
@@ -458,7 +549,8 @@ describe("Vite db provider outputs", () => {
       },
     })
     const expression = renderDatabaseConfigExpression("primary", runtimeConfig, "definition")
-    const config = Function("definition", `return (${expression})`)({ cloudflare: {}, connection: undefined, drizzle: {}, schema: {} })
+    const { resolveRuntimeCloudflareConfig } = await import("../src/internal/cloudflare.ts")
+    const config = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)({ cloudflare: {}, connection: undefined, drizzle: {}, schema: {} }, resolveRuntimeCloudflareConfig)
 
     expect(config.cloudflare).toMatchObject({
       binding: "NUXT_DB",

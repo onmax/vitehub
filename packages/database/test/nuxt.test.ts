@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { hubDb } from "../src/nuxt.ts"
 import { resolveConfigValue } from "../src/config-value.ts"
+import { resolveRuntimeCloudflareConfig } from "../src/internal/cloudflare.ts"
 
 import type { Plugin } from "vite"
 
@@ -684,7 +685,7 @@ describe("Database Nuxt integration", () => {
       const module = await readFile(join(rootDir, ".vitehub/database/vercel-runtime.mjs"), "utf8")
       const expression = /db: createHostedDrizzleDb\((\{[\s\S]*?\}), schema_0\)/.exec(module)?.[1]
       expect(expression).toBeDefined()
-      const config = Function("definition_0", `return (${expression})`)({ drizzle: {}, schema: {} })
+      const config = Function("definition_0", "resolveRuntimeCloudflareConfig", `return (${expression})`)({ drizzle: {}, schema: {} }, resolveRuntimeCloudflareConfig)
       expect(resolveConfigValue(config.cloudflare.databaseId)).toBe("provisioned-id")
       expect(config.cloudflare.databaseName).toBe("content-db")
       const viteOptions = (nuxt.options.vite as { database: { databaseId: Parameters<typeof resolveConfigValue>[0] } }).database
