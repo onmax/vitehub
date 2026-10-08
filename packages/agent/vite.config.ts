@@ -66,6 +66,7 @@ export default defineConfig({
       "src/server/github.ts",
       "src/server/github-inbox.ts",
       "src/server/internal.ts",
+      "src/server/registry.ts",
       "src/server/workspace.ts",
       "src/test.ts",
       "src/vue.ts",

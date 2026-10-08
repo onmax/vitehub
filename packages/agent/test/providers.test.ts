@@ -128,6 +128,7 @@ const hostedAgentRoot = join(import.meta.dirname, "../../../fixtures/tutorials/a
 function agentProviderOutputAliases(extra: Array<{ find: string; replacement: string }> = []) {
   return [
     ...extra,
+    { find: "@vite-hub/agent/server/registry", replacement: resolve(import.meta.dirname, "../src/server/registry.ts") },
     { find: "@vite-hub/agent/server/internal", replacement: resolve(import.meta.dirname, "../src/server/internal.ts") },
     { find: "@vite-hub/agent/server/workspace", replacement: resolve(import.meta.dirname, "../src/server/workspace.ts") },
     { find: "@vite-hub/agent/state/sqlite", replacement: resolve(import.meta.dirname, "../src/state/sqlite.ts") },
@@ -1738,6 +1739,29 @@ describe("agent Vite plugin", () => {
     const handlers = [{ route: "/_vitehub/**", handler: "/console/page.get.js" }, { route: "/**", handler: "/app/fallback.ts" }]
     const result = await resolveAgentViteConfig(hubAgent({}), { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot, nitro: { handlers } }, { command: "serve", mode: "development" })
     expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([...handlers, expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
+  })
+
+  it("does not install the development invocation Nitro route during CLI discovery", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const result = await resolveAgentViteConfig(hubAgent(), {
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+      root: hostedAgentRoot,
+      vitehubCliDiscovery: true,
+      nitro: { handlers: [{ route: "/_vitehub/**", handler: "/app/console.ts" }] },
+    }, { command: "serve", mode: "development" })
+    expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([expect.objectContaining({ route: "/_vitehub/**" })]) } })
+    expect(result).not.toMatchObject({ nitro: { handlers: expect.arrayContaining([expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
+  })
+
+  it("does not install the development invocation Nitro route in a Vite middleware stage", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const result = await resolveAgentViteConfig(hubAgent(), {
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+      root: hostedAgentRoot,
+      server: { middlewareMode: true },
+      nitro: { handlers: [{ route: "/_vitehub/**", handler: "/app/console.ts" }] },
+    }, { command: "serve", mode: "production" })
+    expect(result).not.toMatchObject({ nitro: { handlers: expect.arrayContaining([expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
   })
 
   it.each([
