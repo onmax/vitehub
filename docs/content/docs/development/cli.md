@@ -11,7 +11,7 @@ Each invocation resolves each active plugin's CLI contributor once and uses its 
 Commands stay owned by the package that understands the workflow, while `vitehub` gives agents and developers one predictable entry point.
 The official [`vite-hub` package on npm](https://www.npmjs.com/package/vite-hub) publishes both `vitehub` and `vite-hub` binaries.
 
-CLI discovery and middleware stages load the application's Vite configuration without installing the development invocation route. Console routes remain configured, and `vite dev` keeps its development invocation endpoint. The first SSR import can load the generated Agent registry before server internals finish initializing; registry refreshes still reset discovered public URL names.
+CLI discovery and middleware stages load the application's Vite configuration without installing the development invocation route. Console routes remain configured, and `vite dev` keeps its development invocation endpoint inside the reserved `/_vitehub/agent` namespace. The Console catch-all and an application fallback may enclose this endpoint; exact, parameterized, and wildcard routes still conflict. User-configured routes keep strict conflict checks. The first SSR import can load the generated Agent registry before server internals finish initializing; registry refreshes still reset discovered public URL names.
 
 ## Install and open help
 

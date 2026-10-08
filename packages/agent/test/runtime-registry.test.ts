@@ -7,6 +7,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { createServer, mergeConfig } from 'vite'
 import { afterEach, expect, it } from 'vitest'
+import { VITEHUB_NITRO_CONFIG_CONTEXT } from '@vite-hub/internal/build/vite'
 import { hubAgent } from '../src/vite.ts'
 
 const roots: string[] = []
@@ -193,5 +194,22 @@ it('refreshes discovered agents and their first instructions when files are adde
     await rm(definition)
     server.watcher.emit('unlink', definition)
     await expect.poll(async () => Object.keys((await server.ssrLoadModule(registryPath)).default)).toEqual([])
+  } finally { await server.close() }
+}, 30_000)
+
+it('starts a real Vite dev server with the Console catch-all and the reserved invocation route', async () => {
+  const { root } = await fixture()
+  const server = await createServer(mergeConfig({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { port: 0, watch: null } }, {
+    [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+    nitro: { handlers: [{ route: '/_vitehub/**', handler: '/console/page.get.js' }] },
+  }))
+  try {
+    await server.listen()
+    const handlers = (server.config as unknown as { nitro: { handlers: Array<{ route: string }> } }).nitro.handlers
+    expect(handlers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ route: '/_vitehub/**' }),
+      expect.objectContaining({ route: '/_vitehub/agent/invocations/dev' }),
+    ]))
+    expect(server.resolvedUrls?.local.length).toBeGreaterThan(0)
   } finally { await server.close() }
 }, 30_000)
