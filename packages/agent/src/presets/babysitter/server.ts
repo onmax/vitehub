@@ -823,6 +823,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.ci.rerun.waiting", { ...owner, reason: ciRecovery.reason });
             return;
           }
+          if (inboxClaim.snapshot.pr?.mergeable === null || inboxClaim.snapshot.pr?.mergeable_state === "unknown") {
+            const reason = "GitHub is still calculating mergeability for this PR head.";
+            await pullRequestInbox.finish(inboxClaim, { text: reason,
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason, retryAt: Date.now() + 30_000 } });
+            schedulerEvent("babysitter.mergeability.waiting", { ...owner, head_sha: inboxClaim.snapshot.pr?.head?.sha });
+            return;
+          }
           if (await parkBlockedModelWork()) return;
           if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
             await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { pendingAt: Date.now() });
@@ -914,7 +921,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   await assertLease();
                   await assertRepairBase();
                   if (presetOptions.install !== false) await assertGitHubDependenciesCurrent(providerDirectory);
-                  const head = await prepared.commitRepair(providerDirectory, input);
+                  const head = await prepared.commitRepair(providerDirectory, input, { verifyDependencies: presetOptions.install !== false });
                   await assertLease();
                   return head;
                 },

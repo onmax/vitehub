@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { lstat, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import * as v from "valibot";
+import { assertGitHubDependenciesCurrent } from "./github-install.ts";
 
 const exec = promisify(execFile);
 
@@ -16,7 +17,7 @@ export interface GitHubRepairCommit {
 export async function commitGitHubPullRequestWorkspace(
   target: string,
   input: GitHubRepairCommit,
-  options: { expectedHead: string; signal?: AbortSignal; identity?: Record<string, string | undefined> },
+  options: { expectedHead: string; signal?: AbortSignal; identity?: Record<string, string | undefined>; verifyDependencies?: boolean },
 ): Promise<string> {
   options.signal?.throwIfAborted();
   if (!input.message.trim() || !input.paths.length) throw new Error("A repair message and explicit file paths are required.");
@@ -47,6 +48,22 @@ export async function commitGitHubPullRequestWorkspace(
     await writeFile(recordPath, JSON.stringify({ ...mergeRecord, index: digest(await git("ls-files", "--stage", "-z")) }));
     const unresolved = await git("diff", "--name-only", "--diff-filter=U");
     if (unresolved) throw new Error(`Resolve the remaining merge conflicts and call commitRepair with their file paths: ${unresolved}`);
+  }
+  if (options.verifyDependencies) {
+    const directory = await mkdtemp(join(target, ".git", "vitehub-commit-snapshot-"));
+    try {
+      // The protected Git index is the source of the commit. Provider writes
+      // to checkout files cannot change this validation snapshot.
+      const tree = await git("write-tree");
+      await git("checkout-index", "--all", `--prefix=${directory}/`);
+      await assertGitHubDependenciesCurrent(target, directory);
+      if (await git("write-tree") !== tree) throw new Error("Repair index changed during dependency validation.");
+    } catch (error) {
+      // A rejected ordinary repair must be stageable again after refresh.
+      // Prepared merges retain their host-recorded conflict-resolution index.
+      if (!mergeRecord) await git("reset", "--quiet", "HEAD", "--", ...input.paths);
+      throw error;
+    } finally { await rm(directory, { recursive: true, force: true }); }
   }
   if (mergeRecord || await git("diff", "--cached", "--name-only")) await git("commit", "-m", input.message);
   if (mergeRecord) await rm(recordPath);

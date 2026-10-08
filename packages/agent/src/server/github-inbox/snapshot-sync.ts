@@ -97,7 +97,7 @@ export async function readSnapshot(read: ReadGitHubSnapshot, repository: string,
 
 export async function hydrateSnapshot(inbox: PullRequestInbox, claim: Claim, read: ReadGitHubSnapshot, readThreads?: ReadThreads, activityAuthors: readonly string[] = []): Promise<boolean> {
   const { snapshot: current } = claim
-  if (current.hydrated && !current.refresh) {
+  if (current.hydrated && !current.refresh && current.pr?.mergeable !== null && current.pr?.mergeable_state !== 'unknown') {
     if (!readThreads || current.threadsHydrated && !current.feedbackRefresh) return true
     const threads = await readThreads(current.repository, current.number)
     return await inbox.hydrate(claim, { threads, threadsHydrated: true, feedbackRefresh: false })

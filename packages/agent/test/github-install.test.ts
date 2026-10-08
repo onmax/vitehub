@@ -115,7 +115,11 @@ it.each(["pnpm", "manifest"])("rejects escaped negated %s workspace globs before
   const root = await fixture();
   const packages = ["**", "!../../outside"];
   if (manager === "pnpm") await writeFile(join(root, "pnpm-workspace.yaml"), `packages: ${JSON.stringify(packages)}\n`);
-  else await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: packages }));
+  else {
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, "package-lock.json"), "{}");
+    await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3", workspaces: packages }));
+  }
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
   await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
@@ -298,6 +302,12 @@ it.each(["pnpm", "npm", "yarn"])("selects workspace membership from the active %
   await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/protocol/);
 });
 
+it("ignores the unused manifest workspace paths in a pnpm install", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: ["../../unused"] }));
+  await installGitHubPullRequestWorkspace(root);
+});
+
 it.each(["file:./local", "./local"])("validates referenced local packages from %s", async source => {
   const root = await fixture();
   await mkdir(join(root, "local"));
@@ -362,7 +372,9 @@ it("rejects workspace extglobs that select an external symlink", async () => {
   await writeFile(join(outside, "package.json"), JSON.stringify({ name: "outside" }));
   await mkdir(join(root, "packages", "local"), { recursive: true });
   await symlink(outside, join(root, "packages", "external"));
-  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", workspaces: ["packages/@(local|external)"] }));
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package-lock.json"), "{}");
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3", workspaces: ["packages/@(local|external)"] }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
   await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
