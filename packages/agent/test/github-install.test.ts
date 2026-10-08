@@ -150,6 +150,20 @@ it.each(["package-lock.json", "npm-shrinkwrap.json"])("accepts npm workspace lin
   await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
 });
 
+it.each(["package-lock.json", "npm-shrinkwrap.json"])("fingerprints nested npm package links in %s", async lockfile => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await mkdir(join(root, "vendor/fixtures/local"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3" }));
+  await writeFile(join(root, "vendor/fixtures/local/package.json"), JSON.stringify({ name: "local", version: "1.0.0", bin: { local: "index.js" } }));
+  await writeFile(join(root, "vendor/fixtures/local/index.js"), "export const value = 1\n");
+  await writeFile(join(root, lockfile), JSON.stringify({ lockfileVersion: 3, packages: { "packages/app/node_modules/local": { resolved: "vendor/fixtures/local", link: true } } }));
+  await installGitHubPullRequestWorkspace(root);
+  await assertGitHubDependenciesCurrent(root);
+  await writeFile(join(root, "vendor/fixtures/local/index.js"), "export const value = 2\n");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+
 it.each(["../outside", "/srv/outside", "https://registry.npmjs.org/a.tgz"])("rejects npm workspace links outside the checkout: %s", async target => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
