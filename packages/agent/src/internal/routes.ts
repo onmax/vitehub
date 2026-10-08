@@ -40,7 +40,7 @@ export function validateAgentStaticRoute(route: string, handlers: readonly { rou
     const parts = (normalizeAgentRoute(handler).replace(/\/$/, "") || "/").split("/")
     for (let index = 0; index < parts.length; index++) {
       const part = parts[index]!
-      if (part.startsWith("**") || part.startsWith(":...")) return part.startsWith(":") || index >= namespaceDepth || parts.slice(0, index).some(prefix => prefix.startsWith(":") || prefix.includes("*"))
+      if (part.startsWith("**") || part.startsWith(":...")) return part !== "**" || index >= namespaceDepth || parts.slice(0, index).some(prefix => prefix.startsWith(":") || prefix.includes("*"))
       if (target[index] === undefined) return false
       if (part !== target[index] && !part.startsWith(":") && part !== "*") return false
     }
