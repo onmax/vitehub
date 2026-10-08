@@ -1,4 +1,4 @@
-import { test, type TestContext } from "vitest";
+import { test, vi, type TestContext } from "vitest";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -566,8 +566,12 @@ test('lease replacement corrects a late GitHub write through the real activity c
   const barrier = new Promise<void>(resolve => { release = resolve })
   const began = new Promise<void>(resolve => { started = resolve })
   let delayOldWrite = true
-  const publisher = (token: string) => {
-    const channel = github({ activity: true, app: { token, identity: { login: 'expiry-worker[bot]' }, fetch: async (_input, init) => {
+  const publisher = async (token: string) => {
+    // Each process host has its own in-memory publication queue. Isolate the
+    // channel modules so this test can still overlap writes across hosts.
+    vi.resetModules()
+    const { github: processGitHub } = await import('../src/channels.ts')
+    const channel = processGitHub({ activity: true, app: { token, identity: { login: 'expiry-worker[bot]' }, fetch: async (_input, init) => {
       const method = init?.method ?? 'GET'
       if (method === 'GET') return Response.json(comments)
       const body = JSON.parse(String(init?.body)).body as string
@@ -587,8 +591,8 @@ test('lease replacement corrects a late GitHub write through the real activity c
         channelId: 'github', target: { repository, issue: 239 }, activity: pending.activity, abortSignal,
       })
   }
-  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: publisher('old-expiry-token') }).flush()
-  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: publisher('new-expiry-token') })
+  const first = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: await publisher('old-expiry-token') }).flush()
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: await publisher('new-expiry-token') })
   try {
     await began
     const entry = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
@@ -602,7 +606,7 @@ test('lease replacement corrects a late GitHub write through the real activity c
   assert.equal(managed.length, 1)
   assert.ok(managed[0]!.body.includes('New result'))
   assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
-  const restarted = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: publisher('restarted-expiry-token') })
+  const restarted = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: await publisher('restarted-expiry-token') })
   await restarted.recover()
   await restarted.flush()
   assert.deepEqual(await inbox.pendingStatusDeliveries(), [], 'the correction acknowledgement must survive restart')
