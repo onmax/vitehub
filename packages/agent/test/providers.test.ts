@@ -13502,7 +13502,7 @@ describe("server helpers", () => {
     }
   })
 
-  it.each(["normal", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "expired recovery lease", "claim lease loss", "cleanup lease loss", "replacement recovery owner", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
+  it.each(["normal", "citation notice", "cutoff", "initialize failure", "retry failure", "slow persistence", "second restart", "concurrent recovery", "expired recovery lease", "claim lease loss", "cleanup lease loss", "replacement recovery owner", "index contention"])("tells the thread about a host restart and retries the interrupted inline chat once: %s", async (scenario) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
     const { defineAgent } = await import("../src/index.ts")
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
@@ -13538,6 +13538,7 @@ describe("server helpers", () => {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           platforms: { telegram: () => adapter as never },
           webhooks: { telegram: {} },
+          ...(scenario === "citation notice" ? { errorFallbackText: "Restarted. citeturn0view0" } : {}),
         }),
       ],
       driver: {
@@ -13600,7 +13601,7 @@ describe("server helpers", () => {
       }
       await expect(drain).resolves.toEqual({ active: 1, interrupted: 1, unsettled: 0 })
       await Promise.allSettled(waitUntilTasks)
-      const restartNotice = "The server restarted while I was working on this. I'll retry it automatically."
+      const restartNotice = scenario === "citation notice" ? "Restarted. [source link unavailable]" : "The server restarted while I was working on this. I'll retry it automatically."
       expect([...firstAdapter.postMessage.mock.calls, ...firstAdapter.editMessage.mock.calls].flat()).toContainEqual(expect.stringContaining(restartNotice))
 
       if (scenario === "concurrent recovery" || scenario === "expired recovery lease" || scenario === "claim lease loss" || scenario === "cleanup lease loss" || scenario === "replacement recovery owner" || scenario === "index contention") {
@@ -20632,6 +20633,35 @@ describe("server helpers", () => {
         },
       ])
       expect(adapter.postMessage).toHaveBeenCalledWith("telegram:456", "Your meal was saved, but the final reply failed.")
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  it.each([false, true])("formats citations in error fallback delivery, manual=%s", async (manual) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const adapter = createTestChatAdapter()
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture implements the Chat SDK adapter used by the webhook handler.
+          adapter: () => adapter as never,
+          messages: {
+            stream: false,
+            errorFallbackText: "Read [the source](https://example.com). citeturn0view0",
+            ...(manual ? { delivery: "manual", loading: { text: "Loading…" } } : {}),
+          },
+        }),
+      },
+      driver: { run: () => { throw new Error("model timeout") } },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    try {
+      await expect(handler(chatWebhookRequest(manual ? 91_311 : 91_310), "telegram")).rejects.toThrow("model timeout")
+      const delivered = [...adapter.postMessage.mock.calls, ...adapter.editMessage.mock.calls].flat()
+      expect(delivered).toContainEqual("Read [the source](https://example.com). [source link unavailable]")
+      expect(JSON.stringify(delivered)).not.toContain("cite")
     } finally {
       consoleError.mockRestore()
     }
