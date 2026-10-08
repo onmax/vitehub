@@ -207,6 +207,40 @@ mkdir -p node_modules
   await expect(readFile(join(empty, ".git", "vitehub-install.json"))).rejects.toThrow();
 });
 
+it("parks a queued installer before waiting can consume the repair pass lifetime", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  const started = join(first, "started");
+  const release = join(first, "release");
+  await writeFile(join(second, "bin", "corepack"), `#!/bin/sh
+if [ "$PWD" = '${first}' ]; then
+  touch '${started}'
+  while [ ! -f '${release}' ]; do sleep 0.02; done
+fi
+printf '%s\n' "$@" > args.txt
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const running = installGitHubPullRequestWorkspace(first);
+  let queued: Promise<void> | undefined;
+  try {
+    await vi.waitFor(async () => { await readFile(started); });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+    queued = installGitHubPullRequestWorkspace(second);
+    const observed = queued.then(() => { settled = true; return undefined; }, error => { settled = true; return error; });
+    // Let the real filesystem preflight finish before advancing queue time.
+    for (let n = 0; n < 10; n++) await readFile(join(second, "package.json"));
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 1);
+    expect(settled).toBe(true);
+    expect(await observed).toBeInstanceOf(GitHubWorkspaceInstallError);
+    await expect(readFile(join(second, "args.txt"))).rejects.toThrow();
+  } finally {
+    vi.useRealTimers();
+    await writeFile(release, "");
+    await Promise.allSettled([running, queued]);
+  }
+});
+
 it.each(["cache", "cafile"])("rejects project npm %s paths before execution", async setting => {
   const root = await fixture();
   await writeFile(join(root, ".npmrc"), `${setting}=/srv/outside\n`);
