@@ -9,6 +9,8 @@ import { runWithScheduleWaitUntil } from "./wait-until.ts"
 import type { RuntimeScheduleStore, RuntimeScheduleWake, ScheduleDefinition, ScheduleDefinitionRegistry, ScheduleRegistryDefinition, ScheduleRunAttemptRecord, ScheduleRunContext, ScheduleRunError, ScheduleRunRecord, ScheduleRunStore, ScheduleTargetName } from "../types.ts"
 
 interface ExecuteScheduleOptions {
+  /** Return the persisted failed run when the handler throws. Guards still throw. */
+  captureHandlerFailure?: boolean
   definition: ScheduleRegistryDefinition
   input?: unknown
   runStore?: ScheduleRunStore
@@ -34,6 +36,8 @@ export interface RunScheduleOptions {
 }
 
 interface ExecuteRuntimeScheduleOptions {
+  /** Return the persisted failed run when the handler throws. Guards still throw. */
+  captureHandlerFailure?: boolean
   id: string
   requireDue?: boolean
   runtimeScheduleStore?: RuntimeScheduleStore
@@ -222,7 +226,8 @@ export async function executeSchedule(options: ExecuteScheduleOptions): Promise<
     return await completeRun(run, attempt, response, runStore)
   }
   catch (error) {
-    await failRun(run, attempt, error, runStore)
+    const failed = await failRun(run, attempt, error, runStore)
+    if (options.captureHandlerFailure) return failed
     throw error
   }
 }
@@ -324,6 +329,7 @@ export async function executeRuntimeSchedule(options: ExecuteRuntimeScheduleOpti
   }
 
   return await executeSchedule({
+    captureHandlerFailure: runtimeOptions.captureHandlerFailure,
     definition,
     input: schedule.input,
     runStore: scheduleRunStore,

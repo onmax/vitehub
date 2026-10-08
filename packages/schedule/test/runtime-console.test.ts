@@ -248,6 +248,23 @@ describe("Schedule dev request handler", () => {
     expect(JSON.stringify(body)).not.toContain("secret-name")
   })
 
+  it("returns a failed outer run when its handler invokes a disabled child schedule", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(now)
+    setScheduleRuntimeRegistry({
+      report: async () => defineScheduleTarget({ handler: async () => { await schedules.run("child") } }),
+    })
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "child", target: "report", enabled: false })
+    await schedules.dynamic.create({ cron: "0 9 * * *", id: "digest", target: "report" })
+    const failed = await handleScheduleDevRequest(devRequest({ id: "digest", operation: "run" }))
+    expect(failed.status).toBe(200)
+    expect(await readBody(failed)).toMatchObject({ run: { scheduleId: "digest", status: "failed" } })
+    await schedules.disable("digest")
+    const blocked = await handleScheduleDevRequest(devRequest({ id: "digest", operation: "run" }))
+    expect(blocked.status).toBe(409)
+    expect(await readBody(blocked)).toMatchObject({ error: { code: "SCHEDULE_DISABLED" } })
+  })
+
   it("does not replay a stored handler failure after the schedule is disabled", async () => {
     vi.useFakeTimers({ toFake: ["Date"] })
     vi.setSystemTime(now)
