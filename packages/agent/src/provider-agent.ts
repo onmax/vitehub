@@ -3575,7 +3575,13 @@ async function* runProvider<
         caught = effectiveSignal?.aborted
           ? effectiveSignal.reason ?? new DOMException("[vitehub] Provider Agent Driver invocation aborted.", "AbortError")
           : agentDiagnostics.AGENT_R0722({ message: `[vitehub] Provider Agent Driver turn aborted${current.value.payload.reason ? `: ${current.value.payload.reason}` : "."}` })
-        if (effectiveSignal?.aborted) throw caught
+        if (effectiveSignal?.aborted) {
+          // Deliver measured terminal usage before cancellation closes the stream.
+          for (const event of normalized) {
+            if (event.type === "usage") yield event
+          }
+          throw caught
+        }
       }
       if (isTerminalEvent(current.value, turn.turnId) && !caught) completed = true
       while (pendingToolEvents.length) yield pendingToolEvents.shift()!
