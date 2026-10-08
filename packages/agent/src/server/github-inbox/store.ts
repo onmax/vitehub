@@ -242,6 +242,11 @@ export class PullRequestInbox {
     s.feedbackRefresh = true
   }
   private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
+    let reopened = false
+    if (this.activityAuthors.size && s.status === 'ready') {
+      const [previous] = await tx.execute(`SELECT status FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, s.repository, s.number])
+      reopened = previous?.status === 'terminal'
+    }
     this.compactTerminal(s)
     const head = s.pr?.head?.sha
     await tx.execute(`INSERT OR REPLACE INTO ${this.tables.pullRequests} (scope, repository, number, value, summary, status, generation, handled,
@@ -250,11 +255,11 @@ export class PullRequestInbox {
       s.dirtyAt, s.nextAt, s.lease, s.leaseUntil, s.wait ? 1 : 0, s.progressBudget?.exhausted && s.progressBudget.head === head ? 1 : 0,
       s.pr?.state === undefined ? null : String(s.pr.state).toLowerCase(), head ?? null, s.pr?.head?.ref ?? null, s.pr?.base?.ref ?? null,
     ])
-    if (this.activityAuthors.size && s.status === 'terminal') {
+    if (this.activityAuthors.size && (s.status === 'terminal' || reopened)) {
       const target = statusTargetKey(s)
       const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, `${statusOutboxPrefix}${target}`))
       const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
-      if (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed') {
+      if (reopened || (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed')) {
         await this.enqueueStatusProjectionIn(tx, s)
       }
     }
@@ -324,12 +329,11 @@ export class PullRequestInbox {
   private async statusWritersIn(tx: PullRequestInboxExecutor, target: string): Promise<Array<{ lease: string; expiresAt: number }>> {
     const parsed = v.safeParse(v.array(v.union([v.string(), v.object({ lease: v.string(), expiresAt: v.number() })])), await this.metaIn(tx, `${statusWriterPrefix}${target}`))
     const now = this.clock()
-    // A replaced request may still reach GitHub after lease expiry. Retain it
-    // for fifteen more minutes, then retire it after the corrective publication.
-    // Renewal extends this horizon for live writers. Legacy records receive a
-    // bounded migration horizon on their first persisted correction.
+    // An accepted external request can still land after any local deadline.
+    // Keep its recovery marker until the writer explicitly settles. The
+    // deadline only slows replay for an orphan; it cannot fence GitHub.
     return parsed.success ? parsed.output.map(value => v.is(v.string(), value) ? { lease: value, expiresAt: now + 900_000 } : value)
-      .filter(value => Number.isFinite(value.expiresAt) && value.expiresAt > now) : []
+      .filter(value => Number.isFinite(value.expiresAt)) : []
   }
   private async settleStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<Array<{ lease: string; expiresAt: number }>> {
     const target = statusTargetKey(observed)
@@ -448,8 +452,10 @@ export class PullRequestInbox {
         else {
           // An older accepted request can still land after this acknowledgement.
           // Replay with a fresh activity identity until every writer has settled.
+          // Orphaned writers retain recovery with a slower polling interval.
           const version = randomUUID()
-          await this.setMetaIn(tx, key, { ...released, version, nextAt: this.clock() + 60_000,
+          const retryDelay = writers.some(writer => writer.expiresAt <= this.clock()) ? 300_000 : 60_000
+          await this.setMetaIn(tx, key, { ...released, version, nextAt: this.clock() + retryDelay,
             activity: { ...released.activity, runId: `saved:${statusTargetKey(observed)}:${released.contentKey}:${version}` } })
         }
       } else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])

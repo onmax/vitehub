@@ -827,7 +827,7 @@ test('keeps a durable correction after acknowledgement while a replaced writer c
   assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
 })
 
-for (const legacy of [false, true]) test(`retires an orphaned status writer after a bounded corrective replay, legacy=${legacy}`, async t => {
+for (const legacy of [false, true]) test(`retains recovery for a late orphaned status write beyond its deadline, legacy=${legacy}`, async t => {
   const { inbox, claim, open, setClock } = await fixture(t)
   await inbox.finish(claim, blocked('Old result'))
   const [orphan] = await inbox.claimStatusDeliveries()
@@ -838,19 +838,36 @@ for (const legacy of [false, true]) test(`retires an orphaned status writer afte
   await inbox.close()
   const restored = open()
   t.onTestFinished(() => restored.close())
-  const published: string[] = []
-  const recovery = createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async delivery => { published.push(delivery.text) } })
+  let projection = orphan.text
+  const recovery = createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async delivery => { projection = delivery.text } })
   await recovery.flush()
-  assert.deepEqual(published, ['Pull request closed.'])
-  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 1, 'keep the correction while an accepted old HTTP request can still settle')
+  assert.equal(projection, 'Pull request closed.')
   setClock(orphan.leaseUntil + 60 * 60_000)
   await recovery.flush()
-  assert.deepEqual(published, ['Pull request closed.', 'Pull request closed.'])
-  assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [], 'a final corrective publication must retire a crashed writer')
-  assert.deepEqual(await restored.metaEntries('status-writers:v1:'), [])
+  // Local elapsed time cannot fence an already accepted external request.
+  projection = orphan.text
   setClock(orphan.leaseUntil + 2 * 60 * 60_000)
   await recovery.flush()
-  assert.equal(published.length, 2, 'a crashed process must not cause permanent GitHub writes')
+  assert.equal(projection, 'Pull request closed.', 'the old HTTP write must remain recoverable after its retirement deadline')
+  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 1)
+  await restored.reconcileSettledStatusWriter(orphan)
+  await recovery.flush()
+  assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
+  assert.deepEqual(await restored.metaEntries('status-writers:v1:'), [])
+})
+
+test('reopening a closed PR replaces its acknowledged status without an available worker', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  await inbox.ingest('closed-before-reopen', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  let projection = ''
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async delivery => { projection = delivery.text } })
+  await recovery.flush()
+  assert.equal(projection, 'Pull request closed.')
+  await inbox.ingest('reopened-without-worker', 'pull_request', { repository: { full_name: repository }, action: 'reopened', pull_request: pr })
+  assert.equal((await inbox.get(repository, 239))?.status, 'ready')
+  await recovery.flush()
+  assert.equal(projection, 'New pull request evidence is queued.')
 })
 
 test('a status writer heartbeat preserves its marker beyond the original retirement deadline', async t => {
