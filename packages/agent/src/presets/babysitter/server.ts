@@ -517,23 +517,33 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
 
   /** Moves a stacked PR to the default branch after its parent merged there. */
-  async function retargetMergedStackBase(snapshot: Snapshot): Promise<{ from: string; to: string } | { parent: number } | undefined> {
+  async function retargetMergedStackBase(claim: Claim, signal: AbortSignal): Promise<{ from: string; to: string } | { parent: number } | undefined> {
+    const snapshot = claim.snapshot;
     const pr = snapshot.pr;
     const target = pr && nonDefaultBase(pr);
     if (!pr || !target) return undefined;
     const { base, owner } = target;
-    const parents = await readRest(`repos/${snapshot.repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${base}`)}&per_page=10`);
+    const parents = await readRest(`repos/${snapshot.repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${base}`)}&per_page=10`, undefined, signal);
     const to = stackRetargetBase(pr, parents);
     if (!to) {
       const parent = parents.find(value => isRuntimeRecord(value) && String(value.state).toLowerCase() === "open" && Number.isSafeInteger(value.number));
       return isRuntimeRecord(parent) && hasRuntimeType(parent.number, "number") ? { parent: parent.number } : undefined;
     }
+    const [live] = await readRest(`repos/${snapshot.repository}/pulls/${snapshot.number}`, ".", signal);
+    if (!isRuntimeRecord(live) || String(live.state).toLowerCase() !== "open"
+      || !isRuntimeRecord(live.base) || live.base.ref !== base
+      || !isRuntimeRecord(live.head) || live.head.sha !== pr.head?.sha
+      || !await pullRequestInbox.isClaimCurrent(claim)) {
+      await pullRequestInbox.hydrate(claim, { refresh: true });
+      throw new DOMException("Stack child changed before retargeting.", "AbortError");
+    }
+    signal.throwIfAborted();
     try {
-      await github.command(["api", "-X", "PATCH", `repos/${snapshot.repository}/pulls/${snapshot.number}`, "-f", `base=${to}`], { repository: snapshot.repository, timeout: 60_000 });
+      await github.command(["api", "-X", "PATCH", `repos/${snapshot.repository}/pulls/${snapshot.number}`, "-f", `base=${to}`], { repository: snapshot.repository, timeout: 60_000, signal });
     } catch (error) {
       // A stale stack snapshot can race a webhook or another worker. GitHub
       // may reject a redundant retarget even though the desired base is live.
-      const [current] = await readRest(`repos/${snapshot.repository}/pulls/${snapshot.number}`, ".");
+      const [current] = await readRest(`repos/${snapshot.repository}/pulls/${snapshot.number}`, ".", signal);
       const currentBase = isRuntimeRecord(current) && isRuntimeRecord(current.base) ? current.base.ref : undefined;
       if (currentBase !== to) throw error;
     }
@@ -747,7 +757,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
             return;
           }
-          const retargeted = await retargetMergedStackBase(inboxClaim.snapshot);
+          const retargeted = await retargetMergedStackBase(inboxClaim, passSignal);
           if (retargeted && "parent" in retargeted) {
             await pullRequestInbox.finish(inboxClaim, { text: `Waiting for open parent PR #${retargeted.parent} before repairing its child.`,
               wait: await externalWait(inboxClaim.snapshot, { kind: "pull-request", repository, number: retargeted.parent }, "stack-parent") });
@@ -989,12 +999,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   await assertLease();
                   await assertRepairBase();
                   const renewLease = async () => {
-                    let current = await assertLease();
+                    let current = await assertLease(pullRequest.headRefOid);
                     for (;;) {
                       if (await pullRequestInbox.renew({ ...inboxClaim, generation: current.generation, snapshot: current }, Date.now() + 2 * 60 * 60_000)) return;
                       // A generation can advance between validation and CAS.
                       // Recheck ownership, head and feedback before adopting it.
-                      const latest = await assertLease();
+                      const latest = await assertLease(pullRequest.headRefOid);
                       if (latest.generation === current.generation) throw new DOMException("Pull request lease renewal failed.", "AbortError");
                       current = latest;
                     }

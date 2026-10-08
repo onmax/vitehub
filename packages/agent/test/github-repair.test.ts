@@ -1,12 +1,18 @@
 import { execFile } from "node:child_process";
+import * as filesystem from "node:fs/promises";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts";
 import { assertGitHubDependenciesCurrent } from "../src/server/github-install.ts";
 import { validateGitHubInstallInputs } from "../src/server/github-install-inputs.ts";
+
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, mkdir: vi.fn(actual.mkdir), open: vi.fn(actual.open) };
+});
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -95,6 +101,44 @@ it("keeps tracked linked command deletions behind the installation fence", async
   await rm(join(local, "cli.js"));
   await expect(commitGitHubPullRequestWorkspace(root, { message: "remove command", paths: ["packages/local/cli.js"] }, { expectedHead, verifyDependencies: true })).rejects.toThrow("Dependency inputs changed");
   expect(await git(root, "rev-parse", "HEAD")).toBe(expectedHead);
+});
+
+it.each(["parent", "open"])("rejects generated command %s replacement before copying into the protected snapshot", async race => {
+  const { root } = await fixture();
+  const command = "packages/local/dist/cli.js";
+  await mkdir(join(root, "packages/local/dist"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: "dist/cli.js" }));
+  await writeFile(join(root, ".gitignore"), "dist/\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked command");
+  await writeFile(join(root, command), "safe generated command\n");
+  await writeFile(join(root, ".git/vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  const inputs = await mkdtemp(join(tmpdir(), "vitehub-bin-snapshot-")); roots.push(inputs);
+  await git(root, "checkout-index", "--all", `--prefix=${inputs}/`);
+  const outside = await mkdtemp(join(tmpdir(), "vitehub-bin-outside-")); roots.push(outside);
+  await writeFile(join(outside, "cli.js"), "outside host content\n");
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  let replaced = false;
+  const replace = async () => {
+    replaced = true;
+    await filesystem.rename(join(root, "packages/local/dist"), join(root, "packages/local/original-dist"));
+    await symlink(outside, join(root, "packages/local/dist"));
+  };
+  const mkdirSpy = vi.spyOn(filesystem, "mkdir").mockImplementation(async (path, options) => {
+    if (race === "parent" && String(path) === join(inputs, "packages/local/dist")) await replace();
+    // SAFETY: The intercepted call uses the recursive mkdir overload.
+    return await actual.mkdir(path, options as { recursive: true });
+  });
+  const openSpy = vi.spyOn(filesystem, "open").mockImplementation(async (path, flags, mode) => {
+    if (race === "open" && String(path) === join(root, command)) await replace();
+    return await actual.open(path, flags, mode);
+  });
+  try {
+    await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow();
+    expect(replaced).toBe(true);
+    expect(await readFile(join(inputs, command), "utf8").catch(() => "")).not.toContain("outside host content");
+  } finally { mkdirSpy.mockRestore(); openSpy.mockRestore(); }
 });
 
 it("fingerprints missing linked commands and rejects symbolic or metadata command targets", async () => {
