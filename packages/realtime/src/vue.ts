@@ -23,6 +23,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function isString(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Error fields cross an untyped provider boundary.
+  return typeof value === "string"
+}
+
 function isRealtimeCheckpoint(value: unknown): value is RealtimeCheckpoint {
   if (!isRecord(value) || !isRecord(value.snapshot)) return false
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Check the untrusted checkpoint content before returning it.
@@ -170,10 +175,10 @@ export function useRealtimeTiptap(definition: string, documentId: MaybeRefOrGett
         const data: unknown = await response.json().catch(() => undefined)
         const errorData = isRecord(data) ? data : undefined
         const nestedData = isRecord(errorData?.data) ? errorData.data : undefined
-        const message = typeof errorData?.statusMessage === "string" && errorData.statusMessage
+        const message = isString(errorData?.statusMessage) && errorData.statusMessage
           ? errorData.statusMessage
-          : typeof errorData?.message === "string" ? errorData.message : undefined
-        if (response.status === 409 && isRetryableRealtimeCheckpointCode(typeof nestedData?.code === "string" ? nestedData.code : undefined) && attempt < 20) {
+          : isString(errorData?.message) ? errorData.message : undefined
+        if (response.status === 409 && isRetryableRealtimeCheckpointCode(isString(nestedData?.code) ? nestedData.code : undefined) && attempt < 20) {
           await new Promise(resolve => setTimeout(resolve, 50))
           continue
         }
