@@ -35,6 +35,7 @@ export const PrimitiveRail = defineComponent({
     /** Accessible name of the navigation landmark. */
     label: { required: true, type: String },
   },
+  // SAFETY: Vue uses Object as its runtime slots marker. Each slot receives the shared expanded boolean.
   slots: Object as SlotsType<{ default?: PrimitiveRailSlot; footer?: PrimitiveRailSlot; header?: PrimitiveRailSlot }>,
   setup(props, { slots }) {
     const hovered = ref(false);
