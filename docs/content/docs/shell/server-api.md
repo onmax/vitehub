@@ -22,6 +22,8 @@ Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Wo
 
 Workspace filesystem adapters preserve binary output from redirection and `tee`. Their read, write, and append methods honor Just Bash encoding options.
 
+Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
+
 ## Use Shell sessions
 
 A Shell Session keeps policy across repeated commands: call budget, output size, timeouts, and process budget.

@@ -80,6 +80,8 @@ The provider copies the command list at creation. Later changes to the supplied 
 
 Workspace filesystem adapters preserve binary output from redirection and `tee`. Their read, write, and append methods honor Just Bash encoding options.
 
+Appending creates an absent Workspace file. A read failure for an existing file fails the append before changing its content.
+
 ## Use with Agents
 
 `workspaceShell()` in [`@vite-hub/agent`](../agent/README.md) exposes scoped shell work through an Agent Capability. It attaches Workspace Scope, Shell policy, metadata, and tools to the Agent Definition; do not expose an unrestricted raw runtime to a model.
