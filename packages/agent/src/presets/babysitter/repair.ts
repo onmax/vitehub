@@ -1,3 +1,4 @@
+import type { AgentInvocationContextStore } from "../../types.ts";
 import { defineCapability } from "../../capability-runtime.ts";
 import type { GitHubPullRequestOperations } from "../../server/github.ts";
 import { normalizeGitHubMentionAllowlist } from "../../server/github-auto-merge.ts";
@@ -15,11 +16,11 @@ function stringField(input: unknown, key: string, allowEmpty = false): string {
   return value;
 }
 
-export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, mentionAllowlist: readonly string[] = []) {
+export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, mentionAllowlist: readonly string[] = [], beforePush?: (context: AgentInvocationContextStore) => Promise<void>) {
   const allowedMentions = normalizeGitHubMentionAllowlist(mentionAllowlist)
   return defineCapability({
     id: "babysitter.github",
-    tools: {
+    tools: context => ({
       readCheckLogs: {
         name: "readCheckLogs",
         description: "Read failed logs for a GitHub Actions run associated with this PR head.",
@@ -69,6 +70,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           "Push committed repairs to this PR's pinned source branch. After pushing, resolve any review threads fixed by the push before ending the pass.",
         inputSchema: noArguments,
         execute: async () => {
+          await beforePush?.(context.context);
           await operations.push();
           return { pushed: true };
         },
@@ -149,7 +151,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
             },
           }
         : {}),
-    },
+    }),
   });
 }
 

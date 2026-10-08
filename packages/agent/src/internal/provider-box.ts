@@ -6,8 +6,23 @@ import { join } from "node:path"
 import type { Server, Socket } from "node:net"
 import type { BoxDefinition, BoxFile, BoxPlan, BoxProcess, BoxRuntimeDefinition, BoxSession } from "@vite-hub/box"
 
+import type { AgentInvocationContextStore } from "../types.ts"
+
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { hasRuntimeType, isRuntimeRecord } from "./runtime-type.ts"
+
+const activeBoxes = new WeakMap<AgentInvocationContextStore, ProviderBoxSession>()
+
+export function activeProviderBox(context: AgentInvocationContextStore) {
+  return activeBoxes.get(context)
+}
+
+export function setActiveProviderBox(context: AgentInvocationContextStore, session: ProviderBoxSession) {
+  activeBoxes.set(context, session)
+  return () => {
+    if (activeBoxes.get(context) === session) activeBoxes.delete(context)
+  }
+}
 
 /** Environment names that a Box runtime owns. The relay never forwards them. */
 const boxRuntimeEnvironmentKeys = new Set([
@@ -28,6 +43,8 @@ const frameExit = 3
 const relayCleanupTimeoutMs = 1000
 
 export interface ProviderBoxSession {
+  /** The session writes directly to the host checkout without a remote copy. */
+  readonly localWorkspace?: boolean
   /** Home files and persisted state can contain credentials unknown to the relay. */
   readonly omitDiagnosticOutput?: boolean
   /** Actual Box environment values, retained only for diagnostic redaction. */
@@ -91,7 +108,7 @@ export async function openProviderBox<Context>(options: {
       throw agentDiagnostics.AGENT_R0952({ message: "[vitehub] Agent Box did not report an absolute HOME path." })
     }
     const omitDiagnosticOutput = Object.keys(declared).length > 0 || Object.keys(options.definition.home?.state ?? {}).length > 0
-    return { environment, omitDiagnosticOutput, home: home.stdout, session, spawn: spawn.bind(session), workspace: box.plan.workspace }
+    return { localWorkspace: box.plan.runtime === "trusted-host", environment, omitDiagnosticOutput, home: home.stdout, session, spawn: spawn.bind(session), workspace: box.plan.workspace }
   }
   catch (error) {
     await session.close().catch(() => undefined)

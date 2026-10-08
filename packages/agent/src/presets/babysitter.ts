@@ -18,6 +18,8 @@ import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 export type { BabysitterMerge, BabysitterMergeMethod, BabysitterMergeReadinessInput, BabysitterMergeReady } from "./babysitter/merge.ts";
 
 export interface BabysitterOptions {
+  /** Process admission policy. Concurrency remains the preset hard maximum. */
+  capacity?: Pick<import("../runtime/process.ts").ProcessAgentCapacityOptions, "memory" | "cpu" | "fallbackConcurrency">;
   /** Select PRs with the same rules as the GitHub Channel. */
   filter: GitHubPullRequestFilter;
   /** Provider Driver that repairs each PR in its checkout. Defaults to `"codex"`. Set the model with `driver.model`. */
