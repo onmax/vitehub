@@ -69,6 +69,8 @@ Workspace shell tools do not permit controlled `curl` by default. Pass `sourceRe
 | `materializeSources(options?)` | `abortSignal?`, `details?: 'paths'`, `onProgress?`, `sources?`, `path?` | Materializes every Source or a selected Source/path subset, with cancellation and progress reporting. |
 | `getMeta(key)` / `setMeta(key, value)` | Store-defined | Reads or writes optional Workspace Store metadata when the configured Store implements it. Keys that start with `source:`, `workspace:`, `workspace-file-`, or `loader:` are reserved for Workspace internals, and `setMeta` rejects them. |
 
+When wrapping a writable facade with a replacement `fs`, call `forwardWorkspaceFacade(base, wrapped)` from `@vite-hub/workspace/runtime` to preserve internal Source Sync routing. This forwards enclosing Source guards and durable sync metadata without exposing privileged setters. Keep public writes delegated to the original facade.
+
 Startup and build Source cleanup track ownership by Workspace name. When definitions share a Store, removing or refreshing one definition preserves files last materialized by another definition. Shared paths still contain the most recent write.
 
 File `metadata.source` is reserved for the string name of the Source that owns the file. The local Store rejects other values before writing bytes or consuming a content stream, preserving any existing content and metadata.

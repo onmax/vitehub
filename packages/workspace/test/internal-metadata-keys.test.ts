@@ -4,7 +4,7 @@ import { custom, defineWorkspace, useWorkspace, type WorkspaceDefinition, type W
 import { sha256 } from "../src/core/path.ts"
 import { resetWorkspaceRegistry } from "../src/core/registry.ts"
 import { createWorkspace } from "../src/core/workspace.ts"
-import { createWorkspaceSourceResolutionFacade } from "../src/runtime.ts"
+import { createWorkspaceSourceResolutionFacade, forwardWorkspaceFacade } from "../src/runtime.ts"
 import { sourceSnapshotMetaKey } from "../src/sources/materialization.ts"
 import { sourceSyncMetaKey } from "../src/sources/sync-state.ts"
 import { isInternalWorkspaceMetaKey } from "../src/storage/metadata-keys.ts"
@@ -192,13 +192,19 @@ describe("internal metadata keys", () => {
     await expect(store.stat("docs/old.md")).resolves.toBeUndefined()
   })
 
-  it("supports writable facades that do not register a raw write target", async () => {
+  it.each([false, true])("supports wrappers with public forwarding (replaced fs: %s)", async (replaceFs) => {
     const store = createMemoryWorkspaceStore()
     registerWorkspace("support", defineWorkspace({ store }))
     const base = useWorkspace("support", { mode: "write" })
     // A wrapper supplied by an integration does not have the private target
     // registration created by useWorkspace.
     const wrapped = Object.fromEntries(Object.entries(base)) as unknown as WritableWorkspaceFacade
+    if (replaceFs) {
+      wrapped.fs = { ...base.fs }
+      wrapped.setMeta = (key, value) => base.setMeta!(key, value)
+      forwardWorkspaceFacade(base, wrapped)
+    }
+    await expect(wrapped.setMeta!(sourceSyncMetaKey("docs", "support"), {})).rejects.toThrow("reserved")
     const definition: WorkspaceDefinition = {
       name: "support",
       sources: { docs: docsSource() },
@@ -207,5 +213,11 @@ describe("internal metadata keys", () => {
     const resolved = await createWorkspaceSourceResolutionFacade(wrapped, definition, { invocation, overlay: true })
     await expect((resolved.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
     await expect(store.getMeta!(sourceSyncMetaKey("docs", "support"))).resolves.toMatchObject({ source: "docs" })
+    const next = await createWorkspaceSourceResolutionFacade(wrapped, {
+      ...definition,
+      sources: { docs: { ...docsSource(), async getKeys() { return [] } } },
+    }, { invocation, overlay: true })
+    await expect((next.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
+    await expect(store.stat("docs/guide.md")).resolves.toBeUndefined()
   })
 })

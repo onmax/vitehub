@@ -19,6 +19,7 @@ import {
 } from "../src/index.ts"
 import {
   createWorkspaceSourceResolutionFacade,
+  forwardWorkspaceFacade,
   getWorkspaceSourceRequestExecution,
   resolveWorkspaceSources,
   workspaceSourceRequestDescriptorPath,
@@ -1354,7 +1355,7 @@ describe("Workspace Source Resolution", () => {
     await expect((resolved.workspace as WritableWorkspaceFacade).history.checkpoint()).resolves.toMatchObject({})
   })
 
-  it("keeps parent Source guards during nested sync and permits ordinary nested writes", async () => {
+  it.each([false, true])("keeps parent Source guards during nested sync and ordinary writes (wrapped: %s)", async (wrapped) => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), {
       name: "support",
@@ -1364,7 +1365,12 @@ describe("Workspace Source Resolution", () => {
         async getItem(key) { return { key, path: key, content: "parent" } },
       }) },
     }, { invocation, overlay: true })
-    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, {
+    const enclosing = parent.workspace as WritableWorkspaceFacade
+    const wrapper = Object.fromEntries(Object.entries(enclosing)) as unknown as WritableWorkspaceFacade
+    wrapper.fs = { ...enclosing.fs }
+    wrapper.setMeta = (key, value) => enclosing.setMeta!(key, value)
+    forwardWorkspaceFacade(enclosing, wrapper)
+    const child = await createWorkspaceSourceResolutionFacade(wrapped ? wrapper : enclosing, {
       name: "support",
       sources: { child: custom({
         mount: "docs", sync: { stale: "remove" },
@@ -1472,6 +1478,11 @@ describe("Workspace Source Resolution", () => {
   })
 
   it.each([
+    {
+      name: "proxy get traps",
+      left: new Proxy({ value: "same" }, { get: (target, key) => key === "value" ? "parent" : Reflect.get(target, key) }),
+      right: new Proxy({ value: "same" }, { get: (target, key) => key === "value" ? "child" : Reflect.get(target, key) }),
+    },
     { name: "empty and sparse arrays", left: [], right: Array(1) },
     { name: "sparse array lengths", left: Array(1), right: Array(2) },
     { name: "symbols", left: Symbol("same"), right: Symbol("same") },

@@ -1,3 +1,4 @@
+import { types } from "node:util"
 import { createWorkspaceTools } from "../ai.ts"
 import { workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath } from "../core/path.ts"
@@ -98,9 +99,11 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
 // Custom serializers, accessors, cycles, and exotic objects retain the outer guard.
 function sameWorkspaceSourceValue(left: unknown, right: unknown, ancestors = new Set<object>()): boolean {
   try {
+    // SAFETY: Fingerprints accept unknown values; only plain data is compared below.
     if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
       return Object.is(left, right)
     }
+    if (types.isProxy(left) || types.isProxy(right)) return false
     const prototype = Object.getPrototypeOf(left)
     if (Array.isArray(left) !== Array.isArray(right)
       || prototype !== Object.getPrototypeOf(right)
@@ -266,6 +269,13 @@ function createOverlaySourceStore<Name extends WorkspaceName>(
 }
 
 const sourceSyncStores = new WeakMap<object, (definition: WorkspaceDefinition) => WorkspaceStore>()
+
+/** Preserve internal Source Sync routing when wrapping a writable facade. */
+export function forwardWorkspaceFacade(source: WritableWorkspaceFacade, target: WritableWorkspaceFacade): void {
+  forwardWorkspaceMetadataTarget(source, target)
+  const syncStore = sourceSyncStores.get(source.fs)
+  if (syncStore) sourceSyncStores.set(target.fs, syncStore)
+}
 
 function createWritableFacadeStore(workspace: WritableWorkspaceFacade, sourceSync?: WorkspaceDefinition): WorkspaceStore {
   // Nested resolution must keep syncing to the backing Store, not a prior overlay.
