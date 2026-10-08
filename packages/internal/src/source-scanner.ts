@@ -19,9 +19,8 @@ type JsxElement = { end: number, expressions: { start: number, end: number }[] }
 const jsxElements = new WeakMap<ControlFlowRegexCache, { source: string, results: Map<number, JsxElement | undefined> }>()
 const sourceSyntaxes = new WeakMap<ControlFlowRegexCache, "jsx" | "tsx">()
 
-function createControlFlowRegexCache(parent?: "jsx" | "tsx" | ControlFlowRegexCache): ControlFlowRegexCache {
+function createControlFlowRegexCache(syntax?: "jsx" | "tsx"): ControlFlowRegexCache {
   const context: ControlFlowRegexCache = new Map()
-  const syntax = typeof parent === "string" ? parent : parent && sourceSyntaxes.get(parent)
   if (syntax) sourceSyntaxes.set(context, syntax)
   return context
 }
@@ -668,7 +667,7 @@ function maskJsxElement(source: string, start: number, end: number, output: stri
   }
   for (const expression of element.expressions) {
     output[expression.start] = "{"
-    const masked = maskSourceLiteralsWithContext(source.slice(expression.start + 1, expression.end), createControlFlowRegexCache(controlFlowRegexes))
+    const masked = maskSourceLiteralsWithContext(source.slice(expression.start + 1, expression.end), createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
     for (let offset = 0; offset < masked.length; offset++) output[expression.start + 1 + offset] = masked[offset]
     output[expression.end] = "}"
   }
@@ -858,7 +857,7 @@ function findIdentifierCallsWithContext(source: string, name: string, controlFlo
       continue
     }
     calls.push({
-      arguments: splitTopLevelWithContext(source.slice(openParen + 1, closeParen), ",", createControlFlowRegexCache(controlFlowRegexes)),
+      arguments: splitTopLevelWithContext(source.slice(openParen + 1, closeParen), ",", createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes))),
       closeParen,
       name,
       openParen,
@@ -922,24 +921,24 @@ function findDefaultExportCallWithContext(source: string, names: string[], optio
       if (/\b[A-Za-z_$][\w$]*\s*\(/.test(value)) return false
       return true
     }
-    const firstArgument = stripBoundaryCommentsWithContext(call.arguments[0] || "", createControlFlowRegexCache(controlFlowRegexes))
+    const firstArgument = stripBoundaryCommentsWithContext(call.arguments[0] || "", createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
     let callArgument = !firstArgument.startsWith("{") && options.positionalOptionsIndex !== undefined
-      ? stripBoundaryCommentsWithContext(call.arguments[options.positionalOptionsIndex] || "{}", createControlFlowRegexCache(controlFlowRegexes))
+      ? stripBoundaryCommentsWithContext(call.arguments[options.positionalOptionsIndex] || "{}", createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
       : firstArgument
     // Positional options are often wrapped in parentheses (and may contain a
     // trailing type assertion). Unwrap only complete boundary parentheses so
     // nested expressions remain intact for object matching below.
     while (callArgument.startsWith("(")) {
-      const boundaryEnd = findMatchingWithContext(callArgument, 0, "(", ")", createControlFlowRegexCache(controlFlowRegexes))
+      const boundaryEnd = findMatchingWithContext(callArgument, 0, "(", ")", createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
       if (boundaryEnd === undefined) break
-      const trailing = stripBoundaryCommentsWithContext(callArgument.slice(boundaryEnd + 1), createControlFlowRegexCache(controlFlowRegexes))
+      const trailing = stripBoundaryCommentsWithContext(callArgument.slice(boundaryEnd + 1), createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
       if (trailing && !isCompleteAssertion(trailing)) break
-      callArgument = stripBoundaryCommentsWithContext(callArgument.slice(1, boundaryEnd), createControlFlowRegexCache(controlFlowRegexes))
+      callArgument = stripBoundaryCommentsWithContext(callArgument.slice(1, boundaryEnd), createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
     }
     if (!callArgument.startsWith("{")) continue
-    const objectEnd = findMatchingWithContext(callArgument, 0, "{", "}", createControlFlowRegexCache(controlFlowRegexes))
+    const objectEnd = findMatchingWithContext(callArgument, 0, "{", "}", createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
     if (objectEnd === undefined) continue
-    const suffix = stripBoundaryCommentsWithContext(callArgument.slice(objectEnd + 1), createControlFlowRegexCache(controlFlowRegexes))
+    const suffix = stripBoundaryCommentsWithContext(callArgument.slice(objectEnd + 1), createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
     if (suffix && !isCompleteAssertion(suffix)) continue
     const argument = callArgument.slice(0, objectEnd + 1)
     if (/\bexport\s+default\s*(?:\(\s*)*$/.test(masked.slice(0, call.start))) {
@@ -973,7 +972,7 @@ function readObjectMemberKey(source: string, offset: number) {
 function* readObjectMembers(objectSource: string, controlFlowRegexes: ControlFlowRegexCache) {
   const normalized = stripBoundaryCommentsWithContext(objectSource, controlFlowRegexes)
   if (!normalized.startsWith("{") || !normalized.endsWith("}")) return
-  for (const source of splitTopLevelWithContext(normalized.slice(1, -1), ",", createControlFlowRegexCache(controlFlowRegexes))) {
+  for (const source of splitTopLevelWithContext(normalized.slice(1, -1), ",", createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))) {
     if (skipWhitespaceAndComments(source, 0) === source.length) continue
     let key = readObjectMemberKey(source, 0)
     if (key?.name === "get" || key?.name === "set" || key?.name === "async") {
@@ -992,6 +991,6 @@ function readObjectPropertyWithContext(objectSource: string, propertyName: strin
   for (const member of readObjectMembers(objectSource, controlFlowRegexes)) {
     if (member.name !== propertyName) continue
     const colon = skipWhitespaceAndComments(member.source, member.end)
-    if (member.source[colon] === ":") return stripBoundaryCommentsWithContext(member.source.slice(colon + 1), createControlFlowRegexCache(controlFlowRegexes))
+    if (member.source[colon] === ":") return stripBoundaryCommentsWithContext(member.source.slice(colon + 1), createControlFlowRegexCache(sourceSyntaxes.get(controlFlowRegexes)))
   }
 }
