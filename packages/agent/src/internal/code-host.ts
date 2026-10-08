@@ -126,7 +126,7 @@ function abortError(signal: AbortSignal): Error {
   return new DOMException("The operation was aborted.", "AbortError")
 }
 
-async function withSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function withSignal<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return await promise
   if (signal.aborted) throw abortError(signal)
   return await new Promise<T>((resolve, reject) => {
