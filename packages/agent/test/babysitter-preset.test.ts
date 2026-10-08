@@ -1215,7 +1215,7 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       expect(f.pr().base.sha).not.toBe(baseBranchHead);
       expect(f.passes).toHaveLength(1);
-      expect(prepareGitHubRepairBase).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ expectedHead: f.pr().head.sha, base: baseBranchHead }));
+      expect(prepareGitHubRepairBase).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ expectedHead: f.pr().head.sha, base: baseBranchHead, fetch: { url: "https://github.com/acme/app.git", env: expect.objectContaining({ GH_TOKEN: "host-secret" }) } }));
     } finally { await f.runtime.inbox.close(); }
   });
 

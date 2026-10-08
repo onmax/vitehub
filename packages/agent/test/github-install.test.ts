@@ -594,3 +594,18 @@ it("removes obsolete workspace output when the next install omits that workspace
   await expect(readFile(join(root, "packages", "old", "node_modules", "stale.txt"))).rejects.toThrow();
   await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
 });
+
+it("ignores workspace npmrc files during root npm installs but validates root config", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3", workspaces: ["packages/*"] }));
+  await writeFile(join(root, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: {} }));
+  await mkdir(join(root, "packages", "child"), { recursive: true });
+  await writeFile(join(root, "packages", "child", "package.json"), JSON.stringify({ name: "child" }));
+  await writeFile(join(root, "packages", "child", ".npmrc"), "registry=https://example.com\n");
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(join(root, "packages", "child", ".npmrc"), "cache=/outside\n");
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+  await writeFile(join(root, ".npmrc"), "cache=/outside\n");
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/configuration/);
+});

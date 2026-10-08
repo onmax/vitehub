@@ -64,6 +64,8 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
   const packageRoots = new Set([root]);
   const pnpm = await stat(join(root, "pnpm-lock.yaml")).then(info => info.isFile(), () => false);
+  const npm = !pnpm && (await stat(join(root, "package-lock.json")).then(info => info.isFile(), () => false)
+    || await stat(join(root, "npm-shrinkwrap.json")).then(info => info.isFile(), () => false));
   const dependencyFiles = new Set<string>();
   const dependencyDirectories = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
@@ -190,6 +192,8 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   async function visit(directory: string): Promise<void> {
     for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
       if ([".git", "node_modules"].includes(entry.name)) continue;
+      // Root npm installs do not read workspace-local project configuration.
+      if (npm && entry.name === ".npmrc" && directory !== root) continue;
       const path = join(directory, entry.name);
       if (entry.isSymbolicLink()) {
         // A package-manager input must be a regular file, so it cannot change targets.
