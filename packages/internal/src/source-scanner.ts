@@ -360,10 +360,13 @@ function isStatementBlockRegexStart(source: string, closeBrace: number, controlF
 function maskDeclarationTypeParameters(source: string, head: string, controlFlowRegexes: ControlFlowRegexCache) {
   let start: number | undefined
   let end: number | undefined
+  let masked: string | undefined
   for (const generic of head.matchAll(/(?<![$\p{ID_Continue}\u200C\u200D])(?:function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?|(?:interface|type)\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)\s*</gu)) {
     const next = generic.index + generic[0].length - 1
     // Ignore candidate keywords inside type parameters that were already read.
     if (end !== undefined && next <= end) continue
+    masked ??= maskSourceLiteralsWithContext(head, controlFlowRegexes)
+    if (masked[generic.index] !== head[generic.index]) continue
     const close = findMatchingWithContext(source, next, "<", ">", controlFlowRegexes)
     if (close === undefined || close >= head.length) continue
     start = next
