@@ -222,6 +222,11 @@ describe("GitHub workspace store", () => {
       path: "/repos/onmax/repo/git/trees/base-tree",
       response: { tree: null },
     },
+    ...[undefined, null, ""].map(sha => ({
+      message: "tree",
+      path: "/repos/onmax/repo/git/trees/base-tree",
+      response: { tree: [{ path: ".vitehub/workspaces/docs/file.md", sha, type: "blob" }] },
+    })),
   ])("rejects malformed successful GitHub $message responses", async ({ message, path, response }) => {
     malformedResponsePath = path;
     malformedResponse = response;

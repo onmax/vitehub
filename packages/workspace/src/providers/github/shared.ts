@@ -17,7 +17,7 @@ export interface GitHubWorkspaceOptions {
 export interface GitHubTreeEntry {
   mode?: string;
   path: string;
-  sha?: string | null;
+  sha: string;
   size?: number;
   type: string;
 }
@@ -90,8 +90,7 @@ function isGitHubTreeEntry(value: unknown): value is GitHubTreeEntry {
     && typeof value.type === "string"
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- GitHub JSON fields must be validated before the typed response is used.
     && (value.mode === undefined || typeof value.mode === "string")
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- GitHub JSON fields must be validated before the typed response is used.
-    && (value.sha === undefined || value.sha === null || typeof value.sha === "string")
+    && isNonEmptyString(value.sha)
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- GitHub JSON fields must be validated before the typed response is used.
     && (value.size === undefined || (typeof value.size === "number" && Number.isInteger(value.size) && value.size >= 0))
 }
@@ -454,7 +453,7 @@ export function findGitHubRemoteFiles(
 
   const files = new Map<string, GitHubTreeEntry>();
   for (const entry of tree.tree) {
-    if (entry.type !== "blob" || !entry.sha) continue;
+    if (entry.type !== "blob") continue;
     const path = workspacePathFromGitPath(entry.path, root);
     if (path) files.set(path, entry);
   }
@@ -520,7 +519,7 @@ export async function readGitHubBranchState(input: {
       branchExists,
       files: new Map(input.paths.flatMap((path, index) => {
         const entry = entries[index];
-        return entry?.type === "file" && entry.sha ? [[path, entry] as const] : [];
+        return entry?.type === "file" ? [[path, entry] as const] : [];
       })),
       refSha: ref.object.sha,
       treeSha: current.tree.sha,
