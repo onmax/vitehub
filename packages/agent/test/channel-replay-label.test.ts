@@ -42,6 +42,18 @@ describe("trusted Channel replay metadata", () => {
     expect(new Set(ids).size).toBe(3)
   })
 
+  it("retains the label and key when trigger resolution fails", async () => {
+    const { agent, invocations, invoke } = fixture()
+    invoke.mockImplementationOnce(() => { throw new Error("Synthetic trigger failure") })
+    const response = await handleChannelReplayRequest(agent, { channel: "mailbox", dryRun: true, label: "failed-round" }, { runtime: runtime() })
+    const result = await response.json() as { items: { id: string }[] }
+    expect(result).toMatchObject({ failed: 1 })
+    const record = await invocations.getByRunId(result.items[0]!.id, "support")
+    expect(record?.status).toBe("failed")
+    expect(record?.channelId).toBe("mailbox")
+    expect(record?.annotations).toMatchObject({ triggeredBy: "failed-round", "vitehub.channel.key": "m1" })
+  })
+
   it.each(["", "   ", "x".repeat(513), 123, null])("rejects invalid replay labels before starting an Invocation: %j", async label => {
     const { agent, invocations, invoke } = fixture()
     const response = await handleChannelReplayRequest(agent, { channel: "mailbox", dryRun: true, label })

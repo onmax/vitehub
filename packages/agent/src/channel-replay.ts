@@ -210,7 +210,11 @@ async function runChannelItem<TRuntimeConfig extends AgentRuntimeConfig>(
   const id = run.force ? `${stableId}:${crypto.randomUUID()}` : stableId
   let reservation: AgentInvocationJournal<TRuntimeConfig> | undefined
   try {
-    const itemRuntime = { ...run.runtime, ...(run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, runId: id } }
+    const itemRuntime = { ...run.runtime, ...(run.invocations ? { [exclusiveAgentInvocation]: true } : {}), memo: createMemo(), run: { ...run.runtime.run, channelId: run.channel, runId: id, annotations: {
+      ...run.runtime.run?.annotations,
+      "vitehub.channel.key": key,
+      ...(run.label !== undefined ? { triggeredBy: run.label } : {}),
+    } } }
     if (!run.force && run.invocations) reservation = await reserveAgentChannelItem(run.agent, itemRuntime)
     // SAFETY: Execution context normalization supplies the resolved runtime configuration.
     const triggerContext = createExecutionContext(itemRuntime) as ResolvedAgentRuntimeContext<TRuntimeConfig>
