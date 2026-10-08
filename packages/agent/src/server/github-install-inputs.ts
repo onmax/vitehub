@@ -63,6 +63,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   const root = await realpath(target);
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
   const packageRoots = new Set([root]);
+  const pnpm = await stat(join(root, "pnpm-lock.yaml")).then(info => info.isFile(), () => false);
   const dependencyFiles = new Set<string>();
   const dependencyDirectories = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
@@ -152,6 +153,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     if (Array.isArray(value)) { for (const entry of value) await inspect(entry, base, dependency, field); return; }
     if (!isRuntimeRecord(value)) return;
     for (const [key, entry] of Object.entries(value)) {
+      if (key === "workspaces" && pnpm) continue;
       if (key === "patchedDependencies") {
         await inspectPnpmPatches(entry, base);
       } else if (key === "importers" && isRuntimeRecord(entry)) {
@@ -206,14 +208,14 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
           if (!isRuntimeRecord(data) || Object.values(data).some(value => !isRuntimeRecord(value))) throw new Error("Invalid Yarn lockfile stanza; dependency fields must be structured.");
         } else data = entry.name.endsWith(".json") ? JSON.parse(source) : parse(source);
         await inspect(data, directory, false, entry.name);
-        if (entry.name === "package.json" && isRuntimeRecord(data)) {
+        if (entry.name === "package.json" && !pnpm && isRuntimeRecord(data)) {
           await selectWorkspaces(Array.isArray(data.workspaces) ? data.workspaces : isRuntimeRecord(data.workspaces) ? data.workspaces.packages : undefined, directory);
         }
         if (entry.name === "pnpm-workspace.yaml" && isRuntimeRecord(data)) {
           for (const [key, value] of Object.entries(data)) {
             if (!workspaceFields.has(key) && !supportedSetting(key, value)) throw new Error(`Unsupported project pnpm configuration: ${key}. Host-local configuration paths and package-manager extensions are not allowed.`);
           }
-          await selectWorkspaces(data.packages ?? ["**"], directory);
+          if (pnpm) await selectWorkspaces(data.packages ?? ["**"], directory);
         }
       }
     }
