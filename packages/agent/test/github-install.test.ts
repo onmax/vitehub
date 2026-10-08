@@ -329,6 +329,23 @@ it.each(["manifest", "lockfile"])("rejects Yarn executable fetch protocols in th
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
+it.each([
+  "git+https://github.com/acme/unsafe.git",
+  "https://github.com/acme/unsafe.git",
+  "https://github.com/acme/unsafe",
+  "https://github.com/acme/unsafe/tarball/main",
+  "acme/unsafe",
+  "github:acme/unsafe",
+])("rejects Yarn Git preparation source %s before host execution", async source => {
+  for (const location of ["manifest", "lockfile"]) {
+    const root = await fixture();
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", ...(location === "manifest" ? { dependencies: { unsafe: source } } : {}) }));
+    await writeFile(join(root, "yarn.lock"), location === "manifest" ? "" : `__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: ${JSON.stringify(`unsafe@${source}`)}\n`);
+    await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol|Git dependencies/);
+    await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  }
+});
 it("installs and fingerprints pnpm workspaces without a root manifest", async () => {
   const root = await fixture();
   await rm(join(root, "package.json"));
