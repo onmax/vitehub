@@ -73,7 +73,13 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
       }
     }
     else throw new Error("Frozen dependency installation requires a supported lockfile.");
-    await exec(command, args, { cwd: source, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
+    try { await exec(command, args, { cwd: source, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 }); }
+    catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT" && command === "corepack") {
+        throw new Error("Babysitter host installation requires Corepack in PATH. Install Corepack on the trusted host; Node 25 and newer do not bundle it.", { cause: error });
+      }
+      throw error;
+    }
     const current = await validateGitHubInstallInputs(target).catch(() => undefined);
     if (current !== fingerprint) throw new Error("Dependency inputs changed during installation. Call refreshDependencies again before validation.");
     await publishGitHubInstallSnapshot(snapshot, signal);
