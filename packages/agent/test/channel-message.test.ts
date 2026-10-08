@@ -151,7 +151,7 @@ describe("Channel message handle", () => {
       channels: {
         portal: defineChannel("portal", {
           // SAFETY: This test fixture intentionally constructs the exact asserted runtime contract.
-          adapter: { channelIdFromThreadId: (threadId: string) => threadId, postMessage } as never,
+          adapter: { channelIdFromThreadId: () => "channel-1", postMessage } as never,
           messages: { delivery: "manual" },
           triggers: {
             message: {
@@ -176,6 +176,55 @@ describe("Channel message handle", () => {
     expect(postMessage).toHaveBeenCalledOnce()
     expect(postMessage.mock.calls[0]?.[0]).toBe("thread-1")
     expect(JSON.stringify(postMessage.mock.calls[0]?.[1])).toContain("from hook")
+  })
+
+  it.each(["native stream", "buffered stream", "unsupported stream", "artifacts"] as const)("preserves the reply thread for %s", async (mode) => {
+    const postMessage = vi.fn()
+    const channelIdFromThreadId = () => "channel-1"
+    const stream = vi.fn(async (_threadId: string, chunks: AsyncIterable<string>) => {
+      if (mode === "buffered stream") return null
+      let markdown = ""
+      for await (const chunk of chunks) markdown += chunk
+      return { id: "sent", raw: { markdown } }
+    })
+    const agent = defineAgent({
+      channels: {
+        support: defineChannel("teams", {
+          // SAFETY: The fixture implements the Chat SDK methods exercised by reply delivery.
+          adapter: { channelIdFromThreadId, postMessage, ...(mode === "unsupported stream" ? {} : { stream }) } as never,
+          messages: { delivery: "manual" },
+          triggers: {
+            message: {
+              invoke: context => ({
+                input: { prompt: "hello" },
+                run: { channelId: context.trigger.channelId, origin: "teams", runId: `reply-${mode}`, threadId: "thread-1" },
+              }),
+            },
+          },
+        }),
+      },
+      driver: { run: () => "ok" },
+      hooks: {
+        "agent:finish"(event) {
+          return mode === "artifacts"
+            ? event.reply({ body: "from hook", artifacts: [{ path: "report.md", placement: "link", url: "https://assets.example/report.md" }] })
+            : event.reply((async function* () { yield "from "; yield "hook" })())
+        },
+      },
+    })
+
+    await runAgentTrigger(agent, runtimeContext(), "support.message", {})
+    if (mode === "native stream") {
+      expect(stream).toHaveBeenCalledExactlyOnceWith("thread-1", expect.anything())
+      expect(postMessage).not.toHaveBeenCalled()
+    }
+    else {
+      expect(postMessage).toHaveBeenCalledExactlyOnceWith("thread-1", {
+        markdown: mode === "artifacts" ? "from hook\n\n[report.md](<https://assets.example/report.md>)" : "from hook",
+      })
+      if (mode === "buffered stream") expect(stream).toHaveBeenCalledExactlyOnceWith("thread-1", expect.anything())
+      else expect(stream).not.toHaveBeenCalled()
+    }
   })
 
   it.each([false, true])("labels unresolved citations in Chat SDK delivery, streaming=%s", async (streaming) => {

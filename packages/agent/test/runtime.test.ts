@@ -2538,8 +2538,7 @@ describe("agent message protocol", () => {
         target: "agent/digest",
       },
     }])
-    expect(channelIdFromThreadId).toHaveBeenCalledWith("discord:channel:thread-7")
-    expect(postMessage).toHaveBeenCalledWith("discord:channel", { markdown: "Scheduled reply" })
+    expect(postMessage).toHaveBeenCalledWith("discord:channel:thread-7", { markdown: "Scheduled reply" })
 
     await expect(target.handler({
       id: "srun-invalid",
@@ -5332,9 +5331,9 @@ describe("agent message protocol", () => {
       "https://api.github.test/repos/vite-hub/vitehub/statuses/abc123",
       expect.objectContaining({
         body: JSON.stringify({
+          state: "success",
           context: "ViteHub Review",
           description: "Review completed.",
-          state: "success",
         }),
         method: "POST",
       }),

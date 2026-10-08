@@ -369,7 +369,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
     return claimed.length > 0
   }
 
-  async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }): Promise<boolean> {
+  async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number, invocationStarted?: false }): Promise<boolean> {
     const marked = await retrySqliteBusy(async () => {
       await this.cleanupExpiredStateIfDue()
       return await this.transaction(async tx => {
@@ -944,7 +944,7 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
         const requested = options.journalMode === "delete" ? "delete" : "wal"
         const result = await retrySqliteBusy(async () => await opened.execute(`PRAGMA journal_mode = ${requested.toUpperCase()}`), 30_000)
         const actual = rows(result)[0]?.journal_mode
-        if (actual !== requested) throw agentDiagnostics.AGENT_R0941({ requested, actual: String(actual) })
+        if (actual !== requested) throw agentDiagnostics.AGENT_R0946({ requested, actual: String(actual) })
       } catch (error) {
         await opened.close?.()
         throw error

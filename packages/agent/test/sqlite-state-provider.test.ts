@@ -192,7 +192,7 @@ describe("SQLite Agent State Provider", () => {
     const factory = vi.mocked(createClient).mockReturnValueOnce(opened)
     const state = createLibsqlAgentState({ url, journalMode })
     try {
-      await expect(state.connect()).rejects.toMatchObject({ code: "AGENT_R0941" })
+      await expect(state.connect()).rejects.toMatchObject({ code: "AGENT_R0946" })
       expect(close).toHaveBeenCalledOnce()
     } finally {
       factory.mockClear()

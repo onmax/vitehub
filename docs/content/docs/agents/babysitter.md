@@ -38,6 +38,7 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `reviewChecks` | `[]` | Check names, such as a review bot's check, that keep a PR waiting while they run. |
 | `install` | `true` | Install frozen dependencies on the host before repair, with lifecycle scripts disabled. |
 | `noFindingsReviews` | `[]` | Body prefixes of comment-only reviews that report no findings, such as `'> ✅ No new issues found.'`. They do not wake a waiting PR. |
+| `mentionAllowlist` | `[]` | Exact GitHub logins the worker may notify through `mentionOnPullRequest`. The tool is reserved for verified blockers that need one person's action. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
 | `capacity` | Process defaults | Host admission `memory`, `cpu`, and `fallbackConcurrency` settings. |
 
