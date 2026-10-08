@@ -20,6 +20,8 @@ icon: i-lucide-code-2
 
 Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Workspace filesystem types are exported from these entrypoints. Applications that use the `vite-hub` distribution can import the same APIs from `vite-hub/shell`, `vite-hub/shell/providers/*`, and `vite-hub/shell/workspace`.
 
+`createWritableWorkspaceFs(useWorkspace(name, { mode: "write" }).fs)` accepts the public writable Workspace facade directly. Workspace writes can return revision receipts. The Shell adapter waits for each write and returns `void` from `writeFile()` and `appendFile()`.
+
 Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
 
 ## Use Shell sessions
