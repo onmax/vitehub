@@ -34,6 +34,17 @@ describe("source scanner", () => {
   })
 
   it.each([
+    "for (typeof of / total; false;) {}",
+    "for (void of / total; false;) {}",
+    "for (left + of / total; false;) {}",
+    "for (const value = of / total; false;) {}",
+    "for (const value in of / total) {}",
+  ])("finds default exports after division from of in loop expressions: %s", (loop) => {
+    const call = findDefaultExportCall(`${loop}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
+  it.each([
     "`value: ${count++ / total}`",
     "`value: ${(async () => { for (const x of /['\"]/u) {} })()}`",
   ])("scans contextual slashes inside template expressions: %s", (value) => {

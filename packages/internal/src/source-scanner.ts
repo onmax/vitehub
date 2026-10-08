@@ -135,7 +135,7 @@ function isForOfRegexStart(source: string, index: number, controlFlowRegexes: Co
   let current = previousCodeIndex(source, operatorEnd - 2, controlFlowRegexes)
   if (!/[\w$\])}]/.test(source[current] ?? "")) return false
   const word = /[\w$]+$/.exec(source.slice(0, current + 1))?.[0]
-  if (word && /^(?:const|let|var|in|instanceof)$/.test(word)
+  if (word && /^(?:const|let|var|in|instanceof|typeof|void|delete|await|yield|new)$/.test(word)
     && source[previousCodeIndex(source, current - word.length, controlFlowRegexes)] !== ".") return false
 
   while (current >= 0) {
