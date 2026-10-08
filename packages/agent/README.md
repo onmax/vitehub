@@ -888,8 +888,8 @@ revoke an HTTP write already accepted by GitHub. A crashed writer's marker
 expires fifteen minutes after its last delivery lease. Corrective replay stops
 at that deadline. If an expired writer later settles in a live process, the host
 queues the latest status again. An unobserved remote write after the deadline
-can still overwrite the comment. Channels sharing one GitHub host serialize
-activity publication across token rotation. Waiting comments
+can still overwrite the comment. Channels serialize activity publication by PR target before resolving credentials.
+Separate token callbacks and token rotation cannot split that queue. Waiting comments
 include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 

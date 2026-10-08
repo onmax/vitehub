@@ -292,7 +292,7 @@ describe("agent channels", () => {
     } finally { release(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals() }
   })
 
-  it.each(["App", "resolver"] as const)("serializes GitHub %s activity even when authentication mints different tokens", async credentialKind => {
+  it.each(["App", "resolver", "separate resolver"] as const)("serializes GitHub %s activity even when authentication mints different tokens", async credentialKind => {
     const { github } = await import("../src/channels.ts")
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 })
     let release!: () => void
@@ -319,23 +319,25 @@ describe("agent channels", () => {
         return Response.json({ id: 7 })
       } finally { activeWrites-- }
     }
-    const channel = github({ activity: true, app: {
+    const makeChannel = () => github({ activity: true, app: {
       appId: "rotating-activity-app", installationId: 987, fetch: fetcher,
       privateKey: privateKey.export({ format: "pem", type: "pkcs1" }).toString(),
-      token: credentialKind === "resolver" ? () => `rotating-resolver-token-${++tokens}` : undefined,
+      token: credentialKind !== "App" ? () => `rotating-resolver-token-${++tokens}` : undefined,
     } })
+    const channel = makeChannel()
+    const otherChannel = credentialKind === "separate resolver" ? makeChannel() : channel
     const update = channel.activity?.update
     if (!update) throw new Error("Missing activity updater")
-    const context = (status: "running" | "completed") => ({
+    const context = (status: "running" | "completed", channel: ReturnType<typeof github>) => ({
       activity: { agentName: "app-reviewer", links: [], runId: "app-run", status, tasks: [] },
       channel, memo: vi.fn(), run: { runId: "app-run" }, runtime: "unknown",
       target: { repository: "acme/rotating-activity", issue: 42 }, waitUntil: vi.fn(),
     })
     // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
-    const first = update(context("running") as never)
+    const first = update(context("running", channel) as never)
     await started
     // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
-    const second = update(context("completed") as never)
+    const second = otherChannel.activity!.update(context("completed", otherChannel) as never)
     try { await new Promise(resolve => setTimeout(resolve, 50)) }
     finally { release(); await Promise.all([first, second]) }
     expect(tokens).toBe(credentialKind === "App" ? 1 : 2)

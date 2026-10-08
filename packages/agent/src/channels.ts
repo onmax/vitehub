@@ -1554,33 +1554,6 @@ const githubActivityPreviousRunLimit = 100
 const githubActivityTaskLimit = 25
 const githubActivityActiveRuns = new Map<string, Set<string>>()
 const githubActivityUpdates = new Map<string, Promise<void>>()
-const githubActivityTokenResolverIds = new WeakMap<object, number>()
-let githubActivityNextTokenResolverId = 0
-
-async function githubActivityCredentialKey<TRuntimeConfig extends AgentRuntimeConfig>(
-  app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
-  options: GitHubAppOptions<TRuntimeConfig>,
-  context: GitHubAppContext<TRuntimeConfig>,
-  authority?: AgentGitHub,
-): Promise<string> {
-  if (authority) {
-    let id = githubActivityTokenResolverIds.get(authority)
-    if (id === undefined) githubActivityTokenResolverIds.set(authority, id = ++githubActivityNextTokenResolverId)
-    return `host:${id}`
-  }
-  if (hasRuntimeType(options.token, "function")) {
-    let id = githubActivityTokenResolverIds.get(options.token)
-    if (id === undefined) githubActivityTokenResolverIds.set(options.token, id = ++githubActivityNextTokenResolverId)
-    return `resolver:${id}`
-  }
-  if (options.token) return `token:${options.token}`
-  const env = await githubEnv(context)
-  const appId = app ? await githubAppSetting(options, env, "appId", "appId", context) : undefined
-  const normalizedAppId = hasRuntimeType(appId, "number") ? String(appId) : cleanSecret(appId)
-  if (normalizedAppId) return `app:${normalizedAppId}`
-  return `token:${cleanSecret(env.token) ?? ""}`
-}
-
 interface GitHubActivityTarget {
   deliveryId?: string
   installationId?: number
@@ -1858,7 +1831,6 @@ function renderGithubActivity(
 function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   mode: "initialize" | "lifecycle" = "lifecycle",
-  authority?: AgentGitHub,
 ): NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]> {
   const options = githubAppOptions(app) || {}
   const commentIds = new Map<string, number>()
@@ -1877,7 +1849,10 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
       // Token rotation must not let writes to the same comment run concurrently.
       // Reserve the target before authentication to preserve lifecycle ordering.
-      const updateKey = `${await githubActivityCredentialKey(app, options, context, authority)}\0${commentsTarget}`
+      // Different channel instances and credential callbacks can authenticate
+      // as the same bot. Serialize the PR target before authentication; owned
+      // comment lookup and run tracking still use the authenticated identity.
+      const updateKey = `${apiBaseUrl}\0${target.repository.toLowerCase()}\0${target.issue}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
         // Authentication and the serialized publication each get a request budget.
@@ -3072,8 +3047,8 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
         ...(appInput.identity?.() ? { identity: { login: appInput.identity()! } } : {}),
       }
     : appInput
-  const activityDefinition = activity ? githubAgentActivity(appOptions, "lifecycle", identity) : undefined
-  const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize", identity) : undefined
+  const activityDefinition = activity ? githubAgentActivity(appOptions, "lifecycle") : undefined
+  const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
   const app = githubAppOptions(appOptions)
   const pullRequestOptions = pullRequest === true ? {} : pullRequest || {}
   const workspace = pullRequest ? githubPullRequestWorkspacePolicy(pullRequestOptions) : undefined
