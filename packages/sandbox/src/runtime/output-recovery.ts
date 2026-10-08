@@ -89,13 +89,16 @@ export function extractSandboxOutputFromExecution(execution?: { stdout?: string,
   const streams = [execution?.stdout, execution?.stderr].filter(Boolean) as string[]
 
   for (const stream of streams) {
-    for (const line of stream.split('\n').reverse()) {
-      const markerIndex = line.indexOf(EXEC_STDIO_OUTPUT_MARKER)
-      if (markerIndex < 0)
-        continue
+    const markerOffset = stream.lastIndexOf(EXEC_STDIO_OUTPUT_MARKER)
+    if (markerOffset < 0)
+      continue
 
-      return line.slice(markerIndex + EXEC_STDIO_OUTPUT_MARKER.length)
-    }
+    const lineStart = stream.lastIndexOf('\n', markerOffset) + 1
+    const lineEnd = stream.indexOf('\n', markerOffset)
+    // Keep the first marker in the final matching line, matching the former
+    // reverse-line scan without allocating an array for the whole stream.
+    const markerIndex = stream.indexOf(EXEC_STDIO_OUTPUT_MARKER, lineStart)
+    return stream.slice(markerIndex + EXEC_STDIO_OUTPUT_MARKER.length, lineEnd < 0 ? stream.length : lineEnd)
   }
 
   return null

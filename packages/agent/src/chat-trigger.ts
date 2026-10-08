@@ -13,7 +13,6 @@ import type {
   AgentChatAgentHookArgs,
   AgentChatErrorHookArgs,
   AgentChatCapabilityOptions,
-  AgentChatFinishExtension,
   AgentChatOptions,
   AgentChatPlatformResolver,
   AgentChannelDeliveryEffectIntent,

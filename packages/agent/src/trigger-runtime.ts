@@ -29,7 +29,6 @@ import type {
   AgentWebhookInvocationOwnership,
   AgentWebhookRegistrationDefinition,
   MaybePromise,
-  MaybeResolvable,
   ResolvedAgentRuntimeContext,
   ResolvedAgentTriggerDefinition,
 } from "./types.ts"
@@ -298,26 +297,6 @@ export interface AgentWebhookVerificationResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
-}
-
-function isResolvableObject<T, TContext extends AgentCallbackContext>(
-  value: unknown,
-): value is { resolve: (context: TContext) => T | Promise<T> } {
-  return isRecord(value) && typeof value.resolve === "function"
-}
-
-async function resolveMaybe<T, TContext extends AgentCallbackContext>(
-  value: MaybeResolvable<T, TContext> | undefined,
-  context: TContext,
-): Promise<T | undefined> {
-  if (value === undefined) return undefined
-  if (typeof value === "function") {
-    return await (value as (context: TContext) => T | Promise<T>)(context)
-  }
-  if (isResolvableObject<T, TContext>(value)) {
-    return await value.resolve(context)
-  }
-  return value as T
 }
 
 async function resolveWebhookSecret(
