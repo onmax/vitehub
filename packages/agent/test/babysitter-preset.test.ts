@@ -389,6 +389,7 @@ describe("Babysitter preset runtime", () => {
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.lastResult).toContain("Recovered CI is healthy");
       const healthyWait = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(healthyWait.wait?.retryAt).toBeUndefined();
       expect(await f.runtime.inbox.wake(healthyWait, "new-feedback")).toBe(true);
       expect((await f.runtime.inbox.get("acme/app", 12))?.recoveryHead).toBeUndefined();
     } finally { await f.runtime.inbox.close(); }
@@ -558,6 +559,52 @@ describe("Babysitter preset runtime", () => {
       else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).not.toBe("terminal");
       expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
+  });
+
+  it.each([true, false, "unavailable"])("reconciles final enqueued results with queue membership %s", async membership => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    const uuid = "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42";
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes(`repos/acme/app/pulls/12/merge-async/${uuid}`)) return { stdout: JSON.stringify({ status: "enqueued", details: {} }), stderr: "" };
+      if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify({ status: "pending", details: { uuid, expected_head_sha: "a".repeat(40), merge_action: "direct_merge", merge_method: "squash" } }), stderr: "" };
+      if (args.some(arg => arg.includes("mergeQueueEntry"))) {
+        if (membership === "unavailable") throw new Error("Queue read unavailable");
+        return { stdout: JSON.stringify({ data: { repository: { pullRequest: { state: "OPEN", headRefOid: "a".repeat(40), mergeQueueEntry: membership ? { id: "queued" } : null } } } }), stderr: "" };
+      }
+      return command(args, request);
+    });
+    try {
+      await f.reconcile();
+      vi.setSystemTime(Date.now() + 31_000);
+      await f.reconcile();
+      if (membership === false) expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
+      else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
+      expect(createProviderRuntime).not.toHaveBeenCalled();
+      expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
+  });
+
+  it("parks an uncertain async merge while live mergeability is recalculated", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = await fixture(false, false, { merge: "direct" });
+    const command = f.command.getMockImplementation()!;
+    let uncertain = false;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.includes("PUT")) { uncertain = true; throw new Error("Connection reset after delivery"); }
+      const result = await command(args, request);
+      if (uncertain && args.includes("repos/acme/app/pulls/12")) return { ...result, stdout: JSON.stringify({ ...JSON.parse(result.stdout), mergeable: null, mergeable_state: "unknown" }) };
+      return result;
+    });
+    try {
+      await f.reconcile();
+      vi.setSystemTime(Date.now() + 31_000);
+      await f.reconcile();
+      expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeDefined();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect(createProviderRuntime).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
   });
 

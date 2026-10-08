@@ -323,3 +323,13 @@ describe("host-owned repair operations", () => {
     expect(f.command).not.toHaveBeenCalled()
   })
 })
+
+it("refreshes dependencies only while the assigned PR head is current", async () => {
+  const refreshDependencies = vi.fn(async () => {});
+  const f = fixture({ refreshDependencies });
+  await f.operations.refreshDependencies();
+  expect(refreshDependencies).toHaveBeenCalledTimes(1);
+  f.pullRequest.headRefOid = "b".repeat(40);
+  await expect(f.operations.refreshDependencies()).rejects.toThrow();
+  expect(refreshDependencies).toHaveBeenCalledTimes(1);
+});

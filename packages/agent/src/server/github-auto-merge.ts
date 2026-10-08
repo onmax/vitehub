@@ -68,6 +68,8 @@ export interface GitHubPullRequestOperationsOptions {
   eligible?: (pullRequest: GitHubPullRequestOperationSnapshot) => boolean | Promise<boolean>
   /** Host-owned checkout push, already bound to its source branch and expected-head lease. */
   push?: () => Promise<string>
+  /** Host-owned frozen installation after resolving dependency conflicts. */
+  refreshDependencies?: () => Promise<void>
   /** Host-owned staging and commit in the assigned repair checkout. */
   commitRepair?: (input: GitHubRepairCommit) => Promise<string>
   signal?: AbortSignal
@@ -95,6 +97,7 @@ export interface GitHubPullRequestOperations {
   resolveThread(id: string): Promise<void>
   updateMetadata(input: { title?: string, body?: string }): Promise<void>
   push(): Promise<void>
+  refreshDependencies(): Promise<void>
   commitRepair(input: GitHubRepairCommit): Promise<string>
 }
 
@@ -333,6 +336,11 @@ export function createGitHubPullRequestOperations(
       if (input.body !== undefined) args.push("-f", `body=${input.body}`)
       await snapshot()
       await github.command(args, commandOptions)
+    },
+    async refreshDependencies() {
+      if (!options.refreshDependencies) throw new Error("This worker has no dependency refresh operation.")
+      await snapshot()
+      await options.refreshDependencies()
     },
     async commitRepair(input) {
       if (!options.commitRepair) throw new Error("This worker has no host-owned commit operation.")

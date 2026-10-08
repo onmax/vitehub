@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
-import { installGitHubPullRequestWorkspace, GitHubWorkspaceInstallError } from "../src/server/github-install.ts";
+import { assertGitHubDependenciesCurrent, installGitHubPullRequestWorkspace, GitHubWorkspaceInstallError } from "../src/server/github-install.ts";
 
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -68,4 +68,51 @@ it("rejects legacy npm versions with repository onload scripts before execution"
   await writeFile(join(root, "package-lock.json"), "{}");
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/npm 7 or newer/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+
+it.each(["file:/srv/app", "file:../../outside.tgz", "/srv/app", "file:%2fetc"])("rejects host dependency %s before execution", async source => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { unsafe: source } }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+it("validates decoded lockfile-only sources and workspace manifests", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "pnpm-lock.yaml"), 'packages:\n  unsafe:\n    resolution:\n      tarball: "file:\\u002fsrv/app.tgz"\n');
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+it("allows internal workspace links but rejects links through an external symlink", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "packages", "local"), { recursive: true });
+  await writeFile(join(root, "pnpm-lock.yaml"), "importers:\n  packages/local:\n    dependencies:\n      local:\n        version: link:../../packages/local\n");
+  await installGitHubPullRequestWorkspace(root);
+  await symlink(tmpdir(), join(root, "outside"));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+});
+it("requires a dependency refresh after changing the installed graph", async () => {
+  const root = await fixture();
+  await installGitHubPullRequestWorkspace(root);
+  await assertGitHubDependenciesCurrent(root);
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { example: "1.0.0" } }));
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+  await installGitHubPullRequestWorkspace(root);
+  await assertGitHubDependenciesCurrent(root);
+});
+
+it("rejects local sources in nested workspace manifests", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "packages", "local"), { recursive: true });
+  await writeFile(join(root, "packages", "local", "package.json"), JSON.stringify({ dependencies: { unsafe: "file:../../../outside" } }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+it("requires dependency conflicts to be resolved before refreshing the merged graph", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "pnpm-lock.yaml"), "<<<<<<< HEAD\nlockfileVersion: '9.0'\n=======\nlockfileVersion: '9.0'\n>>>>>>> main\n");
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Resolve dependency conflicts/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await installGitHubPullRequestWorkspace(root);
+  await assertGitHubDependenciesCurrent(root);
 });

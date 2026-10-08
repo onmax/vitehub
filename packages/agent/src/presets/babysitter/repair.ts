@@ -62,6 +62,12 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           return operations.readBaseCheckLogs(input.runId);
         },
       },
+      refreshDependencies: {
+        name: "refreshDependencies",
+        description: "Install frozen dependencies after resolving dependency conflicts or changing manifests or lockfiles. Run before validation.",
+        inputSchema: noArguments,
+        execute: async () => { await operations.refreshDependencies(); return { refreshed: true }; },
+      },
       commitRepair: {
         name: "commitRepair",
         description: "Stage the named repair files and commit them on the host. Git metadata is read-only in the provider sandbox. Call pushRepair after validation and this commit.",

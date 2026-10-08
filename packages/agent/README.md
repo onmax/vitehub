@@ -771,10 +771,11 @@ uses the trusted npm registry and ignores checkout environment files. npm must
 be version 7 or newer. A manifest without a package-manager version uses a pinned
 default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
+Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks.
 Workers call `commitRepair` with a message and explicit repair paths, then
 `pushRepair`. The host commits because the provider sandbox protects Git metadata. For a
 conflicting PR, the host first prepares a merge against the exact base commit.
-The worker resolves the file conflicts and commits them through the same tool.
+Installation runs after merge preparation. The worker resolves dependency conflicts and calls `refreshDependencies` before validation, then commits through the same tool. Changing dependency inputs requires another refresh and validation before committing.
 Unattended Codex runs preauthorize only the assigned host tools. Capability checks
 still run on the host, and the native shell keeps its edit sandbox.
 
