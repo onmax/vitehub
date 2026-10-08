@@ -1,0 +1,23 @@
+import { expectTypeOf, it } from "vitest"
+import { forgejo, gitlab, pullRequest } from "../src/channels.ts"
+import type { CodeHostKind, PullRequestFilter, PullRequestOptions, CodeHostChannelOptions } from "../src/channels.ts"
+
+it("keeps Code Host options neutral and infers message methods", () => {
+  expectTypeOf<CodeHostKind>().toEqualTypeOf<"github" | "gitlab" | "forgejo">()
+  const channel = gitlab({ message: { methods: { label: (_context, name: string) => name } } })
+  expectTypeOf(channel.kind).toEqualTypeOf<"gitlab">()
+  expectTypeOf(forgejo().kind).toEqualTypeOf<"forgejo">()
+  expectTypeOf(pullRequest.read({ context: { get: () => undefined } }).provider).toEqualTypeOf<CodeHostKind>()
+  const options: PullRequestOptions = { reconcile: { comments: { events: ["comment", "review", "review_comment"] } } }
+  gitlab({ pullRequest: options })
+  // @ts-expect-error Code Host Channels do not provide checkout.
+  gitlab({ pullRequest: { workspace: true } })
+  // @ts-expect-error Code Host Channels always verify webhooks.
+  forgejo({ webhookSecret: false })
+  // @ts-expect-error Author association is specific to GitHub.
+  const filter: PullRequestFilter = { authorAssociation: { allow: ["OWNER"] } }
+  // @ts-expect-error Code Host Channels do not publish artifacts.
+  const artifacts: CodeHostChannelOptions = { artifacts: true }
+  void filter
+  void artifacts
+})

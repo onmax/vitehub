@@ -1,3 +1,4 @@
+import { codeHostIngest, codeHostWebhookInput, codeHostChannelMetadata, codeHostChannelPullRequest, codeHostActivityComment } from "./internal/code-host-events.ts"
 import { messageChannelReplyBody, setMessageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
 export { messageChannelReplyBody, messageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
 import type { CodeHostTarget } from "./internal/code-host-channel.ts"
@@ -376,7 +377,10 @@ export interface GitHubPullRequestMetadata {
   unavailable?: string
 }
 
+export type CodeHostKind = "github" | "gitlab" | "forgejo"
+
 export interface GitHubPullRequestRunContext {
+  host?: { kind: CodeHostKind, instance: string }
   pullRequest: {
     apiUrl: string
     base?: GitHubPullRequestRefMetadata
@@ -421,7 +425,7 @@ export interface GitHubPullRequestRunContext {
       updatedAt?: string
     }
     deliveryId?: string
-    event: GitHubPullRequestCommand["event"]
+    event: GitHubPullRequestCommand["event"] | "comment" | "review" | "review_comment"
     installationId?: number
     sender?: {
       id?: number
@@ -442,7 +446,8 @@ export type GitHubPullRequestContext = GitHubPullRequestRunContext["pullRequest"
   baseRef?: string
   deliveryId?: string
   headRef?: string
-  provider: "github"
+  provider: CodeHostKind
+  instance: string
   repository: string
   run: GitHubPullRequestRunContext["run"]
   trigger: GitHubPullRequestRunContext["trigger"]
@@ -467,6 +472,18 @@ function githubPullRequestRunContextFromUnknown(input: unknown): GitHubPullReque
   return value as unknown as GitHubPullRequestRunContext
 }
 
+const codeHostDisplayName = { gitlab: "GitLab", forgejo: "Forgejo" } as const
+
+/** The GitHub host of a pull request, for example github.com or a GitHub Enterprise Server host. */
+function githubInstance(htmlUrl: string | undefined): string {
+  try {
+    return htmlUrl ? new URL(htmlUrl).host : "github.com"
+  }
+  catch {
+    return "github.com"
+  }
+}
+
 export const pullRequest = {
   read(invocation: GitHubPullRequestReadInvocation): GitHubPullRequestContext {
     const context = githubPullRequestRunContextFromUnknown(invocation.context.get("pullRequest"))
@@ -478,7 +495,8 @@ export const pullRequest = {
       ...(value.base?.ref ? { baseRef: value.base.ref } : {}),
       ...(context.trigger.deliveryId ? { deliveryId: context.trigger.deliveryId } : {}),
       ...(value.source.ref || value.head?.ref ? { headRef: value.source.ref || value.head?.ref } : {}),
-      provider: "github",
+      provider: context.host?.kind || "github",
+      instance: context.host?.instance || githubInstance(value.htmlUrl),
       repository: context.repository.fullName,
       run: context.run,
       trigger: context.trigger,
@@ -568,6 +586,64 @@ export interface GitHubChannelOptions<TRuntimeConfig extends AgentRuntimeConfig 
   activity?: boolean | GitHubChannelActivityOptions<TRuntimeConfig>
   app?: true | GitHubAppOptions<TRuntimeConfig> | AgentGitHub
   pullRequest?: boolean | GitHubPullRequestCommentEventOptions<TRuntimeConfig>
+}
+
+export type PullRequestFilter = Omit<GitHubPullRequestFilter, "authorAssociation">
+
+export interface PullRequestTrigger {
+  events: readonly ("comment" | "review" | "review_comment")[]
+  filter?: PullRequestFilter
+  mentions?: readonly string[]
+  prompt?: string
+}
+
+export interface PullRequestOptions {
+  filter?: PullRequestFilter
+  when?: (context: GitHubPullRequestFilterContext) => MaybePromise<boolean>
+  maxBodyLength?: number
+  maxCommentBodyLength?: number
+  maxComments?: number
+  maxFiles?: number
+  origin?: string
+  reply?: boolean | AgentChannelDeliveryFinishEffect
+  threadId?: string
+  reconcile?: boolean | {
+    concurrencyLimit?: number
+    mentions?: readonly string[]
+    prompt?: string
+    events?: readonly ("opened" | "reopened" | "synchronize" | "ready_for_review")[]
+    comments?: boolean | {
+      events?: PullRequestTrigger["events"]
+      filter?: PullRequestFilter
+      prompt?: string
+      when?: PullRequestOptions["when"]
+    }
+    triggers?: readonly PullRequestTrigger[]
+  }
+}
+
+export type PullRequestContext = Omit<GitHubPullRequestContext, "provider" | "instance"> & {
+  provider: CodeHostKind
+  instance: string
+}
+
+export interface CodeHostChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>
+  extends AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> {
+  activity?: boolean | { publicUrl?: MaybeResolvable<string, AgentCallbackContext<TRuntimeConfig>> }
+  /** Default: Server Env, then gitlab.com or codeberg.org. */
+  baseUrl?: MaybeResolvable<string | undefined, AgentCallbackContext<TRuntimeConfig>>
+  /** Default: GITLAB_TOKEN or FORGEJO_TOKEN from Server Env. */
+  token?: MaybeResolvable<string | { unseal: () => string } | undefined, AgentCallbackContext<TRuntimeConfig>>
+  /** Required. Default: GITLAB_WEBHOOK_SECRET or FORGEJO_WEBHOOK_SECRET from Server Env. */
+  webhookSecret?: MaybeResolvable<string | { unseal: () => string } | undefined, AgentCallbackContext<TRuntimeConfig>>
+  /** Commit status name. Default: ViteHub Agent. */
+  statusContext?: string
+  pullRequest?: boolean | PullRequestOptions
+}
+
+interface CodeHostChannelServices<TRuntimeConfig extends AgentRuntimeConfig> {
+  kind: "gitlab" | "forgejo"
+  provider: (context: AgentCallbackContext<TRuntimeConfig>) => ReturnType<typeof codeHostProvider>
 }
 
 export interface DiscordAdapterOptions {
@@ -946,6 +1022,7 @@ async function githubPullRequestReconcileFromInput<TRuntimeConfig extends AgentR
   reconcile: GitHubPullRequestCommentEventOptions<TRuntimeConfig>["reconcile"],
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   context: AgentCallbackContext<TRuntimeConfig>,
+  services?: CodeHostChannelServices<TRuntimeConfig>,
 ): Promise<GitHubPullRequestReconcileInput | undefined> {
   if (!reconcile) return
   const options = reconcile === true ? {} : reconcile
@@ -954,7 +1031,7 @@ async function githubPullRequestReconcileFromInput<TRuntimeConfig extends AgentR
   if (!payload) return
   const event = maybeString(facts?.event) || (isRecord(payload.pull_request) ? "pull_request" : undefined)
   const repository = maybeString(payload.repository?.full_name)
-  const [owner, repo] = repository?.split("/") || []
+  const [owner, repo] = services ? [repository?.split("/").slice(0, -1).join("/"), repository?.split("/").at(-1)] : repository?.split("/") || []
   const installationId = maybeNumber(facts?.installationId) ?? maybeNumber(payload.installation?.id)
   const deliveryId = maybeString(facts?.deliveryId)
   if (!repository || !owner || !repo) return
@@ -996,7 +1073,7 @@ async function githubPullRequestReconcileFromInput<TRuntimeConfig extends AgentR
       const events = Array.isArray(candidate.events) ? candidate.events : []
       if (!events.includes(event || "issue_comment")) continue
       if (event === "pull_request_review" && Array.isArray(candidate.reviewStates) && !candidate.reviewStates.includes(githubPullRequestReviewState(payload) || "")) continue
-      if (!await githubPullRequestMatchesFilter(candidate, payload, app, context)) continue
+      if (!await githubPullRequestMatchesFilter(candidate, payload, app, context, services)) continue
       if (Array.isArray(candidate.mentions) && maybeString(payload.comment?.user?.type)?.toLowerCase() === "bot") continue
       if (Array.isArray(candidate.mentions) && !(body && githubMentionCommand(body, candidate.mentions))) continue
       trigger = candidate
@@ -1059,7 +1136,7 @@ async function githubPullRequestReconcileFromInput<TRuntimeConfig extends AgentR
   const login = maybeString(actor?.login)
   if (!issueNumber || !commentId || !pullRequestUrl || !login) return
   const prompt = maybeString(options.prompt)
-    || `Reconcile pull request #${issueNumber} after GitHub reported ${action}. Review the request, make any needed changes, verify them, and update the pull request.`
+    || `Reconcile pull request #${issueNumber} after ${services ? codeHostDisplayName[services.kind] : "GitHub"} reported ${action}. Review the request, make any needed changes, verify them, and update the pull request.`
   const normalizedPayload: GitHubIssueCommentPayload = {
     ...payload,
     comment: { body: prompt, id: commentId, user: actor },
@@ -1104,6 +1181,7 @@ async function githubPullRequestMetadata<TRuntimeConfig extends AgentRuntimeConf
   command: GitHubPullRequestCommand,
   options: GitHubPullRequestCommentEventOptions<TRuntimeConfig>,
   payload?: GitHubIssueCommentPayload,
+  services?: CodeHostChannelServices<TRuntimeConfig>,
 ): Promise<GitHubPullRequestMetadataFields> {
   const maxBodyLength = githubPullRequestLimit(options.maxBodyLength, defaultGitHubPullRequestMaxBodyLength)
   const maxCommentBodyLength = githubPullRequestLimit(options.maxCommentBodyLength, defaultGitHubPullRequestMaxCommentBodyLength)
@@ -1116,9 +1194,11 @@ async function githubPullRequestMetadata<TRuntimeConfig extends AgentRuntimeConf
 
   try {
     const appOptions = app ? githubAppOptions(app) || {} : {}
-    const token = await githubPullRequestMetadataToken(app, context, command.installationId, command.repository).catch(() => undefined)
-    const provider = await codeHostProvider({ host: "github", baseUrl: appOptions.apiBaseUrl, token, fetch: codeHostChannelFetch(appOptions.fetch || fetch), userAgent: appOptions.userAgent })
-    const { thread, comments, files } = await codeHostPullRequestMetadata(provider, githubCodeHostTarget(command), { maxComments, maxFiles, authenticated: Boolean(token) })
+    const token = services ? undefined : await githubPullRequestMetadataToken(app, context, command.installationId, command.repository).catch(() => undefined)
+    const provider = services ? await services.provider(context) : await codeHostProvider({ host: "github", baseUrl: appOptions.apiBaseUrl, token, fetch: codeHostChannelFetch(appOptions.fetch || fetch), userAgent: appOptions.userAgent })
+    const { thread, comments, files } = services
+      ? await codeHostChannelMetadata(provider, { host: services.kind, instance: provider.instance, repository: command.repository, number: command.issueNumber }, { maxComments, maxFiles })
+      : await codeHostPullRequestMetadata(provider, githubCodeHostTarget(command), { maxComments, maxFiles, authenticated: Boolean(token) })
     const pullRequest = thread.raw
     const commentMetadata = Array.isArray(comments)
       ? comments.map(githubCommentMetadata).filter((comment): comment is GitHubPullRequestCommentMetadata => Boolean(comment))
@@ -1806,37 +1886,40 @@ function renderGithubActivity(
 function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   mode: "initialize" | "lifecycle" = "lifecycle",
+  services?: CodeHostChannelServices<TRuntimeConfig>,
 ): NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]> {
   const trackActiveRuns = mode === "lifecycle"
   const options = githubAppOptions(app) || {}
   const commentIds = new Map<string, number>()
   return {
     async update(context) {
-      const target = githubActivityTarget(context.target)
-      const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
+      const target = services ? codeHostActivityTarget(context.target) : githubActivityTarget(context.target)
+      const hostProvider = services ? await services.provider(context) : undefined
+      const apiBaseUrl = hostProvider?.baseUrl || options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
-      const token = await githubPullRequestMetadataToken(app, context, target.installationId, target.repository)
+      const token = services ? services.kind : await githubPullRequestMetadataToken(app, context, target.installationId, target.repository)
       if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
       const updateKey = `${token}\0${commentsTarget}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
-        const provider = await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(options.fetch || fetch), userAgent: options.userAgent })
-        const identity = await githubActivityIdentity(provider, token, app, context)
+        const provider = hostProvider || await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(options.fetch || fetch), userAgent: options.userAgent })
+        const identity = services ? await codeHostIdentity(provider, { kind: "token" }) : await githubActivityIdentity(provider, token, app, context)
         const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
         const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
         const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
         const knownActiveRun = trackActiveRuns && activeRuns.has(runId)
         const terminal = ["cancelled", "completed", "failed"].includes(context.activity.status)
         const knownCommentId = commentIds.get(activityKey)
-        const activityComments = codeHostActivityComments(provider, { host: "github", instance: provider.instance, repository: target.repository, number: target.issue },
+        const activityComments = codeHostActivityComments(provider, { host: services?.kind || "github", instance: provider.instance, repository: target.repository, number: target.issue },
           knownCommentId ? githubActivityCommentLookupLimit : githubActivityRestartLookupLimit)
-        const comments = (await activityComments.list()).map(comment => comment.raw)
+        const comments = (await activityComments.list()).map(comment => services ? codeHostActivityComment(comment) : comment.raw)
         const owned = comments.filter(comment => maybeNumber(isRecord(comment) ? comment.id : undefined)
           && isOwnedGithubActivityComment(comment, identity))
         let existing = owned.find(comment => maybeNumber(isRecord(comment) ? comment.id : undefined) === knownCommentId)
         if (knownCommentId && !existing) {
           const known = await activityComments.get(knownCommentId)
-          if (known && isOwnedGithubActivityComment(known.raw, identity)) existing = known.raw
+          const raw = known && (services ? codeHostActivityComment(known) : known.raw)
+          if (known && isOwnedGithubActivityComment(raw, identity)) existing = raw
         }
         existing ||= owned[0]
         if (knownCommentId && !existing) commentIds.delete(activityKey)
@@ -2536,7 +2619,7 @@ function githubCommandFromRunContext(value: GitHubPullRequestRunContext): GitHub
     commentId,
     ...(maybeString(value.trigger.comment.nodeId) ? { commentNodeId: maybeString(value.trigger.comment.nodeId) } : {}),
     ...(maybeString(value.trigger.deliveryId) ? { deliveryId: maybeString(value.trigger.deliveryId) } : {}),
-    event: value.trigger.event,
+    event: value.trigger.event === "comment" ? "issue_comment" : value.trigger.event === "review" ? "pull_request_review" : value.trigger.event === "review_comment" ? "pull_request_review_comment" : value.trigger.event,
     ...(maybeNumber(value.trigger.installationId) ? { installationId: maybeNumber(value.trigger.installationId) } : {}),
     issueNumber,
     owner,
@@ -2607,28 +2690,29 @@ async function githubPullRequestMatchesFilter<TRuntimeConfig extends AgentRuntim
   payload: GitHubIssueCommentPayload,
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   context: AgentCallbackContext<TRuntimeConfig>,
+  services?: CodeHostChannelServices<TRuntimeConfig>,
 ): Promise<boolean> {
   const filter = options.filter
   if (!filter && !options.when) return true
   const value = githubPullRequestFilterContext(payload)
   if (!matchesGitHubPullRequestFilter(value, { ...filter, base: undefined, head: undefined, draft: undefined, fork: undefined })) return false
   // Comment webhooks only include a PR link. Fetch PR-only fields when needed.
-  if (!isRecord(payload.pull_request) && payload.issue?.pull_request
+  if ((services || !isRecord(payload.pull_request)) && payload.issue?.pull_request
     && (filter?.base || filter?.head || filter?.draft || filter?.fork || options.when)) {
     const repository = value.repository
     const number = maybeNumber(payload.issue.number)
     if (repository && number) {
       const appOptions = app ? githubAppOptions(app) || {} : {}
       try {
-        const token = await githubPullRequestMetadataToken(app, context, maybeNumber(payload.installation?.id), repository)
-        const provider = await codeHostProvider({ host: "github", baseUrl: appOptions.apiBaseUrl, token, fetch: codeHostChannelFetch(appOptions.fetch || fetch), userAgent: appOptions.userAgent })
-        const pullRequest = (await codeHostChannelRead(provider, "AGENT_R0351", async () => await codeHostPullRequest(provider, { host: "github", instance: provider.instance, repository, number }))).raw
+        const token = services ? undefined : await githubPullRequestMetadataToken(app, context, maybeNumber(payload.installation?.id), repository)
+        const provider = services ? await services.provider(context) : await codeHostProvider({ host: "github", baseUrl: appOptions.apiBaseUrl, token, fetch: codeHostChannelFetch(appOptions.fetch || fetch), userAgent: appOptions.userAgent })
+        const pullRequest = services ? await codeHostChannelPullRequest(provider, { host: services.kind, instance: provider.instance, repository, number }) : (await codeHostChannelRead(provider, "AGENT_R0351", async () => await codeHostPullRequest(provider, { host: "github", instance: provider.instance, repository, number }))).raw
         if (isRecord(pullRequest)) {
           const hydrated = githubPullRequestFilterContext({ ...payload, pull_request: pullRequest })
           value.base = hydrated.base
           value.head = hydrated.head
           value.draft = hydrated.draft
-          value.fork = hydrated.fork
+          value.fork = services && hasRuntimeType(pullRequest.fork, "boolean") ? pullRequest.fork : hydrated.fork
         }
       }
       catch {
@@ -2645,9 +2729,11 @@ async function githubActivitySessionLink<TRuntimeConfig extends AgentRuntimeConf
   context: AgentChannelTriggerContext<TRuntimeConfig>,
   runId: string,
   options: GitHubChannelActivityOptions<TRuntimeConfig> = {},
+  services?: CodeHostChannelServices<TRuntimeConfig>,
 ): Promise<{ label: string, url: string } | undefined> {
   const agentName = context.agentName || context.agentIdentity?.name
   if (!options.publicUrl && !agentName) return
+  if (!agentName && services) throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host activity session links require an Agent identity." })
   if (!agentName) throw new Error("GitHub activity session links require an Agent identity.")
   const { agentInvocationId } = await import("./invocations.ts")
   const id = await agentInvocationId(runId, agentName)
@@ -2662,6 +2748,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
   app?: true | GitHubAppOptions<TRuntimeConfig>,
   activity?: NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]>,
   activityOptions?: GitHubChannelActivityOptions<TRuntimeConfig>,
+  services?: CodeHostChannelServices<TRuntimeConfig>,
 ): AgentChannelDefinition<TRuntimeConfig>["triggers"] {
   if (!pullRequest && !activity) return undefined
   const options = pullRequest === true || !pullRequest ? {} : pullRequest
@@ -2670,9 +2757,9 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
       async invoke(context, input): Promise<AgentTriggerInvokeResult> {
         const accepted = context.queuedInvocation
         const acceptedPullRequest = githubPullRequestRunContextFromUnknown(accepted?.input.context?.pullRequest)
-        const acceptedCommand = githubCommandFromUnknown(accepted?.input.context?.github)
+        const acceptedCommand = githubCommandFromUnknown(services ? codeHostCommandForTrigger(accepted?.input.context?.codeHost) : accepted?.input.context?.github)
         if (accepted && acceptedPullRequest && acceptedCommand?.deliveryId) {
-          const metadata = await githubPullRequestMetadata(app, context, acceptedCommand, options)
+          const metadata = await githubPullRequestMetadata(app, context, acceptedCommand, options, undefined, services)
           const refreshed = {
             ...acceptedPullRequest,
             pullRequest: {
@@ -2707,7 +2794,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
         let payload = inputPayloadOrBody(input)
         if (payload && pullRequest) {
           const optionsForFilter = pullRequest === true ? {} : pullRequest
-          if (!await githubPullRequestMatchesFilter(optionsForFilter, payload, app, context)) return optionsForFilter.ignored?.("filtered") || ignored("filtered")
+          if (!await githubPullRequestMatchesFilter(optionsForFilter, payload, app, context, services)) return optionsForFilter.ignored?.("filtered") || ignored("filtered")
         }
         const activityTarget = githubOpenedPullRequestActivityTarget(input, payload)
         const openedEnabled = !options.reconcile || options.reconcile === true
@@ -2730,16 +2817,18 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
               ...(activityTarget.installationId ? { installationId: activityTarget.installationId } : {}),
             },
           }))
-          context.waitUntil(update.catch(error => console.error(agentDiagnostics.AGENT_R0367({ message: "[vitehub] GitHub pull request activity initialization failed.", cause: error }))))
+          context.waitUntil(update.catch(error => console.error(services
+            ? agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host pull request activity initialization failed.", cause: error })
+            : agentDiagnostics.AGENT_R0367({ message: "[vitehub] GitHub pull request activity initialization failed.", cause: error }))))
           if (!options.reconcile) return ignored("activity_queued")
         }
         if (!pullRequest) return ignored(payload ? "not_command" : "missing_payload")
         const pullRequestInput = isRecord(input) ? { ...input, payload } : { payload }
-        const reconciled = await githubPullRequestReconcileFromInput(pullRequestInput, options.reconcile, app, context)
+        const reconciled = await githubPullRequestReconcileFromInput(pullRequestInput, options.reconcile, app, context, services)
         const command = reconciled?.command || githubPullRequestCommandFromInput(pullRequestInput)
         if (reconciled) payload = reconciled.payload
         const automaticCommentOptions = reconciled?.command.command === "/comment" ? githubPullRequestAutomaticCommentOptions(options.reconcile) : undefined
-        if (automaticCommentOptions && automaticCommentOptions !== true && payload && !await githubPullRequestMatchesFilter(automaticCommentOptions, payload, app, context)) {
+        if (automaticCommentOptions && automaticCommentOptions !== true && payload && !await githubPullRequestMatchesFilter(automaticCommentOptions, payload, app, context, services)) {
           return options.ignored?.("filtered") || ignored("filtered")
         }
         if (!payload && !command) return options.ignored?.("missing_payload") || ignored("missing_payload")
@@ -2750,7 +2839,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
           concurrencyLimit: githubPullRequestReconcileConcurrencyLimit(options.reconcile),
           deliveryId: command.deliveryId,
         } : undefined
-        const metadata = await githubPullRequestMetadata(app, context, command, options, payload)
+        const metadata = await githubPullRequestMetadata(app, context, command, options, payload, services)
         const pullRequestContext = githubPullRequestRunContext(command, {
           ...options,
           threadId: options.threadId || maybeString(payload?.issue?.pull_request?.html_url) || maybeString(payload?.issue?.html_url) || command.pullRequestUrl,
@@ -2759,7 +2848,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
         const run = githubPullRequestRunMetadata(pullRequestContext, context.trigger.channelId)
         if (activity) {
           run.activity = {
-            links: [await githubActivitySessionLink(context, run.runId, activityOptions)].filter(link => link !== undefined),
+            links: [await githubActivitySessionLink(context, run.runId, activityOptions, services)].filter(link => link !== undefined),
             target: {
               issue: command.issueNumber,
               repository: command.repository,
@@ -2817,17 +2906,17 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
 
         let payload = githubDevPayload(input)
         const pullRequestInput = isRecord(input) ? { ...input, payload } : { payload }
-        const reconciled = await githubPullRequestReconcileFromInput(pullRequestInput, options.reconcile, app, context)
+        const reconciled = await githubPullRequestReconcileFromInput(pullRequestInput, options.reconcile, app, context, services)
         const command = reconciled?.command || githubPullRequestCommandFromInput(pullRequestInput)
         if (reconciled) payload = reconciled.payload
         const automaticCommentOptions = reconciled?.command.command === "/comment" ? githubPullRequestAutomaticCommentOptions(options.reconcile) : undefined
-        if (automaticCommentOptions && automaticCommentOptions !== true && payload && !await githubPullRequestMatchesFilter(automaticCommentOptions, payload, app, context)) {
+        if (automaticCommentOptions && automaticCommentOptions !== true && payload && !await githubPullRequestMatchesFilter(automaticCommentOptions, payload, app, context, services)) {
           return options.ignored?.("filtered") || ignored("filtered")
         }
         if (!payload && !command) return options.ignored?.("missing_payload") || ignored("missing_payload")
         if (!command) return options.ignored?.("not_command") || ignored("not_command")
         if (!reconciled && declaredInputCommand(context, command.command) === false) return options.ignored?.("not_command") || ignored("not_command")
-        const metadata = await githubPullRequestMetadata(app, context, command, options, payload)
+        const metadata = await githubPullRequestMetadata(app, context, command, options, payload, services)
         const pullRequest = githubPullRequestRunContext(command, {
           ...options,
           threadId: options.threadId || maybeString(payload?.issue?.pull_request?.html_url) || maybeString(payload?.issue?.html_url) || command.pullRequestUrl,
@@ -3035,6 +3124,157 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
   })
   if (identity) Object.defineProperty(channel, githubChannelIdentityKey, { enumerable: true, value: identity })
   return channel
+}
+
+function codeHostActivityTarget(value: unknown): GitHubActivityTarget {
+  if (!isRecord(value) || !hasRuntimeType(value.repository, "string") || !/^[^\s/]+(?:\/[^\s/]+)+$/.test(value.repository)
+    || !hasRuntimeType(value.issue, "number") || !Number.isSafeInteger(value.issue) || value.issue < 1) {
+    throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host Agent activity requires a target with repository and issue." })
+  }
+  return { repository: value.repository, issue: value.issue }
+}
+
+function codeHostEventName(event: GitHubPullRequestRunContext["trigger"]["event"]): GitHubPullRequestRunContext["trigger"]["event"] {
+  return event === "issue_comment" ? "comment" : event === "pull_request_review" ? "review" : event === "pull_request_review_comment" ? "review_comment" : event
+}
+
+function codeHostPullRequestOptions(options: PullRequestOptions): GitHubPullRequestCommentEventOptions {
+  const reconcile = options.reconcile
+  const events = (values: PullRequestTrigger["events"] | undefined) => values?.map(event => event === "comment" ? "issue_comment" : event === "review" ? "pull_request_review" : "pull_request_review_comment")
+  if (!reconcile || reconcile === true) return { ...options, workspace: false, reconcile }
+  const { comments, ...rest } = reconcile
+  const mapped: Exclude<NonNullable<GitHubPullRequestCommentEventOptions["reconcile"]>, boolean> = {
+    ...rest, triggers: reconcile.triggers?.map(trigger => ({ ...trigger, events: events(trigger.events)! })),
+  }
+  if (comments !== undefined) mapped.comments = comments === true || comments === false ? comments : { ...comments, events: events(comments.events) }
+  return { ...options, workspace: false, reconcile: mapped }
+}
+
+function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem, TKind extends "gitlab" | "forgejo">(
+  kind: TKind,
+  options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>,
+): AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods> {
+  const { activity, baseUrl: _baseUrl, token: _token, webhookSecret: _secret, statusContext, pullRequest: pullRequestInput, ...channelOptions } = options
+  const setting = async (field: "baseUrl" | "token" | "webhookSecret", context: AgentCallbackContext<TRuntimeConfig>) =>
+    cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context))
+  const services: CodeHostChannelServices<TRuntimeConfig> = {
+    kind,
+    provider: async context => await codeHostProvider({ host: kind, baseUrl: await setting("baseUrl", context), token: await setting("token", context), fetch: codeHostChannelFetch(globalThis.fetch) }),
+  }
+  const secret = async (context: AgentCallbackContext<TRuntimeConfig>) => {
+    const value = await setting("webhookSecret", context)
+    if (!value) throw agentDiagnostics.AGENT_R0946({ message: `[vitehub] ${kind}() requires webhookSecret or ${kind.toUpperCase()}_WEBHOOK_SECRET.` })
+    return value
+  }
+  const activityDefinition = activity ? githubAgentActivity(undefined, "lifecycle", services) : undefined
+  const openedActivity = activity ? githubAgentActivity(undefined, "initialize", services) : undefined
+  const pullOptions = codeHostPullRequestOptions(pullRequestInput === true || !pullRequestInput ? {} : pullRequestInput)
+  const sharedTriggers = githubEventTriggers(pullRequestInput ? pullOptions : false, undefined, openedActivity,
+    activity && activity !== true ? activity : undefined, services)
+  const triggers: NonNullable<AgentChannelDefinition<TRuntimeConfig>["triggers"]> = {}
+  for (const [name, trigger] of Object.entries(sharedTriggers || {})) {
+    triggers[name] = {
+      ...trigger,
+      async invoke(context, input) {
+        const provider = await services.provider(context)
+        const raw = isRecord(input) ? input : {}
+        const request = isRecord(raw.request) ? raw.request : {}
+        const headers = isRecord(request.headers) ? Object.fromEntries(Object.entries(request.headers).filter((entry): entry is [string, string] => hasRuntimeType(entry[1], "string"))) : {}
+        const normalized = name === "webhook" && !context.queuedInvocation
+          ? await codeHostWebhookInput(provider, { headers, body: maybeString(raw.body) || JSON.stringify(raw.payload), secret: await secret(context) }) : input
+        const result = await trigger.invoke(context, normalized)
+        if (result instanceof Response) return result
+        const value = githubPullRequestRunContextFromUnknown(result.input?.context?.pullRequest)
+        const command = githubCommandFromUnknown(result.input?.context?.github || codeHostCommandForTrigger(result.input?.context?.codeHost))
+        if (!value || !command) return result
+        const parts = command.repository.split("/")
+        command.repo = parts.pop()!
+        command.owner = parts.join("/")
+        const neutral: GitHubPullRequestRunContext = {
+          ...value, host: { kind, instance: provider.instance },
+          repository: { fullName: command.repository, name: command.repo, owner: command.owner },
+          pullRequest: { ...value.pullRequest, source: { checkout: false, mount: command.repo, ref: value.pullRequest.head?.ref || "", repo: command.repository } },
+          trigger: { ...value.trigger, event: codeHostEventName(value.trigger.event) },
+          run: { ...value.run, origin: pullOptions.origin || `${kind}-pull-request${command.event === "pull_request" ? "" : "-comment"}` },
+        }
+        const { github: _github, ...contextValues } = result.input?.context || {}
+        const run: NonNullable<AgentTriggerRunInvokeResult["run"]> = {
+          ...result.run, ...neutral.run,
+          annotations: { [`${kind}.pullRequest`]: neutral.pullRequest.number, [`${kind}.repository`]: command.repository },
+        }
+        if (activityDefinition) {
+          const link = await githubActivitySessionLink(context, neutral.run.runId!, activity && activity !== true ? activity : undefined, services)
+          run.activity = { links: link ? [link] : [], target: { repository: command.repository, issue: command.issueNumber } }
+        }
+        const invocation: AgentTriggerRunInvokeResult = {
+          ...result,
+          input: { ...result.input, context: { ...contextValues, codeHost: { ...command, event: codeHostEventName(command.event) }, pullRequest: neutral }, prompt: githubPullRequestTaskPrompt(command, neutral) },
+          message: neutral,
+          run,
+        }
+        if (result.webhook && result.webhook.concurrencyLimit !== undefined) {
+          const ownership = { ...result.webhook, rehydrate: undefined }
+          invocation.webhook = { ...ownership, rehydrate: () => ({ ...invocation, webhook: ownership }) }
+        }
+        return invocation
+      },
+    }
+  }
+  return defineChannel(kind, {
+    ...channelOptions,
+    activity: activityDefinition,
+    messages: false,
+    [channelDeliveryHandlers]: codeHostDeliveryEffects({
+      provider: services.provider,
+      target: context => {
+        const value = githubPullRequestRunContextFromUnknown(context.input.context?.pullRequest)
+        if (!value) return
+        const target: CodeHostTarget = { host: kind, instance: value.host?.instance || "", repository: value.repository.fullName, number: value.pullRequest.number }
+        if (value.trigger.event === "comment" || value.trigger.event === "review_comment") target.commentId = value.trigger.comment.id
+        return target
+      },
+      statusContext: statusContext || "ViteHub Agent", reactions: "content",
+    }),
+    triggers: { ...triggers, ...channelOptions.triggers },
+    webhooks: codeHostWebhookRegistrations(channelOptions.webhooks, {
+      secretToken: secret,
+      signature: {
+        async verify({ context, rawBody, request }) {
+          if (!context) throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host webhook verification requires a runtime context." })
+          const provider = await services.provider(context)
+          await codeHostIngest(provider, { headers: request.headers, body: rawBody, secret: await secret(context) })
+          return true
+        },
+      },
+    }),
+  })
+}
+
+function codeHostWebhookRegistrations<TRuntimeConfig extends AgentRuntimeConfig>(
+  webhooks: AgentChannelDefinition<TRuntimeConfig>["webhooks"],
+  verification: Pick<AgentChannelWebhookRegistrationDefinition<TRuntimeConfig>, "secretToken" | "signature">,
+): AgentChannelDefinition<TRuntimeConfig>["webhooks"] {
+  if (webhooks === false) return false
+  if (webhooks === undefined || webhooks === true) return verification
+  const apply = (webhook: AgentChannelWebhookRegistrationDefinition<TRuntimeConfig>) => ({ ...webhook, ...verification })
+  return Array.isArray(webhooks) ? webhooks.map(apply) : apply(webhooks)
+}
+
+function codeHostCommandForTrigger(value: unknown): unknown {
+  if (!isRecord(value)) return value
+  return { ...value, event: value.event === "comment" ? "issue_comment" : value.event === "review" ? "pull_request_review" : value.event === "review_comment" ? "pull_request_review_comment" : value.event }
+}
+
+export function gitlab<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "gitlab", TData, TMethods>
+export function gitlab<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options?: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>): AgentChannelDefinitionOf<TRuntimeConfig, "gitlab", TData, TMethods>
+export function gitlab<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {}): AgentChannelDefinitionOf<TRuntimeConfig, "gitlab", TData, TMethods> {
+  return codeHostChannel("gitlab", options)
+}
+
+export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods>
+export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options?: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods>
+export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {}): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods> {
+  return codeHostChannel("forgejo", options)
 }
 
 export interface GmailChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {

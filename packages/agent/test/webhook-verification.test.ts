@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { defineChatCapability as chat } from "../src/chat-trigger.ts"
 import { defineAgent, runAgentTrigger, verifyAgentWebhookRequest } from "../src/index.ts"
+import type { CodeHostChannelOptions } from "../src/channels.ts"
 
 function runtime(request?: Request) {
   return {
@@ -375,4 +376,27 @@ describe("agent webhook verification", () => {
     await expect(verifyAgentWebhookRequest(stripeRegistration(), stripeRequest(header)))
       .rejects.toMatchObject({ statusCode: 401 })
   })
+})
+
+it.each(["gitlab", "forgejo"] as const)("verifies the %s Channel through the client", async kind => {
+  const { gitlab, forgejo } = await import("../src/channels.ts")
+  const { signDelivery } = await import("forges/testing")
+  const channel = kind === "gitlab" ? gitlab({ webhookSecret: "secret", pullRequest: true }) : forgejo({ webhookSecret: "secret", pullRequest: true })
+  const factory = (options: CodeHostChannelOptions) => kind === "gitlab" ? gitlab(options) : forgejo(options)
+  expect(factory({ webhooks: false }).webhooks).toBe(false)
+  const configured = factory({ webhookSecret: "secret", webhooks: [{ id: "first", secretToken: false, signature: { verify: () => true } }, { id: "second" }] }).webhooks
+  expect(configured).toEqual([
+    expect.objectContaining({ id: "first", secretToken: expect.any(Function), signature: { verify: expect.any(Function) } }),
+    expect.objectContaining({ id: "second", secretToken: expect.any(Function), signature: { verify: expect.any(Function) } }),
+  ])
+  const agent = defineAgent({ channels: { host: channel }, driver: { run: () => "ok" } })
+  const { resolveAgentTriggers } = await import("../src/trigger-runtime.ts")
+  const triggers = await resolveAgentTriggers(agent, { ...runtime(), runtimeConfig: {} })
+  const registrations = triggers["host.webhook"]!.webhooks!
+  const body = JSON.stringify(kind === "gitlab" ? { object_kind: "note" } : { action: "created" })
+  const headers: Record<string, string> = kind === "gitlab" ? { "x-gitlab-event": "Note Hook" } : { "x-forgejo-event": "issue_comment" }
+  const signed = await signDelivery(kind, body, "secret", headers)
+  await expect(verifyAgentWebhookRequest(registrations, new Request("https://agent.test", { method: "POST", body, headers: signed }), runtime())).resolves.toMatchObject({ verified: true })
+  const wrong = await signDelivery(kind, body, "wrong", headers)
+  await expect(verifyAgentWebhookRequest(registrations, new Request("https://agent.test", { method: "POST", body, headers: wrong }), runtime())).rejects.toMatchObject({ statusCode: 401 })
 })

@@ -1,4 +1,4 @@
-import type { Comment, Cursor, ForgeProvider, Page, ReactionContent, ThreadRef } from "forges"
+import type { Comment, Cursor, ForgeProvider, Page, ReactionContent, Thread, ThreadRef } from "forges"
 import type { AgentChannelDeliveryEffectContext, AgentChannelDeliveryEffects, AgentRunInput, AgentRuntimeConfig } from "../types.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { codeHostErrorStatus } from "./code-host.ts"
@@ -35,6 +35,7 @@ export async function codeHostChannelRead<T>(provider: ForgeProvider, code: Meta
   }
   catch (error) {
     const status = codeHostErrorStatus(error)
+    if (provider.kind !== "github" && status !== undefined) throw agentDiagnostics.AGENT_R0946({ message: `[vitehub] Code Host metadata request failed with ${status}.`, cause: error })
     if (provider.kind === "github" && status !== undefined) {
       throw agentDiagnostics[code]({ message: `[vitehub] GitHub metadata request failed with ${status}.`, cause: error })
     }
@@ -48,6 +49,7 @@ export async function codeHostChannelWrite<T>(provider: ForgeProvider, write: ()
   }
   catch (error) {
     const status = codeHostErrorStatus(error)
+    if (provider.kind !== "github" && status !== undefined) throw agentDiagnostics.AGENT_R0946({ message: `[vitehub] Code Host delivery effect failed with ${status}.`, cause: error })
     if (provider.kind === "github" && status !== undefined) {
       throw agentDiagnostics.AGENT_R0350({ message: `[vitehub] GitHub delivery effect failed with ${status}.`, cause: error })
     }
@@ -93,13 +95,13 @@ function shaOf(value: unknown): string | undefined {
  * Read one pull request. GitHub reads only the pull request: `threads.get` also reads
  * check runs and statuses, which costs two more requests per call.
  */
-export async function codeHostPullRequest(provider: ForgeProvider, target: CodeHostTarget): Promise<{ raw: unknown, headSha?: string, baseSha?: string }> {
+export async function codeHostPullRequest(provider: ForgeProvider, target: CodeHostTarget): Promise<{ raw: unknown, headSha?: string, baseSha?: string, model?: Thread }> {
   if (provider.kind === "github") {
     const { data } = await provider.request<unknown>("GET", `/repos/${target.repository}/pulls/${target.number}`)
     return { raw: data, headSha: shaOf(isRecord(data) ? data.head : undefined), baseSha: shaOf(isRecord(data) ? data.base : undefined) }
   }
   const thread = await provider.threads.get(codeHostThreadRef(provider, target))
-  return { raw: thread.raw, headSha: thread.branches?.head.sha, baseSha: thread.branches?.base.sha }
+  return { raw: thread.raw, model: thread, headSha: thread.branches?.head.sha, baseSha: thread.branches?.base.sha }
 }
 
 export async function codeHostPullRequestMetadata(
@@ -154,12 +156,16 @@ export function codeHostActivityComments(provider: ForgeProvider, target: CodeHo
     },
     async get(id: number): Promise<Comment | undefined> {
       try {
-        const response = await provider.request("GET", `/repos/${target.repository}/issues/comments/${id}`)
+        const path = provider.kind === "gitlab"
+          ? `/projects/${encodeURIComponent(target.repository)}/merge_requests/${target.number}/notes/${id}`
+          : `/repos/${target.repository}/issues/comments/${id}`
+        const response = await provider.request("GET", path)
         return rawComment(provider, target, response.data)
       }
       catch (error) {
         const status = codeHostErrorStatus(error)
         if (status === 404) return undefined
+        if (status !== undefined && provider.kind !== "github") throw agentDiagnostics.AGENT_R0946({ message: `[vitehub] Code Host metadata request failed with ${status}.`, cause: error })
         if (status !== undefined && provider.kind === "github") throw agentDiagnostics.AGENT_R0360({ message: `[vitehub] GitHub metadata request failed with ${status}.`, cause: error })
         throw error
       }
@@ -172,7 +178,9 @@ export function codeHostActivityComments(provider: ForgeProvider, target: CodeHo
 export async function codeHostIdentity(provider: ForgeProvider, credential: { kind: "app", login: string } | { kind: "token" }): Promise<{ login: string }> {
   if (credential.kind === "app") return { login: credential.login }
   const { data } = await provider.request("GET", "/user")
+  if (provider.kind === "gitlab" && isRecord(data) && hasRuntimeType(data.username, "string") && data.username) return { login: data.username }
   if (isRecord(data) && hasRuntimeType(data.login, "string") && data.login) return { login: data.login }
+  if (provider.kind !== "github") throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host Agent activity could not resolve the authenticated identity." })
   throw agentDiagnostics.AGENT_R0356({ message: "[vitehub] GitHub Agent activity could not resolve the authenticated identity." })
 }
 
@@ -291,6 +299,7 @@ export function codeHostDeliveryEffects<TRuntimeConfig extends AgentRuntimeConfi
     async update(context) {
       const target = options.target(context)
       if (!target) return
+      if (!target.commentId && target.host !== "github") throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host pull request lifecycle invocations cannot update a triggering comment." })
       if (!target.commentId) throw agentDiagnostics.AGENT_R0364({ message: "[vitehub] GitHub pull request lifecycle invocations cannot update a triggering comment." })
       const provider = await options.provider(context)
       const body = await bodyFor(context, provider)

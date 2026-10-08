@@ -27,7 +27,7 @@ export default defineAgent({
 })
 ```
 
-Built-in helpers include `discord()`, `github()`, [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
+Built-in helpers include `discord()`, `github()`, [`gitlab()` and `forgejo()`](/docs/agents/code-host-channels), [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
