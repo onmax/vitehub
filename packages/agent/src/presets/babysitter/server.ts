@@ -965,7 +965,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 repository,
                 number,
                 expectedHeadOid: pullRequest.headRefOid,
-                expectedBaseOid: pullRequest.baseRefOid,
+                // Launch preparation may replace the stale snapshot base before the tools run.
+                get expectedBaseOid() { return preparedMergeBase ?? pullRequest.baseRefOid; },
                 signal: abortSignal,
                 autoMerge: merge.mode === "auto",
                 eligible: (current) =>
