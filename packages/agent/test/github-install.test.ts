@@ -281,6 +281,23 @@ it.each(["pnpm", "npm", "yarn"])("validates only selected %s workspaces and igno
   await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/protocol/);
 });
 
+it.each(["pnpm", "npm", "yarn"])("selects workspace membership from the active %s manager only", async manager => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: `${manager}@${manager === "pnpm" ? "10.34.6" : manager === "npm" ? "11.6.3" : "4.9.2"}`, workspaces: [manager === "pnpm" ? "fixtures/*" : "packages/*"] }));
+  await writeFile(join(root, "pnpm-workspace.yaml"), `packages: ["${manager === "pnpm" ? "packages/*" : "fixtures/*"}"]\n`);
+  if (manager !== "pnpm") {
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, manager === "npm" ? "package-lock.json" : "yarn.lock"), manager === "npm" ? "{}" : "__metadata:\n  version: 8\n");
+  }
+  for (const directory of ["packages/member", "fixtures/independent"]) {
+    await mkdir(join(root, directory), { recursive: true });
+    await writeFile(join(root, directory, "package.json"), directory.startsWith("packages/") ? "{}" : '{"dependencies":{"unsafe":"exec:./script.js"}}');
+  }
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(join(root, "packages/member/package.json"), '{"dependencies":{"unsafe":"exec:./script.js"}}');
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/protocol/);
+});
+
 it.each(["file:./local", "./local"])("validates referenced local packages from %s", async source => {
   const root = await fixture();
   await mkdir(join(root, "local"));

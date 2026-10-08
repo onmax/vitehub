@@ -22,7 +22,13 @@ export async function createGitHubInstallSnapshot(target: string): Promise<GitHu
   const identities = new Map<string, { dev: string; ino: string }>();
   const managedDirectories = new Set([""]);
   try {
-    await cp(checkout, directory, {
+    const root = await lstat(checkout, { bigint: true });
+    identities.set("", { dev: String(root.dev), ino: String(root.ino) });
+    // Node rejects copying an ancestor into itself before running the filter.
+    // Copy each entry so the protected metadata directory is never traversed.
+    for (const entry of await readdir(checkout)) {
+      if (entry === ".git") continue;
+      await cp(join(checkout, entry), join(directory, entry), {
       recursive: true, dereference: false, verbatimSymlinks: true,
       filter: async source => {
         const path = relative(checkout, source);
@@ -38,7 +44,8 @@ export async function createGitHubInstallSnapshot(target: string): Promise<GitHu
         if (info.isDirectory()) identities.set(path, { dev: String(info.dev), ino: String(info.ino) });
         return true;
       },
-    });
+      });
+    }
     await chmod(directory, 0o700);
     return { checkout, directory, identities, managedDirectories, close: async () => await rm(directory, { recursive: true, force: true }) };
   } catch (error) {

@@ -710,6 +710,31 @@ describe("Babysitter preset runtime", () => {
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
   });
 
+  it("parks model work until GitHub computes definitive mergeability", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const f = await fixture();
+    const command = f.command.getMockImplementation()!;
+    let uncertain = true;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (uncertain && args.includes("repos/acme/app/pulls/12")) return { ...result, stdout: JSON.stringify({ ...JSON.parse(result.stdout), mergeable: null, mergeable_state: "unknown" }) };
+      return result;
+    });
+    try {
+      await f.reconcile();
+      expect(createProviderRuntime.mock.calls.length).toBe(0);
+      const current = await f.runtime.inbox.get("acme/app", 12);
+      expect(current?.status).toBe("waiting");
+      expect(current?.lease).toBeNull();
+      expect(current?.wait?.retryAt).toBeGreaterThan(Date.now());
+      expect(current?.lastResult).toMatch(/mergeability/i);
+      uncertain = false;
+      vi.setSystemTime(Date.now() + 31_000);
+      await f.reconcile();
+      expect(createProviderRuntime.mock.calls.length).toBeGreaterThan(0);
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
+  });
+
   it("preserves the dependency installation opt-out in the configured preset", () => {
     const agent = defineAgent({ extends: babysitter, options: { install: false } });
     expect(agent.install).toBe(false);
