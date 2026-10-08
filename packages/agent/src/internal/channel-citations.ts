@@ -58,16 +58,43 @@ export function formatChannelCitationText(text: string): string {
   return createCitationFormatter()(text, true);
 }
 
-export async function* formatChannelCitationStream(
-  stream: AsyncIterable<string>,
-): AsyncIterable<string> {
-  const format = createCitationFormatter();
-  for await (const chunk of stream) {
-    const text = format(chunk);
-    if (text) yield text;
-  }
-  const remaining = format("", true);
-  if (remaining) yield remaining;
+export function formatChannelCitationStream(stream: AsyncIterable<string>): AsyncIterable<string> {
+  return {
+    [Symbol.asyncIterator]() {
+      const iterator = stream[Symbol.asyncIterator]();
+      const format = createCitationFormatter();
+      let closed = false;
+      return {
+        async next(): Promise<IteratorResult<string>> {
+          while (!closed) {
+            const result = await iterator.next();
+            if (closed) break;
+            const text = format(result.done ? "" : result.value, Boolean(result.done));
+            if (result.done) closed = true;
+            if (text) return { done: false, value: text };
+          }
+          return { done: true, value: undefined };
+        },
+        // Forward cancellation immediately, even while the source's next() is stalled.
+        async return(): Promise<IteratorResult<string>> {
+          if (!closed) {
+            closed = true;
+            await iterator.return?.();
+          }
+          return { done: true, value: undefined };
+        },
+        async throw(error: unknown): Promise<IteratorResult<string>> {
+          closed = true;
+          if (iterator.throw) await iterator.throw(error);
+          else {
+            await iterator.return?.();
+            throw error;
+          }
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
 }
 
 function formatCitationAst<T extends Nodes>(node: T): T {
