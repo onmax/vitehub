@@ -123,7 +123,6 @@ describe("@vite-hub/shell just-bash runtime", () => {
     const runtime = createShellRuntime({
       provider: createJustBashProvider({
         commands,
-        cwd: workspaceMountPoint,
         fs: createReadonlyWorkspaceFs(workspace),
         networkGrants: { executeSourceRequest },
       }),
@@ -131,6 +130,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
 
     expect(runtime.boundary.network).toBe(true)
     await expect(runtime.exec("curl -d '{\"region\":\"eu\"}' https://portal.example.com/runtime/inventory-health")).resolves.toMatchObject({
+      cwd: workspaceMountPoint,
       event: "command_finished",
       exitCode: 0,
       stdout: "ok\n",
@@ -154,6 +154,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
 
     expect(runtime.boundary.network).toBe(false)
     await expect(runtime.exec("curl -X POST https://portal.example.com/action")).resolves.toMatchObject({
+      cwd: workspaceMountPoint,
       event: "policy_denied",
       exitCode: 126,
       stderr: expect.stringContaining("not in the permitted commands"),
@@ -509,6 +510,7 @@ describe("@vite-hub/shell just-bash runtime", () => {
       fs: createReadonlyWorkspaceFs(workspace),
       timeout: 5,
     })).resolves.toMatchObject({
+      cwd: workspaceMountPoint,
       event: "command_timed_out",
       exitCode: null,
       stderr: "[vitehub] Workspace shell command timed out after 5ms.",
