@@ -766,7 +766,10 @@ ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
 `install` defaults to `true`. The host installs dependencies from the frozen
 pnpm, npm, or Yarn lockfile before starting the provider. Lifecycle scripts and
 repository package-manager hooks, plugins, and binary delegation stay disabled.
-The package manager must name an official version, rather than a URL. Installation failures are recorded in `.git/vitehub-install.json` and
+The package manager must name an official version, rather than a URL. Corepack
+uses the trusted npm registry and ignores checkout environment files. npm must
+be version 7 or newer. A manifest without a package-manager version uses a pinned
+default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
 Workers call `commitRepair` with a message and explicit repair paths, then
 `pushRepair`. The host commits because the provider sandbox protects Git metadata. For a

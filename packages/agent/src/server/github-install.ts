@@ -39,9 +39,10 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
       args = [`pnpm@${version("pnpm", "10.34.6")}`, "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile", "--config.manage-package-manager-versions=false"];
     }
     else if (await exists(join(target, "package-lock.json"))) {
-      const npmVersion = packageManager ? version("npm", "") : undefined;
-      command = npmVersion ? "corepack" : "npm";
-      args = [...(npmVersion ? [`npm@${npmVersion}`] : []), "ci", "--ignore-scripts", "--no-audit", "--no-fund"];
+      const npmVersion = version("npm", "11.6.3");
+      if (Number(npmVersion.split(".")[0]) < 7) throw new Error("Host installation requires npm 7 or newer; older npm can execute repository onload scripts.");
+      command = "corepack";
+      args = [`npm@${npmVersion}`, "ci", "--ignore-scripts", "--no-audit", "--no-fund"];
     }
     else if (await exists(join(target, "yarn.lock"))) {
       command = "corepack";

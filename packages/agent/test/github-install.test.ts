@@ -60,3 +60,12 @@ it("uses the declared npm version rather than the host npm binary", async () => 
   await installGitHubPullRequestWorkspace(root);
   expect(await readFile(join(root, "args.txt"), "utf8")).toBe("npm@11.1.0\nci\n--ignore-scripts\n--no-audit\n--no-fund\n");
 });
+
+it("rejects legacy npm versions with repository onload scripts before execution", async () => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@6.14.18" }));
+  await writeFile(join(root, "package-lock.json"), "{}");
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/npm 7 or newer/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
