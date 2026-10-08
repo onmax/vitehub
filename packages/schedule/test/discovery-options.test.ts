@@ -46,6 +46,21 @@ describe.each([false, true])("Schedule option discovery, server=%s", (server) =>
     expect(discover()).toMatchObject([{ name: "daily", allowRuntimeSchedules: false }])
   })
 
+  it.each(["é", "𐐀", "a\u0301", "manualé", "manual\u200C", "allowRuntimeSchedules\u200D"])("accepts an unrelated Unicode option key: %s", async (name) => {
+    for (const source of [
+      `export default defineSchedule({ ${name}: true, cron: '0 9 * * *', handler() {} })`,
+      `export default defineSchedule('0 9 * * *', () => {}, { ${name}: true })`,
+    ]) {
+      const { discover } = await fixture(source, server)
+      expect(discover()).toMatchObject([{ name: "daily", manual: false, allowRuntimeSchedules: false }])
+    }
+  })
+
+  it.each(["0x2a", "1e2", "1_000"])("accepts an unrelated numeric option key: %s", async (name) => {
+    const { discover } = await fixture(`export default defineSchedule('0 9 * * *', () => {}, { ${name}: true, manual: true, allowRuntimeSchedules: true })`, server)
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
   it.each([
     "(({ manual: true, allowRuntimeSchedules: true }))",
     "{ manual: true, allowRuntimeSchedules: true } as const",

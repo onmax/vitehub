@@ -369,6 +369,17 @@ describe("source scanner", () => {
     expect(readObjectProperty(`{ get manual() { return true }, manual: false }`, "manual")).toBe("false")
   })
 
+  it.each(["é", "𐐀", "a\u0301", "manualé", "manual\u200C", "allowRuntimeSchedules\u200D"])("reads a Unicode identifier key: %s", (name) => {
+    expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([name])
+    expect(readObjectProperty(`{ ${name}: true }`, name)).toBe("true")
+    expect(readObjectPropertyNames(`{ get ${name}() {}, async ${name}() {} }`)).toEqual([name, name])
+  })
+
+  it.each(["0x2a", "1e2", "1_000"])("preserves numeric key spelling: %s", (name) => {
+    expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([name])
+    expect(readObjectProperty(`{ ${name}: true }`, name)).toBe("true")
+  })
+
   it("reports unresolved keys without evaluating them", () => {
     expect(readObjectPropertyNames(String.raw`{ get ["manual"]() {}, "manu\u0061l": true, ...options }`)).toEqual([undefined, undefined, undefined])
   })

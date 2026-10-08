@@ -558,7 +558,7 @@ function readObjectMemberKey(source: string, offset: number) {
     return { name: name.includes("\\") ? undefined : name, end }
   }
   if (source[start] === "[") return { name: undefined, end: start }
-  const name = /^[\w$]+/.exec(source.slice(start))?.[0]
+  const name = /^(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*|\d[\w$]*)/u.exec(source.slice(start))?.[0]
   if (name) {
     const end = start + name.length
     return { name: source[end] === "\\" ? undefined : name, end }
