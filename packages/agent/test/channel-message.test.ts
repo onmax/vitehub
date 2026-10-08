@@ -209,8 +209,8 @@ describe("Channel message handle", () => {
       },
       driver: { run: () => text },
       hooks: {
-        async "agent:finish"(event) {
-          await event.reply(streaming ? (async function* () { for (const character of text) yield character })() : text)
+        "agent:finish"(event) {
+          return event.reply(streaming ? (async function* () { for (const character of text) yield character })() : text)
         },
       },
     })
