@@ -2481,6 +2481,39 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
   }
 }
 
+function terminalUsageEvent(event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>, options: {
+  model?: string
+  provider: "claude-code" | "codex"
+  transport?: "gateway"
+}): StreamEvent | undefined {
+  const usage = event.payload.tokenUsage
+  if (!usage || usage.usageStatus === "unavailable"
+    || usage.inputTokens === undefined || usage.outputTokens === undefined
+    || !Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) return
+  // The runtime accumulates these counters within this turn, including after
+  // resume. Latest-response snapshots cannot establish the same totals.
+  return {
+    type: "usage",
+    usageRecord: {
+      model: options.model,
+      provider: options.provider,
+      transport: options.transport,
+      raw: usage,
+      usage: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.inputTokens + usage.outputTokens,
+        inputTokenDetails: {
+          ...(usage.cachedInputTokens === undefined ? {} : { cacheReadTokens: usage.cachedInputTokens }),
+          ...(usage.cacheCreationTokens === undefined ? {} : { cacheWriteTokens: usage.cacheCreationTokens }),
+        },
+        outputTokenDetails: { ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }) },
+        details: { usageStatus: usage.usageStatus, usageScope: usage.usageScope, hasSubagents: usage.hasSubagents },
+      },
+    },
+  }
+}
+
 function providerDataEvent(event: ProviderRuntimeEvent): StreamEvent {
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
   const payload = event.payload as Record<string, unknown>
@@ -2651,11 +2684,15 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
       return event.payload.exitKind === "error" ? [{ error: event.payload.reason || "Provider session exited.", recoverable: event.payload.recoverable, type: "error" }] : [providerDataEvent(event)]
     case "turn.completed":
       const error = event.payload.errorMessage || (event.payload.state === "completed" ? undefined : `Provider turn ${event.payload.state}.`)
-      return error
+      const completedUsage = terminalUsageEvent(event, options)
+      const completedEvents: StreamEvent[] = error
         ? [{ error, type: "error" }]
         : [{ reason: event.payload.stopReason || event.payload.state, type: "finish" }]
+      return completedUsage ? [completedUsage, ...completedEvents] : completedEvents
     case "turn.aborted":
-      return [{ error: `Provider turn aborted${event.payload.reason ? `: ${event.payload.reason}` : "."}`, type: "error" }]
+      const abortedUsage = terminalUsageEvent(event, options)
+      const abortedEvents: StreamEvent[] = [{ error: `Provider turn aborted${event.payload.reason ? `: ${event.payload.reason}` : "."}`, type: "error" }]
+      return abortedUsage ? [abortedUsage, ...abortedEvents] : abortedEvents
     case "turn.plan.updated":
       return [{ data: event.payload, id: event.turnId ? `plan:${event.turnId}` : undefined, type: "data-agent-plan" }]
     case "turn.diff.updated":

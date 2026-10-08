@@ -2726,6 +2726,56 @@ cli_auth_credentials_store = "keyring"
     expect(result.usageRecord.calls[0].usage).toBeUndefined()
   })
 
+  it.each(["codex", "claude-code"] as const)("uses authoritative terminal turn usage from %s after itemless snapshots", async provider => {
+    const threadId = `thread-terminal-usage-${provider}`
+    const tokenUsage = { usageStatus: "complete", usageScope: "main_agent", hasSubagents: true, inputTokens: 9, cachedInputTokens: 3, cacheCreationTokens: 1, outputTokens: 3, reasoningTokens: 1 }
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 4, outputTokens: 1 } }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 5, outputTokens: 2 } }),
+      event("turn.completed", threadId, { state: "completed", tokenUsage }, { turnId: "turn-1" }),
+    ])
+    const result = await createProviderAgentAdapter({ model: "test-model", provider }).generate(context(threadId) as never)
+    if (!isRuntimeRecord(result)) throw new Error("Expected provider result")
+    expect(result.usageRecord).toMatchObject({
+      model: "test-model",
+      provider,
+      raw: tokenUsage,
+      usage: {
+        inputTokens: 9, outputTokens: 3, totalTokens: 12,
+        inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 1 },
+        outputTokenDetails: { reasoningTokens: 1 },
+        details: { usageStatus: "complete", usageScope: "main_agent", hasSubagents: true },
+      },
+    })
+  })
+
+  it.each(["failed", "aborted"] as const)("emits partial terminal usage before a %s turn error", async terminal => {
+    const threadId = `thread-terminal-partial-${terminal}`
+    const tokenUsage = { usageStatus: "partial", usageScope: "main_agent", hasSubagents: false, inputTokens: 7, cachedInputTokens: 2, outputTokens: 3, reasoningTokens: 1 }
+    runtime(threadId, [event(terminal === "failed" ? "turn.completed" : "turn.aborted", threadId,
+      terminal === "failed" ? { state: "failed", errorMessage: "terminal failure", tokenUsage } : { reason: "terminal interruption", tokenUsage }, { turnId: "turn-1" })])
+    const events: StreamEvent[] = []
+    const read = async () => {
+      // SAFETY: The provider adapter's stream returns normalized Agent stream events.
+      const output = await createProviderAgentAdapter({ provider: "codex" }).stream!(context(threadId) as never) as AsyncIterable<StreamEvent>
+      for await (const value of output) events.push(value)
+    }
+    await expect(read()).rejects.toThrow(/terminal failure|terminal interruption/)
+    expect(events.find(value => value.type === "usage")).toMatchObject({ usageRecord: { raw: tokenUsage,
+      usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10, details: { usageStatus: "partial", usageScope: "main_agent" } } } })
+  })
+
+  it("retains measured snapshots when terminal usage is unavailable", async () => {
+    const threadId = "thread-terminal-unavailable"
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 4, outputTokens: 1, totalProcessedTokens: 5 } }),
+      event("turn.completed", threadId, { state: "completed", tokenUsage: { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false } }, { turnId: "turn-1" }),
+    ])
+    const result = await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId) as never)
+    if (!isRuntimeRecord(result)) throw new Error("Expected provider result")
+    expect(result.usageRecord).toMatchObject({ usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 } })
+  })
+
   it("keeps accumulated usage unknown when a distinct response lacks its partition", async () => {
     const threadId = "thread-partial-usage-update"
     runtime(threadId, [
