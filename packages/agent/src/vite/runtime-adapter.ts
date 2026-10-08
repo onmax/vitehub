@@ -8,6 +8,7 @@ import { createAgentRuntimeContext } from "../runtime/context.ts"
 import {
   workspaceAgentWithSourceRoot,
 } from "../workspace-agent.ts"
+import { hasRuntimeType } from "../internal/runtime-type.ts"
 import { decodeColocatedAgentSkills, withColocatedAgentSkills } from "../internal/colocated-agent-skills.ts"
 import { readColocatedAgentInstructions } from "./colocated-agent-instructions.ts"
 import { readColocatedAgentSkills } from "./colocated-agent-skills.ts"
@@ -86,6 +87,13 @@ export function createViteWorkspaceAgentLoader(
     // the Console's configured journal. The facade keeps journal selection lazy and scoped.
     let authored = module.default
     if (server.config.plugins?.some(plugin => plugin.name === "vite-hub/console")) {
+      // Nitro runs its plugins in another module runner. Initialize the same generated
+      // Console configuration in this runner before resolving its journal fallback.
+      // SAFETY: Nitro extends Vite's open config with its registered runtime plugins.
+      const nitro = (server.config as typeof server.config & { nitro?: { plugins?: unknown[] } }).nitro
+      const bootstrap = nitro?.plugins?.find((plugin): plugin is string =>
+        hasRuntimeType(plugin, "string") && /[\\/]\.vitehub[\\/]nitro[\\/]console[\\/]plugin(?:-[^\\/]+)?\.mjs$/.test(plugin))
+      if (bootstrap) await server.ssrLoadModule(bootstrap)
       // SAFETY: The active Console plugin belongs to vite-hub, whose Agent facade exports DefineAgent.
       const framework = await server.ssrLoadModule("vite-hub/agent") as { defineAgent: DefineAgent }
       authored = framework.defineAgent({ extends: authored })

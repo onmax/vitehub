@@ -1,18 +1,21 @@
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
+import { createRequire } from "node:module"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createClient } from "@libsql/client"
 import { createServer, type PluginOption } from "vite"
-import { nitro } from "nitro/vite"
 import { expect, it } from "vitest"
 
+import { loadViteAgent } from "../src/vite/runtime-adapter.ts"
 import { runAgentChannelReplayCli } from "../src/internal/channel-replay-cli.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../src/invocation-stream.ts"
 
 it("journals authenticated Vite SSR dry-run replays in the host Console database", async () => {
   // Load the built host integration, as an application does, without typechecking unrelated primitives here.
   const hostEntry = fileURLToPath(new URL("../../vite-hub/dist/index.js", import.meta.url))
+  const nitroEntry = createRequire(import.meta.url).resolve("nitro/vite")
+  const { nitro } = await import(nitroEntry) as { nitro: () => PluginOption }
   const { vitehub } = await import(hostEntry) as { vitehub: (options: Record<string, unknown>) => PluginOption }
   const root = await mkdtemp(join(tmpdir(), "vitehub-replay-console-"))
   const packageRoot = fileURLToPath(new URL("..", import.meta.url))
@@ -22,6 +25,7 @@ it("journals authenticated Vite SSR dry-run replays in the host Console database
   try {
     await mkdir(join(root, "node_modules/@vite-hub"), { recursive: true })
     for (const name of ["agent", "workspace", "blob", "database"]) await symlink(join(packageRoot, "..", name), join(root, "node_modules/@vite-hub", name), "dir")
+    await symlink(join(packageRoot, "../vite-hub/node_modules/h3"), join(root, "node_modules/h3"), "dir")
     await symlink(join(packageRoot, "../vite-hub"), join(root, "node_modules/vite-hub"), "dir")
     await mkdir(join(root, "server/agents"), { recursive: true })
     await writeFile(join(root, "server/agents/support.ts"), `
@@ -43,7 +47,7 @@ export default defineAgent({ runtime: false, workspace: { mode: 'read' },
 `)
     await writeFile(join(root, "authorize.ts"), "export default () => ({ actor: { id: 'test', name: 'Test' }, mode: 'admin' })\n")
     server = await createServer({ root, configFile: false, appType: "custom", logLevel: "silent",
-      plugins: [vitehub({ preset: "node", agent: true, workflow: false, env: false, blob: { stores: { local: { driver: "fs", base: join(root, "blob") } } },
+      plugins: [vitehub({ preset: "node", agent: true, database: true, workflow: false, env: false, blob: { stores: { default: { driver: "fs", base: join(root, "blob") } } },
         console: { databaseUrl, exposure: "host-managed", authorize: "./authorize.ts" },
       }), nitro()],
       // Initial published SSR-cycle behavior is covered by the separate CLI-discovery PR.
@@ -55,6 +59,8 @@ export default defineAgent({ runtime: false, workspace: { mode: 'read' },
     })
     await server.listen()
     const origin = server.resolvedUrls!.local[0]!
+    const loaded = await loadViteAgent(server, { name: "support", handler: join(root, "server/agents/support.ts") })
+    expect(loaded?.agent).toBeDefined()
     const rejected = await fetch(new URL(agentInvocationStreamRoute, origin), { method: "POST", body: JSON.stringify({ agent: "support", replay: { channel: "mailbox", dryRun: true } }), headers: { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue, "content-type": "application/json" } })
     expect(rejected.status).toBe(403)
     const discovery = await fetch(new URL(agentInvocationStreamRoute, origin), { headers: { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue } })
