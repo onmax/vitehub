@@ -15,6 +15,7 @@ import {
   type ReadonlyWorkspaceFacade,
   type WritableWorkspaceFacade,
   type WorkspaceDefinition,
+  type WorkspaceSource,
   type WorkspaceSourceResolutionContext,
 } from "../src/index.ts"
 import {
@@ -1442,6 +1443,35 @@ describe("Workspace Source Resolution", () => {
 
     await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "ready" })
     await expect(base.readFile("docs/guide.md")).resolves.toBe("resolved")
+  })
+
+  it.each([false, true])("retains the parent guard for a forged matching fingerprint (resolved: %s)", async (resolved) => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    const original = custom({
+      fingerprint: { provider: "docs" },
+      mount: "docs",
+      sync: { stale: "remove" },
+      async getKeys() { return ["guide.md"] },
+      async getItem(key) { return { key, path: key, content: "original" } },
+    })
+    const declared = resolved ? custom({
+      async resolve() { return original },
+      async getKeys() { return [] },
+      async getItem(key) { return { key, content: "" } },
+    }) : original
+    const definition = { name: "support", sources: { docs: declared } }
+    const options = { ...scope("acme", ["docs"]), overlay: true }
+    const parent = await createWorkspaceSourceResolutionFacade(writableFacade(base), definition, options)
+    await (parent.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })
+    const binding = parent.definition.sources!.docs as WorkspaceSource
+    const forged = { ...binding, async getItem(key: string) { return { key, path: key, content: "forged" } } }
+    const child = await createWorkspaceSourceResolutionFacade(parent.workspace, {
+      ...parent.definition,
+      sources: { docs: forged },
+    }, options)
+
+    await expect((child.workspace as WritableWorkspaceFacade).sync({ sources: ["docs"] })).resolves.toMatchObject({ status: "error" })
+    await expect(base.readFile("docs/guide.md")).resolves.toBe("original")
   })
 
   it.each([false, true])("keeps the guard when fingerprint property order changes (nested: %s)", async (nested) => {

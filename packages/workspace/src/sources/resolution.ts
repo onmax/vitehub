@@ -74,9 +74,15 @@ function isWritableWorkspaceFacade<Name extends WorkspaceName>(workspace: Readon
   return typeof (workspace as WritableWorkspaceFacade<Name>).fs.writeFile === "function"
 }
 
+// Resolution lineage is private: copying a public fingerprint cannot grant
+// a replacement Source authority over an enclosing Source's files.
+const sourceBindingLineage = new WeakMap<object, WorkspaceSourceInput>()
+
 function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | undefined, right: WorkspaceSourceInput | undefined): boolean {
   if (left === right) return true
   if (!left || !right) return false
+  if (typeof left !== "object" || typeof right !== "object") return false
+  if ((sourceBindingLineage.get(left) ?? left) !== (sourceBindingLineage.get(right) ?? right)) return false
   const leftBinding = normalizeWorkspaceSource(key, left)
   const rightBinding = normalizeWorkspaceSource(key, right)
   if (leftBinding.source.fingerprint === undefined || rightBinding.source.fingerprint === undefined) return false
@@ -95,7 +101,7 @@ function sameWorkspaceSourceBinding(key: string, left: WorkspaceSourceInput | un
   })
 }
 
-// Only plain data can establish equivalent authority across recreated bindings.
+// Within the same private lineage, only plain data can confirm unchanged options.
 // Custom serializers, accessors, cycles, and exotic objects retain the outer guard.
 function sameWorkspaceSourceValue(left: unknown, right: unknown, ancestors = new Set<object>()): boolean {
   try {
@@ -818,7 +824,7 @@ async function resolveWorkspaceSource(
   const normalized = normalizeWorkspaceSource(key, resolvedSource)
   if (!selectedScopeIntersectsSource(options.selectedWorkspaceScope, normalized)) return undefined
 
-  return copyWorkspaceSourceMetadata(resolvedSource, {
+  const result = copyWorkspaceSourceMetadata(resolvedSource, {
     ...resolvedSource,
     fingerprint: {
       source: resolvedSource.fingerprint,
@@ -835,6 +841,8 @@ async function resolveWorkspaceSource(
       },
     },
   })
+  sourceBindingLineage.set(result, typeof input === "object" ? sourceBindingLineage.get(input) ?? input : input)
+  return result
 }
 
 function applyResolvedWorkspaceSourceBinding(input: WorkspaceSourceInput, source: WorkspaceSource): WorkspaceSource {
