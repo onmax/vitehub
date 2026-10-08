@@ -101,12 +101,12 @@ function readEntryValue(entry: string): string | undefined {
 function splitEntries(body: string): string[] {
   return splitTopLevel(body)
     .map(entry => entry.replace(/^(?:\s*(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*(?:\n|$)))*\s*/, ""))
-    .filter(entry => entry.length > 0)
 }
 
 function readObjectEntries(body: string | undefined): Array<{ key: string; value: string | undefined }> {
   if (!body) return []
   return splitEntries(body)
+    .filter(entry => entry.length > 0)
     .map((entry) => ({ key: readEntryKey(entry) ?? "", value: readEntryValue(entry) }))
 }
 
@@ -224,8 +224,9 @@ function readAuthAccessRoutesConfig(body: string | undefined): ResolvedAuthAcces
     throw authErrorDiagnostics.AUTH_C0012({ message: "`defineAuth()` access.routes must be an inline array." })
   }
 
-  return splitEntries(routes)
-    .map((entry, index) => readAuthAccessRoute(entry, index))
+  const entries = splitEntries(routes)
+  if (entries.at(-1) === "") entries.pop()
+  return entries.map((entry, index) => readAuthAccessRoute(entry, index))
 }
 
 function readAuthDatabaseConfig(body: string | undefined, allowRuntimeValue = false): ResolvedAuthDatabaseConfiguration {

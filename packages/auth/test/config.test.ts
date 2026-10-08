@@ -190,6 +190,26 @@ describe("resolveAuthViteConfig", () => {
     })
   })
 
+  it.each(["", "/* removed route */", "// removed route\n"])("rejects sparse route slots containing %s", async (comment) => {
+    const rootDir = await createTempProject()
+    for (const index of [0, 1, 2]) {
+      const routes = ["'/first'", "'/second'"]
+      routes.splice(index, 0, comment)
+      await writeAuth(rootDir, "server/auth.ts", [`  access: { routes: [${routes.join(",")},] },`])
+
+      expect(() => resolveAuthViteConfig(undefined, rootDir)).toThrow(`access.routes[${index}]`)
+    }
+  })
+
+  it.each(["/* trailing comment */", "// trailing comment\n"])("accepts %s after the final route", async (comment) => {
+    const rootDir = await createTempProject()
+    await writeAuth(rootDir, "server/auth.ts", [`  access: { routes: ['/first', ${comment}] },`])
+    expect(resolveAuthViteConfig(undefined, rootDir)?.access).toEqual({ routes: [{ route: "/first" }] })
+
+    await writeAuth(rootDir, "server/auth.ts", [`  access: { routes: [${comment}] },`])
+    expect(resolveAuthViteConfig(undefined, rootDir)?.access).toEqual({ routes: [] })
+  })
+
   it("resolves shorthand authorize callbacks", async () => {
     const rootDir = await createTempProject()
     await writeAuth(rootDir, "server/auth.ts", [
