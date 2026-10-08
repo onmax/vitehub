@@ -2726,6 +2726,56 @@ cli_auth_credentials_store = "keyring"
     expect(result.usageRecord.calls[0].usage).toBeUndefined()
   })
 
+  it.each(["codex", "claude-code"] as const)("uses authoritative terminal turn usage from %s after itemless snapshots", async provider => {
+    const threadId = `thread-terminal-usage-${provider}`
+    const tokenUsage = { usageStatus: "complete", usageScope: "main_agent", hasSubagents: true, inputTokens: 9, cachedInputTokens: 3, cacheCreationTokens: 1, outputTokens: 3, reasoningTokens: 1 }
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 4, outputTokens: 1 } }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 5, outputTokens: 2 } }),
+      event("turn.completed", threadId, { state: "completed", tokenUsage }, { turnId: "turn-1" }),
+    ])
+    const result = await createProviderAgentAdapter({ model: "test-model", provider }).generate(context(threadId) as never)
+    if (!isRuntimeRecord(result)) throw new Error("Expected provider result")
+    expect(result.usageRecord).toMatchObject({
+      model: "test-model",
+      provider,
+      raw: tokenUsage,
+      usage: {
+        inputTokens: 9, outputTokens: 3, totalTokens: 12,
+        inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 1 },
+        outputTokenDetails: { reasoningTokens: 1 },
+        details: { usageStatus: "complete", usageScope: "main_agent", hasSubagents: true },
+      },
+    })
+  })
+
+  it.each(["failed", "aborted"] as const)("emits partial terminal usage before a %s turn error", async terminal => {
+    const threadId = `thread-terminal-partial-${terminal}`
+    const tokenUsage = { usageStatus: "partial", usageScope: "main_agent", hasSubagents: false, inputTokens: 7, cachedInputTokens: 2, outputTokens: 3, reasoningTokens: 1 }
+    runtime(threadId, [event(terminal === "failed" ? "turn.completed" : "turn.aborted", threadId,
+      terminal === "failed" ? { state: "failed", errorMessage: "terminal failure", tokenUsage } : { reason: "terminal interruption", tokenUsage }, { turnId: "turn-1" })])
+    const events: StreamEvent[] = []
+    const read = async () => {
+      // SAFETY: The provider adapter's stream returns normalized Agent stream events.
+      const output = await createProviderAgentAdapter({ provider: "codex" }).stream!(context(threadId) as never) as AsyncIterable<StreamEvent>
+      for await (const value of output) events.push(value)
+    }
+    await expect(read()).rejects.toThrow(/terminal failure|terminal interruption/)
+    expect(events.find(value => value.type === "usage")).toMatchObject({ usageRecord: { raw: tokenUsage,
+      usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10, details: { usageStatus: "partial", usageScope: "main_agent" } } } })
+  })
+
+  it("retains measured snapshots when terminal usage is unavailable", async () => {
+    const threadId = "thread-terminal-unavailable"
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 4, outputTokens: 1, totalProcessedTokens: 5 } }),
+      event("turn.completed", threadId, { state: "completed", tokenUsage: { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false } }, { turnId: "turn-1" }),
+    ])
+    const result = await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId) as never)
+    if (!isRuntimeRecord(result)) throw new Error("Expected provider result")
+    expect(result.usageRecord).toMatchObject({ usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 } })
+  })
+
   it("keeps accumulated usage unknown when a distinct response lacks its partition", async () => {
     const threadId = "thread-partial-usage-update"
     runtime(threadId, [
@@ -4516,6 +4566,65 @@ cli_auth_credentials_store = "keyring"
 
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
     expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ AGENT_BROWSER_SESSION: "managed", AGENT_BROWSER_SOCKET_DIR: "/managed/socket", VITEHUB_BROWSER_ACTIVE: "1", PATH: "/managed/bin:/caller/bin", LD_LIBRARY_PATH: "/managed/lib:/caller/lib" }) }))
+  })
+
+  it.each(["codex", "claude-code"] as const)("prepares the %s checkout merge before injecting instructions", async provider => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-instruction-merge-"))
+    const threadId = `thread-instruction-merge-${provider}`
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout
+    }
+    try {
+      git("init", "-q", "-b", "target")
+      git("config", "user.name", "Test")
+      git("config", "user.email", "test@localhost")
+      await writeFile(join(root, "AGENTS.md"), "original instructions")
+      await writeFile(join(root, "CLAUDE.md"), "original Claude instructions")
+      git("add", "-A")
+      git("commit", "-qm", "initial")
+      git("branch", "feature")
+      await writeFile(join(root, "AGENTS.md"), "updated source instructions")
+      await writeFile(join(root, "CLAUDE.md"), "updated source Claude instructions")
+      git("add", "-A")
+      git("commit", "-qm", "update target instructions")
+      git("checkout", "-q", "feature")
+      await writeFile(join(root, "feature.txt"), "feature")
+      git("add", "-A")
+      git("commit", "-qm", "feature")
+      const originalFlags = git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")
+      runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+        async onSendTurn() {
+          expect(git("rev-parse", "MERGE_HEAD").trim()).toBe(git("rev-parse", "target").trim())
+          expect(git("show", ":AGENTS.md")).toBe("updated source instructions")
+          expect(git("show", ":CLAUDE.md")).toBe("updated source Claude instructions")
+          const promptPath = provider === "codex" ? "AGENTS.md" : ".claude/vitehub-system-prompt.md"
+          expect(await readFile(join(root, promptPath), "utf8")).toBe("generated repair instructions")
+          await writeFile(join(root, "repair.txt"), "repair")
+          git("add", "-A")
+          git("commit", "-qm", "finish repair merge")
+          expect(git("show", "HEAD:AGENTS.md")).toBe("updated source instructions")
+          expect(git("show", "HEAD:CLAUDE.md")).toBe("updated source Claude instructions")
+        },
+      })
+      await createProviderAgentAdapter({
+        cwd: root,
+        instructions: "generated repair instructions",
+        launch: ({ command }) => {
+          git("merge", "--no-commit", "--no-ff", "target")
+          return { command }
+        },
+        provider,
+      }).generate(context(threadId) as never)
+      expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe("updated source instructions")
+      expect(await readFile(join(root, "CLAUDE.md"), "utf8")).toBe("updated source Claude instructions")
+      expect(git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")).toBe(originalFlags)
+      expect(git("status", "--porcelain")).toBe("")
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {

@@ -2481,6 +2481,39 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
   }
 }
 
+function terminalUsageEvent(event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>, options: {
+  model?: string
+  provider: "claude-code" | "codex"
+  transport?: "gateway"
+}): StreamEvent | undefined {
+  const usage = event.payload.tokenUsage
+  if (!usage || usage.usageStatus === "unavailable"
+    || usage.inputTokens === undefined || usage.outputTokens === undefined
+    || !Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) return
+  // The runtime accumulates these counters within this turn, including after
+  // resume. Latest-response snapshots cannot establish the same totals.
+  return {
+    type: "usage",
+    usageRecord: {
+      model: options.model,
+      provider: options.provider,
+      transport: options.transport,
+      raw: usage,
+      usage: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.inputTokens + usage.outputTokens,
+        inputTokenDetails: {
+          ...(usage.cachedInputTokens === undefined ? {} : { cacheReadTokens: usage.cachedInputTokens }),
+          ...(usage.cacheCreationTokens === undefined ? {} : { cacheWriteTokens: usage.cacheCreationTokens }),
+        },
+        outputTokenDetails: { ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }) },
+        details: { usageStatus: usage.usageStatus, usageScope: usage.usageScope, hasSubagents: usage.hasSubagents },
+      },
+    },
+  }
+}
+
 function providerDataEvent(event: ProviderRuntimeEvent): StreamEvent {
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
   const payload = event.payload as Record<string, unknown>
@@ -2651,11 +2684,15 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
       return event.payload.exitKind === "error" ? [{ error: event.payload.reason || "Provider session exited.", recoverable: event.payload.recoverable, type: "error" }] : [providerDataEvent(event)]
     case "turn.completed":
       const error = event.payload.errorMessage || (event.payload.state === "completed" ? undefined : `Provider turn ${event.payload.state}.`)
-      return error
+      const completedUsage = terminalUsageEvent(event, options)
+      const completedEvents: StreamEvent[] = error
         ? [{ error, type: "error" }]
         : [{ reason: event.payload.stopReason || event.payload.state, type: "finish" }]
+      return completedUsage ? [completedUsage, ...completedEvents] : completedEvents
     case "turn.aborted":
-      return [{ error: `Provider turn aborted${event.payload.reason ? `: ${event.payload.reason}` : "."}`, type: "error" }]
+      const abortedUsage = terminalUsageEvent(event, options)
+      const abortedEvents: StreamEvent[] = [{ error: `Provider turn aborted${event.payload.reason ? `: ${event.payload.reason}` : "."}`, type: "error" }]
+      return abortedUsage ? [abortedUsage, ...abortedEvents] : abortedEvents
     case "turn.plan.updated":
       return [{ data: event.payload, id: event.turnId ? `plan:${event.turnId}` : undefined, type: "data-agent-plan" }]
     case "turn.diff.updated":
@@ -3020,95 +3057,6 @@ async function* runProvider<
         return execution
       })
     }
-    let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
-    let materializeInstructions = Boolean(instructions)
-    if (!instructions && options.provider === "claude-code") {
-      const nativeInstructions = await readFile(join(providerCwd, "CLAUDE.md"), "utf8").catch(() => undefined)
-      if (nativeInstructions !== undefined) instructions = nativeInstructions
-      else {
-        instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
-        materializeInstructions = Boolean(instructions)
-      }
-    }
-    const preserveNativeInstructions = !materializeInstructions
-    const provenanceInstructions = sourceProvenanceInstructions(sourceProvenance)
-    if (!instructions && provenanceInstructions && options.provider === "codex") {
-      instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
-    }
-    if (provenanceInstructions) {
-      instructions = [instructions, provenanceInstructions].filter(Boolean).join("\n\n")
-      materializeInstructions = true
-    }
-    const inspectedTools = inspectAgentTools(context.tools)
-    if (!isAuxiliaryAgentAdapterContext(context)) {
-      await updateAgentTelemetryConfiguration(context.context, {
-        driver: {
-          ...(options.model ? { model: { id: options.model, provider: options.provider } } : {}),
-          provider: options.provider,
-        },
-        ...(instructions ? { instructions: [instructions] } : {}),
-        ...(inspectedTools ? { tools: inspectedTools } : {}),
-      })
-    }
-    if (instructions && materializeInstructions && options.box) {
-      // The provider reads these from Box Home, so the checked-out tree stays unchanged.
-      if (options.provider === "claude-code") {
-        claudeBoxPromptFile = ".claude/vitehub-system-prompt.md"
-        providerBoxHomeFiles[claudeBoxPromptFile] = instructions
-      }
-      else providerBoxHomeFiles[".codex/AGENTS.md"] = instructions
-    }
-    else if (instructions && materializeInstructions) {
-      const promptFileInstructions = options.provider === "claude-code" && preserveNativeInstructions && provenanceInstructions
-        ? provenanceInstructions
-        : instructions
-      if (options.provider === "claude-code") {
-        // Deliver generated instructions once, without Claude's native @path imports.
-        // Preserve native instruction files when only adding source provenance.
-        if (!preserveNativeInstructions) {
-          generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "CLAUDE.md"), ""))
-        }
-        claudePromptFile = join(providerCwd, ".claude", "vitehub-system-prompt.md")
-        generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, claudePromptFile, promptFileInstructions))
-      } else {
-        const generated = await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "AGENTS.md"), instructions)
-        if (preserveNativeInstructions && provenanceInstructions && generated.content !== undefined) {
-          // Remove only the injected text so native instruction edits reach Workspace write-back.
-          generated.appendedContent = `${generated.content.length ? "\n\n" : ""}${provenanceInstructions}`
-        }
-        generatedProviderFiles.push(generated)
-      }
-    }
-    const colocatedSkills = context.context.get(colocatedAgentSkillsContextKey)
-    for (const source of Object.values(colocatedSkills || {})) {
-      if (!isRuntimeRecord(source)
-        || !("content" in source)
-        || !("workspacePath" in source)
-        || !(hasRuntimeType(source.content, "string") || source.content instanceof Uint8Array)
-        || !hasRuntimeType(source.workspacePath, "string")) continue
-      const target = resolve(providerCwd, source.workspacePath)
-      if (target !== providerCwd && !target.startsWith(`${providerCwd}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
-      if (options.box) {
-        addProviderBoxSkill(providerBoxHomeFiles, relative(providerCwd, target), source.content)
-        continue
-      }
-      // Preserve resolved Workspace Sources only after validating the complete path.
-      const { entry } = await inspectGeneratedProviderFilePath(providerCwd, target)
-      if (entry?.isFile()) continue
-      generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, target, source.content))
-    }
-    if (preparedWorkspace?.projectRoot) {
-      generatedProviderFiles.push(...await materializeNestedProviderSkills(root, providerCwd))
-    }
-    generatedProviderFiles.push(...await materializeProviderSkillCompatibility(providerCwd))
-    if (pullRequestRoot || preparedWorkspace?.projectRoot) {
-      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(providerCwd, generatedProviderFiles.map(file => file.path))
-    }
-    // A root pull request checkout is the Driver's repository. Do not add a baseline commit to its branch.
-    if (workspaceSession && !pullRequestRoot) {
-      await workspaceSession.exec("git", ["add", "-A"], { abortSignal: effectiveSignal })
-      await workspaceSession.exec("git", ["-c", "user.name=ViteHub", "-c", "user.email=vitehub@localhost", "commit", "--allow-empty", "-qm", "vitehub provider baseline"], { abortSignal: effectiveSignal })
-    }
     effectiveSignal?.throwIfAborted()
     codexCredentialHome = await waitForProviderOperation(
       prepareCodexCredentialHome(options, context),
@@ -3252,6 +3200,96 @@ async function* runProvider<
       )
       providerLauncher = materializedLauncher.path
       providerLaunchDiagnosticPath = materializedLauncher.diagnosticPath
+    }
+    // Host launch preparation must see source-authored instruction files.
+    let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
+    let materializeInstructions = Boolean(instructions)
+    if (!instructions && options.provider === "claude-code") {
+      const nativeInstructions = await readFile(join(providerCwd, "CLAUDE.md"), "utf8").catch(() => undefined)
+      if (nativeInstructions !== undefined) instructions = nativeInstructions
+      else {
+        instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
+        materializeInstructions = Boolean(instructions)
+      }
+    }
+    const preserveNativeInstructions = !materializeInstructions
+    const provenanceInstructions = sourceProvenanceInstructions(sourceProvenance)
+    if (!instructions && provenanceInstructions && options.provider === "codex") {
+      instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
+    }
+    if (provenanceInstructions) {
+      instructions = [instructions, provenanceInstructions].filter(Boolean).join("\n\n")
+      materializeInstructions = true
+    }
+    const inspectedTools = inspectAgentTools(context.tools)
+    if (!isAuxiliaryAgentAdapterContext(context)) {
+      await updateAgentTelemetryConfiguration(context.context, {
+        driver: {
+          ...(options.model ? { model: { id: options.model, provider: options.provider } } : {}),
+          provider: options.provider,
+        },
+        ...(instructions ? { instructions: [instructions] } : {}),
+        ...(inspectedTools ? { tools: inspectedTools } : {}),
+      })
+    }
+    if (instructions && materializeInstructions && options.box) {
+      // The provider reads these from Box Home, so the checked-out tree stays unchanged.
+      if (options.provider === "claude-code") {
+        claudeBoxPromptFile = ".claude/vitehub-system-prompt.md"
+        providerBoxHomeFiles[claudeBoxPromptFile] = instructions
+      }
+      else providerBoxHomeFiles[".codex/AGENTS.md"] = instructions
+    }
+    else if (instructions && materializeInstructions) {
+      const promptFileInstructions = options.provider === "claude-code" && preserveNativeInstructions && provenanceInstructions
+        ? provenanceInstructions
+        : instructions
+      if (options.provider === "claude-code") {
+        // Deliver generated instructions once, without Claude's native @path imports.
+        // Preserve native instruction files when only adding source provenance.
+        if (!preserveNativeInstructions) {
+          generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "CLAUDE.md"), ""))
+        }
+        claudePromptFile = join(providerCwd, ".claude", "vitehub-system-prompt.md")
+        generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, claudePromptFile, promptFileInstructions))
+      } else {
+        const generated = await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "AGENTS.md"), instructions)
+        if (preserveNativeInstructions && provenanceInstructions && generated.content !== undefined) {
+          // Remove only the injected text so native instruction edits reach Workspace write-back.
+          generated.appendedContent = `${generated.content.length ? "\n\n" : ""}${provenanceInstructions}`
+        }
+        generatedProviderFiles.push(generated)
+      }
+    }
+    const colocatedSkills = context.context.get(colocatedAgentSkillsContextKey)
+    for (const source of Object.values(colocatedSkills || {})) {
+      if (!isRuntimeRecord(source)
+        || !("content" in source)
+        || !("workspacePath" in source)
+        || !(hasRuntimeType(source.content, "string") || source.content instanceof Uint8Array)
+        || !hasRuntimeType(source.workspacePath, "string")) continue
+      const target = resolve(providerCwd, source.workspacePath)
+      if (target !== providerCwd && !target.startsWith(`${providerCwd}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
+      if (options.box) {
+        addProviderBoxSkill(providerBoxHomeFiles, relative(providerCwd, target), source.content)
+        continue
+      }
+      // Preserve resolved Workspace Sources only after validating the complete path.
+      const { entry } = await inspectGeneratedProviderFilePath(providerCwd, target)
+      if (entry?.isFile()) continue
+      generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, target, source.content))
+    }
+    if (preparedWorkspace?.projectRoot) {
+      generatedProviderFiles.push(...await materializeNestedProviderSkills(root, providerCwd))
+    }
+    generatedProviderFiles.push(...await materializeProviderSkillCompatibility(providerCwd))
+    if (pullRequestRoot || preparedWorkspace?.projectRoot) {
+      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(providerCwd, generatedProviderFiles.map(file => file.path))
+    }
+    // A root pull request checkout is the Driver's repository. Do not add a baseline commit to its branch.
+    if (workspaceSession && !pullRequestRoot) {
+      await workspaceSession.exec("git", ["add", "-A"], { abortSignal: effectiveSignal })
+      await workspaceSession.exec("git", ["-c", "user.name=ViteHub", "-c", "user.email=vitehub@localhost", "commit", "--allow-empty", "-qm", "vitehub provider baseline"], { abortSignal: effectiveSignal })
     }
     if (options.box) {
       if (!launchRoot) throw agentDiagnostics.AGENT_R0717({ message: "[vitehub] Provider launcher root was not prepared." })
