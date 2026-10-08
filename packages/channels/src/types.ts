@@ -17,14 +17,17 @@ export interface ChannelConnector<TOptions extends object = Record<string, unkno
 
 export type ChannelConnectorMap = Record<string, ChannelConnector<never, object>>
 
-type ChannelObjectConstraint<TObject extends object> = Extract<
-  TObject,
-  ((...args: never[]) => unknown) | (abstract new (...args: never[]) => unknown)
-> extends never ? unknown : never
+type ChannelObjectConstraint<TObject extends object> = Extract<TObject, Function> extends never ? unknown : never
+
+type ConnectorOptions<TConnector> = TConnector extends { send: (text: string, options: infer TOptions) => unknown }
+  ? unknown extends TOptions ? object : NonNullable<TOptions>
+  : never
 
 type ValidatedChannelConnectors<TConnectors extends ChannelConnectorMap> = {
-  [TName in keyof TConnectors]: TConnectors[TName] extends ChannelConnector<infer TOptions, infer TResult>
-    ? ChannelObjectConstraint<TOptions | TResult> extends never ? never : TConnectors[TName]
+  [TName in keyof TConnectors]: TConnectors[TName] extends ChannelConnector<never, infer TResult>
+    ? [ConnectorOptions<TConnectors[TName]>] extends [object]
+      ? ChannelObjectConstraint<ConnectorOptions<TConnectors[TName]> | TResult> extends never ? never : TConnectors[TName]
+      : never
     : never
 }
 
@@ -45,8 +48,6 @@ export interface DiscoveredChannelDefinition {
   name: string
   source: "server-channels" | "vite-suffix"
 }
-
-type ConnectorOptions<TConnector> = TConnector extends ChannelConnector<infer TOptions, infer _TResult> ? TOptions : never
 
 type ExplicitChannelSendOptions<TConnectors extends ChannelConnectorMap> = {
   [TName in keyof TConnectors & string]: {

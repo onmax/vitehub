@@ -39,6 +39,19 @@ const namedInterfaceChannel = createChannel("named-interface", defineOutboundCha
 
 namedInterfaceChannel.send("Build finished.", { connector: "webhook", destination: "endpoint-1" })
 
+const optionalOptionsChannel = createChannel("optional-options", defineOutboundChannel({
+  connectors: {
+    webhook: {
+      send: async (_text: string, options?: NamedConnectorOptions) => ({ id: options?.destination }),
+    },
+  },
+}))
+optionalOptionsChannel.send("Build finished.", { connector: "webhook", destination: "endpoint-1" })
+// @ts-expect-error Supplied options still need the connector's required properties.
+optionalOptionsChannel.send("Build finished.", { connector: "webhook" })
+// @ts-expect-error Optional parameters must retain known-connector excess-property checks.
+optionalOptionsChannel.send("Build finished.", { connector: "webhook", destination: "endpoint-1", destinaton: "typo" })
+
 const metadataChannel = createChannel("metadata-only", defineOutboundChannel({
   connectors: {
     webhook: {
@@ -90,6 +103,12 @@ defineOutboundChannel({
     constructorResult: { send: (_text: string) => ConstructorOptions },
     // @ts-expect-error Unions containing callable receipts cannot guarantee an object receipt.
     unionResult: { send: (_text: string): { id: string } | (() => void) => ({ id: "accepted" }) },
+    // @ts-expect-error Broad standard function annotations are still callable receipts.
+    functionResult: { send: (_text: string): Function => () => {} },
+    // @ts-expect-error CallableFunction annotations are rejected like concrete functions.
+    broadCallableResult: { send: async (_text: string): Promise<CallableFunction> => () => {} },
+    // @ts-expect-error NewableFunction annotations are rejected like concrete constructors.
+    broadConstructorResult: { send: (_text: string): NewableFunction => ConstructorOptions },
   },
 })
 
