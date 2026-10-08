@@ -21,6 +21,9 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");
   await mkdir(home, { recursive: true });
+  // Corepack caches CommonJS managers below HOME. The checkout's ESM package
+  // scope must not reinterpret their .js executables as ES modules.
+  await writeFile(join(home, "package.json"), JSON.stringify({ type: "commonjs" }));
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, YARN_ENABLE_SCRIPTS: "false", YARN_IGNORE_PATH: "1", COREPACK_ENV_FILE: "0", COREPACK_NPM_REGISTRY: "https://registry.npmjs.org", COREPACK_ENABLE_PROJECT_SPEC: "0", COREPACK_DEFAULT_TO_LATEST: "0", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" };
   const record = join(target, ".git", "vitehub-install.json");
   let command: string | undefined;

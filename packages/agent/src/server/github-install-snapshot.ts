@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { chmod, cp, lstat, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -19,7 +18,7 @@ export interface GitHubInstallSnapshot {
 /** Copy mutable provider inputs into a private host directory before validation. */
 export async function createGitHubInstallSnapshot(target: string): Promise<GitHubInstallSnapshot> {
   const checkout = await realpath(target);
-  const directory = await mkdtemp(join(tmpdir(), "vitehub-dependency-snapshot-"));
+  const directory = await mkdtemp(join(checkout, ".git", "vitehub-dependency-snapshot-"));
   const identities = new Map<string, { dev: string; ino: string }>();
   const managedDirectories = new Set([""]);
   try {

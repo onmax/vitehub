@@ -390,6 +390,51 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it("rechecks a provider cooldown recorded during owner hydration", async () => {
+    const f = await fixture(false);
+    const until = Date.now() + 60 * 60_000;
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.some(arg => arg.includes("/check-runs?"))) await f.runtime.inbox.setMeta("provider-quota-blocked-until", until);
+      return await command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect(createProviderRuntime.mock.calls.length).toBe(0);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.retryAt).toBe(until);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("rechecks a provider cooldown recorded during owner hydration after it expires", async () => {
+    const f = await fixture(false);
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (args.some(arg => arg.includes("/check-runs?"))) await f.runtime.inbox.setMeta("provider-quota-blocked-until", 0);
+      return await command(args, request);
+    });
+    try {
+      await f.runtime.inbox.setMeta("provider-quota-blocked-until", Date.now() + 60 * 60_000);
+      await f.reconcile();
+      expect(createProviderRuntime.mock.calls.length).toBe(1);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("rechecks a provider cooldown recorded during owner hydration or workspace preparation", async () => {
+    const f = await fixture(false);
+    const until = Date.now() + 60 * 60_000;
+    const prepare = f.prepare.getMockImplementation()!;
+    f.prepare.mockImplementation(async (...args) => {
+      const result = await prepare(...args);
+      await f.runtime.inbox.setMeta("provider-quota-blocked-until", until);
+      return result;
+    });
+    try {
+      await f.reconcile();
+      expect(createProviderRuntime.mock.calls.length).toBe(0);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.retryAt).toBe(until);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("retargets ordinary stack work while model admission is blocked", async () => {
     const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
     const f = await fixture(false, false, { base: "feat/parent", parents, admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });

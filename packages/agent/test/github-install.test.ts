@@ -453,6 +453,26 @@ writeFileSync("node_modules/installed.txt", "snapshot dependencies");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "failed" });
 });
 
+it("runs package managers from a snapshot inside protected Git metadata", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\npwd > "$HOME/../install-cwd.txt"\nmkdir -p node_modules\n', { mode: 0o755 });
+  await installGitHubPullRequestWorkspace(root);
+  const directory = (await readFile(join(root, ".git", "install-cwd.txt"), "utf8")).trim();
+  expect(directory).toMatch(new RegExp(`^${root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\.git/vitehub-dependency-snapshot-`));
+});
+
+it("keeps cached CommonJS managers executable in an ESM checkout", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ type: "module", packageManager: "pnpm@10.34.6" }));
+  await writeFile(join(root, "bin", "corepack"), `#!/bin/sh
+set -e
+mkdir -p "$HOME/.cache" node_modules
+printf 'require("node:util");' > "$HOME/.cache/manager.js"
+node "$HOME/.cache/manager.js"
+`, { mode: 0o755 });
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
 it("publishes refreshed dependencies and keeps workspace source links live", async () => {
   const root = await fixture();
   await mkdir(join(root, "packages", "local"), { recursive: true });

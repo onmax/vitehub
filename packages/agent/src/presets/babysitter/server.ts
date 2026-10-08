@@ -566,12 +566,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       }
     }
     const ownerLimit = options.concurrency;
-    // Quota cooldowns park model dispatch. Host merges and retargets still run.
-    const providerBlockedUntil = (await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0;
-    if (providerBlockedUntil > Date.now()) {
-      modelAdmission = false;
-      modelRetryAt = Math.max(modelRetryAt ?? 0, providerBlockedUntil);
-    }
     // Event-scoped filters cannot be established from the pull-request REST
     // listing alone.  Seeding those entries would admit PRs that have never
     // produced an allowed event (for example, `action: synchronize`).
@@ -690,6 +684,27 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           passController.signal,
         ]);
         let providerDirectory: string | undefined;
+        let modelWorkParked = false;
+        const parkBlockedModelWork = async () => {
+          const providerBlockedUntil = (await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0;
+          const providerBlocked = providerBlockedUntil > Date.now();
+          const admitted = modelAdmission && !providerBlocked;
+          if (babysitterModelAdmission(admitted, inboxClaim.snapshot)) return false;
+          modelWorkParked = true;
+          outcome = "waiting";
+          await pullRequestInbox.finish(inboxClaim, {
+            text: providerBlocked
+              ? `CI reconciliation completed; provider quota cooldown ends at ${new Date(providerBlockedUntil).toISOString()}.`
+              : admitted
+                ? "CI reconciliation completed; the same-head repair budget is exhausted."
+                : "CI reconciliation completed; model work is waiting for host admission.",
+            ...(pushedHead ? { progress: { kind: "verified" as const, evidence: `push:${pushedHead}` } } : {}),
+            wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy),
+              ...(pushedHead ? { headSha: pushedHead } : {}),
+              retryAt: admitted ? undefined : Math.max(modelRetryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
+          });
+          return true;
+        };
         const preparedDirectories = new Set<string>();
         const stopPullRequestWatch = cancelWhenPullRequestStops(
           inboxClaim,
@@ -806,18 +821,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             schedulerEvent("babysitter.ci.rerun.waiting", { ...owner, reason: ciRecovery.reason });
             return;
           }
-          if (!babysitterModelAdmission(modelAdmission, inboxClaim.snapshot)) {
-            outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, {
-              text: modelAdmission
-                ? "CI reconciliation completed; the same-head repair budget is exhausted."
-                : providerBlockedUntil > Date.now()
-                  ? `CI reconciliation completed; provider quota cooldown ends at ${new Date(providerBlockedUntil).toISOString()}.`
-                  : "CI reconciliation completed; model work is waiting for host admission.",
-              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: modelAdmission ? undefined : modelRetryAt },
-            });
-            return;
-          }
+          if (await parkBlockedModelWork()) return;
           if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
             await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { pendingAt: Date.now() });
           }
@@ -1056,9 +1060,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                       }
                       providerDirectory = context.cwd;
                     }
-                    return workerDriver.launch
+                    const launch = workerDriver.launch
                       ? await resolveRuntimeValue(workerDriver.launch, context)
                       : { command: context.command };
+                    // Workspace setup and a custom launch can outlive another
+                    // owner's quota failure. Recheck before starting the provider.
+                    if (await parkBlockedModelWork()) throw new DOMException("Provider dispatch is waiting for admission.", "AbortError");
+                    return launch;
                   },
                 },
                 workspace: {
@@ -1115,6 +1123,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             { signal: passSignal, timeout: 60 * 60 * 1000 },
           );
 
+          if (modelWorkParked) return;
+
           const current = await pullRequestInbox.get(repository, number);
           const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
@@ -1150,6 +1160,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now(), evidenceKey: fallbackEvidenceKey });
           }
         } catch (error) {
+          if (modelWorkParked) return;
           if (error instanceof GitHubWorkspaceInstallError) {
             outcome = "waiting";
             await pullRequestInbox.finish(inboxClaim, { text: error.message, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason: error.message, retryAt: Date.now() + 300_000 } });
