@@ -78,11 +78,15 @@ Custom providers can return Shell Processes as class instances. Sessions read th
 
 Shell policy can bound calls, processes, output size, and timeouts. A declared boundary describes the provider contract; it is not proof of operating-system isolation. Use [Sandbox](https://vitehub.dev/docs/sandbox) when work needs provider-managed isolation.
 
+Custom providers can return Shell Observations as class instances. Sessions preserve every declared observation field, including fields exposed through getters.
+
 The Workspace filesystem has a virtual root at `/workspace`. Root existence checks return true. On a writable filesystem, recursive directory creation at the root succeeds without changing the Workspace. Creating the root without `recursive` fails because it already exists.
 
 The Just Bash `commands` list also applies to controlled `curl` requests. A Source network grant permits access to its declared target, but `curl` must still be included when you configure a command list.
 
 The provider copies the command list at creation. Later changes to the supplied list do not change its permissions or network boundary.
+
+Workspace filesystem adapters preserve binary output from redirection and `tee`. Their read, write, and append methods honor Just Bash encoding options.
 
 Just Bash defaults to `/workspace`. A provider `cwd` changes that default, and an `exec` `cwd` takes precedence. The provider reports the selected directory in its observations. Set `cwd` for a custom filesystem with another root.
 
