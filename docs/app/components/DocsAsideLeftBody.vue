@@ -78,6 +78,23 @@ function isActive(path: string) {
         <span class="min-w-0 truncate">{{ relatedSection.title }}</span>
       </NuxtLink>
     </section>
+
+    <section class="vh-docs-sidebar-related" aria-label="Learn ViteHub">
+      <h2 class="vh-docs-sidebar-heading">Learn</h2>
+      <NuxtLink v-if="section.id !== 'getting-started'" to="/docs/getting-started" class="vh-docs-sidebar-link">
+        <UIcon name="i-lucide-book-open" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">Getting started</span>
+      </NuxtLink>
+      <NuxtLink to="/docs/getting-started/concepts" class="vh-docs-sidebar-link">
+        <UIcon name="i-lucide-lightbulb" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">Concepts</span>
+      </NuxtLink>
+    </section>
+
+    <NuxtLink to="/docs" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
+      <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
+      <span class="min-w-0 truncate">Browse all docs</span>
+    </NuxtLink>
   </nav>
 
   <nav v-else class="vh-docs-sidebar-nav" aria-label="All products">

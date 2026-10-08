@@ -20,7 +20,7 @@ const pages = markdownFiles(uiDocsRoot).map((path) => ({
   source: readFileSync(path, "utf8"),
 }));
 const componentPages = pages.filter(
-  (page) => !["index.md", "installation.md"].includes(page.name) && !page.name.startsWith("blocks/"),
+  (page) => !["index.md", "installation.md", "get-started.md"].includes(page.name) && !page.name.startsWith("blocks/"),
 );
 const blockPages = pages.filter((page) => page.name.startsWith("blocks/"));
 const previewNames = (source: string) => Array.from(source.matchAll(previewPattern), (match) => match[1]!);
@@ -122,9 +122,15 @@ describe("UI documentation", () => {
   it("uses the wide component layout without the desktop outline", () => {
     const page = readFileSync(resolve(docsRoot, "app/pages/docs/[...slug].vue"), "utf8");
 
-    expect(page).toContain('path.startsWith("/docs/ui/")');
     expect(page).toContain('root: "lg:!grid-cols-1 lg:!gap-0"');
-    expect(page).toContain('<DocsAsideRight v-if="!isUiPage"');
+    expect(page).not.toContain("DocsAsideRight");
+    expect(page).not.toContain("UContentToc");
+    expect(page).toContain("<DocsTutorial v-else-if=\"page && isTutorialPage\"");
+    const tutorial = readFileSync(resolve(docsRoot, "app/components/DocsTutorial.vue"), "utf8");
+    expect(tutorial).toContain("grid-cols-[minmax(0,1fr)_minmax(20rem,42%)]");
+    expect(tutorial).toContain("grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]");
+    expect(tutorial).not.toContain("minmax(0,48rem)");
+    expect(readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8")).toContain("max-width: none");
   });
 
   it("gives invocation previews fixed-height containing blocks", () => {
@@ -150,14 +156,15 @@ describe("UI documentation", () => {
     expect(sidebarTop).not.toContain("getDocsSectionSelectItems");
   });
 
-  it("keeps the docs sidebar visible without disclosure toggles", () => {
+  it("keeps the docs sidebar visible without a duplicate picker or search", () => {
+    const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
     const sidebar = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftBody.vue"), "utf8");
     const layout = readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8");
 
     expect(sidebar).toContain("flex: 1 1 0");
     expect(sidebar).toContain("min-height: 0");
-    expect(sidebar).not.toContain("<details");
-    expect(sidebar).not.toContain("<summary");
+    expect(sidebarTop).not.toContain("<details");
+    expect(sidebarTop).not.toContain("UContentSearchButton");
     expect(layout).toContain("height: calc(100dvh - var(--ui-header-height));");
   });
 

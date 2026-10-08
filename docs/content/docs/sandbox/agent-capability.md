@@ -2,7 +2,7 @@
 title: Sandbox capability
 description: Let an Agent run allowlisted executables in an isolated sandbox through one sandbox_exec tool.
 navigation.title: Agent capability
-navigation.order: 5
+navigation.order: 6
 icon: i-lucide-box
 ---
 

@@ -42,6 +42,7 @@ const hasPanel = computed(
 /* The content fills the space next to the sidebars. The page header, the page body, and the table of contents set their own insets. */
 .vh-docs-content {
   min-width: 0;
+  max-width: none;
 }
 
 /* On wide screens the rail and the page panel stay at the left edge. The page fills the remaining space. */
