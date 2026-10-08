@@ -559,6 +559,47 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await expect(workspace.exists("copy/opy")).resolves.toBe(false)
   })
 
+  it.each([
+    { source: "/workspace/README.md", destination: "/workspace/models/../README.md" },
+    { source: "/workspace/models", destination: "/workspace/models/./" },
+    { source: "/workspace/models/", destination: "/workspace/models" },
+  ])("preserves Workspace content when moving $source to the same path", async ({ source, destination }) => {
+    const workspace = new MemoryWorkspace({ "README.md": "# Docs\n", "models/orders.sql": "select * from orders\n" })
+    const fs = createWritableWorkspaceFs(workspace)
+
+    await fs.mv(source, destination)
+
+    await expect(workspace.readFile("README.md")).resolves.toBe("# Docs\n")
+    await expect(workspace.readFile("models/orders.sql")).resolves.toBe("select * from orders\n")
+  })
+
+  it.each(["/workspace/models", "/workspace/models/", "/workspace", "/workspace/"])("rejects moving %s into a descendant before changing content", async (source) => {
+    const workspace = new MemoryWorkspace({ "README.md": "# Docs\n", "models/orders.sql": "select * from orders\n" })
+    const fs = createWritableWorkspaceFs(workspace)
+
+    await expect(fs.mv(source, "/workspace/models/archive")).rejects.toThrow("into itself")
+
+    await expect(workspace.readFile("README.md")).resolves.toBe("# Docs\n")
+    await expect(workspace.readFile("models/orders.sql")).resolves.toBe("select * from orders\n")
+    await expect(workspace.exists("models/archive")).resolves.toBe(false)
+  })
+
+  it("rejects moving a missing Workspace source to the same path", async () => {
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({}))
+
+    await expect(fs.mv("/workspace/missing", "/workspace/missing")).rejects.toThrow("does not exist")
+  })
+
+  it("moves Workspace directories to a sibling with a shared name prefix", async () => {
+    const workspace = new MemoryWorkspace({ "models/orders.sql": "select * from orders\n" })
+    const fs = createWritableWorkspaceFs(workspace)
+
+    await fs.mv("/workspace/models", "/workspace/models-copy")
+
+    await expect(workspace.exists("models")).resolves.toBe(false)
+    await expect(workspace.readFile("models-copy/orders.sql")).resolves.toBe("select * from orders\n")
+  })
+
   it("preserves existing Workspace content when an append read fails", async () => {
     const workspace = new MemoryWorkspace({ "notes.md": "saved content\n" })
     const readFile = workspace.readFile.bind(workspace)
