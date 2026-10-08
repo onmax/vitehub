@@ -1153,7 +1153,8 @@ describe("Babysitter preset runtime", () => {
     try {
       await f.reconcile();
       expect(f.push).toHaveBeenCalledOnce();
-      expect(rejected).toBe(true);
+      expect(f.push).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(rejected).toBe(true));
     } finally { vi.restoreAllMocks(); await f.runtime.inbox.close(); }
   });
 
@@ -1410,6 +1411,38 @@ describe("Babysitter preset runtime", () => {
     } finally { release?.(); timers.mockRestore(); get.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
   });
 
+  it.each([false, true])("fences a source push before synchronize during renewal, worker published=%s", async published => {
+    const f = await fixture();
+    f.choose("pushRepair");
+    f.onAdmission(() => {});
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    let rejected = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      if (published) await options?.afterPush?.("b".repeat(40));
+      await f.runtime.inbox.ingest("other-source-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: "c".repeat(40),
+      });
+      expect((await f.runtime.inbox.get("acme/app", 12))?.sourcePushHead).toBe("c".repeat(40));
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => expect(options?.signal?.aborted).toBe(true));
+      rejected = true;
+      options?.signal?.throwIfAborted();
+      return "b".repeat(40);
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(rejected).toBe(true));
+      expect(renew).not.toHaveBeenCalled();
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(current.status).toBe("ready");
+      expect(current.wait).toBeUndefined();
+    } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
   it("revalidates an equivalent generation arriving between renewal read and CAS", async () => {
     const f = await fixture(true, false, { allowOperationAfterAdmission: true });
     f.choose("pushRepair");
@@ -1604,7 +1637,7 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
-  it("retains the preceding self-owned head while a second push webhook is pending", async () => {
+  it.each([false, true])("retains the publication chain while synchronize webhooks lag, first observed=%s", async observed => {
     const f = await fixture(false, false, { operationCount: 2 });
     f.choose("pushRepair");
     const first = "b".repeat(40), second = "d".repeat(40);
@@ -1613,7 +1646,10 @@ describe("Babysitter preset runtime", () => {
     f.push.mockImplementationOnce(async (_target, options) => {
       await originalPush(_target, options);
       await options?.afterPush?.(first);
-      await f.runtime.inbox.ingest("first-repair-synchronize", "pull_request", {
+      await f.runtime.inbox.ingest("first-repair-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: first,
+      });
+      if (observed) await f.runtime.inbox.ingest("first-repair-synchronize", "pull_request", {
         repository: { full_name: "acme/app" }, action: "synchronize",
         pull_request: { ...f.pr(), head: { ...f.pr().head, sha: first } },
       });
@@ -1621,6 +1657,9 @@ describe("Babysitter preset runtime", () => {
     });
     f.push.mockImplementationOnce(async (_target, options) => {
       await options?.afterPush?.(second);
+      await f.runtime.inbox.ingest("second-repair-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: second,
+      });
       options?.signal?.throwIfAborted();
       completed = true;
       return second;
