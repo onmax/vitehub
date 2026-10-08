@@ -22,6 +22,8 @@ Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Wo
 
 Custom providers can return Shell Processes as class instances. Sessions read the process ID, command, and working directory from the provider handle when inspected. A failed metadata read does not prevent process cleanup.
 
+Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
+
 ## Use Shell sessions
 
 A Shell Session keeps policy across repeated commands: call budget, output size, timeouts, and process budget.

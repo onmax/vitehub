@@ -134,7 +134,10 @@ class WorkspaceFileSystem implements WorkspaceShellFileSystem {
   async appendFile(path: string, content: FileContent, _options?: WriteFileOptions | BufferEncoding): Promise<void> {
     const workspace = this.#requireWritable()
     const relativePath = this.#toRelativePath(path)
-    const existing = await workspace.readFile(relativePath, { encoding: "binary" } satisfies ShellReadFileOptions).catch(() => new Uint8Array())
+    const existing = await workspace.readFile(relativePath, { encoding: "binary" } satisfies ShellReadFileOptions).catch(async (error: unknown) => {
+      if (await workspace.exists(relativePath)) throw error
+      return new Uint8Array()
+    })
     const current = toShellContent(existing)
     const next = toShellContent(content)
     const merged = new Uint8Array(current.byteLength + next.byteLength)
