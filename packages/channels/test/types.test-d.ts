@@ -80,6 +80,18 @@ void checkSendTuple
 channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
 channel.send("Build finished.", { connector: "slack", channelId: "channel-1" })
 
+// @ts-expect-error Known connectors reject misspelled option properties.
+channel.send("Build finished.", { connector: "telegram", chatId: "chat-1", slient: true })
+
+const defaultChannel = createChannel("defaults", defineOutboundChannel({
+  connectors: definition.connectors,
+  defaultConnector: "telegram",
+}))
+defaultChannel.send("Build finished.", { chatId: "chat-1" })
+
+// @ts-expect-error Default connectors reject misspelled option properties.
+defaultChannel.send("Build finished.", { chatId: "chat-1", slient: true })
+
 // @ts-expect-error Connector options remain specific to the selected connector.
 channel.send("Build finished.", { connector: "telegram", channelId: "channel-1" })
 

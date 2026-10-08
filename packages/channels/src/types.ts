@@ -75,5 +75,10 @@ export interface ChannelClient<
   TDefault extends keyof TConnectors & string = never,
 > {
   readonly name: string
-  send: <TOptions extends object>(text: string, options: TOptions & ChannelSendOptions<TConnectors, TDefault>) => Promise<ChannelSendOutcome>
+  send: <TOptions extends object>(
+    text: string,
+    options: string extends keyof TConnectors
+      ? TOptions & ChannelSendOptions<TConnectors, TDefault>
+      : ChannelSendOptions<TConnectors, TDefault>,
+  ) => Promise<ChannelSendOutcome>
 }
