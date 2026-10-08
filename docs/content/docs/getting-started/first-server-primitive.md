@@ -2,6 +2,7 @@
 title: First Server Primitive
 navigation.title: First Server Primitive
 description: Add local KV to a small Vite server and return one stored value.
+layout: tutorial
 navigation.order: 3
 icon: i-lucide-server-cog
 ---
@@ -15,11 +16,12 @@ You need Node.js 24.15 or newer and `pnpm`. The first result runs locally withou
 an account or credential.
 ::
 
+::tutorial-step{title="Create the project"}
 ## Create the project
 
 Create an empty ESM project and install ViteHub with Vite and H3.
 
-```bash [Terminal]
+```bash [commands/setup]
 mkdir vitehub-kv-start
 cd vitehub-kv-start
 pnpm init
@@ -27,6 +29,9 @@ pnpm pkg set type=module
 pnpm add vite-hub h3 vite
 ```
 
+::
+
+::tutorial-step{title="Configure the Vite integration"}
 ## Configure the Vite integration
 
 Register `vitehub()` with the `node` preset and enable KV with the file-backed
@@ -62,6 +67,9 @@ export default defineConfig({
 })
 ```
 
+::
+
+::tutorial-step{title="Write and read one value"}
 ## Write and read one value
 
 Create one H3 route and use `kv` to write and read the setting.
@@ -91,19 +99,22 @@ createServer(toNodeHandler(app)).listen(port, () => {
 })
 ```
 
+::
+
+::tutorial-step{title="Run the server"}
 ## Run the server
 
 Build and start the generated Node.js entry. The server listens on port `5173`
 unless you set `PORT`.
 
-```bash [Terminal]
+```bash [commands/build]
 pnpm vite build
 node dist/server.js
 ```
 
 Send a value from another terminal.
 
-```bash [Terminal]
+```bash [commands/request]
 curl -X POST http://localhost:5173/settings \
   -H 'content-type: application/json' \
   -d '{"theme":"system"}'
@@ -111,15 +122,17 @@ curl -X POST http://localhost:5173/settings \
 
 The response proves that the route wrote and read through ViteHub:
 
-```json [Response]
+```json [output/response.json]
 {"settings":{"theme":"system"}}
 ```
 
 To move to a hosted store, change the preset or the KV driver in
 `vite.config.ts`. The server route keeps importing `kv` from `vite-hub/kv`.
 
+::
+
 ## Next steps
 
-- Follow the longer [Server Primitives tutorial](/blog/server-primitives) for a complete walkthrough.
+- Follow the longer [KV Tutorial](/docs/kv/get-started) for a complete walkthrough.
 - Read [KV](/docs/kv) for named stores and hosted drivers.
 - Read [Runtime Helpers and stable imports](/docs/getting-started/concepts/runtime-helpers-and-stable-imports) to see how provider changes stay out of server code.

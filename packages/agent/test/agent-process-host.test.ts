@@ -30,7 +30,8 @@ describe("process host presets", () => {
 
   it("keeps the Babysitter host contribution through extends and options", () => {
     expect(getAgentProcessHostContribution(babysitter)).toBeDefined()
-    const configured = defineAgent({ extends: babysitter, options: { concurrency: 2, filter: { repository: { allow: ["acme/app"] } } } })
+    const configured = defineAgent({ extends: babysitter, options: { concurrency: 2, filter: { repository: { allow: ["acme/app"] } }, mentionAllowlist: ["stefina"] } })
+    expect(configured.options.mentionAllowlist).toEqual(["stefina"])
     expect(getAgentProcessHostContribution(configured)).toBe(getAgentProcessHostContribution(babysitter))
     expect(getAgentProcessHostContribution(defineAgent({ extends: configured, name: "child" }))).toBeDefined()
     expect(getAgentProcessHostContribution(defineAgent({ name: "plain", driver: { run: () => "" } }))).toBeUndefined()

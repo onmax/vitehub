@@ -24,6 +24,7 @@ const movedServerPrimitives = [
   "source",
   "workflows",
   "workspace",
+  "realtime",
 ];
 
 /** Capability pages that now live inside the product section of the primitive they expose. */
@@ -82,6 +83,7 @@ const agentCapabilities = {
 } satisfies Record<string, string>;
 
 export const docsPageRedirects = {
+  "/blog/server-primitives": "/docs/getting-started/server-primitives",
   "/docs/agents/evlog": "/docs/agents/observability",
   "/docs/ai-resources": "/docs/getting-started/ai-resources",
   "/docs/concepts": "/docs/getting-started/concepts",
@@ -158,6 +160,11 @@ export function createDocsRedirectRouteRules(redirects: Record<string, string> =
     routeRules[from] = { redirect: { statusCode: 301, to } };
     routeRules[`${from}/`] = { redirect: { statusCode: 301, to } };
     routeRules[rawMarkdownPath(from)] = { redirect: { statusCode: 301, to: rawMarkdownPath(to) } };
+  }
+
+  for (const [from, to] of Object.entries({ "/databases": "/database", "/rate-limits": "/rate-limit" })) {
+    routeRules[from] = { redirect: { statusCode: 301, to } };
+    routeRules[`${from}/`] = { redirect: { statusCode: 301, to } };
   }
 
   return routeRules;

@@ -2462,6 +2462,9 @@ importers:
       h3-v1:
         specifier: npm:h3@^1.15.11
         version: h3@1.15.11
+      happy-dom:
+        specifier: 20.14.5
+        version: 20.14.5
       miniflare:
         specifier: 4.20260730.0
         version: 4.20260730.0
