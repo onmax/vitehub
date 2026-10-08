@@ -134,11 +134,7 @@ export function createBlobStorage(driver: BlobDriverAdapter<any>, store: string 
     },
     async head(pathname: string) {
       const normalizedPathname = normalizePathname(pathname)
-      const [error, meta] = await blobResult("head", store, () => driver.head(normalizedPathname))
-      if (error) return [error, undefined]
-      return meta
-        ? [null, meta]
-        : [blobError("BLOB_NOT_FOUND", "head", store), undefined]
+      return blobResult("head", store, () => driver.head(normalizedPathname))
     },
     async list(options: BlobListOptions = {}) {
       const normalizedPrefix = options.prefix ? normalizePathname(options.prefix) : options.prefix

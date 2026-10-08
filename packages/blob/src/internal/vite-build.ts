@@ -323,7 +323,7 @@ export function renderBlobRuntimeModule(file: string, blobConfig: false | Resolv
           "    },",
           "    async head(pathname) {",
           "      const [error, object] = await storage.head(pathname)",
-          "      return error ? [error, undefined] : [null, withServedBlobUrl(name, object)]",
+          "      return error ? [error, undefined] : [null, object && withServedBlobUrl(name, object)]",
           "    },",
           "    async list(options) {",
           "      const [error, result] = await storage.list(options)",
