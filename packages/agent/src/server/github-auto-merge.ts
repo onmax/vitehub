@@ -175,9 +175,9 @@ async function githubMentionTokens(body: string): Promise<string[]> {
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Comark has already parsed the body into its string-or-element node contract.
     if (typeof node === "string") {
       // The Markdown parser bounds automatic URL links. Remove email text
-      // while keeping punctuation that can precede a live mention.
+      // using GFM local-part characters only; other punctuation can precede a live mention.
       const text = node
-        .replace(/[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, " ")
+        .replace(/[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, " ")
       for (const match of text.matchAll(githubMentionPattern)) mentions.push(match[2]!.toLowerCase())
       return
     }

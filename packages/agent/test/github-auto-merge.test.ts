@@ -128,6 +128,7 @@ describe("native auto-merge", () => {
   it.each([
     "Contact ops@example.com to restore service.",
     "Contact ops+alerts@example.com to restore service.",
+    "Contact ops._+-@example.com to restore service.",
     "Open https://example.com/@someone for details.",
     'See https://example.com/"@other-user',
     "See https://example.com/'@other-user",
@@ -167,6 +168,16 @@ describe("native auto-merge", () => {
       .filter(([args]) => args[1] === "/repos/acme/app/issues/12/comments")
       .map(([args]) => args.find(arg => arg.startsWith("body=")))
     expect(bodies).toEqual([`body=${body}`, `body=@stefina\n\n${body}`])
+  })
+
+  it.each(["!", "#", "$", "%", "&", "=", "?", "/"])("guards email-like text with %s before a live mention", async (punctuation) => {
+    const body = `Contact foo${punctuation}@unapproved.com`
+    const f = fixture({ mentionAllowlist: ["stefina"], restrictCommentMentions: true })
+    await expect(f.operations.comment(body)).rejects.toThrow(/guarded mention capability/)
+    await expect(f.operations.mention("stefina", body)).rejects.toThrow(/another mention/)
+    expect(f.command).not.toHaveBeenCalled()
+    await expect(f.operations.updateMetadata({ body })).rejects.toThrow(/cannot add GitHub mentions/)
+    expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(false)
   })
 
   it.each([
