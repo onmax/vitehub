@@ -8,6 +8,8 @@ interface DynamicConnectorOptions extends NamedConnectorOptions {
   connector: string
 }
 
+class ConstructorOptions {}
+
 declare global {
   interface ViteHubChannelDefinitionModules {
     alerts: { default: typeof definition }
@@ -65,6 +67,19 @@ defineOutboundChannel({
   },
 })
 
+defineOutboundChannel({
+  connectors: {
+    // @ts-expect-error Connector options must be non-callable objects accepted by runtime dispatch.
+    callableOptions: {
+      send: (_text: string, _options: () => void) => ({ status: "accepted" }),
+    },
+    // @ts-expect-error Constructor functions are also rejected by runtime dispatch.
+    constructorOptions: {
+      send: (_text: string, _options: typeof ConstructorOptions) => ({ status: "accepted" }),
+    },
+  },
+})
+
 async function checkSendTuple() {
   const [error, receipt] = await channel.send("Build finished.", { connector: "telegram", chatId: "chat-1" })
   if (error) {
@@ -110,6 +125,12 @@ dynamic.send("Build finished.", dynamicOptions)
 const dynamicDefaultOptions: NamedConnectorOptions = { destination: "room-1" }
 dynamic.send("Build finished.", dynamicDefaultOptions)
 dynamic.send("Build finished.", { destination: "room-1" })
+
+// @ts-expect-error Dynamic channel options cannot be callable.
+dynamic.send("Build finished.", Object.assign(() => {}, { connector: "runtime" }))
+
+// @ts-expect-error Dynamic channel options cannot be constructor functions.
+dynamic.send("Build finished.", Object.assign(ConstructorOptions, { connector: "runtime" }))
 
 // @ts-expect-error Dynamic connector selectors must be strings when present.
 dynamic.send("Build finished.", { connector: 42 })
