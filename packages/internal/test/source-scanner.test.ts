@@ -9,6 +9,18 @@ import {
 } from "../src/source-scanner.ts"
 
 describe("source scanner", () => {
+  it.each([
+    "fn(.../['\"]/u)",
+    "fn(... /* gap */ /['\"]/u)",
+    "value / /['\"]/u.test(text)",
+    "value / /* gap */ /['\"]/u.test(text)",
+  ])("scans regex operands after spread and division: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
+    const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+    expect(call?.argument).toBe(`{ value: "real" }`)
+  })
+
   it("scans a regex operand after new", () => {
     const value = "new /['\"]/u.constructor()"
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
