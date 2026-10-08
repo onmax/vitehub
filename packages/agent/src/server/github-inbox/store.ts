@@ -762,6 +762,7 @@ export class PullRequestInbox {
       parseWait({ ...s.wait, evidenceKey })
       if (s.wait.evidenceKey === evidenceKey) return false
       if (options.recovery) { s.recoveryHead = s.pr?.head?.sha; s.refresh = true }
+      else delete s.recoveryHead
       delete s.wait
       this.dirty(s, 'wait:evidence-changed')
       await this.put(tx, s)

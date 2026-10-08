@@ -378,6 +378,9 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       expect(createProviderRuntime).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.lastResult).toContain("Recovered CI is healthy");
+      const healthyWait = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(await f.runtime.inbox.wake(healthyWait, "new-feedback")).toBe(true);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.recoveryHead).toBeUndefined();
     } finally { await f.runtime.inbox.close(); }
   });
 
