@@ -16,7 +16,7 @@ export class GitHubWorkspaceInstallError extends Error {
 
 /** Install frozen dependencies before entering the provider's network sandbox. */
 export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal): Promise<void> {
-  if (!(await exists(join(target, "package.json")))) return;
+  if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");
   await mkdir(home, { recursive: true });
@@ -27,7 +27,7 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
   let yarnConfig: string | undefined;
   try {
     const fingerprint = await validateGitHubInstallInputs(target);
-    const { packageManager } = v.parse(manifest, JSON.parse(await readFile(join(target, "package.json"), "utf8")));
+    const { packageManager } = v.parse(manifest, await exists(join(target, "package.json")) ? JSON.parse(await readFile(join(target, "package.json"), "utf8")) : {});
     // Corepack must not execute a PR-supplied URL, devEngines override or yarnPath.
     // Select an official package-manager version and disable repository extensions.
     const version = (name: string, fallback: string) => {
@@ -75,7 +75,7 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
 
 /** Require validation to use the same dependency inputs that the host installed. */
 export async function assertGitHubDependenciesCurrent(target: string): Promise<void> {
-  if (!(await exists(join(target, "package.json")))) return;
+  if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
   const fingerprint = await validateGitHubInstallInputs(target);
   const record = v.parse(v.object({ status: v.string(), fingerprint: v.optional(v.string()) }), JSON.parse(await readFile(join(target, ".git", "vitehub-install.json"), "utf8")));
   if (record.status !== "installed" || record.fingerprint !== fingerprint) throw new Error("Dependency inputs changed or installation failed. Call refreshDependencies and rerun validation before committing.");

@@ -772,6 +772,7 @@ be version 7 or newer. A manifest without a package-manager version uses a pinne
 default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
 Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
+Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:` and unsupported source protocols are rejected before Corepack runs.
 Workers call `commitRepair` with a message and explicit repair paths, then
 `pushRepair`. The host commits because the provider sandbox protects Git metadata. For a
 conflicting PR, the host first prepares a merge against the exact base commit.
@@ -782,7 +783,7 @@ still run on the host, and the native shell keeps its edit sandbox.
 Direct merges use GitHub's asynchronous API, including native stacks. The inbox
 records the request UUID and waits for GitHub to confirm a merge. Finished owners
 release their queue lease while preserving any unresolved merge attempt. Expired
-GitHub request results re-enter the current head's normal merge gates.
+GitHub request results re-enter the current head's normal merge gates. An enqueued request retains its fence until the PR closes, merges, or changes head: queue absence and removal timeline commits do not identify the accepted request safely.
 
 `merge` defaults to `false`:
 

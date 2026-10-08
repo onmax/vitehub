@@ -209,6 +209,7 @@ it("requires a dependency refresh after changing the installed graph", async () 
 
 it("rejects local sources in nested workspace manifests", async () => {
   const root = await fixture();
+  await writeFile(join(root, "pnpm-workspace.yaml"), 'packages: ["packages/*"]\n');
   await mkdir(join(root, "packages", "local"), { recursive: true });
   await writeFile(join(root, "packages", "local", "package.json"), JSON.stringify({ dependencies: { unsafe: "file:../../../outside" } }));
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
@@ -222,4 +223,51 @@ it("requires dependency conflicts to be resolved before refreshing the merged gr
   await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
   await installGitHubPullRequestWorkspace(root);
   await assertGitHubDependenciesCurrent(root);
+});
+
+it.each(["manifest", "lockfile"])("rejects Yarn executable fetch protocols in the %s before host execution", async location => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", dependencies: { unsafe: location === "manifest" ? "exec:./script.js" : "1.0.0" } }));
+  await writeFile(join(root, "yarn.lock"), '__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: "unsafe@exec:./script.js"\n');
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+it("installs and fingerprints pnpm workspaces without a root manifest", async () => {
+  const root = await fixture();
+  await rm(join(root, "package.json"));
+  await writeFile(join(root, "pnpm-workspace.yaml"), 'packages: ["packages/*"]\n');
+  await mkdir(join(root, "packages/member"), { recursive: true });
+  await writeFile(join(root, "packages/member/package.json"), '{}');
+  await installGitHubPullRequestWorkspace(root);
+  expect(await readFile(join(root, "args.txt"), "utf8")).toContain("pnpm@10.34.6");
+  await assertGitHubDependenciesCurrent(root);
+  await writeFile(join(root, "packages/member/package.json"), '{"dependencies":{"example":"1.0.0"}}');
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+it.each(["pnpm", "npm", "yarn"])("validates only selected %s workspaces and ignores independent fixtures", async manager => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: `${manager}@${manager === "pnpm" ? "10.34.6" : manager === "npm" ? "11.6.3" : "4.9.2"}`, ...(manager === "pnpm" ? {} : { workspaces: ["packages/member"] }) }));
+  if (manager === "pnpm") await writeFile(join(root, "pnpm-workspace.yaml"), 'packages: ["packages/*", "!packages/fixture"]\n');
+  else {
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, manager === "npm" ? "package-lock.json" : "yarn.lock"), manager === "npm" ? "{}" : "__metadata:\n  version: 8\n");
+  }
+  for (const directory of ["test/fixtures", "packages/fixture", "packages/member"]) {
+    await mkdir(join(root, directory), { recursive: true });
+    await writeFile(join(root, directory, "package.json"), directory.endsWith("member") ? "{}" : '{"dependencies":{"unsafe":"exec:./script.js"}}');
+    if (!directory.endsWith("member")) await writeFile(join(root, directory, ".npmrc"), "cache=/srv/outside");
+  }
+  await installGitHubPullRequestWorkspace(root);
+  await writeFile(join(root, "packages/member/package.json"), '{"dependencies":{"unsafe":"exec:./script.js"}}');
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/protocol/);
+});
+
+it.each(["file:./local", "./local"])("validates referenced local packages from %s", async source => {
+  const root = await fixture();
+  await mkdir(join(root, "local"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: source } }));
+  await writeFile(join(root, "local/package.json"), '{"dependencies":{"unsafe":"exec:./script.js"}}');
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol/);
+  await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
