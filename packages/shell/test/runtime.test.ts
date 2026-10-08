@@ -451,6 +451,40 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await expect(workspace.exists("copy/opy")).resolves.toBe(false)
   })
 
+  it.each([
+    { encoding: "binary", content: "\u0000\u0080\u00ff" },
+    { encoding: "latin1", content: "\u0000\u0080\u00ff" },
+    { encoding: "hex", content: "0080ff" },
+    { encoding: "base64", content: "AID/" },
+  ] as const)("honors $encoding encoding in Workspace file writes and appends", async ({ encoding, content }) => {
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({}))
+
+    await fs.writeFile("/workspace/data.bin", content, encoding)
+    await fs.appendFile("/workspace/data.bin", content, { encoding })
+
+    expect(Array.from(await fs.readFileBuffer("/workspace/data.bin"))).toEqual([0, 128, 255, 0, 128, 255])
+  })
+
+  it.each(["binary", "latin1"] as const)("reads Workspace bytes with %s encoding", async (encoding) => {
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": new Uint8Array([0, 128, 255]) }))
+
+    await expect(fs.readFile("/workspace/data.bin", { encoding })).resolves.toBe("\u0000\u0080\u00ff")
+  })
+
+  it.each(["> data.bin", ">> data.bin", "| tee data.bin"])("preserves binary command bytes through %s", async (destination) => {
+    const workspace = new MemoryWorkspace({})
+    const shell = createShellRuntime({ provider: createJustBashProvider({
+      commands: ["printf", "base64", "tee"],
+      cwd: "/workspace",
+      fs: createWritableWorkspaceFs(workspace),
+    }) })
+
+    const result = await shell.exec(`printf '%s' 'AID/' | base64 -d ${destination}`)
+
+    expect(result.exitCode).toBe(0)
+    expect(Array.from(await workspace.readFile("data.bin", { encoding: "binary" }) as Uint8Array)).toEqual([0, 128, 255])
+  })
+
   it("does not refresh workspace paths when creating a shell filesystem", () => {
     const workspace = new MemoryWorkspace({
       "README.md": "# Docs\n",
