@@ -324,6 +324,11 @@ function isRecord(value: unknown): value is object {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function isMcpString(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- MCP responses cross a runtime protocol boundary.
+  return typeof value === "string"
+}
+
 function isDenseArray(value: unknown): value is unknown[] {
   if (!Array.isArray(value)) return false
   for (let index = 0; index < value.length; index++) {
@@ -334,14 +339,14 @@ function isDenseArray(value: unknown): value is unknown[] {
 
 function isResourceDescriptor(value: unknown): value is McpResourceDescriptor {
   return isRecord(value)
-    && typeof Reflect.get(value, "name") === "string"
-    && typeof Reflect.get(value, "uri") === "string"
+    && isMcpString(Reflect.get(value, "name"))
+    && isMcpString(Reflect.get(value, "uri"))
 }
 
 function isResourceContent(value: unknown): value is McpResourceContent {
-  if (!isRecord(value) || typeof Reflect.get(value, "uri") !== "string") return false
-  const hasText = Object.hasOwn(value, "text") && typeof Reflect.get(value, "text") === "string"
-  const hasBlob = Object.hasOwn(value, "blob") && typeof Reflect.get(value, "blob") === "string"
+  if (!isRecord(value) || !isMcpString(Reflect.get(value, "uri"))) return false
+  const hasText = Object.hasOwn(value, "text") && isMcpString(Reflect.get(value, "text"))
+  const hasBlob = Object.hasOwn(value, "blob") && isMcpString(Reflect.get(value, "blob"))
   return hasText !== hasBlob
 }
 
@@ -351,7 +356,7 @@ function parseResourceListPage(value: unknown): { nextCursor?: string, resources
   }
   const resources = Reflect.get(value, "resources")
   const nextCursor = Reflect.get(value, "nextCursor")
-  if (!isDenseArray(resources) || resources.some(resource => !isResourceDescriptor(resource)) || (nextCursor !== undefined && typeof nextCursor !== "string")) {
+  if (!isDenseArray(resources) || resources.some(resource => !isResourceDescriptor(resource)) || (nextCursor !== undefined && !isMcpString(nextCursor))) {
     throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
   }
   // SAFETY: Every resource has the string name and URI required by the MCP listing contract.
