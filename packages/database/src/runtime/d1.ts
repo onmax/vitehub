@@ -3,6 +3,8 @@ import { runtimeConfig } from "./definition-config.ts"
 
 import type { DatabaseDefinition, RuntimeDrizzleDatabaseConfig } from "../types.ts"
 
+export { resolveRuntimeCloudflareConfig } from "../internal/cloudflare.ts"
+
 const options = {
   missingConnectionMessage: (config: RuntimeDrizzleDatabaseConfig) => `[vitehub] D1 database "${config.name}" requires a Cloudflare binding or cloudflare.http configuration.`,
   requireRemoteUrl: true,
