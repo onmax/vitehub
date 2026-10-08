@@ -7,7 +7,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { resolveBox } from "@vite-hub/box";
 import { importBoxCommit } from "../src/presets/babysitter/box-commit.ts";
 import { commitGitHubPullRequestWorkspace } from "../src/server/github-repair.ts";
-import { importBoxRepairFiles, publishBoxDependencies } from "../src/presets/babysitter/box-repair.ts";
+import { importBoxRepairFiles, importBoxRepairWorkspace, publishBoxDependencies } from "../src/presets/babysitter/box-repair.ts";
+import { createProviderHeadReader } from "../src/presets/babysitter/checkout-watch.ts";
 import { chmod, lstat, mkdir, symlink } from "node:fs/promises";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -48,6 +49,35 @@ it("transfers binary files, executable files, symlinks and deletions without cha
     expect((await lstat(join(f.checkout, "link"))).isSymbolicLink()).toBe(true);
     await expect(lstat(join(f.checkout, "source.txt"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(f.base);
+  } finally { await f.session.close(); }
+});
+
+it("removes a previously imported untracked dependency file on the next Box refresh", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.remote, "package.json"), JSON.stringify({ name: "temporary-dependency" }));
+    await importBoxRepairWorkspace(f.session, f.checkout, f.signal);
+    expect(await readFile(join(f.checkout, "package.json"), "utf8")).toContain("temporary-dependency");
+    await rm(join(f.remote, "package.json"));
+    await importBoxRepairWorkspace(f.session, f.checkout, f.signal);
+    await expect(lstat(join(f.checkout, "package.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await git(f.checkout, "rev-parse", "HEAD")).toBe(f.base);
+  } finally { await f.session.close(); }
+});
+
+it("reads a successive provider push from Git before its receipt replaces the first push", async () => {
+  const f = await fixture();
+  try {
+    await writeFile(join(f.checkout, "source.txt"), "first repair\n");
+    await git(f.checkout, "commit", "-am", "first repair");
+    const firstHead = await git(f.checkout, "rev-parse", "HEAD");
+    const readHead = createProviderHeadReader(() => f.checkout, () => firstHead);
+    expect(await readHead()).toBe(firstHead);
+    await writeFile(join(f.checkout, "source.txt"), "second repair\n");
+    await git(f.checkout, "commit", "-am", "second repair");
+    expect(await readHead()).toBe(await git(f.checkout, "rev-parse", "HEAD"));
+    expect(await createProviderHeadReader(() => undefined, () => firstHead)()).toBe(firstHead);
+    await expect(createProviderHeadReader(() => join(f.checkout, "missing"), () => firstHead)()).rejects.toThrow();
   } finally { await f.session.close(); }
 });
 
