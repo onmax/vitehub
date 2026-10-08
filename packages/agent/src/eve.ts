@@ -134,7 +134,7 @@ function eveLifecycleEvent(type: string, turn: EveToolContext["session"]["turn"]
     data: {
       get sequence() { return turn.sequence },
       get modelId() { return unsupportedEveRuntimeFeature("step.started data.modelId") },
-      stepIndex: 0,
+      get stepIndex() { return unsupportedEveRuntimeFeature("step.started data.stepIndex") },
       turnId: turn.id,
     },
     type,
