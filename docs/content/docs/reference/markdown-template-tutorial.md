@@ -66,7 +66,7 @@ the trusted `notes` fragment.
 
 Run the module with Node 24:
 
-```sh
+```sh [commands/verify]
 node server/render-release.ts
 ```
 
