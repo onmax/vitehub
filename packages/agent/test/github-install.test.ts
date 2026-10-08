@@ -81,6 +81,26 @@ it("allows unrelated external symlinks during dependency validation", async () =
   await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
 });
 
+it.each([
+  "http://127.0.0.1/private.tgz", "https://10.0.0.1/private.tgz", "https://[::1]/private.tgz",
+  "https://registry.npmjs.org.attacker.example/package.tgz", "https://registry.npmjs.org@127.0.0.1/package.tgz",
+  "https://registry.npmjs.org:4443/package.tgz", "git+ssh://git@127.0.0.1/private.git",
+])("rejects untrusted dependency URL %s in manifests and lockfiles before execution", async source => {
+  for (const input of ["manifest", "lockfile"]) {
+    const root = await fixture();
+    if (input === "manifest") await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { unsafe: source } }));
+    else await writeFile(join(root, "pnpm-lock.yaml"), `packages:\n  unsafe:\n    resolution:\n      tarball: ${JSON.stringify(source)}\n`);
+    await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/trusted HTTPS/);
+    await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  }
+});
+
+it.each(["registry.npmjs.org", "registry.yarnpkg.com", "pkg.pr.new"])("accepts dependency downloads from %s", async host => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { safe: `https://${host}/safe.tgz` } }));
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
 it.each(["packages/*", "packages/*/*"])("rejects an external symlink matched by workspace glob %s", async pattern => {
   const root = await fixture();
   await mkdir(join(root, "packages"));
