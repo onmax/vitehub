@@ -86,9 +86,15 @@ function skipTemplateLiteral(source: string, index: number, controlFlowRegexes: 
   return index
 }
 
+function isLineTerminator(char: string | undefined) {
+  return char === "\n" || char === "\r" || char === "\u2028" || char === "\u2029"
+}
+
 function skipLineComment(source: string, index: number) {
-  const end = source.indexOf("\n", index + 2)
-  return end === -1 ? source.length : end + 1
+  for (let current = index + 2; current < source.length; current++) {
+    if (isLineTerminator(source[current])) return current + 1
+  }
+  return source.length
 }
 
 function skipBlockComment(source: string, index: number) {
@@ -134,7 +140,8 @@ function previousCodeIndex(source: string, index: number, controlFlowRegexes: Co
       current = start - 1
       continue
     }
-    const lineStart = source.lastIndexOf("\n", current) + 1
+    let lineStart = current
+    while (lineStart > 0 && !isLineTerminator(source[lineStart - 1])) lineStart -= 1
     const lineComment = findLineCommentStart(source, lineStart, current, controlFlowRegexes)
     if (lineComment !== -1 && lineComment <= current) {
       current = lineStart - 1
@@ -161,7 +168,7 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
     for (let current = closeParen; current >= 0; current--) {
       if (source[current] !== "(") continue
       if (findMatching(source, current, "(", ")", controlFlowRegexes) !== closeParen) continue
-      const head = source.slice(0, current).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ")
+      const head = source.slice(0, current).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, " ")
       const result = /(?:^|[^\w$])(?:catch|for|if|while|with)\s*$/.test(head)
       controlFlowRegexes.set(index, result)
       return result
@@ -254,9 +261,41 @@ function skipWhitespaceAndComments(source: string, index: number) {
 }
 
 export function stripBoundaryComments(source: string): string {
-  return source
-    .replace(/^(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+/, "")
-    .replace(/(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)+$/, "")
+  const start = skipWhitespaceAndComments(source, 0)
+  const controlFlowRegexes: ControlFlowRegexCache = new Map()
+  let end = start
+  let previousSignificant = ""
+  for (let index = start; index < source.length;) {
+    const char = source[index]
+    const next = source[index + 1]
+    if (/\s/.test(char ?? "")) {
+      previousSignificant = trackSignificant(previousSignificant, char)
+      index += 1
+      continue
+    }
+    if (char === "/" && next === "/") {
+      index = skipLineComment(source, index)
+      continue
+    }
+    if (char === "/" && next === "*") {
+      index = skipBlockComment(source, index)
+      continue
+    }
+    if (isQuote(char)) {
+      index = skipQuoted(source, index, controlFlowRegexes)
+      previousSignificant = "literal"
+    }
+    else if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
+      index = skipRegexLiteral(source, index)
+      previousSignificant = "/"
+    }
+    else {
+      previousSignificant = trackSignificant(previousSignificant, char)
+      index += 1
+    }
+    end = index
+  }
+  return source.slice(start, end)
 }
 
 export function maskSourceLiterals(source: string): string {
@@ -264,7 +303,7 @@ export function maskSourceLiterals(source: string): string {
   let previousSignificant = ""
   const mask = (start: number, end: number) => {
     for (let index = start; index < end; index++) {
-      if (output[index] !== "\n" && output[index] !== "\r") output[index] = " "
+      if (!isLineTerminator(output[index])) output[index] = " "
     }
   }
 

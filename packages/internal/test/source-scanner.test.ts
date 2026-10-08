@@ -351,4 +351,41 @@ describe("source scanner", () => {
     expect(readObjectProperty(`{ nested: { cron: "wrong" }, cron: "0 8 * * *" }`, "cron"))
       .toBe(`"0 8 * * *"`)
   })
+
+  it.each([
+    '"https://example.com"',
+    "'/* marker */'",
+    String.raw`/https?:\/\//`,
+    "`https://${host}/**`",
+    '"start" /* keep */ + "https://example.com"',
+  ])("preserves literal comment markers in definition values: %s", (value) => {
+    const object = `{ value: /* before */ ${value} /* after */ }`
+    expect(readObjectProperty(object, "value")).toBe(value)
+
+    const definition = findDefaultExportCall(
+      `export default defineThing(/* options */ ${object} /* end */)`,
+      ["defineThing"],
+    )
+    expect(definition?.argument).toBe(object)
+  })
+
+  it.each(["\r", "\u2028", "\u2029"])("ends boundary line comments at %j", (lineEnding) => {
+    const object = `{ value: // before${lineEnding} "real" // after${lineEnding}}`
+    const definition = findDefaultExportCall(
+      `export default defineThing(// options${lineEnding}${object} // end${lineEnding})`,
+      ["defineThing"],
+    )
+    expect(definition?.argument).toBe(object)
+    expect(readObjectProperty(`// options${lineEnding}${object} // end`, "value")).toBe('"real"')
+
+    const withControlFlow = findDefaultExportCall([
+      "export default defineThing({",
+      "  handler: () => { // condition hint",
+      '    if (ready) /\\)/.test(")")',
+      "  },",
+      '  value: "real",',
+      "})",
+    ].join(lineEnding), ["defineThing"])
+    expect(readObjectProperty(withControlFlow?.argument || "", "value")).toBe('"real"')
+  })
 })
