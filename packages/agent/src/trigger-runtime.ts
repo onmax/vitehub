@@ -115,12 +115,12 @@ export function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
 
 function channelHistoryAnnotations<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
-  trigger: Pick<ResolvedAgentTriggerDefinition, "channelId">,
+  trigger: Pick<ResolvedAgentTriggerDefinition, "channelId" | "name">,
   input: unknown,
 ): AgentRunMetadata["annotations"] | undefined {
   if (!trigger.channelId) return
   const history = agentChannelOptions(agent)[trigger.channelId]?.history
-  if (!history) return
+  if (!history || (history.trigger !== undefined && history.trigger !== trigger.name)) return
   const annotations: NonNullable<AgentRunMetadata["annotations"]> = {}
   try {
     const key = history.key(input)

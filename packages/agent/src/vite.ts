@@ -2124,12 +2124,13 @@ async function generateAgentWebhookRouteHandler(
       ? [`const inspectionRoutePattern = new RegExp(${JSON.stringify(routeRegexSource(options.inspectionRoute))})`]
       : []),
     "",
-    `const webhookAliases: Record<string, { agent: string, webhook: string }> = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/$/, "") || "/", target])))};`,
+    `const webhookAliases: Record<string, { agent: string, webhook: string }> = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/+$/, "") || "/", target])))};`,
     "export const declaredWebhookHandler = defineEventHandler(async (event) => {",
-    "  const pathname = getRequestURL(event).pathname.replace(/\\/$/, '') || '/'",
-    "  if (webhookAliases[pathname]) return",
+    "  const pathname = getRequestURL(event).pathname.replace(/\\/+$/, '') || '/'",
     "  const cloudflare = cloudflareFromEvent(event)",
     `  const optionsForAgent = (agent: string) => ({ agentIdentity: agentIdentities[agent], ${routeCapabilities.requestOption}cloudflare${runtimeRouteOption}, ${webhookStateOption}waitUntil: waitUntilFromEvent(event) })`,
+    "  const alias = webhookAliases[pathname]",
+    "  if (alias) return await webhookHandlers[alias.agent](await toRequest(event), alias.webhook, optionsForAgent(alias.agent))",
     // Match before acquiring the body stream, so unrelated application routes can still read it.
     "  const request = new Request(getRequestURL(event), { headers: getRequestHeaders(event), method: event.method || 'GET', signal: event.req?.signal })",
     "  const matches: string[] = []",
@@ -2149,7 +2150,7 @@ async function generateAgentWebhookRouteHandler(
     "",
     "export default defineEventHandler(async (event) => {",
     "  const pathname = getRequestURL(event).pathname",
-    "  const alias = webhookAliases[pathname.replace(/\\/$/, '') || '/']",
+    "  const alias = webhookAliases[pathname.replace(/\\/+$/, '') || '/']",
     "  const isWebhookRoute = Boolean(alias) || webhookRoutePattern.test(pathname)",
     ...(options.inspectionRoute ? ["  const isInspectionRoute = inspectionRoutePattern.test(pathname)"] : []),
     "  const agent = alias?.agent || getRouterParam(event, 'agent') || (agentNames.length === 1 ? agentNames[0] : undefined)",
@@ -2402,9 +2403,9 @@ async function writeAgentWebhookRouteHandler(
           ]
         : [
             `  const webhookRoutePattern = new RegExp(${JSON.stringify(routeRegexSource(options.webhookRoute))});`,
-            `  const webhookAliases = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/$/, '') || '/', target])))};`,
+            `  const webhookAliases = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/+$/, '') || '/', target])))};`,
             "  nitroApp.hooks.hook('request', event => {",
-            "    const pathname = new URL(event?.path || event?.node?.req?.url || event?.node?.req?.originalUrl || '/', 'http://vitehub.local').pathname.replace(/\\/$/, '') || '/';",
+            "    const pathname = new URL(event?.path || event?.node?.req?.url || event?.node?.req?.originalUrl || '/', 'http://vitehub.local').pathname.replace(/\\/+$/, '') || '/';",
             "    if (stop || !(webhookAliases[pathname] || webhookRoutePattern.test(pathname))) return;",
             "    waitUntil ||= waitUntilFromEvent(event)",
             "    startWebhookQueues()",

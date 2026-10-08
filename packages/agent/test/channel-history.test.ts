@@ -37,11 +37,11 @@ describe("Collection history Invocation joins", () => {
       triggers: { webhook: defineChannelTrigger({ invoke: () => ({ input: { prompt: "unused" } }) }) },
       webhooks: { secretHeader: "x-test-secret", secretToken: "secret" },
     })
-    const agent = defineAgent({ channels: { productlane: channel }, driver: { run: () => "unused" }, invocations, runtime: false })
+    const agent = defineAgent({ name: "bot-dev", channels: { productlane: channel }, driver: { run: () => "unused" }, invocations, runtime: false })
     const handler = createChannelWebhookRouteHandler(agent)
     const response = await handler(new Request("https://example.com/api/_vitehub/agents/bot-dev/webhooks/productlane", {
       method: "POST", body: JSON.stringify({ invocations: true }), headers: { "x-test-secret": "secret", "x-vitehub-channel-history": "1" },
-    }), "productlane")
+    }), "productlane", { agentIdentity: { name: "discovered-file" } })
     expect(response.status).toBe(200)
     // SAFETY: The response is produced by the real history handler under test.
     const body = await response.json() as { items: Array<{ invocations: Array<{ id: string }> }> }
@@ -49,6 +49,7 @@ describe("Collection history Invocation joins", () => {
       deliveries: [{ channel: "teams", text: "Synthetic unformatted draft" }], text: "Synthetic final text" }])
     expect(body.items[1].invocations.map((r: { id: string }) => r.id)).toEqual(["m2"])
     expect(list).toHaveBeenCalledOnce()
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ agentName: "bot-dev" }))
     expect(get.mock.calls.map(([id]) => id)).not.toContain("other")
     expect(get.mock.calls.map(([id]) => id)).not.toContain("annotated-other")
     expect(invocationItem.mock.calls.map(([r]) => r.id)).not.toContain("m2")

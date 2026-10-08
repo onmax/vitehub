@@ -7281,8 +7281,8 @@ async function createCollectionChannelHistoryResponse(
   history: AgentChannelHistory,
   request: Request,
 ): Promise<Response> {
-  const body = (await request.json().catch(() => undefined)) as { cursor?: unknown, invocations?: unknown, query?: unknown, threadId?: unknown } | undefined
-  if (!body || (body.cursor !== undefined && (!isRuntimeString(body.cursor) || !body.cursor)) || (body.threadId !== undefined && (!isRuntimeString(body.threadId) || !body.threadId.trim())) || (body.invocations !== undefined && !isRuntimeBoolean(body.invocations)) || (body.query !== undefined && !channelHistoryQuery(body.query))) {
+  const body: unknown = await request.json().catch(() => undefined)
+  if (!isRecord(body) || (body.cursor !== undefined && (!isRuntimeString(body.cursor) || !body.cursor)) || (body.threadId !== undefined && (!isRuntimeString(body.threadId) || !body.threadId.trim())) || (body.invocations !== undefined && !isRuntimeBoolean(body.invocations)) || (body.query !== undefined && !channelHistoryQuery(body.query))) {
     return createBadRequest("Channel history export request is invalid.")
   }
   const rawQuery = body.query || {}
@@ -7323,7 +7323,7 @@ async function createCollectionChannelHistoryResponse(
   }
   if (body.invocations === true) {
     const keys = new Set(items.flatMap(item => isRuntimeString(item.key) && item.key ? [item.key] : []))
-    const joined = await channelHistoryInvocations(agent, channelId, history, keys, context.agentIdentity?.name)
+    const joined = await channelHistoryInvocations(agent, channelId, history, keys, routeAgentInvocationName(agent, context.agentIdentity))
     for (const item of items) {
       item.invocations = (isRuntimeString(item.key) ? joined.get(item.key) || [] : [])
         .filter(entry => entry.thread === undefined || item.thread === undefined || entry.thread === item.thread)

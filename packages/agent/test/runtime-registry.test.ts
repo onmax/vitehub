@@ -101,6 +101,9 @@ it('lets an explicit webhook alias select the owner of a shared declared path', 
     const response = await app.request('/api/productlane/webhook', { method: 'POST', body: '{}', headers: { 'x-test-secret': 'secret', 'x-vitehub-channel-history': '1' } })
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ agent: 'bot-dev' })
+    const repeated = await app.request('/api/productlane/webhook//', { method: 'POST', body: '{}', headers: { 'x-test-secret': 'secret', 'x-vitehub-channel-history': '1' } })
+    expect(repeated.status).toBe(200)
+    expect(await repeated.json()).toMatchObject({ agent: 'bot-dev' })
   } finally { await server.close() }
 }, 30_000)
 

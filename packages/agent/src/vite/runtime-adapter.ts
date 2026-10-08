@@ -85,7 +85,9 @@ export function createViteWorkspaceAgentLoader(
     const module = await server.ssrLoadModule(pathToFileURL(definition.handler).href)
     // Use the host facade so definitions authored with the primitive package also inherit
     // the Console's configured journal. The facade keeps journal selection lazy and scoped.
-    let authored = module.default
+    const authored = module.default
+    let journalSource = authored
+    const invocations = Object.getOwnPropertyDescriptor(authored, "invocations")
     if (server.config.plugins?.some(plugin => plugin.name === "vite-hub/console")) {
       // Nitro runs its plugins in another module runner. Initialize the same generated
       // Console configuration in this runner before resolving its journal fallback.
@@ -96,7 +98,10 @@ export function createViteWorkspaceAgentLoader(
       if (bootstrap) await server.ssrLoadModule(bootstrap)
       // SAFETY: The active Console plugin belongs to vite-hub, whose Agent facade exports DefineAgent.
       const framework = await server.ssrLoadModule("vite-hub/agent") as { defineAgent: DefineAgent }
-      authored = framework.defineAgent({ extends: authored })
+      if (!invocations?.get && authored.invocations === undefined) {
+        // Only obtain the lazy journal binding; extending authored would rerun preset configuration.
+        journalSource = framework.defineAgent({})
+      }
     }
     const colocatedInstructions = await readColocatedAgentInstructions(definition.handler)
     const agent = workspaceAgentWithSourceRoot(
@@ -109,8 +114,10 @@ export function createViteWorkspaceAgentLoader(
     )
     // Workspace decoration spreads values and can drop the facade's non-enumerable getter.
     // Keep that binding, including an explicitly authored journal, on the loaded definition.
-    const invocations = Object.getOwnPropertyDescriptor(authored, "invocations")
-    if (invocations) Object.defineProperty(agent, "invocations", invocations)
+    for (const key of ["invocations", Symbol.for("vitehub.console.invocations.fallback")]) {
+      const descriptor = Object.getOwnPropertyDescriptor(journalSource, key)
+      if (descriptor) Object.defineProperty(agent, key, descriptor)
+    }
     return {
       ...module,
       default: agent,

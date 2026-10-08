@@ -8,7 +8,7 @@ import { defineAgent, resolveAgentTriggerInvocation } from "../src/index.ts"
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts"
 
 function fixture() {
-  const invoke = vi.fn(() => ({ input: { prompt: "Synthetic message" }, run: { runId: "authored", annotations: { authored: "kept" } } }))
+  const invoke = vi.fn(() => ({ input: { prompt: "Synthetic message" }, run: { runId: "authored", annotations: { authored: "kept", ...Object.fromEntries(Array.from({ length: 31 }, (_, i) => [`user.${i}`, i])) } } }))
   const invocations = defineAgentInvocations({ store: createMemoryAgentInvocationStore() })
   const agent = defineAgent({
     name: "support", runtime: false, invocations, driver: { run: () => "Synthetic answer" },
@@ -62,6 +62,27 @@ describe("trusted Channel replay metadata", () => {
     await expect(replayChannel(agent, "mailbox", { dryRun: true, label } as never)).rejects.toMatchObject({ code: "AGENT_R0934" })
     expect(invoke).not.toHaveBeenCalled()
     expect((await invocations.list()).invocations).toEqual([])
+  })
+
+  it("does not annotate another trigger with the history item identity", async () => {
+    const key = vi.fn(() => "m1")
+    const thread = vi.fn(() => "t1")
+    const agent = defineAgent({ runtime: false, driver: { run: () => "answer" }, channels: {
+      mailbox: defineChannel("mailbox", { messages: false,
+        history: { collection: defineCollection(async () => [{ id: "m1" }], { cursor: item => item.id, cursorSchema: v.string() }), key, thread, trigger: "received" },
+        triggers: {
+          received: defineChannelTrigger({ invoke: () => ({ input: { prompt: "received" } }) }),
+          deleted: defineChannelTrigger({ invoke: () => ({ input: { prompt: "deleted" } }) }),
+        },
+      }),
+    } })
+    const result = await resolveAgentTriggerInvocation(agent, runtime(), "mailbox.deleted", { id: "m1" })
+    expect(result).not.toHaveProperty("run.annotations")
+    expect(key).not.toHaveBeenCalled()
+    expect(thread).not.toHaveBeenCalled()
+    await resolveAgentTriggerInvocation(agent, runtime(), "mailbox.received", { id: "m1" })
+    expect(key).toHaveBeenCalledOnce()
+    expect(thread).toHaveBeenCalledOnce()
   })
 
   it("keeps unsigned live trigger requests rejected", async () => {

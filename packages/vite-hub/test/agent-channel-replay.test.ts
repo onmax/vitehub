@@ -7,7 +7,6 @@ import { createClient } from "@libsql/client"
 import { createServer, type PluginOption } from "vite"
 import { expect, it } from "vitest"
 
-import { loadViteAgent } from "../../agent/src/vite/runtime-adapter.ts"
 import { runAgentChannelReplayCli } from "../../agent/src/internal/channel-replay-cli.ts"
 import { agentInvocationStreamHeader, agentInvocationStreamHeaderValue, agentInvocationStreamRoute } from "../../agent/src/invocation-stream.ts"
 
@@ -59,8 +58,6 @@ export default defineAgent({ runtime: false, workspace: { mode: 'read' },
     })
     await server.listen()
     const origin = server.resolvedUrls!.local[0]!
-    const loaded = await loadViteAgent(server, { name: "support", handler: join(root, "server/agents/support.ts") })
-    expect(loaded?.agent).toBeDefined()
     const rejected = await fetch(new URL(agentInvocationStreamRoute, origin), { method: "POST", body: JSON.stringify({ agent: "support", replay: { channel: "mailbox", dryRun: true } }), headers: { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue, "content-type": "application/json" } })
     expect(rejected.status).toBe(403)
     const discovery = await fetch(new URL(agentInvocationStreamRoute, origin), { headers: { [agentInvocationStreamHeader]: agentInvocationStreamHeaderValue } })
