@@ -34,7 +34,7 @@ export interface GitHubInboxSummary {
   stackBlocked?: boolean; stackParent?: { number: number; state: string }
 }
 export type Claim = { token: string; generation: number; snapshot: Snapshot }
-export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string }
+export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string; enqueued?: boolean }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
 /** Normalize REST and discovery records once, before they enter the inbox. */
@@ -311,6 +311,16 @@ export class PullRequestInbox {
       const attempt = await this.metaIn(tx, key)
       if (!isRuntimeRecord(attempt) || attempt.token !== token || attempt.asynchronous !== true) return false
       await this.setMetaIn(tx, key, { ...attempt, requestId })
+      return true
+    })
+  }
+  /** Preserve a final enqueued result, including an immediate response without a UUID. */
+  async recordDirectMergeEnqueued(repository: string, number: number, token: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const key = this.directMergeKey(repository, number)
+      const attempt = await this.metaIn(tx, key)
+      if (!isRuntimeRecord(attempt) || attempt.token !== token || attempt.asynchronous !== true) return false
+      await this.setMetaIn(tx, key, { ...attempt, enqueued: true })
       return true
     })
   }

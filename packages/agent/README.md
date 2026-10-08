@@ -773,7 +773,7 @@ uses the trusted npm registry and ignores checkout environment files. npm must
 be version 7 or newer. A manifest without a package-manager version uses a pinned
 default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
-Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks.
+Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
 Workers call `commitRepair` with a message and explicit repair paths, then
 `pushRepair`. The host commits because the provider sandbox protects Git metadata. For a
 conflicting PR, the host first prepares a merge against the exact base commit.
