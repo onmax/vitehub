@@ -178,6 +178,46 @@ describe("Channel message handle", () => {
     expect(JSON.stringify(postMessage.mock.calls[0]?.[1])).toContain("from hook")
   })
 
+  it.each([false, true])("labels unresolved citations in Chat SDK delivery, streaming=%s", async (streaming) => {
+    const delivered: string[] = []
+    const text = "Verified answer. citeturn228505view0turn395856view0 See [PR #1188](https://github.com/acme/portal/pull/1188)."
+    const adapter = {
+      channelIdFromThreadId: (threadId: string) => threadId,
+      postMessage: vi.fn(async (_threadId: string, message: { markdown: string }) => { delivered.push(message.markdown) }),
+      stream: vi.fn(async (_threadId: string, chunks: AsyncIterable<string>) => {
+        let markdown = ""
+        for await (const chunk of chunks) markdown += chunk
+        delivered.push(markdown)
+        return { id: "sent" }
+      }),
+    }
+    const agent = defineAgent({
+      channels: {
+        support: defineChannel("teams", {
+          // SAFETY: The fixture implements the Chat SDK methods exercised by reply delivery.
+          adapter: adapter as never,
+          messages: { delivery: "manual" },
+          triggers: {
+            message: {
+              invoke: context => ({
+                input: { prompt: "hello" },
+                run: { channelId: context.trigger.channelId, origin: "teams", runId: `citation-${streaming}`, threadId: "thread-1" },
+              }),
+            },
+          },
+        }),
+      },
+      driver: { run: () => text },
+      hooks: {
+        async "agent:finish"(event) {
+          await event.reply(streaming ? (async function* () { for (const character of text) yield character })() : text)
+        },
+      },
+    })
+    await runAgentTrigger(agent, runtimeContext(), "support.message", {})
+    expect(delivered).toEqual(["Verified answer. [source link unavailable] See [PR #1188](https://github.com/acme/portal/pull/1188)."])
+  })
+
   it("leaves event.message undefined without a Channel", async () => {
     let message: unknown = "unset"
     const agent = defineAgent({

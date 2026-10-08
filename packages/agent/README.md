@@ -322,6 +322,8 @@ for the code format and an application catalog example.
 
 ## Chat state
 
+`teams()` requests descriptive Markdown source links. Chat SDK reply delivery replaces unresolved native web citations with `[source link unavailable]`, including in streams. Codex app-server does not expose a citation-ID-to-URL map; ViteHub preserves explicit source links and does not guess URLs for native IDs.
+
 Chat History and the Concurrent Invocation Guard need an Agent State Provider when they should survive a process restart. The default `provider: "auto"` uses Cloudflare state on Cloudflare and local SQLite at `file:.vitehub/data/agent-state.sqlite` during Vite development. Production Node and serverless output require `VITEHUB_AGENT_STATE_URL` or explicit provider options because ViteHub cannot infer a durable filesystem there.
 
 ```ts

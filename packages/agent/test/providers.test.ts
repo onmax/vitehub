@@ -20213,6 +20213,40 @@ describe("server helpers", () => {
     expect(adapter.postMessage.mock.invocationCallOrder[1]).toBeLessThan(adapter.deleteMessage.mock.invocationCallOrder[0]!)
   })
 
+  it.each(["final", "loading", "manual", "stream"] as const)("delivers readable citations through the %s webhook path", async (delivery) => {
+    const adapter = createTestChatAdapter()
+    const text = "Answer. citeturn228505view0turn395856view0 See [the PR](https://github.com/acme/portal/pull/1188)."
+    const expected = "Answer. [source link unavailable] See [the PR](https://github.com/acme/portal/pull/1188)."
+    const agent = defineAgent({
+      channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture supplies the Chat SDK adapter used by the webhook handler.
+          adapter: () => adapter as never,
+          messages: delivery === "loading" ? { loading: { text: "Loading…" } }
+            : delivery === "manual" ? { delivery: "manual" }
+              : { stream: delivery === "stream", fallbackStreamingPlaceholderText: null },
+        }),
+      },
+      driver: { run: () => delivery === "stream" ? {
+        fullStream: (async function* () {
+          for (const character of text) yield { text: character, type: "text-delta" }
+          yield { type: "finish", finishReason: "stop" }
+        })(),
+      } : text },
+      hooks: {
+        "agent:finish": event => event.reply(event.text!),
+      },
+    })
+    // SAFETY: This fixture supplies the normalized Agent contract used by the route handler.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = await handler(chatWebhookRequest(91_300 + ["final", "loading", "manual", "stream"].indexOf(delivery)), "telegram")
+    expect(response.status).toBe(200)
+    const sent = [...adapter.postMessage.mock.calls, ...adapter.editMessage.mock.calls]
+    expect(JSON.stringify(sent)).not.toContain("")
+    const answers = sent.filter(call => JSON.stringify(call).includes(expected))
+    expect(answers).toHaveLength(1)
+  })
+
   it("does not repeat the final text when a finish hook replies with it after streaming", async () => {
     const { defineAgent } = await import("../src/index.ts")
     const { telegram } = await import("../src/channels.ts")

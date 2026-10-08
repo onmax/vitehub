@@ -1,3 +1,4 @@
+import { formatChannelCitationMessage, formatChannelCitationStream, formatChannelCitationText } from "../internal/channel-citations.ts"
 import { isDurableAgentState, requireAtomicAgentStateLock, type AgentStateCacheMutation, type AtomicAgentStateLockAdapter } from "../internal/state-lock.ts"
 import { parseStandardSchema } from "@vite-hub/internal/http-request"
 import { runWithActiveCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
@@ -2569,6 +2570,11 @@ async function postChatStream(
   abortSignal?: AbortSignal,
   maximumDeadline?: number,
 ): Promise<void> {
+  const originalResponse = response
+  response = {
+    getText: () => formatChannelCitationText(originalResponse.getText()),
+    [Symbol.asyncIterator]: () => formatChannelCitationStream(originalResponse)[Symbol.asyncIterator](),
+  }
   abortSignal?.throwIfAborted()
   let sent: unknown
   if (fallback === undefined) {
@@ -4657,6 +4663,7 @@ function chatMessageDeliveryArtifacts(message: AgentChatMessage): readonly Publi
 }
 
 async function postChatMessage(thread: Thread, message: AgentChatMessage, abortSignal?: AbortSignal): Promise<void> {
+  message = formatChannelCitationMessage(message)
   if (isAsyncIterable(message)) {
     let markdown = ""
     const stream = (async function* () {
@@ -4710,6 +4717,7 @@ async function postChatMessage(thread: Thread, message: AgentChatMessage, abortS
 }
 
 async function replaceManualDeliveryPlaceholder(placeholder: unknown, message: AgentChatMessage): Promise<boolean> {
+  message = formatChannelCitationMessage(message)
   if (!placeholder || !isRuntimeObject(placeholder) || !("edit" in placeholder) || !isRuntimeFunction(placeholder.edit)) return false
   // SAFETY: The surrounding route guards establish this record shape before the value crosses the internal boundary.
   const target = placeholder as { edit: (message: unknown) => Promise<unknown> }
@@ -4993,7 +5001,7 @@ async function flushChatFinishExtensionMessages(
   const messages = chat[chatFinishMessagesKey].splice(0)
   for (const [index, queued] of messages.entries()) {
     const callbacks = queued.directCallback ? [queued.directCallback, ...queued.callbacks] : queued.callbacks
-    let { message } = queued
+    let message = formatChannelCitationMessage(queued.message)
     const capture: ChatFinishDeliveryCapture = { content: "", truncated: false }
     if (isAsyncIterable(message) && callbacks.length) {
       message = captureStreamedChatFinishMessage(message, capture)
@@ -6510,7 +6518,7 @@ async function handleChatSdkMessage(
             : // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
               await runAgentInline(agent as never, inlineRunContext as never, invocationInput as never)
           // SAFETY: The owning Agent runtime boundary creates this value with the asserted route contract.
-          const text = await collectAgentOutput(result, progress?.update, (toolResult) => toolResults.push(toolResult))
+          const text = formatChannelCitationText(await collectAgentOutput(result, progress?.update, (toolResult) => toolResults.push(toolResult)))
           if (!bufferedDelivery && text) {
             await deliverPrimaryChatReply(chatFinish, async () => {
               invocationDeadlineAbort?.signal.throwIfAborted()
