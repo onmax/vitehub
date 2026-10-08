@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
-import { object, optional, parse, record, string } from "valibot"
+import { object, optional, parse, record, safeParse, string } from "valibot"
 
 import type { BlobDriverAdapter, BlobDriverMultipartUpload, BlobListOptions, BlobListResult, BlobMultipartOptions, BlobObject, BlobPutBody, BlobPutOptions, ResolvedFsBlobStoreConfig } from "../types.ts"
 import { blobErrorDiagnostics } from "../error-diagnostics.ts"
@@ -36,7 +36,10 @@ const fsBlobMetadataSchema = object({
   customMetadata: optional(record(string(), string())),
 })
 
+const fsBlobHashSchema = object({ contentHash: string(), fileVersion: string() })
+
 interface FsBlobEntry {
+  contentHash: string
   meta: FsBlobMetadata
   path: string
   size: number
@@ -107,9 +110,9 @@ async function assertNoSymlinkPath(root: string, path: string) {
   }
 }
 
-function resolveMetaPath(root: string, pathname: string) {
+function resolveMetaPath(root: string, pathname: string, directory = "blob-meta") {
   const normalized = relative(root, resolveBlobPath(root, pathname)).split(sep).join("/")
-  return resolve(root, ".vitehub", "blob-meta", `${encodeMetaKey(normalized)}.json`)
+  return resolve(root, ".vitehub", directory, `${encodeMetaKey(normalized)}.json`)
 }
 
 function isNotFound(error: unknown): boolean {
@@ -160,20 +163,39 @@ async function writeAtomic(root: string, path: string, bytes: Uint8Array | strin
 }
 
 async function removeMetadata(root: string, pathname: string) {
-  const path = resolveMetaPath(root, pathname)
+  for (const directory of ["blob-meta", "blob-hashes"]) {
+    const path = resolveMetaPath(root, pathname, directory)
+    await assertNoSymlinkPath(root, path)
+    await rm(path, { force: true })
+  }
+}
+
+async function readHash(root: string, pathname: string) {
+  const path = resolveMetaPath(root, pathname, "blob-hashes")
   await assertNoSymlinkPath(root, path)
-  await rm(path, { force: true })
+  try {
+    const value: unknown = JSON.parse(await readFile(path, "utf8"))
+    const result = safeParse(fsBlobHashSchema, value)
+    return result.success ? result.output : undefined
+  }
+  catch (error) {
+    if (isNotFound(error) || error instanceof SyntaxError) return
+    throw error
+  }
+}
+
+async function writeHash(root: string, pathname: string, hash: { contentHash: string, fileVersion: string }) {
+  const path = resolveMetaPath(root, pathname, "blob-hashes")
+  await assertNoSymlinkPath(root, path)
+  await mkdir(dirname(path), { recursive: true })
+  await writeAtomic(root, path, JSON.stringify(hash))
 }
 
 function toBlobObject(entry: FsBlobEntry): BlobObject {
-  const httpEtag = createHash("sha1")
-    .update(`${entry.path}:${entry.size}:${entry.uploadedAt.getTime()}`)
-    .digest("hex")
-
   return {
     contentType: entry.meta.contentType,
     customMetadata: entry.meta.customMetadata || {},
-    httpEtag: `"${httpEtag}"`,
+    httpEtag: `"${entry.contentHash}"`,
     httpMetadata: entry.meta.contentType ? { contentType: entry.meta.contentType } : {},
     pathname: entry.path,
     size: entry.size,
@@ -184,15 +206,40 @@ function toBlobObject(entry: FsBlobEntry): BlobObject {
 async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | null> {
   try {
     const path = resolveBlobPath(root, pathname)
-    await assertNoSymlinkPath(root, path)
-    const stats = await stat(path)
-    if (!stats.isFile()) return null
-    return {
-      meta: await readMetadata(root, pathname),
-      path: pathname,
-      size: stats.size,
-      uploadedAt: stats.mtime,
+    for (let attempt = 0; attempt < 3; attempt++) {
+      // Legacy content files may block descendant paths, but internal sidecar errors must propagate.
+      const stats = await (async () => {
+        try {
+          await assertNoSymlinkPath(root, path)
+          return await stat(path, { bigint: true })
+        }
+        catch (error) {
+          if (isDirectoryError(error)) return null
+          throw error
+        }
+      })()
+      if (!stats?.isFile()) return null
+      const meta = await readMetadata(root, pathname)
+      const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+      const cached = await readHash(root, pathname)
+      let contentHash = cached?.fileVersion === fileVersion ? cached.contentHash : undefined
+      if (!contentHash) {
+        contentHash = createHash("sha256").update(await readFile(path)).digest("hex")
+        const after = await stat(path, { bigint: true })
+        if (fileVersion !== `${after.dev}:${after.ino}:${after.size}:${after.mtimeNs}:${after.ctimeNs}`) continue
+        await writeHash(root, pathname, { contentHash, fileVersion }).catch((error) => {
+          console.error("[vitehub/blob] Filesystem hash cache write failed", error)
+        })
+      }
+      return {
+        contentHash,
+        meta,
+        path: pathname,
+        size: Number(stats.size),
+        uploadedAt: stats.mtime,
+      }
     }
+    throw new Error("Blob changed while reading its filesystem metadata.")
   }
   catch (error) {
     if (isNotFound(error)) return null
@@ -295,6 +342,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
 
   const driver: BlobDriverAdapter<ResolvedFsBlobStoreConfig> = {
     name: "fs",
+    canonicalPathname: pathname => relative(root, resolveBlobPath(root, pathname)).split(sep).join("/"),
     options,
     async createMultipartUpload(pathname: string, multipartOptions: BlobMultipartOptions) {
       resolveBlobPath(root, pathname)
@@ -353,7 +401,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
       }
       catch (error) {
-        if (isNotFound(error)) return null
+        if (isNotFound(error) || isDirectoryError(error)) return null
         throw error
       }
     },
