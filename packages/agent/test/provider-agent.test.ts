@@ -4568,6 +4568,65 @@ cli_auth_credentials_store = "keyring"
     expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ AGENT_BROWSER_SESSION: "managed", AGENT_BROWSER_SOCKET_DIR: "/managed/socket", VITEHUB_BROWSER_ACTIVE: "1", PATH: "/managed/bin:/caller/bin", LD_LIBRARY_PATH: "/managed/lib:/caller/lib" }) }))
   })
 
+  it.each(["codex", "claude-code"] as const)("prepares the %s checkout merge before injecting instructions", async provider => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-instruction-merge-"))
+    const threadId = `thread-instruction-merge-${provider}`
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout
+    }
+    try {
+      git("init", "-q", "-b", "target")
+      git("config", "user.name", "Test")
+      git("config", "user.email", "test@localhost")
+      await writeFile(join(root, "AGENTS.md"), "original instructions")
+      await writeFile(join(root, "CLAUDE.md"), "original Claude instructions")
+      git("add", "-A")
+      git("commit", "-qm", "initial")
+      git("branch", "feature")
+      await writeFile(join(root, "AGENTS.md"), "updated source instructions")
+      await writeFile(join(root, "CLAUDE.md"), "updated source Claude instructions")
+      git("add", "-A")
+      git("commit", "-qm", "update target instructions")
+      git("checkout", "-q", "feature")
+      await writeFile(join(root, "feature.txt"), "feature")
+      git("add", "-A")
+      git("commit", "-qm", "feature")
+      const originalFlags = git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")
+      runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+        async onSendTurn() {
+          expect(git("rev-parse", "MERGE_HEAD").trim()).toBe(git("rev-parse", "target").trim())
+          expect(git("show", ":AGENTS.md")).toBe("updated source instructions")
+          expect(git("show", ":CLAUDE.md")).toBe("updated source Claude instructions")
+          const promptPath = provider === "codex" ? "AGENTS.md" : ".claude/vitehub-system-prompt.md"
+          expect(await readFile(join(root, promptPath), "utf8")).toBe("generated repair instructions")
+          await writeFile(join(root, "repair.txt"), "repair")
+          git("add", "-A")
+          git("commit", "-qm", "finish repair merge")
+          expect(git("show", "HEAD:AGENTS.md")).toBe("updated source instructions")
+          expect(git("show", "HEAD:CLAUDE.md")).toBe("updated source Claude instructions")
+        },
+      })
+      await createProviderAgentAdapter({
+        cwd: root,
+        instructions: "generated repair instructions",
+        launch: ({ command }) => {
+          git("merge", "--no-commit", "--no-ff", "target")
+          return { command }
+        },
+        provider,
+      }).generate(context(threadId) as never)
+      expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe("updated source instructions")
+      expect(await readFile(join(root, "CLAUDE.md"), "utf8")).toBe("updated source Claude instructions")
+      expect(git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")).toBe(originalFlags)
+      expect(git("status", "--porcelain")).toBe("")
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {
     const threadId = `thread-root-generated-git-${provider}`
     let root = ""
