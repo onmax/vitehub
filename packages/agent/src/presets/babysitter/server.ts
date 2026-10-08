@@ -413,8 +413,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
 
   const postPushGraceMs = options.postPushGraceMs ?? 3 * 60_000;
 
-  async function parkOnPushedHead(claim: Claim, text: string, head: string) {
-    return await pullRequestInbox.finish(claim, { text, progress: { kind: "verified", evidence: `push:${head}` },
+  async function parkOnPushedHead(claim: Claim, text: string, head: string, precedingHead?: string) {
+    // A later push may still await its webhook while the inbox reports our
+    // preceding published head. Carry that verified receipt into the finish fence.
+    const publishedClaim = precedingHead && claim.snapshot.pr?.head ? {
+      ...claim, snapshot: { ...claim.snapshot, pr: { ...claim.snapshot.pr, head: { ...claim.snapshot.pr.head, sha: precedingHead } } },
+    } : claim;
+    return await pullRequestInbox.finish(publishedClaim, { text, progress: { kind: "verified", evidence: `push:${head}` },
       wait: { ...createCheckWait(claim.snapshot, waitPolicy), headSha: head } });
   }
 
@@ -679,6 +684,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         let passResult: BabysitterPassResult | undefined;
         let pushSucceeded = false;
         let pushedHead: string | undefined;
+        let pushedPrecedingHead: string | undefined;
         let pushedAt: ReturnType<typeof setTimeout> | undefined;
         schedulerEvent("babysitter.owner.started", { maxOwners: ownerLimit, ...owner });
         const passController = new AbortController();
@@ -880,18 +886,22 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 pr: snapshot.pr && { ...snapshot.pr,
                   base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
               }, waitPolicy);
+              let precedingPushHead: string | undefined = pullRequest.headRefOid;
               const assertLease = async (pendingWebhookHead?: string) => {
                 abortSignal.throwIfAborted();
                 const current = await pullRequestInbox.get(repository, number);
                 if (current?.lease !== inboxClaim.token || current.leaseUntil <= Date.now()) {
                   throw new DOMException("Pull request lease lost.", "AbortError");
                 }
-                const stopped = claimStopReason(inboxClaim, current, current.pr?.head?.sha === pendingWebhookHead ? undefined : pushedHead);
+                const stopped = claimStopReason(inboxClaim, current, current.pr?.head?.sha === pendingWebhookHead ? pendingWebhookHead : pushedHead);
                 if (stopped) throw new DOMException(stopped, "AbortError");
+                if (pushedHead && current.pr?.head?.sha === pushedHead) precedingPushHead = undefined;
                 // Merge and feedback mutations require the original generation.
                 // Repair publication may coalesce base and successful-check updates
                 // when its head, requirements and actionable feedback are unchanged.
-                if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)
+                const selfHead = current.pr?.head?.sha === pushedHead
+                  || pendingWebhookHead !== pullRequest.headRefOid && current.pr?.head?.sha === pendingWebhookHead;
+                if (current.generation !== inboxClaim.generation && !selfHead
                   && !(repairOperation.getStore() && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot, current))) {
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
@@ -979,12 +989,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   await assertLease();
                   await assertRepairBase();
                   const renewLease = async () => {
-                    let current = await assertLease(pullRequest.headRefOid);
+                    let current = await assertLease(precedingPushHead);
                     for (;;) {
                       if (await pullRequestInbox.renew({ ...inboxClaim, generation: current.generation, snapshot: current }, Date.now() + 2 * 60 * 60_000)) return;
                       // A generation can advance between validation and CAS.
                       // Recheck ownership, head and feedback before adopting it.
-                      const latest = await assertLease(pullRequest.headRefOid);
+                      const latest = await assertLease(precedingPushHead);
                       if (latest.generation === current.generation) throw new DOMException("Pull request lease renewal failed.", "AbortError");
                       current = latest;
                     }
@@ -999,7 +1009,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     // A no-op push creates no synchronize webhook or repair progress.
                     pushSucceeded = head !== pullRequest.headRefOid;
                     if (pushSucceeded) {
-                      pushedHead = head;
+                      if (pushedHead !== head) {
+                        pushedPrecedingHead = pushedHead ?? pullRequest.headRefOid;
+                        precedingPushHead = pushedPrecedingHead;
+                        pushedHead = head;
+                      }
                       pushedAt ??= setTimeout(() => passController.abort(new DOMException("Repair pushed; waiting for check and review webhooks.", "TimeoutError")), postPushGraceMs);
                     }
                   };
@@ -1008,7 +1022,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                       signal: abortSignal,
                       beforePush: async () => { await assertLease(); await assertRepairBase(); },
                       // The synchronize webhook may still expose the pre-push head.
-                      afterPush: async head => { recordPush(head); await assertLease(pullRequest.headRefOid); },
+                      afterPush: async head => { recordPush(head); await assertLease(precedingPushHead); },
                     });
                     recordPush(result);
                     return result;
@@ -1228,7 +1242,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });
           } else if (pushedHead) {
             outcome = "waiting";
-            recorded = await parkOnPushedHead(inboxClaim, resultText, pushedHead);
+            recorded = await parkOnPushedHead(inboxClaim, resultText, pushedHead, pushedPrecedingHead);
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && passResult?.wait?.kind === "external") {
             outcome = "waiting";
             await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, null);
@@ -1263,7 +1277,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           if (pushedHead && (await pullRequestInbox.get(repository, number))?.status !== "terminal") {
             // The repair reached GitHub. Its checks and reviews resume the PR.
             outcome = "waiting";
-            await parkOnPushedHead(inboxClaim, error instanceof Error ? error.message : String(error), pushedHead);
+            await parkOnPushedHead(inboxClaim, error instanceof Error ? error.message : String(error), pushedHead, pushedPrecedingHead);
             const expected = isAbortError(error) || (error instanceof Error && error.name === "TimeoutError") || github.isRateLimitError(error);
             if (!expected) schedulerError("babysitter.owner.failed", error, owner);
           } else if (isAbortError(error)) {
