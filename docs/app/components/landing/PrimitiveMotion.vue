@@ -412,6 +412,60 @@ const id = useId();
   transform-origin: 0 0;
 }
 
+/* Agent: a message starts the run, and the Agent calls three primitives through its Capabilities. */
+.ag-call { animation-name: ag-call; }
+.ag-run { animation-name: ag-run; }
+.ag-call-1 { animation-name: ag-call-1; }
+.ag-call-2 { animation-name: ag-call-2; }
+.ag-call-3 { animation-name: ag-call-3; }
+.ag-tool-1 { animation-name: ag-tool-1; }
+.ag-tool-2 { animation-name: ag-tool-2; }
+.ag-tool-3 { animation-name: ag-tool-3; }
+@keyframes ag-call {
+  0%, 4% { opacity: 0; transform: translateX(0); }
+  7% { opacity: 0.85; transform: translateX(0); }
+  16% { opacity: 0.85; transform: translateX(5px); }
+  19%, 100% { opacity: 0; transform: translateX(6px); }
+}
+@keyframes ag-run {
+  0%, 17% { opacity: 0.35; }
+  21%, 88% { opacity: 0.85; }
+  96%, 100% { opacity: 0.35; }
+}
+@keyframes ag-call-1 {
+  0%, 22% { opacity: 0; transform: translate(0, 0); }
+  25% { opacity: 0.85; transform: translate(0, 0); }
+  36% { opacity: 0.85; transform: translate(8.5px, -6.4px); }
+  39%, 100% { opacity: 0; transform: translate(10px, -7.5px); }
+}
+@keyframes ag-tool-1 {
+  0%, 35% { opacity: 0.35; }
+  40%, 46% { opacity: 0.85; }
+  56%, 100% { opacity: 0.35; }
+}
+@keyframes ag-call-2 {
+  0%, 44% { opacity: 0; transform: translateX(0); }
+  47% { opacity: 0.85; transform: translateX(0); }
+  58% { opacity: 0.85; transform: translateX(8.5px); }
+  61%, 100% { opacity: 0; transform: translateX(10px); }
+}
+@keyframes ag-tool-2 {
+  0%, 57% { opacity: 0.35; }
+  62%, 68% { opacity: 0.85; }
+  78%, 100% { opacity: 0.35; }
+}
+@keyframes ag-call-3 {
+  0%, 66% { opacity: 0; transform: translate(0, 0); }
+  69% { opacity: 0.85; transform: translate(0, 0); }
+  80% { opacity: 0.85; transform: translate(8.5px, 6.4px); }
+  83%, 100% { opacity: 0; transform: translate(10px, 7.5px); }
+}
+@keyframes ag-tool-3 {
+  0%, 79% { opacity: 0.35; }
+  84%, 90% { opacity: 0.85; }
+  100% { opacity: 0.35; }
+}
+
 /* Env: each value is validated in order. */
 .env-check-1 { animation-name: env-check-1; }
 .env-check-2 { animation-name: env-check-2; }

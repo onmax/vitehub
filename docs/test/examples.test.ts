@@ -20,6 +20,8 @@ describe("examples catalog", () => {
     expect(examples).toEqual([
       expect.objectContaining({
         name: "Drop",
+        description:
+          "Review what your agents plan. Agents drop docs and small apps; people comment on the exact spot, share links, and send the feedback back for the next version.",
         kind: "project",
         status: "published",
         action: {
@@ -27,7 +29,8 @@ describe("examples catalog", () => {
           label: "View source",
           to: "https://github.com/vite-hub/drop",
         },
-        builtWith: ["Blob", "Queue", "Rate Limit", "Sandbox", "Schedule"],
+        builtWith: ["Auth", "Database", "Blob", "KV", "Rate Limit", "Browser", "Schedule"],
+        website: "https://drop.vitehub.dev",
       }),
       expect.objectContaining({
         name: "Calories",

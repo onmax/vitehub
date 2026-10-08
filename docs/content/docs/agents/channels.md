@@ -29,6 +29,8 @@ export default defineAgent({
 
 Built-in helpers include `discord()`, `github()`, [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
 
+`teams()` instructs the Agent to cite sources with descriptive Markdown links to verified URLs. Chat SDK Channel delivery labels unresolved native web citations as `[source link unavailable]`, including during streaming. Codex app-server does not supply a citation-ID-to-URL map, so ViteHub cannot recover those links from the IDs. Ordinary source links remain intact.
+
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
 ## Act on the Channel message in hooks

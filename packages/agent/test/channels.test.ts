@@ -403,10 +403,9 @@ describe("agent channels", () => {
       waitUntil: vi.fn(),
     } as never)
 
-    expect(fetcher).toHaveBeenCalledWith("https://api.github.test/app", expect.objectContaining({
-      headers: expect.objectContaining({ authorization: expect.stringMatching(/^Bearer .+\..+\..+$/) }),
-      method: "GET",
-    }))
+    const appCall = fetcher.mock.calls.find(([input]) => input === "https://api.github.test/app")
+    expect(appCall?.[1]?.method).toBe("GET")
+    expect(new Headers(appCall?.[1]?.headers).get("authorization")).toMatch(/^Bearer .+\..+\..+$/)
     expect(fetcher).toHaveBeenCalledWith("https://api.github.test/repos/acme/app/issues/comments/7", expect.objectContaining({ method: "PATCH" }))
   })
 

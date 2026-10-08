@@ -112,35 +112,30 @@ The page shows **ViteHub UI is ready.** in bold. This proves that the component 
 
 ## Defaults
 
-Set package-wide defaults in the Nuxt module options or in `createViteHubUI()`:
+The package defaults are designed for a Console. Keep them until your product has a reason to change them. If you do need a package-wide override, use the same option in the Nuxt module or the Vite plugin.
 
-::tabs
-  :::tabs-item{label="Nuxt" icon="i-simple-icons-nuxtdotjs"}
-    ```ts [nuxt.config.ts]
-    export default defineNuxtConfig({
-      modules: ["@vite-hub/ui/nuxt"],
-      viteHubUI: {
-        defaults: {
-          markdown: { class: "vh-typeset vh-typeset-chat my-markdown" },
-          messageScroller: { edgeThreshold: 12, previousItemPeek: 72 },
-        },
-      },
-    });
-    ```
-  :::
-  :::tabs-item{label="Vue with Vite" icon="i-simple-icons-vite"}
-    ```ts [src/main.ts]
-    app.use(
-      createViteHubUI({
-        defaults: {
-          markdown: { class: "vh-typeset vh-typeset-chat my-markdown" },
-          messageScroller: { edgeThreshold: 12, previousItemPeek: 72 },
-        },
-      }),
-    );
-    ```
-  :::
-::
+```ts [nuxt.config.ts]
+export default defineNuxtConfig({
+  modules: ["@vite-hub/ui/nuxt"],
+  viteHubUI: {
+    defaults: {
+      markdown: { class: "vh-typeset vh-typeset-chat" },
+      messageScroller: { edgeThreshold: 8, previousItemPeek: 64 },
+    },
+  },
+});
+```
+
+```ts [src/main.ts]
+app.use(
+  createViteHubUI({
+    defaults: {
+      markdown: { class: "vh-typeset vh-typeset-chat" },
+      messageScroller: { edgeThreshold: 8, previousItemPeek: 64 },
+    },
+  }),
+);
+```
 
 | Default                            | Initial value                | Used by                                |
 | ---------------------------------- | ---------------------------- | -------------------------------------- |
