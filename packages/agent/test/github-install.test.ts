@@ -562,3 +562,46 @@ it("publishes refreshed dependencies and keeps workspace source links live", asy
   expect(await readFile(join(root, "node_modules", "local", "index.js"), "utf8")).toBe("export const value = 2;");
   await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
 });
+
+it("removes obsolete root and workspace outputs when switching to and from Yarn PnP", async () => {
+  const root = await fixture();
+  const workspace = join(root, "packages", "local");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(join(workspace, "package.json"), JSON.stringify({ name: "local", version: "1.0.0" }));
+  await writeFile(join(root, "pnpm-workspace.yaml"), "packages: [packages/*]\n");
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nmkdir -p node_modules packages/local/node_modules\nprintf old > packages/local/node_modules/installed.txt\n');
+  await installGitHubPullRequestWorkspace(root);
+  await rm(join(root, "pnpm-lock.yaml"));
+  await rm(join(root, "pnpm-workspace.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", workspaces: ["packages/local"] }));
+  await writeFile(join(root, "yarn.lock"), "__metadata:\n  version: 8\n");
+  await mkdir(join(root, ".yarn", "releases"), { recursive: true });
+  await writeFile(join(root, ".yarn", "releases", "keep.txt"), "source configuration");
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf pnp > .pnp.cjs\nprintf loader > .pnp.loader.mjs\nprintf data > .pnp.data.json\nmkdir -p .yarn/cache .yarn/unplugged\nprintf state > .yarn/install-state.gz\n');
+  await installGitHubPullRequestWorkspace(root);
+  for (const path of [join(root, "node_modules"), join(workspace, "node_modules")])
+    await expect(readFile(join(path, "installed.txt"))).rejects.toThrow();
+  const { lstat } = await import("node:fs/promises");
+  await expect(lstat(join(root, "node_modules"))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(lstat(join(workspace, "node_modules"))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+
+  await rm(join(root, "yarn.lock"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6" }));
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nmkdir -p node_modules\n');
+  await installGitHubPullRequestWorkspace(root);
+  for (const path of [".pnp.cjs", ".pnp.loader.mjs", ".pnp.data.json", ".yarn/cache", ".yarn/unplugged", ".yarn/install-state.gz"])
+    await expect(lstat(join(root, path))).rejects.toMatchObject({ code: "ENOENT" });
+  expect(await readFile(join(root, ".yarn", "releases", "keep.txt"), "utf8")).toBe("source configuration");
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+});
+
+it("removes obsolete workspace output when the next install omits that workspace", async () => {
+  const root = await fixture();
+  await mkdir(join(root, "packages", "old", "node_modules"), { recursive: true });
+  await writeFile(join(root, "packages", "old", "node_modules", "stale.txt"), "obsolete");
+  await installGitHubPullRequestWorkspace(root);
+  await expect(readFile(join(root, "packages", "old", "node_modules", "stale.txt"))).rejects.toThrow();
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+});
