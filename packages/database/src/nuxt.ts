@@ -1,5 +1,5 @@
 import { copyFile, mkdir, readdir, rm } from "node:fs/promises"
-import { resolve } from "node:path"
+import { dirname, resolve, sep } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { writeFileIfChanged } from "@vite-hub/internal/definition-catalog"
@@ -51,7 +51,10 @@ type DatabaseNuxtModule = {
 }
 
 type NuxtLike = {
-  hook?: (name: string, callback: (value: Record<string, unknown>) => Promise<void> | void) => void
+  hook?: {
+    (name: "nitro:config", callback: (value: Record<string, unknown>) => Promise<void> | void): void
+    (name: "builder:watch", callback: (event: string, path: string) => Promise<void> | void): void
+  }
   options: Record<string, unknown> & {
     buildDir?: string
     dev?: boolean
@@ -61,6 +64,7 @@ type NuxtLike = {
     serverDir?: string
     srcDir?: string
     vite?: Record<string, unknown> & { root?: string }
+    watch?: Array<string | RegExp>
   }
 }
 
@@ -129,6 +133,36 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
 
     const hook = (nuxt as NuxtLike).hook
     if (typeof hook === "function") {
+      let localNitroConfig: Record<string, unknown> | undefined
+      let localRuntimeRefresh = Promise.resolve()
+      const definitionFiles = new Set<string>()
+      const definitionDirectories = new Set([
+        ...(serverDirs ?? [resolve(root, "server")]).map(directory => resolve(directory, "databases")),
+        resolve(root, "src"),
+      ])
+      const refreshLocalRuntime = () => {
+        const refresh = async () => {
+          if (!localNitroConfig) return
+          const runtime = await installNitroLocalDatabaseRuntime(localNitroConfig, root, provisionRoot, generatedRoot, runtimeOptions, serverDirs)
+          for (const definition of runtime?.definitions ?? []) {
+            definitionFiles.add(definition.handler)
+            definitionDirectories.add(dirname(definition.handler))
+          }
+          nuxtOptions.watch = [...new Set([...(nuxtOptions.watch ?? []), ...definitionDirectories, ...definitionFiles])]
+        }
+        const queued = localRuntimeRefresh.then(refresh, refresh)
+        localRuntimeRefresh = queued
+        return queued
+      }
+      if (nuxtOptions.dev) {
+        nuxtOptions.watch = [...new Set([...(nuxtOptions.watch ?? []), ...definitionDirectories])]
+        hook("builder:watch", async (_event, path) => {
+          const file = resolve(nuxtOptions.srcDir || nuxtOptions.rootDir || root, path)
+          if (definitionFiles.has(file) || [...definitionDirectories].some(directory => file === directory || file.startsWith(`${directory}${sep}`))) {
+            await refreshLocalRuntime()
+          }
+        })
+      }
       hook("nitro:config", async (config) => {
         const provider = resolveNitroHostingProvider(config, nuxtOptions)
         if (!nuxtOptions.dev && provider === "cloudflare" && d1?.unresolved && !hasCompleteNitroConfigD1Binding(config, d1.bindingName, d1.unresolved.databaseName)) {
@@ -139,14 +173,8 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
         }
         if (!nuxtOptions.dev && (provider || d1)) mergeNitroHostedCondition(config)
         if (nuxtOptions.dev) {
-          await installNitroLocalDatabaseRuntime(
-            config,
-            root,
-            provisionRoot,
-            generatedRoot,
-            runtimeOptions,
-            serverDirs,
-          )
+          localNitroConfig = config
+          await refreshLocalRuntime()
         }
         if (!nuxtOptions.dev) {
           const runtime = resolveDBViteConfig(runtimeOptions, root, { provisionRoot, serverDirs })
@@ -248,6 +276,7 @@ async function installNitroLocalDatabaseRuntime(
   }))
   if (alias) alias[databaseDrizzleImport] = file
   else config.alias = { [databaseDrizzleImport]: file }
+  return runtime
 }
 
 function resolveNuxtContentModuleDependencies(options: DatabaseNuxtIntegrationOptions, nuxt: unknown): NuxtModuleDependencies {

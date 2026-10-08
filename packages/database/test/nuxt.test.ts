@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { describe, expect, it, vi } from "vitest"
@@ -8,6 +8,8 @@ import { describe, expect, it, vi } from "vitest"
 import { hubDb } from "../src/nuxt.ts"
 import { resolveConfigValue } from "../src/config-value.ts"
 import { resolveRuntimeCloudflareConfig } from "../src/internal/cloudflare.ts"
+import { runtimeConfig } from "../src/runtime/definition-config.ts"
+import type { ResolvedDBViteConfig } from "../src/types.ts"
 
 import type { Plugin } from "vite"
 
@@ -29,11 +31,18 @@ vi.mock("@vite-hub/database/runtime/state", () => ({
 
 function createNuxt(options: Record<string, unknown>) {
   const hooks: Record<string, ((value: Record<string, unknown>) => Promise<void> | void)[]> = {}
+  const watchHooks: Array<(event: string, path: string) => Promise<void> | void> = []
   return {
     hooks,
+    watchHooks,
     nuxt: {
       options,
       hook(name: string, callback: (value: Record<string, unknown>) => Promise<void> | void) {
+        if (name === "builder:watch") {
+          // SAFETY: Nuxt supplies the native builder:watch event and file path to this callback.
+          watchHooks.push(callback as unknown as (event: string, path: string) => Promise<void> | void)
+          return
+        }
         hooks[name] ||= []
         hooks[name]!.push(callback)
       },
@@ -463,6 +472,74 @@ describe("Database Nuxt integration", () => {
       await rm(serverDir, { force: true, recursive: true })
       await callHook(hooks, "nitro:config", nitroConfig)
       expect(nitroConfig.alias).toBeUndefined()
+      await expect(readFile(runtimeFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+    }
+    finally {
+      await rm(rootDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["default", "nested", "nested-src"] as const)("refreshes Nitro development resource projections after Definition edits at the %s project root", async (location) => {
+    const rootDir = await mkdtemp(join(tmpdir(), "vitehub-db-nuxt-hmr-"))
+    const projectRoot = location === "default" ? rootDir : join(rootDir, "packages/database")
+    const buildDir = join(rootDir, ".nuxt")
+    const srcDir = join(rootDir, "app")
+    const definition = join(projectRoot, location === "nested-src" ? "src/database.ts" : "server/databases/config.ts")
+    const runtimeFile = join(buildDir, "vitehub/database/local-runtime.mjs")
+    await mkdir(dirname(definition), { recursive: true })
+    await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+    await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({
+      cloudflare: { d1Nuxt: { "host-db": "host-provisioned-id" } },
+    }))
+    const writeInheritedDefinition = () => writeFile(definition, "export default defineDatabase({ schema: {} })\n")
+    const readDefaults = async (): Promise<ResolvedDBViteConfig["definitionDefaults"]> => {
+      const module = await readFile(runtimeFile, "utf8")
+      return JSON.parse(/const definitionDefaults = (.+)\n/.exec(module)![1]!)
+    }
+    try {
+      await writeInheritedDefinition()
+      const { hooks, nuxt, watchHooks } = createNuxt({ buildDir, dev: true, rootDir, srcDir, vite: {} })
+      await hubDb({ binding: "HOST_DB", databaseName: "host-db", driver: "d1", ...(location === "default" ? {} : { projectRoot }) })(undefined, nuxt)
+      const nitroConfig: Record<string, unknown> = {}
+      await callHook(hooks, "nitro:config", nitroConfig)
+      expect(nitroConfig.alias).toEqual({ "@vite-hub/database/drizzle": runtimeFile })
+      const inherited = { drizzle: {}, name: "default", schema: {} }
+      const initial = runtimeConfig(inherited, await readDefaults()).cloudflare
+      expect(initial?.binding).toBe("HOST_DB")
+      expect(resolveConfigValue(initial?.databaseId)).toBe("host-provisioned-id")
+
+      const owned = { ...inherited, cloudflare: { binding: "HOST_DB", databaseId: "application-id", databaseName: "application-db" } }
+      await writeFile(definition, [
+        `const cloudflare = ${JSON.stringify(owned.cloudflare)}`,
+        "export default defineDatabase({ cloudflare, schema: {} })",
+        "",
+      ].join("\n"))
+      for (const callback of watchHooks) await callback("change", relative(srcDir, definition))
+      const updatedDefaults = await readDefaults()
+      expect(updatedDefaults.cloudflareProjections?.default?.resource).toBe("opaque")
+      const updated = runtimeConfig(owned, updatedDefaults).cloudflare
+      expect(updated?.binding).toBeUndefined()
+      expect(resolveConfigValue(updated?.databaseId)).toBe("application-id")
+      expect(nuxt.options.watch).toContain(dirname(definition))
+
+      await writeInheritedDefinition()
+      for (const callback of watchHooks) await callback("change", definition)
+      expect(runtimeConfig(inherited, await readDefaults()).cloudflare?.binding).toBe("HOST_DB")
+
+      await rm(dirname(definition), { force: true, recursive: true })
+      for (const callback of watchHooks) await callback("unlinkDir", dirname(definition))
+      expect(nitroConfig.alias).toBeUndefined()
+      await expect(readFile(runtimeFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" })
+      await mkdir(dirname(definition), { recursive: true })
+      await writeInheritedDefinition()
+      for (const callback of watchHooks) await callback("addDir", dirname(definition))
+      expect(nitroConfig.alias).toEqual({ "@vite-hub/database/drizzle": runtimeFile })
+      expect(runtimeConfig(inherited, await readDefaults()).cloudflare?.binding).toBe("HOST_DB")
+
+      const customConfig = { alias: { "@vite-hub/database/drizzle": "#custom-database" } }
+      await callHook(hooks, "nitro:config", customConfig)
+      for (const callback of watchHooks) await callback("change", definition)
+      expect(customConfig.alias).toEqual({ "@vite-hub/database/drizzle": "#custom-database" })
       await expect(readFile(runtimeFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" })
     }
     finally {
