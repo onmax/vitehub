@@ -163,6 +163,10 @@
       "types": "./dist/server/github-inbox.d.ts",
       "import": "./dist/server/github-inbox.js"
     },
+    "./server/registry": {
+      "types": "./dist/server/registry.d.ts",
+      "import": "./dist/server/registry.js"
+    },
     "./server/internal": {
       "types": "./dist/server/internal.d.ts",
       "import": "./dist/server/internal.js"

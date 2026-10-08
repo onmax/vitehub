@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { createServer, mergeConfig } from 'vite'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { VITEHUB_NITRO_CONFIG_CONTEXT } from '@vite-hub/internal/build/vite'
 import { hubAgent } from '../src/vite.ts'
 
@@ -117,18 +117,30 @@ export async function inspect() {
   } finally { await server.close() }
 }, 30_000)
 
-it('loads published server internals before the registry during Vite SSR', async () => {
+it('clears external runtime aliases on each internal-first Vite SSR load', async () => {
   const { root } = await fixture(false)
   const packageRoot = fileURLToPath(new URL('..', import.meta.url))
+  const runtime = await import('@vite-hub/runtime')
   await mkdir(join(root, 'node_modules/@vite-hub'), { recursive: true })
   await symlink(packageRoot, join(root, 'node_modules/@vite-hub/agent'), 'dir')
   await symlink(join(packageRoot, '../workspace'), join(root, 'node_modules/@vite-hub/workspace'), 'dir')
-  const server = await createServer({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { middlewareMode: true, watch: null } })
+  vi.stubGlobal('__VITEHUB_PUBLIC_URL__', { agents: { review: 'https://review.example' } })
   try {
-    const internal = await server.ssrLoadModule(join(packageRoot, 'dist/server/internal.js'))
-    expect(typeof internal.resetPublicUrlAgentNames).toBe('function')
-    expect((await server.ssrLoadModule(join(root, '.vitehub/agent/registry.mjs'))).default).toEqual({})
-  } finally { await server.close() }
+    for (let load = 0; load < 2; load++) {
+      runtime.registerPublicUrlAgentName('removed-agent', 'review')
+      expect(runtime.resolvePublicUrl({ agentName: 'removed-agent' })).toBe('https://review.example')
+      const server = await createServer({ root, configFile: false, appType: 'custom', logLevel: 'silent', plugins: [hubAgent()], server: { middlewareMode: true, watch: null } })
+      try {
+        const internal = await server.ssrLoadModule(join(packageRoot, 'dist/server/internal.js'))
+        expect(typeof internal.resetPublicUrlAgentNames).toBe('function')
+        expect((await server.ssrLoadModule(join(root, '.vitehub/agent/registry.mjs'))).default).toEqual({})
+        expect(runtime.resolvePublicUrl({ agentName: 'removed-agent' })).toBeUndefined()
+      } finally { await server.close() }
+    }
+  } finally {
+    runtime.resetPublicUrlAgentNames()
+    vi.unstubAllGlobals()
+  }
 }, 30_000)
 
 

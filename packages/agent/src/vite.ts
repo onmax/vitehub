@@ -1830,12 +1830,11 @@ async function writeAgentRuntimeRegistry(
     workspaceRegistry: false,
   })
   await writeFile(catalogPath, [...aggregateCatalog.imports, "", ...aggregateCatalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
-  // Published server internals also import this registry. On the first SSR load,
-  // that cycle can reach the registry before the reset export is initialized.
-  // No discovered aliases exist yet; subsequent registry refreshes reset them.
+  // Use a non-cyclic alias reset entry: server internals also import this registry,
+  // so their reset re-export can be uninitialized during an internal-first reload.
   await writeFile(registryPath, [
-    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/internal"))}`,
-    "if (typeof resetPublicUrlAgentNames === 'function') resetPublicUrlAgentNames()",
+    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/registry"))}`,
+    "resetPublicUrlAgentNames()",
     `export default {${entries.length ? `\n  ${entries.join(",\n  ")}\n` : ""}}`,
     `export const metadata = {${generatedAgentIdentityEntries(definitions)}}`,
     "",
@@ -3314,6 +3313,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       // CLI discovery resolves the application config to collect contributors; it does not start Nitro.
       // The Console's discovery config intentionally includes its broad /_vitehub/** route, so do not
       // install or validate the development-only invocation handler in that mode.
+      // SAFETY: Vite preserves the optional discovery flag; both flags are checked against true.
       const cliDiscovery = (config as { server?: { middlewareMode?: unknown }, vitehubCliDiscovery?: unknown }).vitehubCliDiscovery === true
         || (config as { server?: { middlewareMode?: unknown } }).server?.middlewareMode === true
       const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && !cliDiscovery && environment?.command === "serve"
