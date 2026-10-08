@@ -41,6 +41,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readStringArray(value: unknown): string[] {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider output config entries are untrusted JSON values.
   return Array.isArray(value)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Provider output config entries are untrusted JSON values.
     ? value.filter((entry): entry is string => typeof entry === "string")
     : []
 }
