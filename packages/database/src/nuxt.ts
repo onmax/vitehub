@@ -143,7 +143,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
       const refreshLocalRuntime = () => {
         const refresh = async () => {
           if (!localNitroConfig) return
-          const runtime = await installNitroLocalDatabaseRuntime(localNitroConfig, root, provisionRoot, generatedRoot, runtimeOptions, serverDirs)
+          const runtime = await installNitroLocalDatabaseRuntime(localNitroConfig, root, provisionRoot, generatedRoot, runtimeOptions, serverDirs, d1)
           for (const definition of runtime?.definitions ?? []) {
             definitionFiles.add(definition.handler)
             definitionDirectories.add(dirname(definition.handler))
@@ -165,7 +165,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
       }
       hook("nitro:config", async (config) => {
         const provider = resolveNitroHostingProvider(config, nuxtOptions)
-        if (!nuxtOptions.dev && provider === "cloudflare" && d1?.unresolved && !hasCompleteNitroConfigD1Binding(config, d1.bindingName, d1.unresolved.databaseName)) {
+        if (!nuxtOptions.dev && provider === "cloudflare" && d1?.unresolved && !findCompleteNitroConfigD1Binding(config, d1.bindingName, d1.unresolved.databaseName)) {
           if (d1.unresolved.reason === "missing-database-name") {
             throw databaseErrorDiagnostics.DATABASE_B0001({ message: "[vitehub] Cloudflare D1 output requires database.databaseName." })
           }
@@ -178,6 +178,7 @@ export function hubDb(options: DatabaseNuxtIntegrationOptions = {}): DatabaseNux
         }
         if (!nuxtOptions.dev) {
           const runtime = resolveDBViteConfig(runtimeOptions, root, { provisionRoot, serverDirs })
+          if (provider === "cloudflare") assertDistinctNuxtD1Bindings(runtime, d1, config)
           const d1Only = runtime && usesD1HttpOnly(runtime)
           const runtimeProvider = provider === "vercel" ? "vercel" : provider === "cloudflare" || d1 || d1Only ? "cloudflare" : provider
           if (d1Only) {
@@ -237,6 +238,7 @@ async function installNitroLocalDatabaseRuntime(
   generatedRoot: string,
   options: ResolvedDatabaseNuxtIntegrationOptions,
   serverDirs?: string[],
+  d1?: ResolvedDatabaseNuxtD1Options,
 ) {
   const file = resolve(generatedRoot, generatedNitroLocalDatabaseRuntime)
   const alias = isRecord(config.alias) ? config.alias : undefined
@@ -247,6 +249,7 @@ async function installNitroLocalDatabaseRuntime(
   }
 
   const runtime = resolveDBViteConfig(options, root, { provisionRoot, serverDirs })
+  assertDistinctNuxtD1Bindings(runtime, d1, config)
   if (!runtime?.definitions.length) {
     await rm(file, { force: true })
     if (alias && existingAlias === file) {
@@ -493,11 +496,24 @@ function mergeNitroConfigCloudflareConfig(config: Record<string, unknown>, d1: R
   wrangler.d1_databases = mergeCloudflareD1Bindings(wrangler.d1_databases, [d1.d1Database])
 }
 
-function hasCompleteNitroConfigD1Binding(config: Record<string, unknown>, bindingName: string, databaseName: string | undefined) {
+function assertDistinctNuxtD1Bindings(runtime: ReturnType<typeof resolveDBViteConfig>, d1: ResolvedDatabaseNuxtD1Options | undefined, config: Record<string, unknown>) {
+  if (!runtime || !d1) return
+  const host = d1.d1Database ?? findCompleteNitroConfigD1Binding(config, d1.bindingName, d1.unresolved?.databaseName)
+  for (const name of runtime.databaseNames) {
+    const projection = runtime.definitionDefaults.cloudflareProjections[name]
+    if (projection?.resource !== "configured" || projection.binding !== d1.bindingName) continue
+    const definition = runtime.databases[name]?.cloudflare
+    if (host && resolveConfigValue(definition?.databaseId) === host.database_id && resolveConfigValue(definition?.databaseName) === host.database_name) continue
+    throw databaseErrorDiagnostics.DATABASE_B0004({ message: `[vitehub] Database Definition ${JSON.stringify(name)} requires a distinct Cloudflare D1 binding from the Nuxt host resource ${JSON.stringify(d1.bindingName)}. Set cloudflare.binding on the Definition to a different binding name.` })
+  }
+}
+
+function findCompleteNitroConfigD1Binding(config: Record<string, unknown>, bindingName: string, databaseName: string | undefined) {
   const cloudflare = isRecord(config.cloudflare) ? config.cloudflare : undefined
   const wrangler = cloudflare && isRecord(cloudflare.wrangler) ? cloudflare.wrangler : undefined
   const bindings = wrangler?.d1_databases
-  return Array.isArray(bindings) && bindings.some(binding => isRecord(binding)
+  if (!Array.isArray(bindings)) return
+  return bindings.find((binding: unknown): binding is Record<string, unknown> => isRecord(binding)
     && binding.binding === bindingName
     && typeof binding.database_id === "string"
     && Boolean(binding.database_id.trim())

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { discoverDatabaseDefinitions, resolveDBViteConfig } from "../src/config.ts"
+import { resolveConfigValue } from "../src/config-value.ts"
 import { resolveCloudflareD1Bindings, resolveRuntimeCloudflareConfig } from "../src/internal/cloudflare.ts"
 import { renderDatabaseConfigExpression } from "../src/internal/runtime-config-expression.ts"
 import { runtimeConfig } from "../src/runtime/definition-config.ts"
@@ -464,6 +465,49 @@ describe("resolveDBViteConfig", () => {
     expect(config.cloudflare?.databaseName).toBe(resource.databaseName)
     expect(config.cloudflare?.previewDatabaseId).toBeUndefined()
     if (access !== "build") expect(config.cloudflare?.binding).toBeUndefined()
+  })
+
+  it.each([
+    { field: "databaseId", provisioned: false },
+    { field: "databaseId", provisioned: true },
+    { field: "databaseName", provisioned: false },
+    { field: "databaseName", provisioned: true },
+  ] as const)("preserves configured $field ownership when its runtime Env is absent with provisioned=$provisioned", async ({ field, provisioned }) => {
+    const rootDir = await createTempProject()
+    const originalValue = process.env.VITEHUB_TEST_OWNED_RESOURCE
+    delete process.env.VITEHUB_TEST_OWNED_RESOURCE
+    try {
+      await writeDefinition(rootDir, "server/databases/config.ts", "notes", { cloudflare: `${field}: process.env.VITEHUB_TEST_OWNED_RESOURCE,` })
+      if (provisioned) {
+        await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+        await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { default: "application-id" } } }))
+      }
+      const resolved = resolveDBViteConfig({
+        binding: "HOST_DB", cloudflare: { http: true }, databaseId: "host-id", databaseName: "host-name", driver: "d1", previewDatabaseId: "host-preview-id",
+      }, rootDir)!
+      expect(resolved.definitionDefaults.cloudflareProjections.default?.resource).toBe("configured")
+      const expression = renderDatabaseConfigExpression("default", resolved, "definition")
+      const configs = () => {
+        const definition = { cloudflare: { [field]: process.env.VITEHUB_TEST_OWNED_RESOURCE }, drizzle: {}, name: "default", schema: {} }
+        return [Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)(definition, resolveRuntimeCloudflareConfig), runtimeConfig(definition, resolved.definitionDefaults)]
+      }
+      for (const config of configs()) {
+        expect(resolveConfigValue(config.cloudflare?.databaseId)).toBe(provisioned ? "application-id" : undefined)
+        expect(resolveConfigValue(config.cloudflare?.databaseName)).toBeUndefined()
+        expect(config.cloudflare?.previewDatabaseId).toBeUndefined()
+        expect(config.cloudflare?.binding).toBeUndefined()
+        expect(config.cloudflare?.http).toBe(true)
+      }
+      process.env.VITEHUB_TEST_OWNED_RESOURCE = "runtime-value"
+      for (const config of configs()) {
+        expect(resolveConfigValue(config.cloudflare?.[field])).toBe("runtime-value")
+        expect(config.cloudflare?.previewDatabaseId).toBeUndefined()
+      }
+    }
+    finally {
+      if (originalValue === undefined) delete process.env.VITEHUB_TEST_OWNED_RESOURCE
+      else process.env.VITEHUB_TEST_OWNED_RESOURCE = originalValue
+    }
   })
 
   it("preserves D1 HTTP credentials for a one-field URL override", async () => {

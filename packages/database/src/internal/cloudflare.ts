@@ -19,11 +19,12 @@ export function cloudflareOptions(
 export function mergeCloudflareConfig(
   defaults: CloudflareD1BindingConfig | undefined,
   definition: CloudflareD1BindingConfig | undefined,
+  ownsResource = definition?.databaseId !== undefined || definition?.databaseName !== undefined,
 ): CloudflareD1BindingConfig | undefined {
   if (!defaults) return definition
-  if (!definition) return defaults
+  if (!definition && !ownsResource) return defaults
+  definition ??= {}
   const value: CloudflareD1BindingConfig = { ...defaults }
-  const ownsResource = definition.databaseId !== undefined || definition.databaseName !== undefined
   if (definition.binding !== undefined) value.binding = definition.binding
   if (ownsResource) {
     value.databaseId = definition.databaseId
@@ -49,9 +50,9 @@ export function resolveRuntimeCloudflareConfig(
   definition: CloudflareD1BindingConfig | undefined,
   options: Partial<CloudflareD1Projection> & { migrationsDir?: string, name: string },
 ) {
-  const value = mergeCloudflareConfig(defaults, definition)
+  const inheritsResource = options.resource !== "configured" && definition?.databaseId === undefined && definition?.databaseName === undefined
+  const value = mergeCloudflareConfig(defaults, definition, !inheritsResource)
   if (!value) return
-  const inheritsResource = definition?.databaseId === undefined && definition?.databaseName === undefined
   const binding = options.resource === "opaque" && !inheritsResource
     ? undefined
     : definition?.binding?.trim() || options.binding

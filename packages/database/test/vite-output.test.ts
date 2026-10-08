@@ -739,6 +739,7 @@ describe("Vite db provider outputs", () => {
         migrationsTable: "__nuxt_migrations",
       },
     })
+    runtimeConfig.definitionDefaults.cloudflareProjections.primary = { resource: "inherited" }
     const expression = renderDatabaseConfigExpression("primary", runtimeConfig, "definition")
     const { resolveRuntimeCloudflareConfig } = await import("../src/internal/cloudflare.ts")
     const config = Function("definition", "resolveRuntimeCloudflareConfig", `return (${expression})`)({ cloudflare: {}, connection: undefined, drizzle: {}, schema: {} }, resolveRuntimeCloudflareConfig)
