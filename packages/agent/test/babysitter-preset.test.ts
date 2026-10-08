@@ -542,6 +542,25 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it.each([false, true])("rechecks dynamic host admission after dependency setup, Box=%s", async box => {
+    let accepting = true;
+    const retryAt = Date.now() + 300_000;
+    const admission = vi.fn(async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true, reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }));
+    const f = await fixture(false, false, { box, admission });
+    const installOriginal = githubInstalls.installGitHubPullRequestWorkspace;
+    const install = vi.spyOn(githubInstalls, "installGitHubPullRequestWorkspace").mockImplementationOnce(async (...args) => { await installOriginal(...args); accepting = false; });
+    try {
+      await f.reconcile();
+      expect(install).toHaveBeenCalledOnce();
+      expect(f.passes).toHaveLength(0);
+      expect(admission.mock.calls.length).toBeGreaterThan(1);
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(current.status).toBe("waiting");
+      expect(current.wait?.retryAt).toBe(retryAt);
+      expect(current.lease).toBeNull();
+    } finally { install.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
   it("keeps a recovery claim parked when admission permits only host work", async () => {
     const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {

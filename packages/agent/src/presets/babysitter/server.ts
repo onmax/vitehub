@@ -688,9 +688,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         let providerDirectory: string | undefined;
         let modelWorkParked = false;
         const parkBlockedModelWork = async () => {
+          const currentAdmission = await options.admission?.();
+          const retryAt = currentAdmission && !currentAdmission.accepting
+            ? currentAdmission.retryAt ?? Date.now() + 60_000 : modelRetryAt;
           const providerBlockedUntil = (await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0;
           const providerBlocked = providerBlockedUntil > Date.now();
-          const admitted = modelAdmission && !providerBlocked;
+          const admitted = (currentAdmission?.accepting ?? modelAdmission) && !providerBlocked;
           if (babysitterModelAdmission(admitted, inboxClaim.snapshot)) return false;
           modelWorkParked = true;
           outcome = "waiting";
@@ -703,7 +706,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             ...(pushedHead ? { progress: { kind: "verified" as const, evidence: `push:${pushedHead}` } } : {}),
             wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy),
               ...(pushedHead ? { headSha: pushedHead } : {}),
-              retryAt: admitted ? undefined : Math.max(modelRetryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
+              retryAt: admitted ? undefined : Math.max(retryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
           });
           return true;
         };
