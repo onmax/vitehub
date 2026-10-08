@@ -854,8 +854,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Check durable ownership at dispatch, including after admission I/O.
               // The cancellation watcher alone leaves a window for a reclaimed worker.
               const repairOperation = new AsyncLocalStorage<boolean>();
-              const repairEvidenceKey = (snapshot: Snapshot) => mergeReviewEvidenceKey({
+              const repairEvidenceKey = (snapshot: Snapshot, current = snapshot) => mergeReviewEvidenceKey({
                 ...snapshot,
+                // Resolved failures cease to be repair requirements. Missing or
+                // pending evidence retains the original failure and fences publication.
+                checks: Object.fromEntries(Object.entries(snapshot.checks).filter(([key]) =>
+                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase()))),
+                statuses: Object.fromEntries(Object.entries(snapshot.statuses).filter(([key]) =>
+                  String(current.statuses[key]?.state).toLowerCase() !== "success")),
                 // A base advance is checked separately before conflict repair.
                 // Title and body remain part of the worker's repair requirements.
                 pr: snapshot.pr && { ...snapshot.pr,
@@ -873,7 +879,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 // Repair publication may coalesce base and successful-check updates
                 // when its head, requirements and actionable feedback are unchanged.
                 if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)
-                  && !(repairOperation.getStore() && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot))) {
+                  && !(repairOperation.getStore() && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot, current))) {
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
                 return current;
