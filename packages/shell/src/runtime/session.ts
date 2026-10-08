@@ -83,12 +83,19 @@ class RuntimeShellSession implements ShellSession {
       timeout: options.timeout ?? this.policy.timeout,
     })
 
+    const timedOut = result.timedOut
     return applyOutputLimit({
-      ...result,
       command: result.command ?? command,
       cwd: result.cwd ?? options.cwd,
       durationMs: result.durationMs ?? Date.now() - started,
-      event: result.timedOut ? "command_timed_out" : result.event,
+      event: timedOut ? "command_timed_out" : result.event,
+      exitCode: result.exitCode,
+      maxOutputLength: result.maxOutputLength,
+      outputTruncated: result.outputTruncated,
+      stderr: result.stderr,
+      stdout: result.stdout,
+      timedOut,
+      workspaceGuardrail: result.workspaceGuardrail,
     }, this.policy.maxOutputLength)
   }
 
