@@ -5,6 +5,11 @@ import { join } from "node:path"
 import { createClient } from "@libsql/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+vi.mock("@libsql/client", async importOriginal => {
+  const actual = await importOriginal<typeof import("@libsql/client")>()
+  return { ...actual, createClient: vi.fn(actual.createClient) }
+})
+
 import { createLibsqlAgentState, createSqliteAgentState, type LibsqlAgentStateClient, type SqliteAgentStateDriver, ViteHubSqliteAgentStateAdapter } from "../src/state/sqlite.ts"
 
 import type { QueueEntry, StateAdapter } from "chat"
@@ -176,6 +181,23 @@ describe("SQLite Agent State Provider", () => {
     } finally {
       client.close()
       await state.disconnect()
+    }
+  })
+
+  it.each(["wal", "delete"] as const)("rejects a VFS that silently retains a different journal mode than %s", async journalMode => {
+    const { url } = await createState()
+    // A real memory VFS returns 'memory' even when PRAGMA requests WAL.
+    const opened = createClient({ url: "file::memory:" })
+    const close = vi.spyOn(opened, "close")
+    const factory = vi.mocked(createClient).mockReturnValueOnce(opened)
+    const state = createLibsqlAgentState({ url, journalMode })
+    try {
+      await expect(state.connect()).rejects.toThrow(new RegExp(`journal mode.*${journalMode}.*memory`, "i"))
+      expect(close).toHaveBeenCalledOnce()
+    } finally {
+      factory.mockClear()
+      await state.disconnect()
+      opened.close()
     }
   })
 
