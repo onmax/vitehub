@@ -13578,14 +13578,13 @@ describe("server helpers", () => {
           adapter: () => adapter as never,
           messages: { errorFallbackText: "Restarted. citeturn0view0" },
         }),
-      } } : {}),
-      capabilities: [
+      } } : { capabilities: [
         defineChatCapability({
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           platforms: { telegram: () => adapter as never },
           webhooks: { telegram: {} },
         }),
-      ],
+      ] }),
       driver: {
         run: async ({ input }: { input: { abortSignal?: AbortSignal } }) => {
           prompts.push(JSON.stringify(input))
