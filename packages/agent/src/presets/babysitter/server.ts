@@ -865,9 +865,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               const repairOperation = new AsyncLocalStorage<boolean>();
               const repairEvidenceKey = (snapshot: Snapshot) => mergeReviewEvidenceKey({
                 ...snapshot,
-                // Metadata edits are re-evaluated by merge gates. They must not
-                // discard an exact-head repair with unchanged actionable feedback.
-                pr: snapshot.pr && { ...snapshot.pr, title: undefined, body: undefined,
+                // A base advance is checked separately before conflict repair.
+                // Title and body remain part of the worker's repair requirements.
+                pr: snapshot.pr && { ...snapshot.pr,
                   base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
               }, waitPolicy);
               const assertLease = async () => {
@@ -879,8 +879,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 const stopped = claimStopReason(inboxClaim, current, pushedHead);
                 if (stopped) throw new DOMException(stopped, "AbortError");
                 // Merge and feedback mutations require the original generation.
-                // Repair publication may coalesce metadata and successful-check
-                // updates when its head and actionable feedback are unchanged.
+                // Repair publication may coalesce base and successful-check updates
+                // when its head, requirements and actionable feedback are unchanged.
                 if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)
                   && !(repairOperation.getStore() && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot))) {
                   throw new DOMException("Pull request evidence changed.", "AbortError");
