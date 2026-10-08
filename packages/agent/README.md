@@ -881,7 +881,12 @@ New same-head feedback discards obsolete saved results. Confirmed repair-head an
 closure transitions retain their result. If a writer settles after another host
 replaces its expired lease, the latest settled result is requeued with a fresh
 activity identity. GitHub comments are eventually consistent: a lease cannot
-revoke an HTTP write already accepted by GitHub. Waiting comments
+revoke an HTTP write already accepted by GitHub. A crashed writer's marker
+expires fifteen minutes after its last delivery lease. Corrective replay stops
+at that deadline. If an expired writer later settles in a live process, the host
+queues the latest status again. An unobserved remote write after the deadline
+can still overwrite the comment. Channels sharing one GitHub host serialize
+activity publication across token rotation. Waiting comments
 include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 

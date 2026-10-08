@@ -1484,7 +1484,7 @@ async function githubAppInstallationToken<TRuntimeConfig extends AgentRuntimeCon
     userAgent: options.userAgent,
   })
   try {
-    return (await credentials.installationToken(installationId)).token
+    return (await credentials.installationToken(installationId, { signal })).token
   }
   catch (error) {
     const status = codeHostErrorStatus(error)
@@ -1561,7 +1561,13 @@ async function githubActivityCredentialKey<TRuntimeConfig extends AgentRuntimeCo
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   options: GitHubAppOptions<TRuntimeConfig>,
   context: GitHubAppContext<TRuntimeConfig>,
+  authority?: object,
 ): Promise<string> {
+  if (authority) {
+    let id = githubActivityTokenResolverIds.get(authority)
+    if (id === undefined) githubActivityTokenResolverIds.set(authority, id = ++githubActivityNextTokenResolverId)
+    return `host:${id}`
+  }
   if (hasRuntimeType(options.token, "function")) {
     let id = githubActivityTokenResolverIds.get(options.token)
     if (id === undefined) githubActivityTokenResolverIds.set(options.token, id = ++githubActivityNextTokenResolverId)
@@ -1605,6 +1611,7 @@ interface GitHubActivityIdentity {
 async function githubAppIdentity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig>,
   context: GitHubAppContext<TRuntimeConfig>,
+  signal?: AbortSignal,
 ): Promise<GitHubActivityIdentity> {
   const options = githubAppOptions(app) || {}
   if (options.identity) return options.identity
@@ -1618,7 +1625,7 @@ async function githubAppIdentity<TRuntimeConfig extends AgentRuntimeConfig>(
     userAgent: options.userAgent,
   })
   try {
-    return { appId: (await credentials.app()).id }
+    return { appId: (await credentials.app(signal)).id }
   }
   catch (error) {
     const status = codeHostErrorStatus(error)
@@ -1633,6 +1640,7 @@ async function githubActivityIdentity<TRuntimeConfig extends AgentRuntimeConfig>
   token: string,
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   context: GitHubAppContext<TRuntimeConfig>,
+  signal?: AbortSignal,
 ): Promise<GitHubActivityIdentity> {
   try {
     return await codeHostIdentity(provider, { kind: "token" })
@@ -1649,7 +1657,7 @@ async function githubActivityIdentity<TRuntimeConfig extends AgentRuntimeConfig>
   ) {
     return { login: "github-actions[bot]" }
   }
-  if (app) return githubAppIdentity(app, context)
+  if (app) return githubAppIdentity(app, context, signal)
   throw agentDiagnostics.AGENT_R0356({ message: "[vitehub] GitHub Agent activity could not resolve the authenticated identity." })
 }
 
@@ -1850,6 +1858,7 @@ function renderGithubActivity(
 function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   mode: "initialize" | "lifecycle" = "lifecycle",
+  authority?: object,
 ): NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]> {
   const options = githubAppOptions(app) || {}
   const commentIds = new Map<string, number>()
@@ -1864,23 +1873,22 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
         deadline.throwIfAborted()
         return request(input, { ...init, signal: init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline })
       }
-      const scopedApp = app ? { ...options, fetch: fetcher } : undefined
       const apiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
       // Token rotation must not let writes to the same comment run concurrently.
       // Reserve the target before authentication to preserve lifecycle ordering.
-      const updateKey = `${await githubActivityCredentialKey(app, options, context)}\0${commentsTarget}`
+      const updateKey = `${await githubActivityCredentialKey(app, options, context, authority)}\0${commentsTarget}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
         // Authentication and the serialized publication each get a request budget.
         deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
         deadline.throwIfAborted()
-        const token = await githubPullRequestMetadataToken(scopedApp, context, target.installationId, target.repository, deadline)
+        const token = await githubPullRequestMetadataToken(app, context, target.installationId, target.repository, deadline)
         if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
         deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
         deadline.throwIfAborted()
         const provider = await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(fetcher), userAgent: options.userAgent })
-        const identity = await githubActivityIdentity(provider, token, scopedApp, context)
+        const identity = await githubActivityIdentity(provider, token, app, context, deadline)
         const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
         const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
         const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
@@ -3064,8 +3072,8 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
         ...(appInput.identity?.() ? { identity: { login: appInput.identity()! } } : {}),
       }
     : appInput
-  const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
-  const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
+  const activityDefinition = activity ? githubAgentActivity(appOptions, "lifecycle", identity) : undefined
+  const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize", identity) : undefined
   const app = githubAppOptions(appOptions)
   const pullRequestOptions = pullRequest === true ? {} : pullRequest || {}
   const workspace = pullRequest ? githubPullRequestWorkspacePolicy(pullRequestOptions) : undefined

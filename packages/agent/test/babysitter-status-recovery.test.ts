@@ -910,7 +910,7 @@ test('keeps a durable correction after acknowledgement while a replaced writer c
   assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
 })
 
-for (const legacy of [false, true]) test(`retains recovery for a late orphaned status write beyond its deadline, legacy=${legacy}`, async t => {
+for (const legacy of [false, true]) test(`retired writer settlement corrects a late status write, legacy=${legacy}`, async t => {
   const { inbox, claim, open, setClock } = await fixture(t)
   await inbox.finish(claim, blocked('Old result'))
   const [orphan] = await inbox.claimStatusDeliveries()
@@ -927,16 +927,48 @@ for (const legacy of [false, true]) test(`retains recovery for a late orphaned s
   assert.equal(projection, 'Pull request closed.')
   setClock(orphan.leaseUntil + 60 * 60_000)
   await recovery.flush()
-  // Local elapsed time cannot fence an already accepted external request.
+  assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
+  assert.deepEqual(await restored.metaEntries('status-writers:v1:'), [])
+  // An observed late settlement still corrects the current status after retirement.
   projection = orphan.text
   setClock(orphan.leaseUntil + 2 * 60 * 60_000)
-  await recovery.flush()
-  assert.equal(projection, 'Pull request closed.', 'the old HTTP write must remain recoverable after its retirement deadline')
-  assert.equal((await restored.metaEntries('status-outbox:v1:')).length, 1)
   await restored.reconcileSettledStatusWriter(orphan)
+  await recovery.flush()
+  assert.equal(projection, 'Pull request closed.', 'observed late settlement must repair the current projection')
+  assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
+  assert.deepEqual(await restored.metaEntries('status-writers:v1:'), [])
+})
+
+for (const legacy of [false, true]) test(`retires a crashed status writer after a bounded correction window, legacy=${legacy}`, async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Saved result'))
+  const [orphan] = await inbox.claimStatusDeliveries()
+  assert.ok(orphan?.leaseUntil)
+  if (legacy) await inbox.setMeta('status-writers:v1:acme/app#239', [orphan.lease])
+  await inbox.close()
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  let writes = 0
+  const recovery = createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async () => { writes++ } })
+  setClock(orphan.leaseUntil + 1)
+  await recovery.flush()
+  const firstMarkers = await restored.meta('status-writers:v1:acme/app#239')
+  assert.ok(Array.isArray(firstMarkers))
+  const expiry = firstMarkers.find(entry => entry.lease === orphan.lease)?.expiresAt
+  assert.ok(Number.isFinite(expiry), 'legacy writer deadlines must be persisted once')
+  setClock(orphan.leaseUntil + 10 * 60_000)
+  await recovery.flush()
+  const nextMarkers = await restored.meta('status-writers:v1:acme/app#239')
+  assert.ok(Array.isArray(nextMarkers))
+  assert.equal(nextMarkers.find(entry => entry.lease === orphan.lease)?.expiresAt, expiry)
+  setClock(orphan.leaseUntil + 60 * 60_000)
   await recovery.flush()
   assert.deepEqual(await restored.metaEntries('status-outbox:v1:'), [])
   assert.deepEqual(await restored.metaEntries('status-writers:v1:'), [])
+  const completed = writes
+  setClock(orphan.leaseUntil + 120 * 60_000)
+  await recovery.flush()
+  assert.equal(writes, completed, 'a crashed writer must not trigger perpetual replay')
 })
 
 test('reopening a closed PR replaces its acknowledged status without an available worker', async t => {

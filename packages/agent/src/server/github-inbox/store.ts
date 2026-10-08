@@ -333,11 +333,16 @@ export class PullRequestInbox {
   private async statusWritersIn(tx: PullRequestInboxExecutor, target: string): Promise<Array<{ lease: string; expiresAt: number }>> {
     const parsed = v.safeParse(v.array(v.union([v.string(), v.object({ lease: v.string(), expiresAt: v.number() })])), await this.metaIn(tx, `${statusWriterPrefix}${target}`))
     const now = this.clock()
-    // An accepted external request can still land after any local deadline.
-    // Keep its recovery marker until the writer explicitly settles. The
-    // deadline only slows replay for an orphan; it cannot fence GitHub.
-    return parsed.success ? parsed.output.map(value => v.is(v.string(), value) ? { lease: value, expiresAt: now + 900_000 } : value)
-      .filter(value => Number.isFinite(value.expiresAt)) : []
+    if (!parsed.success) return []
+    const writers = parsed.output.map(value => v.is(v.string(), value) ? { lease: value, expiresAt: now + 900_000 } : value)
+      .filter(value => Number.isFinite(value.expiresAt) && value.expiresAt > now)
+    // A crashed process cannot settle its marker. Bound correction replay,
+    // and persist a legacy marker's first deadline instead of extending it on reads.
+    if (writers.length !== parsed.output.length || parsed.output.some(value => v.is(v.string(), value))) {
+      if (writers.length) await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, writers)
+      else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusWriterPrefix}${target}`])
+    }
+    return writers
   }
   private async settleStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<Array<{ lease: string; expiresAt: number }>> {
     const target = statusTargetKey(observed)
@@ -455,11 +460,9 @@ export class PullRequestInbox {
         if (outcome === 'discarded') await this.reconcileStatusWriterIn(tx, observed)
         else {
           // An older accepted request can still land after this acknowledgement.
-          // Replay with a fresh activity identity until every writer has settled.
-          // Orphaned writers retain recovery with a slower polling interval.
+          // Replay with a fresh activity identity through each writer's correction window.
           const version = randomUUID()
-          const retryDelay = writers.some(writer => writer.expiresAt <= this.clock()) ? 300_000 : 60_000
-          await this.setMetaIn(tx, key, { ...released, version, nextAt: this.clock() + retryDelay,
+          await this.setMetaIn(tx, key, { ...released, version, nextAt: this.clock() + 60_000,
             activity: { ...released.activity, runId: `saved:${statusTargetKey(observed)}:${released.contentKey}:${version}` } })
         }
       } else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
