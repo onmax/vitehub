@@ -710,9 +710,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         let providerDirectory: string | undefined;
         let modelWorkParked = false;
         const parkBlockedModelWork = async () => {
+          const currentAdmission = await options.admission?.();
+          const retryAt = currentAdmission && !currentAdmission.accepting
+            ? currentAdmission.retryAt ?? Date.now() + 60_000 : modelRetryAt;
           const providerBlockedUntil = (await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0;
           const providerBlocked = providerBlockedUntil > Date.now();
-          const admitted = modelAdmission && !providerBlocked;
+          const admitted = (currentAdmission?.accepting ?? modelAdmission) && !providerBlocked;
           if (babysitterModelAdmission(admitted, inboxClaim.snapshot)) return false;
           modelWorkParked = true;
           outcome = "waiting";
@@ -725,7 +728,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             ...(pushedHead ? { progress: { kind: "verified" as const, evidence: `push:${pushedHead}` } } : {}),
             wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy),
               ...(pushedHead ? { headSha: pushedHead } : {}),
-              retryAt: admitted ? undefined : Math.max(modelRetryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
+              retryAt: admitted ? undefined : Math.max(retryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
           });
           return true;
         };
@@ -889,12 +892,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // The cancellation watcher alone leaves a window for a reclaimed worker.
               const repairOperation = new AsyncLocalStorage<boolean>();
               const repairEvidenceKey = (snapshot: Snapshot, current = snapshot) => {
-                const published = current.pr?.head?.sha !== pullRequest.headRefOid && verifiedPushHeads.has(current.pr?.head?.sha ?? "");
+                const published = !!pushedHead && verifiedPushHeads.has(pushedHead);
                 const original = published && snapshot === inboxClaim.snapshot;
                 const checks: Snapshot["checks"] = original ? {} : Object.fromEntries(Object.entries(snapshot.checks).filter(([key]) =>
-                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase())));
+                  !["success", "neutral", "skipped"].includes(String(current.checks[key]?.conclusion).toLowerCase())
+                  && (!published || verifiedPushHeads.has(snapshot.checks[key]?.head_sha ?? ""))));
                 const statuses: Snapshot["statuses"] = original ? {} : Object.fromEntries(Object.entries(snapshot.statuses).filter(([key]) =>
-                  String(current.statuses[key]?.state).toLowerCase() !== "success"));
+                  String(current.statuses[key]?.state).toLowerCase() !== "success"
+                  && (!published || verifiedPushHeads.has(snapshot.statuses[key]?.sha ?? ""))));
                 if (published) {
                   for (const key of Object.keys(checks)) checks[key] = { ...checks[key], head_sha: pullRequest.headRefOid };
                   for (const key of Object.keys(statuses)) statuses[key] = { ...statuses[key], sha: pullRequest.headRefOid };
@@ -908,7 +913,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 }, waitPolicy);
               };
               let observePendingPush: ((current: Snapshot) => void) | undefined;
-              verifiedPushHeads.add(pullRequest.headRefOid);
               const pendingInboxHeads = new Set([pullRequest.headRefOid]);
               const assertLease = async () => {
                 abortSignal.throwIfAborted();

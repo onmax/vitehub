@@ -805,6 +805,15 @@ export class PullRequestInbox {
       const matches = await tx.execute(`SELECT number FROM ${t.pullRequests} WHERE scope=? AND repository=? AND state='open'
         AND ((? IS NOT NULL AND head_sha=?) OR (? IS NOT NULL AND (base_ref=? OR head_ref=?)))`, [this.scope, repository, sha ?? null, sha ?? null, pushedRef, pushedRef, pushedRef])
       for (const row of matches) numbers.add(Number(row.number))
+      if (sha && (check || event === 'status')) {
+        // Source-push and check deliveries can precede synchronize. Retain CI
+        // for an active publication or its durable pushed-head wait.
+        const pending = await tx.execute(`SELECT number, value FROM ${t.pullRequests} WHERE scope=? AND repository=? AND state='open' AND (lease IS NOT NULL OR waiting=1)`, [this.scope, repository])
+        for (const row of pending) {
+          const snapshot = parseSnapshot(JSON.parse(stringValue(row.value)))
+          if (snapshot.wait?.headSha === sha || snapshot.lease && snapshot.leaseUntil > this.clock() && snapshot.sourcePushHeads?.includes(sha)) numbers.add(Number(row.number))
+        }
+      }
       for (const number of numbers) {
         const existing = await this.getIn(tx, repository, number)
         const s = existing ?? this.empty(repository, number)
@@ -812,7 +821,8 @@ export class PullRequestInbox {
         // invalidate active work when the author, labels, head, or state changes.
         if (!existing && !matchesGitHubPullRequestFilter({ ...pullRequestFilterContext(repository, payload.pull_request ?? null), actor: payload.sender?.login ?? payload.comment?.user?.login, action: payload.action }, { actor: this.filter?.actor, action: this.filter?.action }, 'event')) continue
         const pushRefMatch = event === 'push' && (payload.ref === `refs/heads/${s.pr?.base?.ref}` || payload.ref === `refs/heads/${s.pr?.head?.ref}`)
-        if (sha && s.pr?.head?.sha && s.pr.head.sha !== sha && !pushRefMatch) continue // old-head CI cannot wake current head
+        const pendingHead = sha && (check || event === 'status') && (s.wait?.headSha === sha || s.lease && s.leaseUntil > this.clock() && s.sourcePushHeads?.includes(sha))
+        if (sha && s.pr?.head?.sha && s.pr.head.sha !== sha && !pushRefMatch && !pendingHead) continue // unrelated old-head CI cannot wake current head
         let changed = false
         if (payload.pull_request) changed = this.updatePr(s, payload.pull_request)
         const upsert = (map: Record<string, GitHubEvidence>, value: GitHubEvidence | undefined, itemKey?: string) => {
@@ -1005,13 +1015,14 @@ export class PullRequestInbox {
       if (result.wait && pinnedHead) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
         if (result.verifiedPushHeads && (result.progress?.kind !== 'verified' || result.progress.evidence !== `push:${pinnedHead}`)) throw new Error('Published ancestry requires a verified push receipt')
-        const published = new Set([claim.snapshot.pr?.head?.sha, pinnedHead, ...result.verifiedPushHeads ?? []])
+        const pushed = new Set([pinnedHead, ...result.verifiedPushHeads ?? []])
+        const published = new Set([claim.snapshot.pr?.head?.sha, ...pushed])
         // Synchronize can lag several successful pushes. Accept only this pass's
         // verified publication chain, and fence a different source push even
         // while the PR snapshot still exposes its original head.
         if (s.status === 'terminal' || !published.has(s.pr?.head?.sha)
-          || s.sourcePushHead !== claim.snapshot.sourcePushHead && !published.has(s.sourcePushHead)
-          || s.sourcePushHeads?.some(head => !published.has(head))) {
+          || s.sourcePushHead !== claim.snapshot.sourcePushHead && !pushed.has(s.sourcePushHead ?? "")
+          || s.sourcePushHeads?.some(head => !pushed.has(head))) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
           await this.put(tx, s)
