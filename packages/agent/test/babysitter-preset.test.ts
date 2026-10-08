@@ -44,6 +44,8 @@ import { getAgentLayerOptions } from "../src/agent-layers.ts";
 import { github as githubChannel, githubChannelIdentity } from "../src/channels.ts";
 import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
 import * as githubRuns from "../src/server/github-pull-requests.ts";
+import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts";
+import * as githubInstalls from "../src/server/github-install.ts";
 import { agentInvocationId } from "../src/invocations.ts";
 import type { GitHubHost } from "../src/server/github.ts";
 
@@ -201,7 +203,9 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
   });
   let workerDirectory: string | undefined;
   const prepare = vi.fn(async (directory: string) => { workerDirectory = directory });
-  const commit = vi.fn(async () => head);
+  const commit = vi.fn(async (directory: string, input: { message: string; paths: string[] }) => remoteBox
+    ? await commitGitHubPullRequestWorkspace(directory, input, { expectedHead: head })
+    : head);
   const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void }) => {
     pushed = true;
     if (remoteBox) {
@@ -331,6 +335,9 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
             runtimeMode,
             approvalPolicy,
           });
+          if (operation === "commitRepair" && remoteBox) {
+            await writeFile(join(remoteBox.path, "source.ts"), "export const value = 2\n");
+          }
           if (operation === "pushRepair" && remoteBox) {
             await writeFile(join(remoteBox.path, "source.ts"), "export const value = 2\n");
             await git(remoteBox.path, "commit", "-am", "repair");
@@ -1188,6 +1195,31 @@ describe("Babysitter preset runtime", () => {
     f.choose("pushRepair");
     await f.reconcile();
     expect(f.push).toHaveBeenCalledOnce();
+  });
+
+  it("commits uncommitted remote Box edits through the protected host repair index", async () => {
+    const f = await fixture(false, false, { box: true, remoteBox: true });
+    f.choose("commitRepair", { message: "Repair source", paths: ["source.ts"] });
+    await f.reconcile();
+    expect(f.commit).toHaveBeenCalledOnce();
+    const committed = await promisify(execFile)("git", ["-C", f.checkout, "show", "HEAD:source.ts"]);
+    expect(committed.stdout).toBe("export const value = 2\n");
+  });
+
+  it("prepares the exact conflict base and frozen dependencies before opening a Box", async () => {
+    const f = await fixture(false, false, { box: true, mergeableState: "dirty" });
+    const install = vi.spyOn(githubInstalls, "installGitHubPullRequestWorkspace").mockImplementation(async directory => {
+      expect(f.prepare).not.toHaveBeenCalled();
+      expect(boxDefinitions).not.toHaveBeenCalled();
+      await writeFile(join(directory, "dependencies.ready"), "installed\n");
+    });
+    try {
+      await f.reconcile();
+      expect(prepareGitHubRepairBase).toHaveBeenCalledWith(f.checkout, expect.objectContaining({ expectedHead: f.pr().head.sha, base: f.pr().base.sha }));
+      expect(install).toHaveBeenCalledOnce();
+      expect(await readFile(join(f.checkout, "dependencies.ready"), "utf8")).toBe("installed\n");
+      expect(f.passes).toHaveLength(1);
+    } finally { install.mockRestore(); }
   });
 
   it.each([false, true])("repairs through a trusted-host Box using the prepared PR working tree (inherited checkout: %s)", async (boxCheckout) => {
