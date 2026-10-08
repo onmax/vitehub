@@ -1804,6 +1804,9 @@ importers:
       '@vite-hub/auth':
         specifier: workspace:*
         version: link:../auth
+      '@vite-hub/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@vite-hub/workspace':
         specifier: workspace:*
         version: link:../workspace
