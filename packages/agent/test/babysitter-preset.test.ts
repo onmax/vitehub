@@ -589,15 +589,16 @@ describe("Babysitter preset runtime", () => {
     } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
   });
 
-  it.each(["removed", "old-removal", "wrong-head-removal", "readded", "head-changed", "merged", "closed"])("reconciles enqueued merges only with definitive %s evidence", async outcome => {
+  it.each(["removed", "same-second-removal", "old-removal", "wrong-head-removal", "readded", "head-changed", "merged", "closed"])("reconciles enqueued merges only with definitive %s evidence", async outcome => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    const startedAt = Date.now();
+    const startedAt = Math.floor(Date.now() / 1000) * 1000 + 500;
+    vi.setSystemTime(startedAt);
     const f = await fixture(false, false, { merge: "direct" });
     const command = f.command.getMockImplementation()!;
     f.command.mockImplementation(async (args, request) => {
       if (args.includes("repos/acme/app/pulls/12/merge-async")) return { stdout: JSON.stringify({ status: "enqueued", details: {} }), stderr: "" };
       if (args.some(arg => arg.includes("mergeQueueEntry"))) {
-        const removed = { __typename: "RemovedFromMergeQueueEvent", createdAt: new Date(startedAt + (outcome === "old-removal" ? -60_000 : 1_000)).toISOString(), beforeCommit: { oid: (outcome === "wrong-head-removal" ? "b" : "a").repeat(40) } };
+        const removed = { __typename: "RemovedFromMergeQueueEvent", createdAt: new Date(startedAt + (outcome === "old-removal" ? -60_000 : outcome === "same-second-removal" ? -500 : 1_000)).toISOString(), beforeCommit: { oid: (outcome === "wrong-head-removal" ? "b" : "a").repeat(40) } };
         const event = outcome === "readded" ? { __typename: "AddedToMergeQueueEvent" } : removed;
         return { stdout: JSON.stringify({ data: { repository: { pullRequest: {
           state: outcome === "merged" ? "MERGED" : outcome === "closed" ? "CLOSED" : "OPEN",
@@ -611,7 +612,7 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       vi.setSystemTime(startedAt + 31_000);
       await f.reconcile();
-      const definitive = ["removed", "head-changed", "merged", "closed"].includes(outcome);
+      const definitive = ["head-changed", "merged", "closed"].includes(outcome);
       if (definitive) expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
       else expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ enqueued: true });
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe(outcome === "merged" || outcome === "closed" ? "terminal" : definitive ? "ready" : "waiting");
