@@ -269,6 +269,75 @@ describe("hubDb", () => {
     }
   }, 30_000)
 
+  it("refreshes direct Definition resource projections during Vite development hot updates", async () => {
+    const rootDir = await createTempProject()
+    await symlink(resolve(import.meta.dirname, "../../../node_modules"), join(rootDir, "node_modules"), "dir")
+    const requests: string[] = []
+    const proxy = createHttpServer((request, response) => {
+      requests.push(request.url!)
+      response.setHeader("Content-Type", "application/json")
+      response.end(JSON.stringify({ success: true, result: [{ success: true, results: { rows: [["application note"]] } }] }))
+    })
+    const proxyUrl = await listenHttpServer(proxy)
+    const definition = await writeDefinition(rootDir, "server/databases/config.ts")
+    const queryFile = join(rootDir, "server/query.ts")
+    await writeFile(queryFile, [
+      "import definition from './databases/config.ts'",
+      "import { useDatabase } from '@vite-hub/database/drizzle'",
+      "import { runWithActiveCloudflareEnv } from '@vite-hub/internal/runtime/cloudflare-env'",
+      "export const query = (binding: unknown) => runWithActiveCloudflareEnv({ HOST_DB: binding }, async () => {",
+      "  const { db, schema } = useDatabase('default')",
+      "  return { definition: await definition.select().from(definition.schema.notes), registry: await db.select().from(schema.notes) }",
+      "})",
+      "",
+    ].join("\n"))
+    const nativeQueries: string[] = []
+    const binding = {
+      prepare(query: string) {
+        nativeQueries.push(query)
+        return { bind: () => ({ raw: async () => [["host note"]] }) }
+      },
+    }
+    const plugin = hubDb({ binding: "HOST_DB", databaseId: "host-id", databaseName: "host-db", driver: "d1" })
+    const server = await createViteServer({ configFile: false, plugins: [plugin], root: rootDir, server: { host: "127.0.0.1", port: 0, watch: null } })
+    try {
+      await server.listen()
+      async function query() {
+        // SAFETY: This fixture writes the module before Vite evaluates its public Database imports.
+        const module = await server.ssrLoadModule(queryFile) as {
+          query: (nativeBinding: typeof binding) => Promise<{ definition: Array<{ title: string }>, registry: Array<{ title: string }> }>
+        }
+        return module.query(binding)
+      }
+      await expect(query()).resolves.toEqual({ definition: [{ title: "host note" }], registry: [{ title: "host note" }] })
+      expect(nativeQueries).toHaveLength(2)
+      nativeQueries.length = 0
+
+      await writeFile(definition, [
+        "import { defineDatabase } from '@vite-hub/database'",
+        "import { sqliteTable, text } from 'drizzle-orm/sqlite-core'",
+        "const notes = sqliteTable('notes', { title: text('title') })",
+        `const cloudflare = { binding: 'HOST_DB', databaseId: 'application-id', databaseName: 'application-db', http: { authToken: 'application-token', url: ${JSON.stringify(`${proxyUrl}/application/raw`)} } }`,
+        "export default defineDatabase({ cloudflare, schema: { notes } })",
+        "",
+      ].join("\n"))
+      const changedModule = server.moduleGraph.getModuleById(definition)
+      if (!changedModule) throw new Error("Expected Vite to track the Database Definition.")
+      // Vite invalidates the edited file before it invokes the plugin's hot-update hook.
+      server.moduleGraph.invalidateModule(changedModule)
+      // SAFETY: The hook receives the real Vite server and the Definition file loaded above.
+      const handleHotUpdate = plugin.handleHotUpdate as (context: unknown) => Promise<void>
+      await handleHotUpdate({ file: definition, server })
+
+      await expect(query()).resolves.toEqual({ definition: [{ title: "application note" }], registry: [{ title: "application note" }] })
+      expect(nativeQueries).toEqual([])
+      expect(requests).toEqual(["/application/raw", "/application/raw"])
+    }
+    finally {
+      await Promise.all([server.close(), closeHttpServer(proxy)])
+    }
+  }, 30_000)
+
   it("exposes integration connection defaults to direct definitions", async () => {
     const plugin = hubDb({
       connection: {

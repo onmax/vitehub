@@ -195,6 +195,7 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
 
   return {
     name: DB_VITE_PLUGIN_NAME,
+    enforce: "pre",
     api: {
       getConfig: () => runtimeConfig,
       isEnabled: () => resolvedOptions() !== false,
@@ -271,8 +272,10 @@ export function hubDb(options?: DBModulePublicOptions): DBVitePlugin {
 
       const schemaModule = context.server.moduleGraph.getModuleById(RESOLVED_DB_VIRTUAL_SCHEMA_ID)
       const databasesModule = context.server.moduleGraph.getModuleById(RESOLVED_DB_VIRTUAL_DATABASES_ID)
+      const definitionDefaultsModule = context.server.moduleGraph.getModuleById(RESOLVED_DB_VIRTUAL_DEFINITION_DEFAULTS_ID)
       if (schemaModule) context.server.moduleGraph.invalidateModule(schemaModule)
       if (databasesModule) context.server.moduleGraph.invalidateModule(databasesModule)
+      if (definitionDefaultsModule) context.server.moduleGraph.invalidateModule(definitionDefaultsModule)
     },
     async buildEnd(error) {
       if (error) {
