@@ -29,9 +29,9 @@ export interface BabysitterInstallRecord {
 }
 
 async function detectInstallCommand(cwd: string): Promise<string[] | undefined> {
-  if (await exists(join(cwd, "pnpm-lock.yaml"))) return ["pnpm", "install", "--frozen-lockfile", "--prefer-offline"];
-  if (await exists(join(cwd, "package-lock.json"))) return ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"];
-  if (await exists(join(cwd, "bun.lock")) || await exists(join(cwd, "bun.lockb"))) return ["bun", "install", "--frozen-lockfile"];
+  if (await exists(join(cwd, "pnpm-lock.yaml"))) return ["pnpm", "install", "--frozen-lockfile", "--prefer-offline", "--ignore-scripts", "--ignore-pnpmfile", "--package-import-method=clone-or-copy"];
+  if (await exists(join(cwd, "package-lock.json"))) return ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund", "--ignore-scripts"];
+  if (await exists(join(cwd, "bun.lock")) || await exists(join(cwd, "bun.lockb"))) return ["bun", "install", "--frozen-lockfile", "--ignore-scripts"];
   if (!(await exists(join(cwd, "yarn.lock")))) return undefined;
   let manager = "";
   try {
@@ -39,15 +39,28 @@ async function detectInstallCommand(cwd: string): Promise<string[] | undefined> 
     manager = isRuntimeRecord(manifest) && hasRuntimeType(manifest.packageManager, "string") ? manifest.packageManager : "";
   } catch {}
   // Yarn 1 has no --immutable; later versions deprecate --frozen-lockfile.
-  return ["yarn", "install", !manager || manager.startsWith("yarn@1.") ? "--frozen-lockfile" : "--immutable"];
+  return !manager || manager.startsWith("yarn@1.")
+    ? ["yarn", "install", "--frozen-lockfile", "--ignore-scripts"]
+    : ["yarn", "install", "--immutable", "--mode=skip-builds"];
 }
 
-/** The installed pnpm trees depend on the lockfile, workspace, root manifest, .npmrc, patches and Node. */
-export async function pnpmInstallKey(cwd: string): Promise<string> {
-  const hash = createHash("sha256").update(process.version);
+/** Scope isolated pnpm trees to a repository and its lockfile, workspace manifests, config, patches and Node. */
+export async function pnpmInstallKey(cwd: string, repository = cwd): Promise<string> {
+  const hash = createHash("sha256").update("isolated-v2\0").update(repository).update("\0").update(process.version);
   for (const file of ["pnpm-lock.yaml", "pnpm-workspace.yaml", "package.json", ".npmrc"]) {
     hash.update(`\0${file}\0`).update(await readFile(join(cwd, file)).catch(() => ""));
   }
+  const manifests = async (directory: string): Promise<void> => {
+    for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+      if ([".git", "node_modules"].includes(entry.name)) continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await manifests(path);
+      else if (entry.name === "package.json" || entry.name === ".npmrc") {
+        hash.update(`\0${relative(cwd, path)}\0`).update(await readFile(path));
+      }
+    }
+  };
+  await manifests(cwd);
   const patches = await readdir(join(cwd, "patches"), { recursive: true, withFileTypes: true }).catch(() => []);
   for (const file of patches.filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name)).sort()) {
     hash.update(`\0${relative(cwd, file)}\0`).update(await readFile(file));
@@ -88,7 +101,7 @@ function untilSettled(running: Promise<void>, signal: AbortSignal): Promise<void
 
 function resolveCache(install: BabysitterInstall, env: Record<string, string | undefined>) {
   const cache = isRuntimeRecord(install) ? install.cache : undefined;
-  // Hardlinked trees need GNU `cp -al`; a custom command installs without the cache.
+  // Reflink copies need GNU `cp --reflink=auto`; a custom command installs without the cache.
   if (cache === false || process.platform !== "linux" || (isRuntimeRecord(install) && install.command)) return undefined;
   const configured = isRuntimeRecord(cache) ? cache : {};
   return {
@@ -100,11 +113,11 @@ function resolveCache(install: BabysitterInstall, env: Record<string, string | u
 /**
  * Installs dependencies in a pass workspace before the provider starts. The install gets a
  * scrubbed environment without host credentials. A detected pnpm install on Linux reuses the
- * node_modules trees of an earlier pass with the same install key: the host hardlinks them into
+ * node_modules trees of an earlier pass with the same install key: the host copies them with independent writable inodes into
  * the workspace, as pnpm links its own store, and verifies them with a frozen offline install.
  * Passes that need the same key wait for the first install, then restore its trees.
  */
-export function createBabysitterInstaller(install: BabysitterInstall, env: Record<string, string | undefined> = process.env) {
+export function createBabysitterInstaller(install: BabysitterInstall, env: Record<string, string | undefined> = process.env, repository?: string) {
   const cache = resolveCache(install, env);
   const inFlight = new Map<string, Promise<void>>();
 
@@ -117,7 +130,7 @@ export function createBabysitterInstaller(install: BabysitterInstall, env: Recor
     for (const tree of trees) if (await exists(join(cwd, tree))) return false;
     for (const tree of trees) {
       await mkdir(dirname(join(cwd, tree)), { recursive: true });
-      await execFileAsync("cp", ["-al", join(entry, "files", tree), join(cwd, tree)], { signal });
+      await execFileAsync("cp", ["-a", "--reflink=auto", join(entry, "files", tree), join(cwd, tree)], { signal });
     }
     const now = new Date();
     await utimes(entry, now, now).catch(() => {});
@@ -134,7 +147,7 @@ export function createBabysitterInstaller(install: BabysitterInstall, env: Recor
       if (!trees.length) return;
       for (const tree of trees) {
         await mkdir(dirname(join(staging, "files", tree)), { recursive: true });
-        await execFileAsync("cp", ["-al", join(cwd, tree), join(staging, "files", tree)]);
+        await execFileAsync("cp", ["-a", "--reflink=auto", join(cwd, tree), join(staging, "files", tree)]);
       }
       await writeFile(join(staging, "trees.json"), JSON.stringify(trees));
       await rename(staging, entry);
@@ -151,7 +164,7 @@ export function createBabysitterInstaller(install: BabysitterInstall, env: Recor
     }
   }
 
-  return async function installDependencies(cwd: string, signal: AbortSignal, nodeOptions?: string): Promise<BabysitterInstallRecord | undefined> {
+  return async function installDependencies(cwd: string, signal: AbortSignal, nodeOptions?: string, repositoryIdentity = repository ?? cwd): Promise<BabysitterInstallRecord | undefined> {
     if (install === false) return undefined;
     const custom = isRuntimeRecord(install) && install.command ? [install.command, ...install.args ?? []] : undefined;
     const command = custom ?? await detectInstallCommand(cwd);
@@ -162,8 +175,9 @@ export function createBabysitterInstaller(install: BabysitterInstall, env: Recor
       ...Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined && environmentNames.test(entry[0])),
       ...nodeOptions ? [["NODE_OPTIONS", nodeOptions]] : [],
       ["CI", "1"],
+      ...custom ? [] : [["npm_config_ignore_scripts", "true"], ["YARN_ENABLE_SCRIPTS", "false"]],
     ]);
-    const key = cache && program === "pnpm" ? await pnpmInstallKey(cwd).catch(() => undefined) : undefined;
+    const key = cache && program === "pnpm" ? await pnpmInstallKey(cwd, repositoryIdentity).catch(() => undefined) : undefined;
     let finishFlight: (() => void) | undefined;
     const releaseFlight = () => {
       if (!finishFlight || !key) return;

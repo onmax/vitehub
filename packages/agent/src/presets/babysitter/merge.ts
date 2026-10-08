@@ -71,9 +71,9 @@ function botAuthor(value: GitHubEvidence): boolean {
  */
 function ignoredFeedback(value: GitHubEvidence, policy: FeedbackPolicy): boolean {
   if (value.deleted) return true;
+  if (String(value.state).toUpperCase() === "CHANGES_REQUESTED") return false;
   const author = feedbackAuthor(value);
   if (policy.workerAuthors?.has(author) || policy.ignoreFeedbackAuthors?.has(author)) return true;
-  if (String(value.state).toUpperCase() === "CHANGES_REQUESTED") return false;
   const body = String(value.body ?? "").trim();
   return !body || (policy.noFindingsReviews ?? []).some(prefix => body.startsWith(prefix));
 }

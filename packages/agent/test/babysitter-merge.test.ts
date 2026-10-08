@@ -106,9 +106,9 @@ describe("Babysitter merge evidence", () => {
     expect(directMergeReadiness(s, "passed").ready).toBe(false);
   });
 
-  it("always counts requested changes, even without a body", () => {
+  it.each(["maintainer", "preview[bot]", "repair[bot]"])("always counts requested changes from %s, even without a body", (login) => {
     const s = snapshot();
-    s.reviews.blocked = { id: 6, state: "CHANGES_REQUESTED", body: "", user: { login: "maintainer", type: "User" } };
+    s.reviews.blocked = { id: 6, state: "CHANGES_REQUESTED", body: "", user: { login, type: "User" } };
     expect(directMergeReadiness(s, "passed", feedbackPolicy)).toEqual({ ready: false, reason: "1 new feedback item needs assessment" });
   });
 

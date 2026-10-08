@@ -148,15 +148,19 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
       return { stdout: JSON.stringify({ data }), stderr: "" };
     }
     if (text.includes("-X PUT") && text.includes("/merge")) return { stdout: JSON.stringify({ merged: true }), stderr: "" };
-    if (text.includes("--slurp") && text.includes("/protection/required_status_checks"))
-      return { stdout: JSON.stringify([{ contexts: [], checks: [] }]), stderr: "" };
+    if (args.includes("--slurp")) throw new Error("unknown flag: --slurp");
+    if (text.includes("/protection/required_status_checks")) {
+      expect(args).toContain(". | @json");
+      return { stdout: JSON.stringify({ contexts: [], checks: [] }), stderr: "" };
+    }
     if (text.includes("/rules/branches/")) {
+      expect(args).toContain(".[] | @json");
       const rule = {
         type: "required_status_checks",
         parameters: { required_status_checks: [{ context: "test" }] },
       };
       return {
-        stdout: JSON.stringify(args.includes("--slurp") ? [rule] : rule),
+        stdout: `${JSON.stringify(rule)}\n${JSON.stringify(rule)}`,
         stderr: "",
       };
     }
@@ -349,7 +353,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
             threadId,
             turnId: "turn-1",
             payload: {
-              delta: JSON.stringify({
+              delta: JSON.stringify(preset.result ?? {
                 disposition: "park",
                 text: "Repair checked. Waiting for checks.",
               }),
@@ -411,6 +415,21 @@ describe("Babysitter preset runtime", () => {
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
     } finally { await f.runtime.inbox.close(); }
   });
+
+  it("recovers claimed execution and wait evaluation from stalled readiness", async () => {
+    const ready = vi.fn(() => new Promise<true>(() => {}));
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready }, result: { disposition: "park", text: "Waiting", wait: { kind: "checks", headSha: "a".repeat(40) } } });
+    try {
+      await f.reconcile();
+      expect(ready).toHaveBeenCalled();
+      expect(createProviderRuntime).toHaveBeenCalled();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait).toBeDefined();
+      const calls = ready.mock.calls.length;
+      await f.reconcile();
+      expect(ready.mock.calls.length).toBeGreaterThan(calls);
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("-X PUT"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  }, 30_000);
 
   it("keeps an unconfirmed direct merge fenced for reconciliation", async () => {
     const f = await fixture(false, false, { merge: "direct" });
@@ -591,10 +610,10 @@ describe("Babysitter preset runtime", () => {
     await writeFile(join(h.checkout, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
     try {
       await h.reconcile();
-      expect((await readFile(join(bin, "args"), "utf8")).trim()).toBe("install --frozen-lockfile --prefer-offline");
+      expect((await readFile(join(bin, "args"), "utf8")).trim()).toBe("install --frozen-lockfile --prefer-offline --ignore-scripts --ignore-pnpmfile --package-import-method=clone-or-copy");
       // A failed install is recorded for the model and does not stop the pass.
       expect(h.passes).toHaveLength(1);
-      expect(JSON.parse(h.passes[0]!.install!)).toMatchObject({ command: "pnpm install --frozen-lockfile --prefer-offline", ok: false, exitCode: 3 });
+      expect(JSON.parse(h.passes[0]!.install!)).toMatchObject({ command: "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts --ignore-pnpmfile --package-import-method=clone-or-copy", ok: false, exitCode: 3 });
       expect(h.events).toHaveBeenCalledWith("babysitter.install.finished", expect.objectContaining({ ok: false, exitCode: 3 }));
     } finally {
       vi.unstubAllEnvs();

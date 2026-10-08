@@ -43,6 +43,7 @@ import { directMergeReadiness, feedbackFingerprints, liveMergeReadiness, resolve
 import { createCheckWait, failureKeys, hasPendingChecks, reviewCheckRunning, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 import type { BabysitterAdmission } from "./admission.ts";
+import { boundedMergeReady } from "./merge-ready.ts";
 import { createBabysitterInstaller } from "./install.ts";
 
 export interface BabysitterRuntimeOptions {
@@ -229,11 +230,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const requiredChecks = createGitHubRequiredCheckPolicyReader(async (path) => {
     const repository = path.split("/").slice(1, 3).join("/");
     try {
-      const result = await github.command(["api", "--paginate", "--slurp", path], { repository, timeout: 60_000 });
-      const pages: unknown = JSON.parse(result.stdout);
-      if (!Array.isArray(pages)) return { status: 0 };
-      // gh returns one entry per page. Rules are a list; protection endpoints return one object.
-      return { status: 200, data: path.includes("/rules/") ? pages.flat() : pages[0], nextPage: null };
+      const list = path.includes("/rules/");
+      const result = await github.command(["api", "--paginate", path, "--jq", list ? ".[] | @json" : ". | @json"], { repository, timeout: 60_000 });
+      const pages: unknown[] = result.stdout.trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+      // gh emits one JSON value per line. Rules are a list; protection endpoints return one object.
+      return { status: 200, data: list ? pages : pages[0], nextPage: null };
     } catch (error) {
       return { status: Number(String(error).match(/HTTP\s+(\d{3})/i)?.[1] ?? 0) };
     }
@@ -278,7 +279,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const assessedFeedback = new Set(isRuntimeRecord(assessment) && Array.isArray(assessment.feedback) ? assessment.feedback.filter(item => hasRuntimeType(item, "string")) : []);
     let decision = directMergeReadiness(snapshot, evaluation.state, { ...waitPolicy, assessedFeedback, reviewedEvidenceKey });
     if (decision.ready && merge.ready) {
-      const ready = await merge.ready({ repository, number, head: decision.head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state });
+      const callback = merge.ready;
+      const head = decision.head;
+      const ready = await boundedMergeReady(() => callback({ repository, number, head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state }), signal);
+      if (signal.aborted) return "blocked";
       if (ready !== true) decision = { ready: false, reason: ready };
     }
     if (!decision.ready) {
@@ -404,7 +408,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
    * install does not stop the pass.
    */
   async function installDependencies(cwd: string, signal: AbortSignal, owner: Record<string, unknown>, nodeOptions: string | undefined) {
-    const record = await installer(cwd, signal, nodeOptions);
+    const record = await installer(cwd, signal, nodeOptions, hasRuntimeType(owner.repository, "string") ? owner.repository : cwd);
     if (!record) return;
     try {
       // A linked worktree has a .git file, so ask Git for the directory.
@@ -423,14 +427,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     if (merge.mode !== "direct" || !merge.ready) return true;
     const head = snapshot.pr?.head?.sha;
     if (!head) return false;
+    const callback = merge.ready;
     try {
-      return await merge.ready({
+      return await boundedMergeReady(() => callback({
         repository: snapshot.repository,
         number: snapshot.number,
         head,
         snapshot: structuredClone(snapshot),
         requiredChecks,
-      }) === true;
+      })) === true;
     } catch (error) {
       schedulerEvent("babysitter.direct_merge.skipped", {
         pullRequest: snapshot.number,

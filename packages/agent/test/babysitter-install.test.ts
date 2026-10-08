@@ -40,49 +40,71 @@ async function workspace(lockfile = "lockfileVersion: '9.0'\n") {
 
 const signal = () => new AbortController().signal;
 
+it("does not execute repository lifecycle scripts during a detected npm install", async () => {
+  const cwd = await directory("npm-scripts");
+  await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "script-test", version: "1.0.0", scripts: { preinstall: "node -e \"require('fs').writeFileSync('executed', 'yes')\"" } }));
+  await writeFile(join(cwd, "package-lock.json"), JSON.stringify({ name: "script-test", version: "1.0.0", lockfileVersion: 3, packages: { "": { name: "script-test", version: "1.0.0", hasInstallScript: true } } }));
+  const install = createBabysitterInstaller({ cache: false });
+  expect(await install(cwd, signal())).toMatchObject({ ok: true });
+  expect(await readdir(cwd)).not.toContain("executed");
+});
+
 describe.runIf(process.platform === "linux")("Babysitter dependency install cache", () => {
-  it("installs on a miss, restores hardlinked trees on a hit and reinstalls when verification fails", async () => {
+  it("installs on a miss, restores isolated trees on a hit and reinstalls when verification fails", async () => {
     const pnpm = await fakePnpm();
     const cache = await directory("cache");
-    const install = createBabysitterInstaller({ cache: { directory: cache } }, pnpm.env);
+    const install = createBabysitterInstaller({ cache: { directory: cache } }, pnpm.env, "test/repo");
 
     const first = await workspace();
-    expect(await install(first, signal())).toMatchObject({ ok: true, cache: "miss", command: "pnpm install --frozen-lockfile --prefer-offline" });
-    const key = await pnpmInstallKey(first);
+    expect(await install(first, signal())).toMatchObject({ ok: true, cache: "miss", command: "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts --ignore-pnpmfile --package-import-method=clone-or-copy" });
+    const key = await pnpmInstallKey(first, "test/repo");
     expect(JSON.parse(await readFile(join(cache, key, "trees.json"), "utf8"))).toEqual(expect.arrayContaining(["node_modules", join("packages", "a", "node_modules")]));
 
+    await writeFile(join(first, "node_modules/pkg/index.js"), "poisoned");
     const second = await workspace();
     const hit = await install(second, signal());
-    expect(hit).toMatchObject({ ok: true, cache: "hit", command: "pnpm install --frozen-lockfile --offline" });
+    expect(hit).toMatchObject({ ok: true, cache: "hit", command: "pnpm install --frozen-lockfile --offline --ignore-scripts --ignore-pnpmfile --package-import-method=clone-or-copy" });
+    expect(await readFile(join(second, "node_modules/pkg/index.js"), "utf8")).toBe("installed\n");
+    await writeFile(join(second, "node_modules/pkg/index.js"), "also poisoned");
+    expect(await readFile(join(cache, key, "files/node_modules/pkg/index.js"), "utf8")).toBe("installed\n");
     expect(hit?.restoreMs).toBeGreaterThanOrEqual(0);
     expect(hit?.saveMs).toBeUndefined();
     const restored = await stat(join(second, "packages", "a", "node_modules", "dep", "index.js"));
-    expect(restored.ino).toBe((await stat(join(first, "packages", "a", "node_modules", "dep", "index.js"))).ino);
+    expect(restored.ino).not.toBe((await stat(join(first, "packages", "a", "node_modules", "dep", "index.js"))).ino);
 
     await writeFile(join(pnpm.bin, "fail-offline"), "");
     const third = await workspace();
-    expect(await install(third, signal())).toMatchObject({ ok: true, cache: "verify-failed", command: "pnpm install --frozen-lockfile --prefer-offline" });
+    expect(await install(third, signal())).toMatchObject({ ok: true, cache: "verify-failed", command: "pnpm install --frozen-lockfile --prefer-offline --ignore-scripts --ignore-pnpmfile --package-import-method=clone-or-copy" });
     expect(await readFile(join(third, "node_modules", "pkg", "index.js"), "utf8")).toBe("installed\n");
     expect((await pnpm.calls()).filter(call => call.startsWith(third))).toHaveLength(2);
+  });
+
+  it("separates repositories and workspace manifests", async () => {
+    const cwd = await workspace();
+    const before = await pnpmInstallKey(cwd, "one/repo");
+    expect(await pnpmInstallKey(cwd, "two/repo")).not.toBe(before);
+    await mkdir(join(cwd, "packages/a"), { recursive: true });
+    await writeFile(join(cwd, "packages/a/package.json"), '{"name":"a"}');
+    expect(await pnpmInstallKey(cwd, "one/repo")).not.toBe(before);
   });
 
   it("keys the cache by the install inputs and keeps the most recently used entries", async () => {
     const pnpm = await fakePnpm();
     const cache = await directory("cache");
-    const install = createBabysitterInstaller({ cache: { directory: cache, entries: 1 } }, pnpm.env);
+    const install = createBabysitterInstaller({ cache: { directory: cache, entries: 1 } }, pnpm.env, "test/repo");
     const first = await workspace();
     await install(first, signal());
     const changed = await workspace("lockfileVersion: '9.0'\nimporters: {}\n");
     await mkdir(join(changed, "patches"));
-    expect(await pnpmInstallKey(changed)).not.toBe(await pnpmInstallKey(first));
+    expect(await pnpmInstallKey(changed, "test/repo")).not.toBe(await pnpmInstallKey(first, "test/repo"));
     expect(await install(changed, signal())).toMatchObject({ cache: "miss" });
-    expect((await readdir(cache)).filter(name => /^[a-f0-9]{32}$/.test(name))).toEqual([await pnpmInstallKey(changed)]);
+    expect((await readdir(cache)).filter(name => /^[a-f0-9]{32}$/.test(name))).toEqual([await pnpmInstallKey(changed, "test/repo")]);
   });
 
   it("runs one install per key at a time; later passes wait and restore its trees", async () => {
     const pnpm = await fakePnpm();
     await writeFile(join(pnpm.bin, "delay"), "0.3");
-    const install = createBabysitterInstaller({ cache: { directory: await directory("cache") } }, pnpm.env);
+    const install = createBabysitterInstaller({ cache: { directory: await directory("cache") } }, pnpm.env, "test/repo");
     const [left, right] = [await workspace(), await workspace()];
     const [first, second] = await Promise.all([install(left, signal()), install(right, signal())]);
     expect(first).toMatchObject({ ok: true, cache: "miss" });
@@ -94,7 +116,7 @@ describe.runIf(process.platform === "linux")("Babysitter dependency install cach
   it("releases waiting passes when the first install is aborted", async () => {
     const pnpm = await fakePnpm();
     await writeFile(join(pnpm.bin, "delay"), "5");
-    const install = createBabysitterInstaller({ cache: { directory: await directory("cache") } }, pnpm.env);
+    const install = createBabysitterInstaller({ cache: { directory: await directory("cache") } }, pnpm.env, "test/repo");
     const controller = new AbortController();
     const first = install(await workspace(), controller.signal);
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -111,12 +133,12 @@ describe.runIf(process.platform === "linux")("Babysitter dependency install cach
     const cache = await directory("cache");
     const report = join(pnpm.bin, "env.json");
     const script = `require("node:fs").writeFileSync(${JSON.stringify(report)}, JSON.stringify(process.env))`;
-    const custom = createBabysitterInstaller({ command: process.execPath, args: ["-e", script], cache: { directory: cache } }, pnpm.env);
+    const custom = createBabysitterInstaller({ command: process.execPath, args: ["-e", script], cache: { directory: cache } }, pnpm.env, "test/repo");
     expect(await custom(await workspace(), signal(), "--max-old-space-size=1024")).toMatchObject({ ok: true });
     const env = JSON.parse(await readFile(report, "utf8"));
     expect(env).toMatchObject({ CI: "1", NODE_OPTIONS: "--max-old-space-size=1024" });
     expect(env).not.toHaveProperty("GH_TOKEN");
-    const disabled = createBabysitterInstaller({ cache: false }, pnpm.env);
+    const disabled = createBabysitterInstaller({ cache: false }, pnpm.env, "test/repo");
     const record = await disabled(await workspace(), signal());
     expect(record).toMatchObject({ ok: true });
     expect(record?.cache).toBeUndefined();

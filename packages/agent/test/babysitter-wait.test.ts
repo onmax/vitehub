@@ -136,6 +136,8 @@ describe("Babysitter check waits", () => {
     snapshot.wait = { headSha: head, ...createCheckWait(snapshot, ignoring) };
     snapshot.comments["15"] = preview;
     expect(wakeReasons(snapshot, "pending", ignoring)).toEqual([]);
+    snapshot.reviews["16"] = { ...preview, id: 16, state: "CHANGES_REQUESTED" };
+    expect(wakeReasons(snapshot, "pending", ignoring)).toEqual(["feedback-changed"]);
   });
 
   it("holds an external dependency through an unrelated green PR check", async () => {
