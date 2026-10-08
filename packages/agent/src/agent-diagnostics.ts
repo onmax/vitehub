@@ -1532,6 +1532,10 @@ export const agentDiagnostics = defineDiagnostics({
       fix: "Set vitehub({ observability: { service } }) in the Vite config.",
     },
     AGENT_R0940: dynamicError,
+    AGENT_R0941: {
+      why: ({ requested, actual }: { requested: string; actual: string }) => `[vitehub] SQLite journal mode ${requested} was requested, but the VFS retained ${actual}.`,
+      fix: "Use a local VFS that supports the requested journal mode. Set journalMode to delete for volumes that support rollback journaling only.",
+    },
     AGENT_R0928: {
       why: "[vitehub] Provider Agent Drivers are not included in Worker builds. They start local Codex or Claude Code processes, which require a Node.js host.",
       fix: "Use a { model } or { run } Driver in Worker builds, or deploy Agents that use provider Drivers to a Node.js host.",

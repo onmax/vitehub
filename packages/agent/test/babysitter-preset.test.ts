@@ -649,7 +649,7 @@ describe("Babysitter preset runtime", () => {
     expect(agent.options.install).toBe(false);
   });
 
-  it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("releases the claim when branch safety read %s fails", async (path) => {
+  it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("parks the claim when branch safety read %s fails", async (path) => {
     const f = await fixture(false, false, { merge: "direct" });
     const command = f.command.getMockImplementation()!;
     f.command.mockImplementation(async (args, request) => {
@@ -660,6 +660,9 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
       expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.retryAt).toBeGreaterThan(Date.now());
+      expect(await f.runtime.inbox.claim(1)).toEqual([]);
       expect(f.command.mock.calls.some(([args]) => args.includes("PUT"))).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
