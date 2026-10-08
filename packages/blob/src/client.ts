@@ -69,6 +69,11 @@ function isString(value: unknown): value is string {
   return typeof value === "string"
 }
 
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Upload response sizes cross an untrusted HTTP boundary.
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+}
+
 function isStringRecord(value: unknown): value is Record<string, string> {
   return isRecord(value) && Object.values(value).every(isString)
 }
@@ -86,17 +91,20 @@ function isSerializedBlobObject(value: unknown): value is SerializedBlobObject {
     || !isString(value.pathname)
     || (value.contentType !== undefined && !isString(value.contentType))
     || (value.httpEtag !== undefined && !isString(value.httpEtag))
-    || (value.size !== undefined && typeof value.size !== "number")
+    || (value.size !== undefined && !isFiniteNonNegativeNumber(value.size))
     || !isString(value.uploadedAt)
     || !isStringRecord(value.httpMetadata)
     || !isStringRecord(value.customMetadata)
     || (value.url !== undefined && !isString(value.url))) return false
-  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Upload responses cross an untrusted HTTP boundary.
-  return value.size === undefined || typeof value.size === "number" && Number.isFinite(value.size) && value.size >= 0
+  return true
+}
+
+function isSerializedBlobObjectArray(value: unknown): value is SerializedBlobObject[] {
+  return isDenseArray(value) && value.every(isSerializedBlobObject)
 }
 
 function parseSerializedBlobObjectArray(value: unknown): SerializedBlobObject[] {
-  if (!isDenseArray(value) || value.some(item => !isSerializedBlobObject(item))) {
+  if (!isSerializedBlobObjectArray(value)) {
     throw new Error("Upload request returned malformed JSON.")
   }
   return value
