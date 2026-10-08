@@ -1,7 +1,10 @@
 :root {
   --ui-radius: 0.125rem;
   --ui-header-height: 44px;
-  --vh-sidebar-width: 268px;
+  /* The shared primitive rail is 3.5rem wide. The page panel sits next to it. */
+  --vh-rail-width: 3.5rem;
+  --vh-panel-width: 260px;
+  --vh-sidebar-width: calc(var(--vh-rail-width) + var(--vh-panel-width));
   --vh-toc-width: 240px;
   --vh-content-width: 796px;
   --vh-docs-width: calc(var(--vh-sidebar-width) + var(--vh-content-width) + var(--vh-toc-width) + 3rem);
@@ -35,7 +38,7 @@
 
 @media (min-width: 1280px) {
   :root {
-    --vh-sidebar-width: 286px;
+    --vh-panel-width: 272px;
     --vh-toc-width: 260px;
     --vh-content-width: 820px;
   }

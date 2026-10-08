@@ -1,6 +1,6 @@
 import { normalizeDocsPath, type DocsPage, type DocsSection } from "./docs";
 
-/** Catalog rows on `/docs` and groups in the product select, in display order. */
+/** Catalog rows on `/docs` and groups in the docs rail, in display order. */
 export const docsCategoryOrder = [
   "Start",
   "Data",
@@ -42,7 +42,7 @@ export function getUncategorizedDocsSections(sections: DocsSection[]) {
   return sections.filter(section => !isDocsCategory(section.category));
 }
 
-/** The section that owns a docs path. `/docs` and unknown paths have no section; the sidebar shows the product index. */
+/** The section that owns a docs path. `/docs` and unknown paths have no section, so no page panel opens. */
 export function getDocsSectionForPath(sections: DocsSection[], path: string) {
   const normalizedPath = normalizeDocsPath(path);
 
@@ -76,14 +76,14 @@ export function getDocsRelatedSections(sections: DocsSection[], section: DocsSec
     .filter((candidate): candidate is DocsSection => Boolean(candidate) && candidate?.id !== section.id);
 }
 
-/** Categories whose section Overview renders as a product landing page without the sidebar. */
+/** Categories whose section Overview renders as a product landing page without a table of contents. */
 export const docsLandingCategories: readonly DocsCategory[] = ["Data", "Compute", "Access", "Delivery", "Files", "Agents"];
 const docsLandingCategorySet = new Set<string>(docsLandingCategories);
 
 /** Sections whose Overview stays a regular docs page even though their category is a product category. */
 const docsPageOverviewSections = new Set(["ui"]);
 
-/** True for `/docs` and for the Overview of every product section. These pages have a hero and no sidebar. */
+/** True for `/docs` and for the Overview of every product section. These pages have a hero and no table of contents. */
 export function isDocsLandingPath(sections: DocsSection[], path: string) {
   const normalizedPath = normalizeDocsPath(path);
   if (normalizedPath === "/docs") return true;

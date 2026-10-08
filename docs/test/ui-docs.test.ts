@@ -143,11 +143,12 @@ describe("UI documentation", () => {
     expect(inspector).toContain('class="h-full border-x border-default"');
   });
 
-  it("uses a static context link instead of a product disclosure control", () => {
+  it("switches sections with the primitive rail instead of a product selector", () => {
     const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
+    const sidebars = readFileSync(resolve(docsRoot, "app/components/DocsSidebars.vue"), "utf8");
 
-    expect(sidebarTop).toContain("vh-docs-context");
-    expect(sidebarTop).toContain('<NuxtLink');
+    expect(sidebars).toContain("<DocsRail />");
+    expect(sidebarTop).toContain('<h2 class="vh-docs-panel-title">');
     expect(sidebarTop).not.toContain("USelectMenu");
     expect(sidebarTop).not.toContain("getDocsSectionSelectItems");
   });

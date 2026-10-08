@@ -37,7 +37,7 @@ const isUiPage = computed(() => {
   const path = route.path.replace(/\/+$/, "");
   return path === "/docs/ui" || path.startsWith("/docs/ui/");
 });
-// A product Overview is a landing page with a hero and page cards instead of the sidebar and table of contents.
+// A product Overview is a landing page with a hero and page cards instead of the table of contents.
 const landingSection = computed(() =>
   isDocsLandingPath(docsManifest.sections, route.path) ? getDocsSectionForPath(docsManifest.sections, route.path) : null,
 );

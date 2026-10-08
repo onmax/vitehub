@@ -709,7 +709,7 @@ describe("framework package contract", () => {
       "utf8",
     );
     expect(consoleRail).toContain("navigationFailed.value = true");
-    expect(consoleRail).toContain('aria-label="Retry loading primitives"');
+    expect(consoleRail).toContain('<PrimitiveRailItem label="Retry loading primitives" @click="loadNavigation">');
     expect(consoleRail).toContain("open('vitehub-console')");
     expect(consoleRail).toContain("subscribeConsoleNavigation(props.sectionsBase");
     expect(consoleRail).toContain('import { defineShortcuts } from "@nuxt/ui/composables";');
