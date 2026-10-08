@@ -117,7 +117,7 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
     try {
       const previous = previousCodeIndex(source, index - 1, controlFlowRegexes)
       const result = token === "of"
-        ? isForOfRegexStart(source, index, controlFlowRegexes)
+        ? isLabeledStatementRegexStart(source, index, previous, controlFlowRegexes) || isForOfRegexStart(source, index, controlFlowRegexes)
         : !endsWithPostfixUpdate(source, previous, token)
       controlFlowRegexes.set(index, result)
       return result
@@ -142,7 +142,7 @@ function isForOfRegexStart(source: string, index: number, controlFlowRegexes: Co
   let current = previousCodeIndex(source, operatorEnd - 2, controlFlowRegexes)
   if (!/(?:[$\p{ID_Continue}\])}]|\u200C|\u200D)$/u.test(source.slice(0, current + 1))) return false
   const word = /[$\p{ID_Continue}\u200C\u200D]+$/u.exec(source.slice(0, current + 1))?.[0]
-  if (word && /^(?:const|let|var|in|instanceof|typeof|void|delete|await|yield|new)$/.test(word)
+  if (word && /^(?:as|satisfies|const|let|var|in|instanceof|typeof|void|delete|await|yield|new)$/.test(word)
     && source[previousCodeIndex(source, current - word.length, controlFlowRegexes)] !== ".") return false
 
   while (current >= 0) {
@@ -215,6 +215,10 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
   controlFlowRegexes.set(index, undefined)
   try {
     const closeParen = previousCodeIndex(source, index - 1, controlFlowRegexes)
+    if (isLabeledStatementRegexStart(source, index, closeParen, controlFlowRegexes)) {
+      controlFlowRegexes.set(index, true)
+      return true
+    }
     if (source[closeParen] !== ")") {
       controlFlowRegexes.set(index, false)
       return false
@@ -236,6 +240,16 @@ function isControlFlowRegexStart(source: string, index: number, controlFlowRegex
     controlFlowRegexes.delete(index)
     throw error
   }
+}
+
+function isLabeledStatementRegexStart(source: string, index: number, labelEnd: number, controlFlowRegexes: ControlFlowRegexCache) {
+  if (!/[\r\n\u2028\u2029]/.test(source.slice(labelEnd + 1, index))) return false
+  const label = /[$\p{ID_Continue}\u200C\u200D]+$/u.exec(source.slice(0, labelEnd + 1))?.[0]
+  if (!label) return false
+  const labelStart = labelEnd - label.length + 1
+  const statementEnd = previousCodeIndex(source, labelStart - 1, controlFlowRegexes)
+  if (/[\r\n\u2028\u2029]/.test(source.slice(statementEnd + 1, labelStart))) return false
+  return /(?:^|[^$\p{ID_Continue}\u200C\u200D])(?:break|continue)$/u.test(source.slice(0, statementEnd + 1))
 }
 
 function skipRegexLiteral(source: string, index: number) {

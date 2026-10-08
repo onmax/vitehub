@@ -28,6 +28,17 @@ describe("source scanner", () => {
     expect(call?.argument).toBe(`{ value: "real" }`)
   })
 
+  it.each(["break", "continue"])("scans a regex statement after a labeled %s", (statement) => {
+    for (const label of ["outer", "é", "of"]) {
+      for (const separator of ["\n", "\r", "\u2028", "\u2029", " /* next */\n", " // next\n"]) {
+        const value = `${label}: while (ready) { ${statement} ${label}${separator}/['"]/u.test(value) }`
+        expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+        const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
+        expect(call?.argument).toBe(`{ value: "real" }`)
+      }
+    }
+  })
+
   it.each([
     "for (é of /['\"]/u) {}",
     "for (const x of /['\"]/u) {}",
@@ -50,6 +61,8 @@ describe("source scanner", () => {
   it.each([
     "for (typeof of / total; false;) {}",
     "for (void of / total; false;) {}",
+    "type of = number; for (value as of / total; false;) {}",
+    "type of = number; for (value satisfies of / total; false;) {}",
     "for (left + of / total; false;) {}",
     "for (const value = of / total; false;) {}",
     "for (const value in of / total) {}",
