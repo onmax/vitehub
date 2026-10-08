@@ -2,7 +2,7 @@ import type { EventKind, ForgeOptionsBase, ForgeProvider, WebhookInput, WebhookU
 import { fake } from "forges/fake"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { forgejo, gitlab } from "../src/channels.ts"
-import type { CodeHostChannelOptions } from "../src/channels.ts"
+import type { ForgejoChannelOptions } from "../src/channels.ts"
 import type { AgentCallbackContext } from "../src/types.ts"
 import { getAgentChannelSyncDefinition } from "../src/internal/channel-sync.ts"
 import { runAgentChannelSyncCli } from "../src/internal/channel-sync-cli.ts"
@@ -69,12 +69,13 @@ const fetcher = vi.fn<typeof fetch>(async () => { throw new Error("Unexpected ne
 // SAFETY: Sync resolution only reads the option callbacks and Channel Env in this fixture.
 const context = {} as AgentCallbackContext
 const events: EventKind[] = ["comment", "review", "review_comment", "state_change"]
-const options: CodeHostChannelOptions = {
+// Forgejo options are the subset that both Channels accept.
+const options: ForgejoChannelOptions = {
   token, webhookSecret: secret, sync: { repositories: ["platform/api", "platform/web"] },
   pullRequest: { reconcile: { mentions: ["@review-bot"] } },
 }
 
-async function sync(host: typeof hosts[number], input: CodeHostChannelOptions = options) {
+async function sync(host: typeof hosts[number], input: ForgejoChannelOptions = options) {
   const channel = host === "gitlab" ? gitlab(input) : forgejo(input)
   const definition = getAgentChannelSyncDefinition(channel)!
   expect(definition.provider).toBe(host)
@@ -265,7 +266,7 @@ it("keeps nested GitLab groups in the repository reference", async () => {
   await expect(sync("forgejo", { ...options, sync: { repositories: ["platform/team/api"] } })).rejects.toThrow("sync.repositories")
 })
 
-const featureCases: Array<[CodeHostChannelOptions, EventKind[]]> = [
+const featureCases: Array<[ForgejoChannelOptions, EventKind[]]> = [
   [{ pullRequest: true }, ["comment"]],
   [{ activity: true }, ["state_change"]],
   [{ pullRequest: { reconcile: { events: [], triggers: [{ events: ["review"] }] } } }, ["comment", "review"]],
