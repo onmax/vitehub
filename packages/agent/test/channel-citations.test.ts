@@ -61,6 +61,33 @@ describe("Chat SDK citation delivery", () => {
     expect(returns).toBe(1);
   });
 
+  it("cancels a pending read from a real async generator and requests its cleanup", async () => {
+    let release: ((text: string) => void) | undefined;
+    const chunk = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    let reportCleanup: (() => void) | undefined;
+    const cleanedUp = new Promise<void>((resolve) => {
+      reportCleanup = resolve;
+    });
+    const source = (async function* () {
+      try {
+        yield await chunk;
+      } finally {
+        reportCleanup?.();
+      }
+    })();
+    const iterator = formatChannelCitationStream(source)[Symbol.asyncIterator]();
+    const pending = iterator.next();
+    try {
+      await expect(iterator.return?.()).resolves.toMatchObject({ done: true });
+      await expect(pending).resolves.toMatchObject({ done: true });
+    } finally {
+      release?.("late text");
+    }
+    await cleanedUp;
+  });
+
   it("labels a citation truncated at the end of a completed stream", async () => {
     const chunks = (async function* () {
       yield "Answer. cite";

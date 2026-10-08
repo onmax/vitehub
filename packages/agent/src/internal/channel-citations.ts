@@ -64,11 +64,28 @@ export function formatChannelCitationStream(stream: AsyncIterable<string>): Asyn
       const iterator = stream[Symbol.asyncIterator]();
       const format = createCitationFormatter();
       let closed = false;
+      let pendingRead: Promise<IteratorResult<string>> | undefined;
+      let cancelRead: (() => void) | undefined;
+      const cancelled = new Promise<undefined>((resolve) => {
+        cancelRead = () => resolve(undefined);
+      });
+      const close = async (error?: unknown, throwing = false) => {
+        if (closed) return;
+        closed = true;
+        cancelRead?.();
+        const closing = throwing && iterator.throw ? iterator.throw(error) : iterator.return?.();
+        // Async generators queue return() behind next(). Request cleanup, but let
+        // the delivery timeout finish while the invocation abort closes the source.
+        if (pendingRead) void closing?.catch(() => undefined);
+        else await closing;
+      };
       return {
         async next(): Promise<IteratorResult<string>> {
           while (!closed) {
-            const result = await iterator.next();
-            if (closed) break;
+            pendingRead = iterator.next();
+            const result = await Promise.race([pendingRead, cancelled]);
+            pendingRead = undefined;
+            if (closed || result === undefined) break;
             const text = format(result.done ? "" : result.value, Boolean(result.done));
             if (result.done) closed = true;
             if (text) return { done: false, value: text };
@@ -77,20 +94,12 @@ export function formatChannelCitationStream(stream: AsyncIterable<string>): Asyn
         },
         // Forward cancellation immediately, even while the source's next() is stalled.
         async return(): Promise<IteratorResult<string>> {
-          if (!closed) {
-            closed = true;
-            await iterator.return?.();
-          }
+          await close();
           return { done: true, value: undefined };
         },
         async throw(error: unknown): Promise<IteratorResult<string>> {
-          closed = true;
-          if (iterator.throw) await iterator.throw(error);
-          else {
-            await iterator.return?.();
-            throw error;
-          }
-          return { done: true, value: undefined };
+          await close(error, true);
+          throw error;
         },
       };
     },

@@ -13533,12 +13533,18 @@ describe("server helpers", () => {
     const prompts: string[] = []
     const createAgent = (adapter: ReturnType<typeof createTestChatAdapter>) => defineAgent({
       name: "support",
+      ...(scenario === "citation notice" ? { channels: {
+        telegram: testTelegram(telegram, {
+          // SAFETY: The fixture supplies the Chat SDK adapter used by restart recovery.
+          adapter: () => adapter as never,
+          messages: { errorFallbackText: "Restarted. citeturn0view0" },
+        }),
+      } } : {}),
       capabilities: [
         defineChatCapability({
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
           platforms: { telegram: () => adapter as never },
           webhooks: { telegram: {} },
-          ...(scenario === "citation notice" ? { errorFallbackText: "Restarted. citeturn0view0" } : {}),
         }),
       ],
       driver: {
