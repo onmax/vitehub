@@ -320,6 +320,10 @@ not change.
 See [Errors and diagnostics](https://vitehub.dev/docs/reference/errors-diagnostics)
 for the code format and an application catalog example.
 
+## Chat replies
+
+`teams()` requests descriptive Markdown source links. Chat SDK reply delivery replaces unresolved native web citations with `[source link unavailable]`, including in streams. Codex app-server does not expose a citation-ID-to-URL map; ViteHub preserves explicit source links and does not guess URLs for native IDs.
+
 ## Chat state
 
 Chat History and the Concurrent Invocation Guard need an Agent State Provider when they should survive a process restart. The default `provider: "auto"` uses Cloudflare state on Cloudflare and local SQLite at `file:.vitehub/data/agent-state.sqlite` during Vite development. Production Node and serverless output require `VITEHUB_AGENT_STATE_URL` or explicit provider options because ViteHub cannot infer a durable filesystem there.
@@ -777,6 +781,7 @@ retry after five minutes. Set `install: false` for a checkout with no Node depen
 Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
 Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:`, Git dependencies that prepare remote projects, and unsupported source protocols are rejected before Corepack runs. Use registry packages or HTTPS archives instead, or set `install: false` when dependencies must be prepared in the provider sandbox.
 Local package source files, archives, and patch files contribute their contents and executable mode to the dependency fingerprint. Local package source trees require regular files and directories; installed modules and Git metadata are excluded. Host installation reads a private validated snapshot, so concurrent provider writes cannot alter package-manager configuration or dependency sources after validation. The host publishes only generated dependency outputs and rejects a refresh if the live dependency inputs changed. Workspace links continue to point to the live checkout.
+Refresh reconciles all managed outputs. Switching to Yarn PnP removes obsolete root and workspace `node_modules`; switching away removes generated `.pnp.*` and Yarn cache state while preserving Yarn source configuration. Provider quota cooldowns pause model dispatch until their recorded deadline. Host merges and stack retargets continue during that cooldown.
 Yarn `~/` patch selectors resolve from the project root after decoding. Other local patch selectors are rejected because Yarn can resolve them inside a parent package filesystem. Each grouped lockfile
 descriptor is checked. Workspace glob matches must stay inside the checkout after
 symlink resolution. Trusted GitHub release archives use the HTTPS archive path.

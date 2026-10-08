@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { chmod, cp, lstat, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -12,6 +12,7 @@ export interface GitHubInstallSnapshot {
   checkout: string;
   directory: string;
   identities: ReadonlyMap<string, { dev: string; ino: string }>;
+  managedDirectories: ReadonlySet<string>;
   close(): Promise<void>;
 }
 
@@ -20,13 +21,18 @@ export async function createGitHubInstallSnapshot(target: string): Promise<GitHu
   const checkout = await realpath(target);
   const directory = await mkdtemp(join(tmpdir(), "vitehub-dependency-snapshot-"));
   const identities = new Map<string, { dev: string; ino: string }>();
+  const managedDirectories = new Set([""]);
   try {
     await cp(checkout, directory, {
       recursive: true, dereference: false, verbatimSymlinks: true,
       filter: async source => {
         const path = relative(checkout, source);
         const parts = path.split(sep);
-        if ([".git", "node_modules"].includes(basename(source))
+        if (basename(source) === "node_modules") {
+          managedDirectories.add(relative(checkout, dirname(source)));
+          return false;
+        }
+        if (basename(source) === ".git"
           || rootOutputs.has(path) || parts[0] === ".yarn" && yarnOutputs.has(parts[1]!)) return false;
         const info = await lstat(source, { bigint: true });
         if (path === ".yarn" && !info.isDirectory()) throw new Error("Yarn installation output must use a regular checkout directory.");
@@ -35,7 +41,7 @@ export async function createGitHubInstallSnapshot(target: string): Promise<GitHu
       },
     });
     await chmod(directory, 0o700);
-    return { checkout, directory, identities, close: async () => await rm(directory, { recursive: true, force: true }) };
+    return { checkout, directory, identities, managedDirectories, close: async () => await rm(directory, { recursive: true, force: true }) };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
     throw error;
@@ -65,7 +71,16 @@ export async function publishGitHubInstallSnapshot(snapshot: GitHubInstallSnapsh
       const [dev, ino, source, names, yarn] = process.argv.slice(1);
       const info = await lstat(".", { bigint: true });
       if (String(info.dev) !== dev || String(info.ino) !== ino) throw new Error("Dependency output directory changed during installation.");
+      const outputs = JSON.parse(names);
+      const present = await Promise.all(outputs.map(name => lstat(join(source, name)).then(() => true, error => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      })));
       if (yarn === "true") {
+        if (!present.some(Boolean) && !await lstat(".yarn").catch(error => {
+          if (error.code === "ENOENT") return undefined;
+          throw error;
+        })) process.exit(0);
         await mkdir(".yarn").catch(error => { if (error.code !== "EEXIST") throw error; });
         const expected = await lstat(".yarn", { bigint: true });
         if (!expected.isDirectory()) throw new Error("Yarn output directory must not be a symbolic link.");
@@ -73,25 +88,26 @@ export async function publishGitHubInstallSnapshot(snapshot: GitHubInstallSnapsh
         const actual = await lstat(".", { bigint: true });
         if (actual.dev !== expected.dev || actual.ino !== expected.ino) throw new Error("Yarn output directory changed during installation.");
       }
-      for (const name of JSON.parse(names)) {
+      for (const [index, name] of outputs.entries()) {
         await rm(name, { recursive: true, force: true });
-        await rename(join(source, name), name);
+        if (present[index]) await rename(join(source, name), name);
       }
     `, identity.dev, identity.ino, join(outputDirectory, path, yarn ? ".yarn" : ""), JSON.stringify(names), String(yarn)], {
       cwd: join(snapshot.checkout, path), signal,
     });
   }
+  const managedDirectories = new Set(snapshot.managedDirectories);
   async function visit(path: string) {
-    const outputs: string[] = [];
     for (const entry of await readdir(join(outputDirectory, path), { withFileTypes: true })) {
-      if (entry.name === "node_modules" || !path && rootOutputs.has(entry.name)) outputs.push(entry.name);
-      else if (!path && entry.name === ".yarn") {
-        const names = (await readdir(join(outputDirectory, ".yarn"))).filter(name => yarnOutputs.has(name));
-        if (names.length) await publish("", names, true);
-      } else if (entry.isDirectory()) await visit(join(path, entry.name));
+      if (entry.name === "node_modules") managedDirectories.add(path);
+      else if (!path && rootOutputs.has(entry.name) || path === ".yarn" && yarnOutputs.has(entry.name)) continue;
+      else if (entry.isDirectory()) await visit(join(path, entry.name));
     }
-    if (outputs.length) await publish(path, outputs);
   }
-  try { await visit(""); }
+  try {
+    await visit("");
+    for (const path of managedDirectories) await publish(path, path ? ["node_modules"] : ["node_modules", ...rootOutputs]);
+    await publish("", [...yarnOutputs], true);
+  }
   finally { if (transfer) await rm(transfer, { recursive: true, force: true }); }
 }
