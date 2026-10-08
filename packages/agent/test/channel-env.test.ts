@@ -1242,3 +1242,42 @@ describe("built-in Channel Env at runtime", { timeout: 30_000 }, () => {
     expect(createDiscordAdapter).toHaveBeenCalledWith({ applicationId: "app-id", botToken: "bot-token", publicKey: "public-key" })
   })
 })
+
+describe("Code Host Server Env discovery", () => {
+  it.each([
+    ["codeHost()", ["github"]],
+    ["codeHost({ host: 'gitlab' })", ["gitlab"]],
+    ["codeHost({ host: `gitlab` })", ["gitlab"]],
+    ["codeHost({ host: `${selected}` })", ["github", "gitlab", "forgejo"]],
+    ["codeHost({ host: 'gitlab', host: selected })", ["github", "gitlab", "forgejo"]],
+    ["codeHost({ host: 'forgejo' })", ["forgejo"]],
+    ["codeHost({ host: selected })", ["github", "gitlab", "forgejo"]],
+    ["codeHost(options)", ["github", "gitlab", "forgejo"]],
+    ["codeHost({ host: 'gitlab' + suffix })", ["github", "gitlab", "forgejo"]],
+    ["codeHost({ host: 'gitlab', ...options })", ["github", "gitlab", "forgejo"]],
+    ["codeHost(({ host: 'gitlab' }))", ["gitlab"]],
+  ])("declares optional host fields for %s", async (expression, hosts) => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-code-host-env-"))
+    try {
+      await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "reviewer.ts"), `
+        import { defineAgent } from "vite-hub/agent"
+        import { codeHost } from "vite-hub/agent/capabilities"
+        export default defineAgent({ capabilities: [${expression}] })
+      `)
+      const env = discoverAgentChannelEnv({ rootDir: root })
+      expect(Object.keys(env)).toEqual(hosts)
+      for (const host of hosts) {
+        expect(env[host]?.token?.secret).toBe(true)
+        expect(Object.values(env[host]!).every(field => !field.required)).toBe(true)
+      }
+    }
+    finally { await rm(root, { recursive: true, force: true }) }
+  })
+
+  it.each(["vite-hub/agent/capabilities", "@vite-hub/agent/capabilities"])("reads static strings from aliases and namespaces in %s", (module) => {
+    const source = `import { codeHost as host } from '${module}'; import * as caps from '${module}'; host({ host: 'gitlab' }); caps.codeHost({ host: 'forgejo' })`
+    const uses = discoverBuiltInChannelUses(source, ["codeHost"], { modules: new Set([module]), shorthands: false })
+    expect(uses.map(use => use.stringOptions?.get("host"))).toEqual(["gitlab", "forgejo"])
+  })
+})
