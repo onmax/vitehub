@@ -32,7 +32,7 @@ function labeller(run = vi.fn((_context: { input: { data?: unknown } }) => ({ la
   })
 }
 
-function interceptChannel() {
+function interceptChannel(options: { omitMessage?: boolean } = {}) {
   const messageSchema = v.pipe(v.object({
     from: v.string(),
     subject: v.string(),
@@ -52,7 +52,7 @@ function interceptChannel() {
               prompt: input.message.subject,
               ...(input.data ? { data: input.data } : {}),
             },
-            message: input.message,
+            ...(options.omitMessage ? {} : { message: input.message }),
             run: {
               channelId: context.trigger.channelId,
               origin: context.channel.kind,
@@ -151,6 +151,19 @@ describe("Agent data and intercept", () => {
     const intercept = vi.fn(({ data }) => data)
     const agent = defineAgent({
       channels: { mail: interceptChannel() },
+      driver: { run: () => "driver" },
+      intercept,
+      runtime: false,
+    })
+
+    await expect(runAgentTrigger(agent, runtime(), "mail.received", { message: { subject: "Dinner" } })).rejects.toThrow(/Channel "mail" message data/)
+    expect(intercept).not.toHaveBeenCalled()
+  })
+
+  it("validates a missing Channel message before intercept", async () => {
+    const intercept = vi.fn(({ data }) => data)
+    const agent = defineAgent({
+      channels: { mail: interceptChannel({ omitMessage: true }) },
       driver: { run: () => "driver" },
       intercept,
       runtime: false,

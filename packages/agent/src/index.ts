@@ -4705,7 +4705,12 @@ async function createAgentInvocationContext<
         await validateCapabilityInput(false)
         if (intercept) {
           const channelMessage = !internalDefinition?.[baseAgentData] && activeChannelContext
-            ? await channelMessageData(activeChannelContext.channel, activeChannelContext.channelId, invocationContext, false)
+            ? await channelMessageData(
+              activeChannelContext.channel,
+              activeChannelContext.channelId,
+              invocationContext,
+              invocationContext.get("agent.trigger") !== undefined,
+            )
             : undefined
           const value = await runObservedAgentHook(observedHooks, {
             name: "agent:intercept",
