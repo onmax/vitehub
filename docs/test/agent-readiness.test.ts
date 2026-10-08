@@ -71,7 +71,7 @@ describe("agent-ready HTTP contracts", () => {
       domain: "https://vitehub.dev",
       sections: [{ links: [
         { href: "https://vitehub.dev/docs/agents" },
-        { href: "https://vitehub.dev/blog/server-primitives" },
+        { href: "https://vitehub.dev/blog/agents" },
         { href: "https://vitehub.dev/about" },
         { href: "https://vitehub.dev/contact" },
         { href: "https://vitehub.dev/privacy" },
@@ -82,7 +82,7 @@ describe("agent-ready HTTP contracts", () => {
     rewriteLlmsRawLinks(options);
     expect(options.sections[0]?.links).toEqual([
       { href: "https://vitehub.dev/raw/docs/agents.md" },
-      { href: "https://vitehub.dev/raw/blog/server-primitives.md" },
+      { href: "https://vitehub.dev/raw/blog/agents.md" },
       { href: "https://vitehub.dev/raw/about.md" },
       { href: "https://vitehub.dev/raw/contact.md" },
       { href: "https://vitehub.dev/raw/privacy.md" },
