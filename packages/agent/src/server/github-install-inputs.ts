@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { glob, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { glob, lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
 import { parseSyml } from "@yarnpkg/parsers";
@@ -58,7 +58,7 @@ function validateNpmConfig(source: string): void {
 export class GitHubDependencyConflictError extends Error {}
 
 /** Validate decoded manifests and lockfiles before a package manager can read host paths. */
-export async function validateGitHubInstallInputs(target: string): Promise<string> {
+export async function validateGitHubInstallInputs(target: string, prepareLinkedBins?: (paths: readonly string[]) => Promise<void>): Promise<string> {
   const hash = createHash("sha256");
   const root = await realpath(target);
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
@@ -68,6 +68,8 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     || await stat(join(root, "npm-shrinkwrap.json")).then(info => info.isFile(), () => false));
   const dependencyFiles = new Set<string>();
   const dependencyDirectories = new Set<string>();
+  const linkedDirectories = new Set<string>();
+  const linkedBinFiles = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
     // Workspace exclusions still contribute crawler roots. File dependencies
     // use literal paths and must keep their leading exclamation marks.
@@ -107,9 +109,10 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     if (info?.isDirectory()) {
       const canonical = await realpath(path);
       packageRoots.add(canonical);
-      // Link and portal dependencies read live source files. Their package
-      // manifests affect installation; builds and source edits do not.
+      // Link and portal dependencies read live source files. Installation
+      // fingerprints their manifests and command targets, not unrelated output.
       if (copyContents) dependencyDirectories.add(canonical);
+      else linkedDirectories.add(canonical);
     }
     else if (info?.isFile()) dependencyFiles.add(path);
   }
@@ -230,6 +233,26 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
   }
   for (const directory of packageRoots) await visit(directory);
+  for (const directory of linkedDirectories) {
+    const source = await readFile(join(directory, "package.json"), "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    });
+    if (source === undefined) continue;
+    const manifest: unknown = JSON.parse(source);
+    if (!isRuntimeRecord(manifest) || manifest.bin === undefined) continue;
+    const targets = hasRuntimeType(manifest.bin, "string") ? [manifest.bin]
+      : isRuntimeRecord(manifest.bin) ? Object.values(manifest.bin) : undefined;
+    if (!targets) throw new Error("Linked dependency bin targets must be file paths.");
+    for (const target of targets) {
+      if (!hasRuntimeType(target, "string") || !target) throw new Error("Linked dependency bin targets must be file paths.");
+      await checkPath(encodeURIComponent(target), directory);
+      const path = resolve(directory, target);
+      if (relative(root, path).split(/[\\/]/).includes(".git")) throw new Error("Linked dependency bin targets must not read Git metadata.");
+      linkedBinFiles.add(path);
+    }
+  }
+  await prepareLinkedBins?.([...linkedBinFiles].map(path => relative(root, path)));
   const fingerprintedDirectories = new Set<string>();
   async function collectDependencyFiles(directory: string): Promise<void> {
     if (fingerprintedDirectories.has(directory)) return;
@@ -244,9 +267,16 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
   }
   for (const directory of dependencyDirectories) await collectDependencyFiles(directory);
-  for (const path of [...dependencyFiles].sort()) {
+  for (const path of [...new Set([...dependencyFiles, ...linkedBinFiles])].sort()) {
     hash.update(relative(root, path)).update("\0");
-    hash.update((await stat(path)).mode & 0o111 ? "executable\0" : "regular\0");
+    const info = linkedBinFiles.has(path) ? await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    }) : await stat(path);
+    // Package managers skip missing commands; their later appearance changes shims.
+    if (!info) { hash.update("missing-bin\0"); continue; }
+    if (linkedBinFiles.has(path) && !info.isFile()) throw new Error("Linked dependency bin targets must be regular files.");
+    hash.update(info.mode & 0o111 ? "executable\0" : "regular\0");
     for await (const chunk of createReadStream(path)) hash.update(chunk);
     hash.update("\0");
   }

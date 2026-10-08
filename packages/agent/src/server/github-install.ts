@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { validateGitHubInstallInputs } from "./github-install-inputs.ts";
 import { createGitHubInstallSnapshot, publishGitHubInstallSnapshot } from "./github-install-snapshot.ts";
 import { randomUUID } from "node:crypto";
@@ -128,7 +128,27 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
 /** Require validation to use the same dependency inputs that the host installed. */
 export async function assertGitHubDependenciesCurrent(target: string, inputs = target): Promise<void> {
   if (!(await exists(join(inputs, "package.json"))) && !(await exists(join(inputs, "pnpm-workspace.yaml")))) return;
-  const fingerprint = await validateGitHubInstallInputs(inputs);
+  const fingerprint = await validateGitHubInstallInputs(inputs, inputs === target ? undefined : async paths => {
+    const checkout = await realpath(target);
+    for (const path of paths) {
+      const destination = join(inputs, path);
+      if (await lstat(destination).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; })) continue;
+      // The index owns tracked commands, including staged deletion. Generated
+      // untracked commands remain installation inputs without entering commits.
+      const tracked = await exec("git", ["--literal-pathspecs", "-C", target, "-c", "core.fsmonitor=false", "ls-tree", "--name-only", "HEAD", "--", path], {
+        env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      if (tracked.stdout.trim()) continue;
+      const source = join(checkout, path);
+      const info = await lstat(source).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; });
+      if (!info) continue;
+      if (!info.isFile()) throw new Error("Linked dependency bin targets must be regular files.");
+      const part = relative(checkout, await realpath(source));
+      if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part)) throw new Error("Linked dependency bin targets must stay inside the checkout.");
+      await mkdir(dirname(destination), { recursive: true });
+      await cp(source, destination);
+    }
+  });
   const record = v.parse(v.object({ status: v.string(), fingerprint: v.optional(v.string()) }), JSON.parse(await readFile(join(target, ".git", "vitehub-install.json"), "utf8")));
   if (record.status !== "installed" || record.fingerprint !== fingerprint) throw new Error("Dependency inputs changed or installation failed. Call refreshDependencies and rerun validation before committing.");
 }
