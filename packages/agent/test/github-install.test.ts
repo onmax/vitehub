@@ -132,12 +132,31 @@ it.each([
   }
 });
 
-it("accepts Yarn virtual peer locators with a supported nested source", async () => {
+it.each(["abc123", ""])("accepts Yarn virtual peer locators with entropy %s and a supported nested source", async entropy => {
   const root = await fixture();
   await rm(join(root, "pnpm-lock.yaml"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
-  await writeFile(join(root, "yarn.lock"), '__metadata:\n  version: 8\n"safe@npm:^1.0.0":\n  version: 1.0.0\n  resolution: "safe@virtual:abc123#npm:1.0.0"\n');
+  await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n"safe@npm:^1.0.0":\n  version: 1.0.0\n  resolution: "safe@virtual:${entropy}#npm:1.0.0"\n`);
   await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it.each(["package-lock.json", "npm-shrinkwrap.json"])("accepts npm workspace link targets in %s", async lockfile => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await mkdir(join(root, "packages/a"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3", workspaces: ["packages/*"] }));
+  await writeFile(join(root, "packages/a/package.json"), JSON.stringify({ name: "a", version: "1.0.0" }));
+  await writeFile(join(root, lockfile), JSON.stringify({ lockfileVersion: 3, packages: { "": { workspaces: ["packages/*"] }, "node_modules/a": { resolved: "packages/a", link: true }, "packages/a": { version: "1.0.0" } } }));
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+});
+
+it.each(["../outside", "/srv/outside", "https://registry.npmjs.org/a.tgz"])("rejects npm workspace links outside the checkout: %s", async target => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "npm@11.6.3" }));
+  await writeFile(join(root, "package-lock.json"), JSON.stringify({ lockfileVersion: 3, packages: { "node_modules/a": { resolved: target, link: true } } }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local|checkout-relative/);
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it.each(["exec:./script.js", "http://registry.npmjs.org/unsafe.tgz", "file:/srv/outside.tgz"])("rejects Yarn virtual locators wrapping %s", async source => {
