@@ -38,8 +38,10 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   const hash = createHash("sha256");
   const root = await realpath(target);
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
-  async function checkPath(value: string, base: string) {
-    let decoded = decodeURIComponent(value);
+  async function checkPath(value: string, base: string, workspace = false) {
+    // Workspace exclusions still contribute crawler roots. File dependencies
+    // use literal paths and must keep their leading exclamation marks.
+    let decoded = decodeURIComponent(workspace ? value.replace(/^!+/, "") : value);
     if (decoded.startsWith("//") || /^[a-z]:/i.test(decoded) || decoded.includes("\\") || decoded.startsWith("~")) throw new Error("Host-local dependency paths are not allowed.");
     if (!inside(resolve(base, decoded))) throw new Error("Host-local dependency paths must stay inside the checkout.");
     // Check wildcard prefixes before deeper matching can pass through a symlink.
@@ -70,11 +72,12 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
   }
   async function inspect(value: unknown, base: string, dependency = false, field = ""): Promise<void> {
     if (hasRuntimeType(value, "string")) {
+      if (field === "workspaces") { await checkPath(value, base, true); return; }
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
       const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
       if (local) await checkPath(local[1]!, base);
       else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\~]|[a-z]:[/\\])/i.test(value)) await checkPath(value, base);
-      else if (field === "workspaces" || field === "directory") await checkPath(value, base);
+      else if (field === "directory") await checkPath(value, base);
       return;
     }
     if (Array.isArray(value)) { for (const entry of value) await inspect(entry, base, dependency, field); return; }
