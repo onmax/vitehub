@@ -38,6 +38,15 @@ it.each(["true", "false"])("accepts lockfile-shaping npm peer settings: %s", asy
   await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
 });
 
+it.each([".npmrc", "pnpm-workspace.yaml"])("accepts pnpm deep workspace linking from %s and fingerprints it", async config => {
+  const root = await fixture();
+  await writeFile(join(root, config), config === ".npmrc" ? "link-workspace-packages=deep\n" : "linkWorkspacePackages: deep\n");
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+  await writeFile(join(root, config), config === ".npmrc" ? "link-workspace-packages=false\n" : "linkWorkspacePackages: false\n");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow();
+});
+
 it("records a reproduced installation failure for durable retry", async () => {
   const root = await fixture();
   await writeFile(join(root, "bin", "corepack"), "#!/bin/sh\nexit 7\n", { mode: 0o755 });
