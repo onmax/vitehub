@@ -1,6 +1,8 @@
 import { isAsyncIterable } from "./stream-result.ts";
 import { isRuntimeString } from "./runtime-value.ts";
 import type { AgentChatMessage } from "../types.ts";
+import type { CardChild, CardElement } from "chat";
+import type { Nodes } from "mdast";
 
 const citationStart = "\uE200cite\uE202";
 const citationEnd = "\uE201";
@@ -68,6 +70,113 @@ export async function* formatChannelCitationStream(
   if (remaining) yield remaining;
 }
 
+function formatCitationAst<T extends Nodes>(node: T): T {
+  let formatted = { ...node };
+  if ("value" in node && isRuntimeString(node.value))
+    formatted = { ...formatted, value: formatChannelCitationText(node.value) };
+  if ("alt" in node && node.alt)
+    formatted = { ...formatted, alt: formatChannelCitationText(node.alt) };
+  if ("title" in node && node.title)
+    formatted = { ...formatted, title: formatChannelCitationText(node.title) };
+  if ("children" in node)
+    formatted = { ...formatted, children: node.children.map((child) => formatCitationAst(child)) };
+  return formatted;
+}
+
+type CardNode =
+  | CardElement
+  | CardChild
+  | Extract<CardChild, { type: "actions" }>["children"][number]
+  | Extract<CardChild, { type: "fields" }>["children"][number];
+
+function formatOptionalCitationText(text: string | undefined): string | undefined {
+  return text === undefined ? undefined : formatChannelCitationText(text);
+}
+
+function formatCitationCard<T extends CardNode>(node: T): T {
+  switch (node.type) {
+    case "card":
+      return {
+        ...node,
+        title: formatOptionalCitationText(node.title),
+        subtitle: formatOptionalCitationText(node.subtitle),
+        children: node.children.map((child) => formatCitationCard(child)),
+      };
+    case "section":
+    case "actions":
+    case "fields":
+      return { ...node, children: node.children.map((child) => formatCitationCard(child)) };
+    case "text":
+      return { ...node, content: formatChannelCitationText(node.content) };
+    case "field":
+      return {
+        ...node,
+        label: formatChannelCitationText(node.label),
+        value: formatChannelCitationText(node.value),
+      };
+    case "button":
+    case "link-button":
+      return {
+        ...node,
+        label: formatChannelCitationText(node.label),
+        tooltip: formatOptionalCitationText(node.tooltip),
+      };
+    case "link":
+      return { ...node, label: formatChannelCitationText(node.label) };
+    case "image":
+      return { ...node, alt: formatOptionalCitationText(node.alt) };
+    case "select":
+    case "radio_select":
+      return {
+        ...node,
+        label: formatChannelCitationText(node.label),
+        ...(node.type === "select"
+          ? { placeholder: formatOptionalCitationText(node.placeholder) }
+          : {}),
+        options: node.options.map((option) => ({
+          ...option,
+          label: formatChannelCitationText(option.label),
+          description: formatOptionalCitationText(option.description),
+        })),
+      };
+    case "table":
+      return {
+        ...node,
+        caption: formatOptionalCitationText(node.caption),
+        headers: node.headers.map(formatChannelCitationText),
+        rows: node.rows.map((row) => row.map(formatChannelCitationText)),
+      };
+    case "chart":
+      return {
+        ...node,
+        title: formatChannelCitationText(node.title),
+        chart:
+          node.chart.type === "pie"
+            ? {
+                ...node.chart,
+                segments: node.chart.segments.map((segment) => ({
+                  ...segment,
+                  label: formatChannelCitationText(segment.label),
+                })),
+              }
+            : {
+                ...node.chart,
+                categories: node.chart.categories.map(formatChannelCitationText),
+                series: node.chart.series.map((series) => ({
+                  ...series,
+                  name: formatChannelCitationText(series.name),
+                  data: series.data.map((point) => ({
+                    ...point,
+                    label: formatChannelCitationText(point.label),
+                  })),
+                })),
+              },
+      };
+    case "divider":
+      return node;
+  }
+}
+
 export function formatChannelCitationMessage(message: AgentChatMessage): AgentChatMessage {
   if (isRuntimeString(message)) return formatChannelCitationText(message);
   if (isAsyncIterable(message)) {
@@ -78,5 +187,12 @@ export function formatChannelCitationMessage(message: AgentChatMessage): AgentCh
     return { ...message, markdown: formatChannelCitationText(message.markdown) };
   if ("raw" in message) return { ...message, raw: formatChannelCitationText(message.raw) };
   if ("text" in message) return { ...message, text: formatChannelCitationText(message.text) };
-  return message;
+  if ("ast" in message) return { ...message, ast: formatCitationAst(message.ast) };
+  if ("card" in message)
+    return {
+      ...message,
+      card: formatCitationCard(message.card),
+      fallbackText: formatOptionalCitationText(message.fallbackText),
+    };
+  return formatCitationCard(message);
 }

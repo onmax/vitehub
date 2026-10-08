@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { parseMarkdown, stringifyMarkdown } from "chat";
+import type { CardElement } from "chat";
 import {
   formatChannelCitationMessage,
   formatChannelCitationStream,
@@ -68,5 +70,80 @@ describe("Chat SDK citation delivery", () => {
     });
     expect(formatChannelCitationMessage({ raw: input })).toEqual({ raw: expected });
     expect(formatChannelCitationMessage({ text: input })).toEqual({ text: expected });
+  });
+
+  it("formats AST text without mutating the AST, URLs, or attachments", () => {
+    const ast = parseMarkdown(input);
+    const files = [{ filename: "report.txt", data: Buffer.from("report") }];
+    const formatted = formatChannelCitationMessage({ ast, files });
+    expect(formatted).toEqual({ ast: parseMarkdown(expected), files });
+    expect(stringifyMarkdown(ast)).toContain("cite");
+  });
+
+  it("formats visible card text and fallback text while preserving action values and URLs", () => {
+    const url = "https://example.com/source";
+    const card: CardElement = {
+      type: "card",
+      title: input,
+      subtitle: input,
+      imageUrl: url,
+      children: [
+        { type: "section", children: [{ type: "text", content: input }] },
+        { type: "fields", children: [{ type: "field", label: input, value: input }] },
+        { type: "link", label: input, url },
+        { type: "image", alt: input, url },
+        {
+          type: "actions",
+          children: [
+            { type: "button", id: "apply", label: input, tooltip: input, value: input },
+            { type: "link-button", label: input, tooltip: input, url },
+            {
+              type: "select",
+              id: "choose",
+              label: input,
+              placeholder: input,
+              options: [{ label: input, description: input, value: input }],
+            },
+          ],
+        },
+        { type: "table", caption: input, headers: [input], rows: [[input]] },
+        {
+          type: "chart",
+          title: input,
+          chart: { type: "pie", segments: [{ label: input, value: 1 }] },
+        },
+      ],
+    };
+    const formatted = formatChannelCitationMessage({ card, fallbackText: input });
+    expect(formatted).toMatchObject({
+      card: {
+        title: expected,
+        subtitle: expected,
+        imageUrl: url,
+        children: [
+          { children: [{ content: expected }] },
+          { children: [{ label: expected, value: expected }] },
+          { label: expected, url },
+          { alt: expected, url },
+          {
+            children: [
+              { id: "apply", label: expected, tooltip: expected, value: input },
+              { label: expected, tooltip: expected, url },
+              {
+                id: "choose",
+                label: expected,
+                placeholder: expected,
+                options: [{ label: expected, description: expected, value: input }],
+              },
+            ],
+          },
+          { caption: expected, headers: [expected], rows: [[expected]] },
+          { title: expected, chart: { segments: [{ label: expected, value: 1 }] } },
+        ],
+      },
+      fallbackText: expected,
+    });
+    expect(formatChannelCitationMessage(card)).toEqual((formatted as { card: CardElement }).card);
+    expect(card.title).toBe(input);
   });
 });
