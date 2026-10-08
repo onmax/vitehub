@@ -50,7 +50,7 @@ function assertWritablePath(pathname: string) {
     if (part === "..") parts.pop()
     else if (part && part !== ".") parts.push(part)
   }
-  if (parts[0]?.toLowerCase() === "_vitehub" && parts[1]?.toLowerCase() === "derived") {
+  if (parts[0]?.toLowerCase() === "_vitehub" && (parts.length === 1 || parts[1]?.toLowerCase() === "derived")) {
     throw blobErrorDiagnostics.BLOB_R0033({ message: "Blob pathname uses the reserved derived cache namespace." })
   }
 }

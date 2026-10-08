@@ -218,7 +218,7 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
     throw new Error("Blob changed while reading its filesystem metadata.")
   }
   catch (error) {
-    if (isNotFound(error)) return null
+    if (isNotFound(error) || isDirectoryError(error)) return null
     throw error
   }
 }
@@ -377,7 +377,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
         return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
       }
       catch (error) {
-        if (isNotFound(error)) return null
+        if (isNotFound(error) || isDirectoryError(error)) return null
         throw error
       }
     },

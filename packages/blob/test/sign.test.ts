@@ -64,7 +64,7 @@ describe("signed Blob requests", () => {
   it("rejects signed writes into the derived cache before calling the provider", async () => {
     const storage = createR2Storage()
     const sign = awsMock.getSignedUrl.mock.calls.length
-    for (const pathname of ["_vitehub/derived/forged", "elsewhere/../_vitehub/derived/forged", "%5Fvitehub/derived/forged", "_vitehub\\derived\\forged"]) {
+    for (const pathname of ["_vitehub", "elsewhere/../_vitehub", "%5Fvitehub", "_vitehub/derived/forged", "elsewhere/../_vitehub/derived/forged", "%5Fvitehub/derived/forged", "_vitehub\\derived\\forged"]) {
       await expect(storage.sign(pathname, { expiresIn: 60, method: "PUT" })).rejects.toThrow("reserved derived cache")
     }
     expect(awsMock.getSignedUrl).toHaveBeenCalledTimes(sign)

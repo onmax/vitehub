@@ -230,7 +230,7 @@ describe("Blob response transforms", () => {
     await storage.serve(event(), "private/original", options)
     const [, cache] = await storage.list({ prefix: "_vitehub/derived/" })
     const path = cache!.blobs[0]!.pathname
-    for (const pathname of [path, `elsewhere/../${path}`, path.replace("_", "%5F"), path.replaceAll("/", "\\")]) {
+    for (const pathname of ["_vitehub", "_VITEHUB/", "elsewhere/../_vitehub", "%5Fvitehub", path, `elsewhere/../${path}`, path.replace("_", "%5F"), path.replaceAll("/", "\\")]) {
       await expect(storage.put(pathname, "forged")).rejects.toThrow("reserved derived cache")
       await expect(storage.createMultipartUpload(pathname)).rejects.toThrow("reserved derived cache")
       await expect(storage.resumeMultipartUpload(pathname, "forged-upload")).rejects.toThrow("reserved derived cache")
@@ -239,6 +239,21 @@ describe("Blob response transforms", () => {
     const [, body] = await storage.serve(event(), "private/original", options)
     expect(await new Response(body).text()).toBe("public")
     expect(run).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["_vitehub", "_vitehub/derived"])("serves fresh derivatives when legacy file %s blocks caching", async (pathname) => {
+    await driver.put(pathname, "legacy data")
+    const warning = vi.spyOn(console, "error").mockImplementation(() => {})
+    for (let count = 0; count < 2; count++) {
+      const [error, body] = await storage.serve(event(), "private/original", options)
+      expect(error).toBeNull()
+      expect(await new Response(body).text()).toBe("public")
+    }
+    expect(run).toHaveBeenCalledTimes(2)
+    expect(warning).toHaveBeenCalledTimes(2)
+    expect(await (await driver.get(pathname))?.text()).toBe("legacy data")
+    expect(await driver.head(`${pathname}/missing`)).toBeNull()
+    expect(await driver.get(`${pathname}/missing`)).toBeNull()
   })
 
   it("detects same-size filesystem changes even when the modification date is restored", async () => {
