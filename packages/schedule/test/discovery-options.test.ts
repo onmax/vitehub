@@ -47,6 +47,16 @@ describe.each([false, true])("Schedule option discovery, server=%s", (server) =>
   })
 
   it.each([
+    "(({ manual: true, allowRuntimeSchedules: true }))",
+    "{ manual: true, allowRuntimeSchedules: true } as const",
+  ])("discovers normalized positional literal options: %s", async (options) => {
+    const { discover } = await fixture(`export default defineSchedule('0 9 * * *', () => {}, ${options})`, server)
+    const definitions = discover()
+    expect(definitions).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+    expect(createScheduleTargetsContents(definitions)).toContain('["daily"]')
+  })
+
+  it.each([
     "const options = {}; export default defineSchedule('0 9 * * *', () => {}, options)",
     "export default defineSchedule('0 9 * * *', () => {}, { ...options })",
   ])("rejects unresolved positional options", async (source) => {
@@ -64,6 +74,22 @@ describe.each([false, true])("Schedule option discovery, server=%s", (server) =>
     const { file, discover } = await fixture(source, server)
     expect(discover).toThrow(file)
     expect(discover).toThrow(/allowRuntimeSchedules.*literal|literal.*allowRuntimeSchedules/)
+  })
+
+  it.each([
+    "get 'manual'() { return true }",
+    '"manual"() { return true }',
+    "get /* option */ 'allowRuntimeSchedules'() { return true }",
+    '"allowRuntimeSchedules"() { return true }',
+  ])("rejects quoted metadata getters and methods: %s", async (property) => {
+    for (const source of [
+      `export default defineSchedule({ cron: '0 9 * * *', handler() {}, ${property} })`,
+      `export default defineSchedule('0 9 * * *', () => {}, { ${property} })`,
+    ]) {
+      const { file, discover } = await fixture(source, server)
+      expect(discover).toThrow(file)
+      expect(discover).toThrow(/literal true or false/)
+    }
   })
 
   it("identifies an indirect default export at the definition call", async () => {

@@ -4,6 +4,7 @@ import {
   findDefaultExportCall,
   findIdentifierCalls,
   readObjectProperty,
+  readObjectPropertyNames,
   splitTopLevel,
 } from "../src/source-scanner.ts"
 
@@ -350,5 +351,25 @@ describe("source scanner", () => {
   it("reads top-level object properties without matching nested values", () => {
     expect(readObjectProperty(`{ nested: { cron: "wrong" }, cron: "0 8 * * *" }`, "cron"))
       .toBe(`"0 8 * * *"`)
+  })
+
+  it.each([
+    "manual: true",
+    "manual",
+    "get /* option */ 'manual'() { return true }",
+    'set "manual"(value) {}',
+    'async "manual"() {}',
+    "*'manual'() {}",
+  ])("finds a property regardless of member syntax: %s", (member) => {
+    expect(readObjectPropertyNames(`{ ${member} }`)).toEqual(["manual"])
+  })
+
+  it("does not report properties inside another member", () => {
+    expect(readObjectPropertyNames(`{ nested: { manual: true }, handler() { const manual = true }, /* trailing */ }`)).toEqual(["nested", "handler"])
+    expect(readObjectProperty(`{ get manual() { return true }, manual: false }`, "manual")).toBe("false")
+  })
+
+  it("reports unresolved keys without evaluating them", () => {
+    expect(readObjectPropertyNames(String.raw`{ get ["manual"]() {}, "manu\u0061l": true, ...options }`)).toEqual([undefined, undefined, undefined])
   })
 })
