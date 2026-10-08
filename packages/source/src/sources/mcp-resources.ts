@@ -319,7 +319,9 @@ function shouldInclude(path: string, options: Pick<McpResourcesSourceOptions, "i
   return true
 }
 
-function isRecord(value: unknown): value is object {
+type McpRecord = Record<PropertyKey, unknown>
+
+function isRecord(value: unknown): value is McpRecord {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- MCP responses cross a runtime protocol boundary.
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -337,11 +339,11 @@ function isDenseArray(value: unknown): value is unknown[] {
   return true
 }
 
-function isOwnMcpString(value: object, key: PropertyKey): boolean {
+function isOwnMcpString(value: McpRecord, key: PropertyKey): boolean {
   return Object.hasOwn(value, key) && isMcpString(Reflect.get(value, key))
 }
 
-function hasOptionalMcpString(value: object, key: PropertyKey): boolean {
+function hasOptionalMcpString(value: McpRecord, key: PropertyKey): boolean {
   return !Reflect.has(value, key) || isOwnMcpString(value, key)
 }
 
