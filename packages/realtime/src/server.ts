@@ -1,6 +1,7 @@
 import { Editor } from "@tiptap/core"
 import { prosemirrorJSONToYDoc, updateYFragment, yDocToProsemirrorJSON } from "@tiptap/y-tiptap"
 import { assertAuthOrigin } from "@vite-hub/auth/server"
+import { getViteHubErrorShape } from "@vite-hub/runtime"
 import { isWorkspaceConflict, normalizeSafeWorkspacePath, resolveWorkspaceStoreTarget, useWorkspace } from "@vite-hub/workspace"
 import { HTTPError, defineEventHandler, defineWebSocketHandler } from "h3"
 import * as decoding from "lib0/decoding"
@@ -250,7 +251,15 @@ export async function readRealtimeWorkspaceDocument(
   writable: WritableWorkspaceFacade,
   documentId: string,
 ): Promise<{ baselineDigest: string | undefined, markdown: string }> {
-  const stat = () => writable.fs.stat(documentId)
+  const stat = async () => {
+    try {
+      return await writable.fs.stat(documentId)
+    }
+    catch (error) {
+      if (getViteHubErrorShape(error)?.code === "WORKSPACE_NOT_FOUND") return undefined
+      throw error
+    }
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const before = await stat()
     let markdown = ""
