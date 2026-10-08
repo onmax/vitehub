@@ -100,7 +100,8 @@ export function createViteWorkspaceAgentLoader(
       const framework = await server.ssrLoadModule("vite-hub/agent") as { defineAgent: DefineAgent }
       if (!invocations?.get && authored.invocations === undefined) {
         // Only obtain the lazy journal binding; extending authored would rerun preset configuration.
-        journalSource = framework.defineAgent({})
+        // The facade requires a valid Driver, but this descriptor carrier is never invoked.
+        journalSource = framework.defineAgent({ driver: { run: () => "" }, runtime: false })
       }
     }
     const colocatedInstructions = await readColocatedAgentInstructions(definition.handler)

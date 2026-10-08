@@ -171,7 +171,7 @@ describe("colocated Agent instructions", () => {
       expect(configure).toHaveBeenCalledOnce()
       expect(loaded?.agent.invocations).toBe(explicit ? original : fallback)
       if (explicit) expect(facade).not.toHaveBeenCalled()
-      else expect(facade).toHaveBeenCalledWith({})
+      else expect(facade).toHaveBeenCalledWith({ driver: { run: expect.any(Function) }, runtime: false })
     }
     finally { await rm(root, { force: true, recursive: true }) }
   })
