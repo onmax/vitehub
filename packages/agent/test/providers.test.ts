@@ -9468,7 +9468,7 @@ describe("server helpers", () => {
     }
   })
 
-  it("completes a handled webhook rehydration without running the saved invocation", async () => {
+  it.each([204, 302, 400, 403])("settles handled webhook rehydration with status %s without Invocation evidence", async status => {
     const { github } = await import("../src/channels.ts")
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-response-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
@@ -9483,7 +9483,7 @@ describe("server helpers", () => {
     const run = vi.fn(() => "unexpected saved invocation")
     const rehydrate = vi.fn((context: { waitUntil: (task: Promise<unknown>) => void }) => {
       context.waitUntil(deferred)
-      return new Response(null, { status: 204 })
+      return new Response(null, { status })
     })
     const agent = defineAgent({
       channels: {
@@ -9537,8 +9537,172 @@ describe("server helpers", () => {
       expect(deferredWork).toHaveBeenCalledOnce()
       expect(retry).not.toHaveBeenCalled()
       expect(run).not.toHaveBeenCalled()
+      const deliveries = await handler.deliveries(new Request("https://example.com/api/github/webhook"), "github", options)
+      const delivery = deliveries.find(item => item.sourceId === "delivery-rehydrate-response")
+      expect(delivery?.status).toBe(status === 204 ? "completed" : "rejected")
+      expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
     } finally {
       releaseDeferredWork()
+      await stop()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
+  })
+
+  it.each(["stream", "503", "body error", "exhausted", "timeout", "recovery"] as const)("observes handled webhook rehydration %s within durable custody", async kind => {
+    const { github } = await import("../src/channels.ts")
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined)
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-outcome-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const complete = vi.spyOn(state, "completeWebhookDelivery")
+    if (kind === "recovery") complete.mockRejectedValueOnce(new Error("completion outage"))
+    const retry = vi.spyOn(state, "retryWebhookDelivery")
+    const failed = vi.fn()
+    const run = vi.fn(() => "unexpected saved invocation")
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const cancelBody = vi.fn()
+    const streamingResponse = new Response(new ReadableStream<Uint8Array>({
+      start(controller) { streamController = controller },
+      cancel: cancelBody,
+    }))
+    const rehydrate = vi.fn((): Response => {
+      if (kind === "stream" || kind === "timeout") return streamingResponse
+      if (kind === "exhausted" || kind === "recovery" || (kind === "503" && rehydrate.mock.calls.length === 1)) return new Response(null, { status: 503 })
+      if (kind === "body error" && rehydrate.mock.calls.length === 1) return new Response(new ReadableStream({
+        start(controller) { controller.error(new Error("handled response body failed")) },
+      }))
+      return new Response(null, { status: 204 })
+    })
+    const agent = defineAgent({
+      channels: {
+        github: github({
+          triggers: {
+            webhook: {
+              failed,
+              invoke: () => ({
+                input: { prompt: "saved source data", ...(kind === "timeout" ? { timeout: 500 } : {}) },
+                run: { runId: "saved-rehydration-run" },
+                webhook: { concurrencyLimit: 1, deliveryId: "delivery-rehydrate-outcome", rehydrate },
+              }),
+            },
+          },
+          webhooks: { secretToken: false },
+        }),
+      },
+      driver: { run },
+    })
+    await state.connect()
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const options = { agentName: "review", webhookState: state }
+    const stop = handler.resume(options)
+    let stopRecovery: (() => Promise<void>) | undefined
+    let recoveryState: ReturnType<typeof createLibsqlAgentState> | undefined
+    let clock: ReturnType<typeof vi.spyOn> | undefined
+    const request = () => new Request("https://example.com/api/github/webhook", {
+      body: "{}",
+      headers: {
+        "content-type": "application/json",
+        "x-github-delivery": "delivery-rehydrate-outcome",
+        "x-github-event": "pull_request",
+      },
+      method: "POST",
+    })
+    try {
+      expect((await handler(request(), "github", options)).status).toBe(200)
+      await vi.waitFor(() => expect(rehydrate).toHaveBeenCalled())
+      if (kind === "stream") {
+        await vi.waitFor(() => expect(streamingResponse.body?.locked).toBe(true))
+        expect(complete).not.toHaveBeenCalled()
+        streamController.enqueue(new TextEncoder().encode("handled"))
+        streamController.close()
+      }
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 5_000 })
+      if (kind === "recovery") {
+        await expect(complete.mock.results[0]?.value).rejects.toThrow("completion outage")
+        expect(failed).toHaveBeenCalledOnce()
+        await stop()
+        const [scope] = await state.webhookDeliveryScopes()
+        const [pending] = await state.webhookDeliveries(scope!)
+        expect(pending?.failure).toMatchObject({ invocationStarted: false, notificationStarted: true })
+        clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + pending!.leaseTtlMs + 1)
+        recoveryState = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+        await recoveryState.connect()
+        stopRecovery = handler.resume({ ...options, webhookState: recoveryState })
+        await vi.waitFor(async () => expect(await recoveryState!.webhookDeliveries(scope!)).toEqual([]), { timeout: 5_000 })
+      } else await Promise.all(complete.mock.results.map(result => result.value))
+      const expectedAttempts = kind === "exhausted" || kind === "recovery" ? 3 : kind === "503" || kind === "body error" ? 2 : 1
+      expect(rehydrate).toHaveBeenCalledTimes(expectedAttempts)
+      expect(retry).toHaveBeenCalledTimes(kind === "timeout" ? 0 : expectedAttempts - 1)
+      expect(failed).toHaveBeenCalledTimes(kind === "exhausted" || kind === "timeout" || kind === "recovery" ? 1 : 0)
+      if (failed.mock.calls.length) {
+        expect(failed.mock.calls[0]?.[0]).not.toHaveProperty("invocation")
+        expect(failed.mock.calls[0]?.[0]).not.toHaveProperty("run")
+      }
+      if (kind === "timeout") expect(cancelBody).toHaveBeenCalledOnce()
+      expect(run).not.toHaveBeenCalled()
+      const delivery = (await handler.deliveries(request(), "github", options)).find(item => item.sourceId === "delivery-rehydrate-outcome")
+      expect(delivery?.status).toBe(kind === "exhausted" || kind === "timeout" || kind === "recovery" ? "failed" : "completed")
+      expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
+    } finally {
+      if (kind === "timeout" && !cancelBody.mock.calls.length) streamController.close()
+      clock?.mockRestore()
+      await stopRecovery?.()
+      await stop()
+      await recoveryState?.disconnect()
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+      consoleError.mockRestore()
+    }
+  }, 10_000)
+
+  it("recovers handled webhook rehydration failure without adding Invocation evidence", async () => {
+    const { github } = await import("../src/channels.ts")
+    const { openAgentChannelDelivery } = await import("../src/internal/channel-delivery.ts")
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-webhook-rehydrate-failure-recovery-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const failed = vi.fn()
+    const run = vi.fn()
+    const agent = defineAgent({
+      channels: { github: github({ triggers: { webhook: { failed, invoke: () => new Response(null, { status: 204 }) } }, webhooks: { secretToken: false } }) },
+      driver: { run },
+    })
+    await state.connect()
+    const scope = "webhook:review:github:github:"
+    const sourceId = "delivery-rehydrate-failure-recovery"
+    const channelDelivery = await openAgentChannelDelivery(state, { agentName: "review", channelId: "github", provider: "github", scope, sourceId })
+    const request = () => new Request("https://example.com/api/github/webhook", {
+      body: "{}",
+      headers: { "content-type": "application/json", "x-github-delivery": sourceId, "x-github-event": "pull_request" },
+      method: "POST",
+    })
+    const persistedFailure = { attempts: 3, error: "handled response failed", invocationStarted: false as const, notificationStarted: true as const }
+    await state.enqueueWebhookDelivery({
+      channelDeliveryId: channelDelivery.delivery.id,
+      concurrencyGroup: "review:default",
+      concurrencyLimit: 1,
+      deliveryId: sourceId,
+      enqueuedAt: Date.now(),
+      failure: persistedFailure,
+      invocation: { input: { prompt: "saved" }, run: { runId: "never-started" } },
+      leaseTtlMs: 30_000,
+      rehydrate: true,
+      request: { body: "{}", headers: Object.fromEntries(request().headers), method: "POST", url: request().url },
+      scope,
+      webhookId: "github",
+    })
+    // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const options = { agentName: "review", webhookState: state }
+    const stop = handler.resume(options)
+    try {
+      await vi.waitFor(async () => expect(await state.webhookDeliveries(scope)).toEqual([]), { timeout: 5_000 })
+      const delivery = (await handler.deliveries(request(), "github", options)).find(item => item.sourceId === sourceId)
+      expect(delivery?.status).toBe("failed")
+      expect(delivery?.events.filter(event => event.type.startsWith("invocation."))).toEqual([])
+      expect(failed).not.toHaveBeenCalled()
+      expect(run).not.toHaveBeenCalled()
+    } finally {
       await stop()
       await state.disconnect()
       await rm(stateDir, { force: true, recursive: true })
