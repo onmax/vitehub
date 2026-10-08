@@ -459,6 +459,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("persists an asynchronous merge and waits for confirmed completion", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const f = await fixture(false, false, { merge: "direct" });
     const command = f.command.getMockImplementation()!;
     const uuid = "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42";
@@ -472,13 +473,13 @@ describe("Babysitter preset runtime", () => {
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
       expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
       expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: uuid });
-      await f.runtime.inbox.ingest("async-merge-complete", "issue_comment", { repository: { full_name: "acme/app" }, issue: { number: 12, pull_request: {} }, action: "created", comment: { id: 123, body: "Merge result available", user: { login: "developer" } } });
+      vi.setSystemTime(Date.now() + 31_000);
       await f.reconcile();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
       expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeUndefined();
       expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(1);
       expect(createProviderRuntime).not.toHaveBeenCalled();
-    } finally { await f.runtime.inbox.close(); }
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
   });
 
   it.each(["repos/acme/app", "repos/acme/app/pulls?state=open&base=fix&per_page=100"])("releases the claim when branch safety read %s fails", async (path) => {
@@ -497,6 +498,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("keeps an unconfirmed direct merge fenced for reconciliation", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const f = await fixture(false, false, { merge: "direct" });
     const command = f.command.getMockImplementation()!;
     f.command.mockImplementation(async (args, request) => {
@@ -513,11 +515,11 @@ describe("Babysitter preset runtime", () => {
       expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toBeDefined();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).not.toBe("terminal");
       expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
-      await f.runtime.inbox.ingest("merge-reconcile-wake", "check_run", { repository: { full_name: "acme/app" }, action: "completed", check_run: { id: 2, name: "test", head_sha: "a".repeat(40), status: "completed", conclusion: "success", pull_requests: [{ number: 12 }] } });
+      vi.setSystemTime(Date.now() + 31_000);
       await f.reconcile();
       expect(await f.runtime.inbox.directMergeAttempt("acme/app", 12)).toMatchObject({ requestId: "630b9d5e-3f2a-4f7e-8b0c-2d5f9a8c1e42" });
       expect(f.command.mock.calls.filter(([args]) => args.includes("PUT"))).toHaveLength(2);
-    } finally { await f.runtime.inbox.close(); }
+    } finally { vi.useRealTimers(); await f.runtime.inbox.close(); }
   });
 
   it("releases a rejected merge claim and records a timed retry", async () => {
