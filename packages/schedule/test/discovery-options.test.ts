@@ -56,7 +56,7 @@ describe.each([false, true])("Schedule option discovery, server=%s", (server) =>
     }
   })
 
-  it.each(["0x2a", "1e2", "1_000"])("accepts an unrelated numeric option key: %s", async (name) => {
+  it.each(["0x2a", "1e2", "1_000", ".5", "1.5", "1e+2", "1e-2", "1.", "1_000.5_2", "0b1010", "0o52", "42n"])("accepts an unrelated numeric option key: %s", async (name) => {
     const { discover } = await fixture(`export default defineSchedule('0 9 * * *', () => {}, { ${name}: true, manual: true, allowRuntimeSchedules: true })`, server)
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
   })

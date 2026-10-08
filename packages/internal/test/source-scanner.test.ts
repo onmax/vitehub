@@ -375,9 +375,14 @@ describe("source scanner", () => {
     expect(readObjectPropertyNames(`{ get ${name}() {}, async ${name}() {} }`)).toEqual([name, name])
   })
 
-  it.each(["0x2a", "1e2", "1_000"])("preserves numeric key spelling: %s", (name) => {
+  it.each(["0x2a", "1e2", "1_000", ".5", "1.5", "1e+2", "1e-2", "1.", "1_000.5_2", "0b1010", "0o52", "42n"])("preserves numeric key spelling: %s", (name) => {
     expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([name])
     expect(readObjectProperty(`{ ${name}: true }`, name)).toBe("true")
+    expect(readObjectPropertyNames(`{ get ${name}() {}, async ${name}() {} }`)).toEqual([name, name])
+  })
+
+  it.each(["1manual", "1e+", "1__0", "0xg"])("reports an unresolved numeric key spelling: %s", (name) => {
+    expect(readObjectPropertyNames(`{ ${name}: true }`)).toEqual([undefined])
   })
 
   it("reports unresolved keys without evaluating them", () => {

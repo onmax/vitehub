@@ -558,10 +558,16 @@ function readObjectMemberKey(source: string, offset: number) {
     return { name: name.includes("\\") ? undefined : name, end }
   }
   if (source[start] === "[") return { name: undefined, end: start }
-  const name = /^(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*|\d[\w$]*)/u.exec(source.slice(start))?.[0]
+  const name = /^[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*/u.exec(source.slice(start))?.[0]
   if (name) {
     const end = start + name.length
     return { name: source[end] === "\\" ? undefined : name, end }
+  }
+  const numeric = /^(?:0[xX][\da-fA-F](?:_?[\da-fA-F])*n?|0[bB][01](?:_?[01])*n?|0[oO][0-7](?:_?[0-7])*n?|(?:0|[1-9](?:_?\d)*)n|(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)/.exec(source.slice(start))?.[0]
+  if (numeric) {
+    const end = start + numeric.length
+    const next = source[skipWhitespaceAndComments(source, end)]
+    return { name: next === ":" || next === "(" ? numeric : undefined, end }
   }
 }
 
