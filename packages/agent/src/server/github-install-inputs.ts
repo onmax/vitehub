@@ -12,7 +12,7 @@ const sourceFields = new Set(["resolved", "tarball", "resolution", "version", "s
 const downloadHosts = new Set(["registry.npmjs.org", "registry.yarnpkg.com", "pkg.pr.new", "github.com", "codeload.github.com"]);
 
 function unwrapYarnVirtualSource(value: string): string {
-  return value.replace(/(^|@)(?:virtual:[^#]+#)+/g, "$1");
+  return value.replace(/(^|@)(?:virtual:[^#]*#)+/g, "$1");
 }
 
 function checkDownloadSource(value: string): void {
@@ -165,7 +165,15 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
     }
     if (Array.isArray(value)) { for (const entry of value) await inspect(entry, base, dependency, field); return; }
     if (!isRuntimeRecord(value)) return;
+    const npmLink = npm && field.startsWith("node_modules/") && value.link === true;
+    if (npmLink) {
+      if (!hasRuntimeType(value.resolved, "string") || /^[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(value.resolved))) {
+        throw new Error("npm workspace links must reference checkout-relative paths.");
+      }
+      await selectLocalPackage(value.resolved, root, false);
+    }
     for (const [key, entry] of Object.entries(value)) {
+      if (npmLink && key === "resolved") continue;
       if (key === "workspaces" && pnpm) continue;
       if (key === "patchedDependencies") {
         await inspectPnpmPatches(entry, base);

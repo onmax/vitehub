@@ -56,7 +56,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { operationCount?: number; inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -349,9 +349,11 @@ async function fixture(autoMerge = false, discovered = false, preset: { inboxPat
           }
           if (operation) {
             await onRepair?.();
-            const result = await client.callTool({ name: operation, arguments: operationArguments });
-            if (onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
-            else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
+            for (let count = 0; count < (preset.operationCount ?? 1); count++) {
+              const result = await client.callTool({ name: operation, arguments: operationArguments });
+              if (onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
+              else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
+            }
           }
         } finally {
           await client.close();
@@ -1641,6 +1643,35 @@ describe("Babysitter preset runtime", () => {
       expect(f.commit).not.toHaveBeenCalled();
       expect(f.push).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("retains the preceding self-owned head while a second push webhook is pending", async () => {
+    const f = await fixture(false, false, { operationCount: 2 });
+    f.choose("pushRepair");
+    const first = "b".repeat(40), second = "d".repeat(40);
+    const originalPush = f.push.getMockImplementation()!;
+    let completed = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await originalPush(_target, options);
+      await options?.afterPush?.(first);
+      await f.runtime.inbox.ingest("first-repair-synchronize", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "synchronize",
+        pull_request: { ...f.pr(), head: { ...f.pr().head, sha: first } },
+      });
+      return first;
+    });
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await options?.afterPush?.(second);
+      options?.signal?.throwIfAborted();
+      completed = true;
+      return second;
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledTimes(2);
+      expect(completed).toBe(true);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(second);
     } finally { await f.runtime.inbox.close(); }
   });
 
