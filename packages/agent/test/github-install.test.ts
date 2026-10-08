@@ -2,6 +2,7 @@ import { chmod, symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { validateGitHubInstallInputs } from "../src/server/github-install-inputs.ts";
 import { assertGitHubDependenciesCurrent, installGitHubPullRequestWorkspace, GitHubWorkspaceInstallError } from "../src/server/github-install.ts";
 
 const roots: string[] = [];
@@ -635,6 +636,16 @@ it("rejects a Yarn patch relative to an unvalidated parent package filesystem", 
   const locator = "safe@patch:safe@npm%3A1.0.0#./patches/safe.patch::locator=parent%40npm%3A1.0.0";
   await writeFile(join(root, "yarn.lock"), `__metadata:\n  version: 8\n${JSON.stringify(locator)}:\n  version: 1.0.0\n  resolution: ${JSON.stringify(locator)}\n`);
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/project.relative/);
+});
+
+it.each(["config", "missing/generated.js"])("rejects linked command targets inside canonical Git metadata: %s", async target => {
+  const root = await fixture();
+  await mkdir(join(root, "packages/local"), { recursive: true });
+  await writeFile(join(root, ".git/config"), "protected Git configuration\n");
+  await symlink("../../.git", join(root, "packages/local/meta"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { local: "link:./packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: `meta/${target}` }));
+  await expect(validateGitHubInstallInputs(root)).rejects.toThrow(/Git metadata/);
 });
 
 it("rejects symlinks inside copied local dependency contents", async () => {

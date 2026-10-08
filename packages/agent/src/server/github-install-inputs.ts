@@ -96,8 +96,9 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
     let current = path;
     for (;;) {
       try {
-        if (!inside(await realpath(current))) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
-        break;
+        const canonical = await realpath(current);
+        if (!inside(canonical)) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
+        return canonical;
       } catch (error) {
         if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
         const parent = dirname(current);
@@ -264,9 +265,9 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
     if (!targets) throw new Error("Linked dependency bin targets must be file paths.");
     for (const target of targets) {
       if (!hasRuntimeType(target, "string") || !target) throw new Error("Linked dependency bin targets must be file paths.");
-      await checkPath(encodeURIComponent(target), directory);
+      const canonical = await checkPath(encodeURIComponent(target), directory);
       const path = resolve(directory, target);
-      if (relative(root, path).split(/[\\/]/).includes(".git")) throw new Error("Linked dependency bin targets must not read Git metadata.");
+      if ([path, canonical].some(candidate => relative(root, candidate).split(/[\\/]/).includes(".git"))) throw new Error("Linked dependency bin targets must not read Git metadata.");
       linkedBinFiles.add(path);
     }
   }
