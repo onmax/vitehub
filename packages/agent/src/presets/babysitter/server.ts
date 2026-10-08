@@ -1161,21 +1161,26 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // provider session to this pass so a new checkout never
               // resumes a Codex process whose temporary cwd was deleted.
               githubRun.threadId = `${githubRun.threadId}:${runId}`;
-              const result = await runWithProviderRetry(() => runAgent(
-                agent,
-                {
-                  runtime: "vite",
-                  run: githubRun,
-                  memo: (_key, create) => create(),
-                  waitUntil: () => {},
-                },
-                {
-                  abortSignal,
-                  context,
-                  messages: [createMessage({ role: "user", text: userMessage })],
-                },
-                { schedule: { ...schedule, runId }, output: "drained" },
-              ), abortSignal);
+              const result = await runWithProviderRetry(async () => {
+                // Run metadata and retry backoff can outlive a sibling admission
+                // block. Check each Box dispatch immediately before runAgent.
+                if (workerSettings.box && await parkBlockedModelWork()) throw new DOMException("Provider dispatch is waiting for admission.", "AbortError");
+                return await runAgent(
+                  agent,
+                  {
+                    runtime: "vite",
+                    run: githubRun,
+                    memo: (_key, create) => create(),
+                    waitUntil: () => {},
+                  },
+                  {
+                    abortSignal,
+                    context,
+                    messages: [createMessage({ role: "user", text: userMessage })],
+                  },
+                  { schedule: { ...schedule, runId }, output: "drained" },
+                );
+              }, abortSignal);
               const validated = babysitterPassResultSchema["~standard"].validate(result);
               if ("issues" in validated)
                 throw new Error("Babysitter returned an invalid pass result.");
