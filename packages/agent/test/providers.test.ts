@@ -13576,7 +13576,11 @@ describe("server helpers", () => {
         telegram: testTelegram(telegram, {
           // SAFETY: The fixture supplies the Chat SDK adapter used by restart recovery.
           adapter: () => adapter as never,
-          messages: { errorFallbackText: "Restarted. citeturn0view0" },
+          messages: {
+            errorFallbackText: ({ publicError, defaultText }) => publicError.code === "HOST_RESTARTED"
+              ? "Restarted. citeturn0view0"
+              : defaultText,
+          },
         }),
       } } : { capabilities: [
         defineChatCapability({
