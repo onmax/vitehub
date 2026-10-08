@@ -233,6 +233,36 @@ describe("Agent data and intercept", () => {
     expect(intercept).toHaveBeenCalledWith(expect.objectContaining({ data: undefined }))
   })
 
+  it.each(["handled", "driver"])("leaves a missing Capability trigger message absent when intercept selects %s", async (result) => {
+    const intercept = vi.fn(({ data }) => {
+      expect(data).toBeUndefined()
+      return result === "handled" ? "handled" : undefined
+    })
+    const run = vi.fn(() => "driver")
+    const agent = defineAgent({
+      capabilities: [defineCapability({
+        id: "background",
+        triggers: {
+          requested: {
+            invoke: () => ({
+              input: { prompt: "background work" },
+              run: { channelId: "mail", origin: "background", runId: "background-run" },
+            }),
+          },
+        },
+      })],
+      channels: { mail: interceptChannel() },
+      driver: { run },
+      intercept,
+      runtime: false,
+    })
+
+    await expect(runAgentTrigger(agent, runtime(), "background.requested", {})).resolves.toBe(result)
+    expect(intercept).toHaveBeenCalledOnce()
+    if (result === "handled") expect(run).not.toHaveBeenCalled()
+    else expect(run).toHaveBeenCalledOnce()
+  })
+
   it.each(["replace", "clear", "mutate"])("revalidates data changed by an input hook through %s", async (change) => {
     const run = vi.fn(() => "ok")
     const close = vi.fn()

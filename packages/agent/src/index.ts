@@ -4709,7 +4709,7 @@ async function createAgentInvocationContext<
               activeChannelContext.channel,
               activeChannelContext.channelId,
               invocationContext,
-              invocationContext.get("agent.trigger") !== undefined,
+              invocationContext.get("agent.trigger")?.source === "channel",
             )
             : undefined
           const value = await runObservedAgentHook(observedHooks, {

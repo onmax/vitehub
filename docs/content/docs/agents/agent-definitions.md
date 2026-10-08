@@ -229,6 +229,8 @@ Set `intercept` when app code can answer some Invocations without the Driver. Th
 
 Without an Agent `data` schema, `intercept.data` uses `input.data` when it exists. Otherwise, a Channel-triggered Invocation uses the Trigger's message, validated by the Channel's `message.data` schema. The value stays typed as `unknown`, since direct Invocations and explicit trigger data can have another shape. Use an Agent `data` schema when interception needs a known type.
 
+A Capability trigger that selects a Channel can omit its message. Without an Agent `data` schema or explicit `input.data`, `intercept.data` stays `undefined`.
+
 ```ts [server/agents/labeller.ts]
 import * as v from 'valibot'
 import { defineAgent } from 'vite-hub/agent'
