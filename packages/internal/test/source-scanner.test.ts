@@ -65,6 +65,7 @@ describe("source scanner", () => {
     "<Email></Email>",
     '<Email /* " */></Email>',
     '<Email></Email /* " */>',
+    '<Email / /* " */ >',
     "<Email />",
     "<T extends />",
     "<Email<string>></Email>",

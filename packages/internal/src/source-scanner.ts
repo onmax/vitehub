@@ -534,7 +534,10 @@ function readJsxElement(source: string, index: number, controlFlowRegexes: Contr
       expressions.push({ start: current, end })
       current = end + 1
     }
-    else if (source[current] === "/" && source[current + 1] === ">") return { end: current + 2, expressions }
+    else if (source[current] === "/") {
+      const end = skipWhitespaceAndComments(source, current + 1)
+      return source[end] === ">" ? { end: end + 1, expressions } : undefined
+    }
     else if (source[current] === "<") return
     else current += 1
   }

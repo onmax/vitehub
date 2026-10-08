@@ -37,7 +37,7 @@ describe("Schedule JSX discovery", () => {
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
   })
 
-  it.each(["<Email></Email>", '<Email /* " */></Email>', '<Email></Email /* " */>', "<Email />", "<T extends />", "<Email<string>></Email>", "<Email<{ subject: string }>>{import(target)}</Email>", "<T>(value) =&gt; value</T>", "<T extends={Email}>(value) {() => value}</T>", "<><Email /></>", String.raw`<Email subject="C:\"></Email>`, `<Email></Email>*/['"]/u`, `<Email></Email> * /['"]/u`, "<Email></Email>*/ /", "<Email></Email>*/a/*value", "<Email></Email>*/a/*value*/b/", "<Email></Email>*/a/*value + 1 /* after */"])("reads literal metadata from a server .tsx definition: %s", async (jsx) => {
+  it.each(["<Email></Email>", '<Email /* " */></Email>', '<Email></Email /* " */>', '<Email / /* " */ >', "<Email />", "<T extends />", "<Email<string>></Email>", "<Email<{ subject: string }>>{import(target)}</Email>", "<T>(value) =&gt; value</T>", "<T extends={Email}>(value) {() => value}</T>", "<><Email /></>", String.raw`<Email subject="C:\"></Email>`, `<Email></Email>*/['"]/u`, `<Email></Email> * /['"]/u`, "<Email></Email>*/ /", "<Email></Email>*/a/*value", "<Email></Email>*/a/*value*/b/", "<Email></Email>*/a/*value + 1 /* after */"])("reads literal metadata from a server .tsx definition: %s", async (jsx) => {
     const { discover } = await fixture(`export default defineSchedule({ cron: '0 9 * * *', handler: () => ${jsx}, manual: true, allowRuntimeSchedules: true })`, true, ".tsx")
     expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
   })

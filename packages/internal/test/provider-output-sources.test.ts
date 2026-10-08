@@ -1471,6 +1471,7 @@ it.each([
   ["Email<{ subject: string }>", "{import(target)}", true],
   ["Email<string>", "import(fake)", false],
   ['Email /* " */ value={import(target)}', "import(fake)", true],
+  ["Email", '<Email value={import(target)} / /* " */ > import(fake)', true],
 ])("traces computed imports in JSX expressions: %s %s", async (tag, body, executable) => {
   const rootDir = await mkdtemp(join(tmpdir(), "vitehub-provider-jsx-computed-repository-"))
   tempDirs.push(rootDir)
