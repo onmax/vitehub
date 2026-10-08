@@ -36,7 +36,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { allowOperationAfterAdmission?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -298,7 +298,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
           });
           if (operation) {
             const result = await client.callTool({ name: operation, arguments: operationArguments });
-            if (onAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
+            if (onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
             else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
           }
         } finally {
@@ -929,6 +929,108 @@ describe("Babysitter preset runtime", () => {
       expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
       expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBe(replacementToken);
     } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["commitRepair", "pushRepair"] as const)("keeps %s available after same-head metadata changes", async operation => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    let edited = false;
+    f.onAdmission(async () => {
+      if (edited) return;
+      edited = true;
+      await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" },
+        action: "edited",
+        pull_request: { ...f.pr(), body: "Updated validation evidence." },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(edited).toBe(true);
+      expect(operation === "commitRepair" ? f.commit : f.push).toHaveBeenCalledOnce();
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["successful check", "base advance"] as const)("keeps repair publication available after a same-head %s", async change => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    let changed = false;
+    f.onAdmission(async () => {
+      if (changed) return;
+      changed = true;
+      if (change === "base advance") {
+        f.advanceBase("d".repeat(40));
+        await f.runtime.inbox.ingest("base-advanced", "pull_request", {
+          repository: { full_name: "acme/app" }, action: "edited", pull_request: f.pr(),
+        });
+      } else {
+        await f.runtime.inbox.ingest("check-succeeded", "check_run", {
+          repository: { full_name: "acme/app" }, action: "completed",
+          check_run: { id: 2, name: "test", head_sha: f.pr().head.sha,
+            status: "completed", conclusion: "success", app: { id: 1 }, pull_requests: [{ number: 12 }] },
+        });
+      }
+    });
+    try {
+      await f.reconcile();
+      expect(changed).toBe(true);
+      expect(f.push).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("still fences merge authorization after same-head metadata changes", async () => {
+    const f = await fixture(true);
+    f.choose("requestAutoMerge");
+    let edited = false;
+    f.onAdmission(async () => {
+      if (edited) return;
+      edited = true;
+      await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), body: "Updated merge requirements." },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(edited).toBe(true);
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("renews a slow repair push against validated same-head metadata", async () => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    let changed = false;
+    f.onAdmission(async () => {
+      if (changed) return;
+      changed = true;
+      await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), body: "Updated validation evidence." },
+      });
+    });
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    const originalPush = f.push.getMockImplementation()!;
+    f.push.mockImplementationOnce(async (...args) => {
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (typeof renewal !== "function") throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
+      expect(await renew.mock.results[0]?.value).toBe(true);
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(renew.mock.calls[0]?.[0].generation).toBe(current.generation);
+      return await originalPush(...args);
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+    } finally {
+      timers.mockRestore();
+      renew.mockRestore();
+      await f.runtime.inbox.close();
+    }
   });
 
   it.each(["pushRepair", "requestAutoMerge"] as const)("fences %s when feedback advances the claimed generation during admission", async (operation) => {
