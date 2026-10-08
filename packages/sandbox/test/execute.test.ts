@@ -3,7 +3,7 @@ import { posix } from "node:path"
 import { unknownExecutionAuthority } from "@vite-hub/runtime"
 
 import { executeSandboxDefinition } from "../src/runtime/execute.ts"
-import { createHandlerError, readExecOutputWithRecovery, tryParseSandboxOutput } from "../src/runtime/output-recovery.ts"
+import { createHandlerError, extractSandboxOutputFromExecution, readExecOutputWithRecovery, tryParseSandboxOutput } from "../src/runtime/output-recovery.ts"
 import { toSandboxError } from "../src/runtime/error-normalization.ts"
 import { SANDBOX_VALUE_MARKER } from "../src/runtime/binary-sidecars.ts"
 import type { ViteHubError } from "@vite-hub/runtime"
@@ -41,6 +41,13 @@ it("waits for complete Cloudflare output before rejecting a malformed envelope",
   expect(readFile).toHaveBeenCalledTimes(2)
   expect(output).toBe('{"ok":1,"result":true}')
   expect(tryParseSandboxOutput(output)).toBeNull()
+})
+
+it("extracts output from a large provider stream", () => {
+  const output = '{"ok":true,"result":"ready"}'
+  const stream = `${"x".repeat(1_000_000)}\n${"noise ".repeat(100)}${"__VITEHUB_OUTPUT__"}${output}`
+
+  expect(extractSandboxOutputFromExecution({ stdout: stream })).toBe(output)
 })
 
 function createFakeSandbox(options: { execError?: Error, execResult?: SandboxExecResult, holdExecution?: boolean, holdFileWrite?: boolean, holdInstall?: boolean, onExecute?: SandboxExecHook, provider?: "cloudflare" | "vercel" } = {}) {

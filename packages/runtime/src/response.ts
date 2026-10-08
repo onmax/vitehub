@@ -104,7 +104,11 @@ function isSerializedHeaderEntry(value: unknown): value is readonly [string, str
 }
 
 function isSerializedHeaderEntries(value: unknown): value is readonly (readonly [string, string])[] {
-  return Array.isArray(value) && value.every(isSerializedHeaderEntry)
+  if (!Array.isArray(value)) return false
+  for (let index = 0; index < value.length; index++) {
+    if (!isSerializedHeaderEntry(value[index])) return false
+  }
+  return true
 }
 
 function isBase64(value: string): boolean {

@@ -200,6 +200,41 @@ describe("agent webhook verification", () => {
     expect(verify).toHaveBeenCalledTimes(1)
   })
 
+  it("reads a request body once for multiple signature verifiers", async () => {
+    const seen: string[] = []
+    const verify = vi.fn(({ rawBody }: { rawBody: Uint8Array }) => {
+      seen.push(new TextDecoder().decode(rawBody))
+      if (seen.length === 1) rawBody[0] = 0x78
+      return false
+    })
+    const request = new Request("https://example.com", {
+      body: "payload",
+      headers: { "x-first-signature": "first", "x-second-signature": "second" },
+      method: "POST",
+    })
+    const clone = vi.spyOn(request, "clone")
+
+    await expect(verifyAgentWebhookRequest([
+      {
+        id: "first",
+        provider: "custom",
+        secretHeader: "x-first-signature",
+        secretToken: "secret-token",
+        signature: { verify },
+      },
+      {
+        id: "second",
+        provider: "custom",
+        secretHeader: "x-second-signature",
+        secretToken: "secret-token",
+        signature: { verify },
+      },
+    ], request)).rejects.toMatchObject({ statusCode: 401 })
+
+    expect(clone).toHaveBeenCalledOnce()
+    expect(seen).toEqual(["payload", "payload"])
+  })
+
   it("allows explicit unverified webhook registrations", async () => {
     const invoked = vi.fn(() => "ok")
     const agent = defineAgent({
