@@ -347,6 +347,8 @@ describe("playground import contracts", () => {
     expect(shimExports).toEqual(["defineWorkspace", "source", "useWorkspace"])
     expect(shimProperties.sort()).toEqual(sourceExports)
     expect(viteE2e).toContain('alias["@vite-hub/workspace/internal/runtime/workspace"] = workspaceRuntimeFile')
+    expect(viteE2e).toContain('resolve(queuePackageDir, "src/runtime/create-client.ts")')
+    expect(viteE2e).not.toContain('export { createQueueClient, deferQueue, getQueue, runQueue }')
   })
 
   it("keeps the Vite e2e KV shim on error-first results", () => {
