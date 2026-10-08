@@ -8,8 +8,15 @@ const exec = promisify(execFile);
 const yarnOutputs = new Set(["cache", "unplugged", "install-state.gz"]);
 const rootOutputs = new Set([".pnp.cjs", ".pnp.loader.mjs", ".pnp.data.json"]);
 
+export interface GitHubInstallSnapshot {
+  checkout: string;
+  directory: string;
+  identities: ReadonlyMap<string, { dev: string; ino: string }>;
+  close(): Promise<void>;
+}
+
 /** Copy mutable provider inputs into a private host directory before validation. */
-export async function createGitHubInstallSnapshot(target: string) {
+export async function createGitHubInstallSnapshot(target: string): Promise<GitHubInstallSnapshot> {
   const checkout = await realpath(target);
   const directory = await mkdtemp(join(tmpdir(), "vitehub-dependency-snapshot-"));
   const identities = new Map<string, { dev: string; ino: string }>();
@@ -36,7 +43,7 @@ export async function createGitHubInstallSnapshot(target: string) {
 }
 
 /** Publish package-manager outputs without following replaced provider directories. */
-export async function publishGitHubInstallSnapshot(snapshot: Awaited<ReturnType<typeof createGitHubInstallSnapshot>>, signal?: AbortSignal): Promise<void> {
+export async function publishGitHubInstallSnapshot(snapshot: GitHubInstallSnapshot, signal?: AbortSignal): Promise<void> {
   let outputDirectory = snapshot.directory;
   let transfer: string | undefined;
   // TMPDIR can use another filesystem. Stage output under protected Git
