@@ -294,7 +294,7 @@ export class PullRequestInbox {
       version: randomUUID(), contentKey, repository: snapshot.repository, number: snapshot.number,
       head, generation: snapshot.generation, text: snapshot.lastResult, attempts: 0, nextAt: now,
       activity: {
-        runId: claim?.runId ?? `saved:${key}:${snapshot.generation}:${head}`,
+        runId: `saved:${key}:${contentKey}`,
         status: snapshot.status === 'waiting' ? 'waiting' : snapshot.status === 'ready' ? 'failed' : 'completed',
         updatedAt: new Date(now).toISOString(), links: [...claim?.activity?.links ?? []], tasks: [], summary: snapshot.lastResult,
       },
@@ -331,12 +331,24 @@ export class PullRequestInbox {
       for (const pending of candidates) {
         const snapshot = await this.getIn(tx, pending.repository, pending.number)
         if (pending.precedingHead && snapshot?.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
-        const delivery = { ...pending, lease: randomUUID(), leaseUntil: now + leaseMs }
+        // Upgrade saved entries from releases that reused the invocation run ID.
+        const delivery = { ...pending, activity: { ...pending.activity, runId: `saved:${statusTargetKey(pending)}:${pending.contentKey}` }, lease: randomUUID(), leaseUntil: now + leaseMs }
         await this.setMetaIn(tx, `${statusOutboxPrefix}${statusTargetKey(pending)}`, delivery)
         claimed.push(delivery)
         if (claimed.length === limit) break
       }
       return claimed
+    })
+  }
+  /** Keep the external writer's lease, including when its saved result is superseded. */
+  async renewStatusDelivery(observed: StatusDelivery, leaseMs = 300_000): Promise<boolean> {
+    if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('Status delivery lease must be positive')
+    return await this.transaction(async tx => {
+      const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
+      const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
+      await this.setMetaIn(tx, key, { ...parsed.output, leaseUntil: this.clock() + leaseMs })
+      return true
     })
   }
   /** Version and lease comparisons preserve newer results and fence replaced consumers. */

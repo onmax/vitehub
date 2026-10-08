@@ -854,9 +854,12 @@ Pass results and their GitHub status deliveries commit in one inbox transaction.
 The host publishes the saved result through its verified GitHub identity, retries
 failed delivery after restart, and compares delivery versions before clearing an
 entry. Delivery claims are atomic across hosts and expire after five minutes if
-a host stops. Publication runs outside queue reconciliation with a twenty-second
-deadline. Deferred repair heads yield the bounded batch to other PRs. A newer
-result cannot be erased by an older publication. Waiting comments
+a host stops. Active writers renew their leases until publication settles, even
+when the twenty-second deadline requests cancellation. Up to five publications
+run outside queue reconciliation and remain tracked during process drain.
+Deferred repair heads yield the bounded batch to other PRs. Saved results use
+separate activity run IDs so completed invocations can publish their wait reason.
+A newer result cannot be erased by an older publication. Waiting comments
 include the blocker reason. A confirmed repair result waits for its head webhook
 if that webhook arrives after the pass finishes.
 

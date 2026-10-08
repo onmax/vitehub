@@ -1300,16 +1300,25 @@ describe("Babysitter preset runtime", () => {
     const f = await fixture(false, false, { activityBarrier: barrier });
     await f.reconcile();
     expect(await f.runtime.inbox.pendingStatusDeliveries()).toHaveLength(1);
-    const second = f.reconcile();
+    const tracked: Promise<unknown>[] = [];
+    const second = f.runtime.reconcile("test", { track: work => { tracked.push(work); return work; } });
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([second, new Promise<never>((_resolve, reject) => {
         deadline = setTimeout(() => reject(new Error("Status publication blocked reconciliation.")), 1_000);
       })]);
+      expect(tracked.length).toBeGreaterThan(0);
+      let settled = false;
+      const publication = Promise.all(tracked).then(() => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(settled).toBe(false);
+      release();
+      await publication;
     } finally {
       clearTimeout(deadline);
       release();
       await second;
+      await Promise.all(tracked);
       await vi.waitFor(async () => expect(await f.runtime.inbox.metaEntries("status-outbox:v1:")).toHaveLength(0));
       await f.runtime.inbox.close();
     }

@@ -222,26 +222,30 @@ test('two hosts sharing an inbox claim a saved status before publishing', async 
   }
 })
 
-test('a stalled publisher is aborted and the status remains durably retryable', async t => {
-  const { inbox, claim } = await fixture(t)
+test('a stalled publisher retains ownership until its aborted write settles', async t => {
+  const { inbox, claim, open } = await fixture(t)
   await inbox.finish(claim, blocked())
+  const other = open()
+  t.onTestFinished(() => other.close())
   let release!: () => void
-  let signal: AbortSignal | undefined
+  let aborted!: () => void
   const barrier = new Promise<void>(resolve => { release = resolve })
+  const deadline = new Promise<void>(resolve => { aborted = resolve })
+  let settled = false
   const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publishTimeoutMs: 20,
-    publish: async (_pending, deadline) => { signal = deadline; await barrier } })
-  const flushing = recovery.flush()
-  let timeout: ReturnType<typeof setTimeout> | undefined
+    publish: async (_pending, signal) => { signal.addEventListener('abort', aborted, { once: true }); await barrier } })
+  const flushing = recovery.flush().then(() => { settled = true })
   try {
-    await Promise.race([flushing, new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Status publication blocked past its deadline.')), 200) })])
-    assert.equal(signal?.aborted, true)
-    const entries = await inbox.metaEntries('status-outbox:v1:')
-    assert.equal((entries[0]?.[1] as { attempts: number }).attempts, 1)
+    await deadline
+    await new Promise(resolve => setTimeout(resolve, 20))
+    assert.equal(settled, false, 'host shutdown must wait for the actual publisher')
+    assert.deepEqual(await other.claimStatusDeliveries(), [], 'timeout must not release an active external writer')
   } finally {
-    clearTimeout(timeout)
     release()
     await flushing
   }
+  const entries = await inbox.metaEntries('status-outbox:v1:')
+  assert.equal((entries[0]?.[1] as { attempts: number }).attempts, 1)
 })
 
 test('an expired delivery lease can be recovered while its old owner is fenced', async t => {
@@ -307,4 +311,112 @@ test('the publication deadline reaches GitHub credentials and stalled HTTP reque
   assert.equal(requestSignal?.aborted, true)
   const entries = await inbox.metaEntries('status-outbox:v1:')
   assert.equal((entries[0]?.[1] as { attempts: number }).attempts, 1)
+})
+
+for (const legacy of [false, true]) test(`saved waiting activity publishes after the invocation has completed, legacy=${legacy}`, async t => {
+  const { inbox, claim } = await fixture(t)
+  claim.runId = `completed-invocation-${legacy}`
+  const comments: Array<{ id: number; body: string; user: { login: string } }> = []
+  const channel = github({ activity: true, app: { apiBaseUrl: `https://status-${legacy}.example.test`, token: 'test-token', identity: { login: 'worker[bot]' }, fetch: async (input, init) => {
+    if ((init?.method ?? 'GET') === 'GET') return Response.json(comments)
+    const body = JSON.parse(String(init?.body)).body
+    if (init?.method === 'POST') comments.push({ id: 10, body, user: { login: 'worker[bot]' } })
+    else comments[0]!.body = body
+    return Response.json(comments[0])
+  } } })
+  const agent = { name: 'babysitter-worker', channels: { github: channel } }
+  await publishAgentActivity(agent, { channelId: 'github', target: { repository, issue: 239 }, activity: {
+    runId: claim.runId!, status: 'completed', updatedAt: new Date().toISOString(), links: [], tasks: [], summary: 'Invocation completed.',
+  } })
+  await inbox.finish(claim, blocked())
+  if (legacy) {
+    const [pending] = await inbox.pendingStatusDeliveries()
+    await inbox.setMeta('status-outbox:v1:acme/app#239', { ...pending!, activity: { ...pending!.activity, runId: claim.runId! } })
+  }
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: (pending, abortSignal) =>
+    publishAgentActivity(agent, { channelId: 'github', target: { repository, issue: 239 }, activity: pending.activity, abortSignal }) }).flush()
+  assert.match(comments[0]!.body, /Cannot commit because \.git is read-only/)
+})
+
+test('a late timed-out writer cannot overwrite a newer result from another host', async t => {
+  const { inbox, claim, open } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void
+  let aborted!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const deadline = new Promise<void>(resolve => { aborted = resolve })
+  let projection = ''
+  const old = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publishTimeoutMs: 20, publish: async (pending, signal) => {
+    signal.addEventListener('abort', aborted, { once: true })
+    await barrier
+    projection = pending.text
+  } }).flush()
+  const next = createBabysitterStatusRecovery({ inbox: other, revision: 'release-1', publish: async pending => { projection = pending.text } })
+  try {
+    await deadline
+    await new Promise(resolve => setTimeout(resolve, 20))
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+    await next.flush()
+  } finally { release(); await old }
+  await next.flush()
+  assert.equal(projection, 'New result')
+})
+
+test('a stalled writer renews the lease inherited by a newer saved result', async t => {
+  const { inbox, claim, open, setClock } = await fixture(t)
+  await inbox.finish(claim, blocked('Old result'))
+  const other = open()
+  t.onTestFinished(() => other.close())
+  let release!: () => void
+  let started!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const began = new Promise<void>(resolve => { started = resolve })
+  const flushing = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publishTimeoutMs: 20, deliveryLeaseMs: 90,
+    publish: async () => { started(); await barrier } }).flush()
+  try {
+    await began
+    const before = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+    setClock(before.leaseUntil - 1)
+    await inbox.wake((await inbox.get(repository, 239))!, 'new-feedback')
+    await inbox.finish((await inbox.claim(1))[0]!, blocked('New result'))
+    // Wait for the publisher heartbeat to renew the coalesced entry.
+    let renewed = false
+    for (let index = 0; index < 20; index++) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      const current = (await inbox.metaEntries('status-outbox:v1:'))[0]![1] as { leaseUntil: number }
+      if (current.leaseUntil > before.leaseUntil) { renewed = true; break }
+    }
+    assert.equal(renewed, true)
+    setClock(before.leaseUntil + 1)
+    assert.deepEqual(await other.claimStatusDeliveries(), [])
+  } finally { release(); await flushing }
+  const [next] = await other.claimStatusDeliveries()
+  assert.equal(next?.text, 'New result')
+  assert.equal(await inbox.renewStatusDelivery({ ...next!, lease: 'replaced' }), false)
+})
+
+test('a timed-out writer does not block unrelated publication slots', async t => {
+  const { inbox, claim } = await fixture(t)
+  for (let index = 0; index < 6; index++) {
+    if (index) await inbox.seed(repository, { ...pr, number: pr.number + index })
+    await inbox.finish(index ? (await inbox.claim(1))[0]! : claim, blocked())
+  }
+  let release!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  const delivered = new Set<number>()
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publishTimeoutMs: 20, publish: async pending => {
+    if (pending.number === pr.number) await barrier
+    delivered.add(pending.number)
+  } })
+  const first = recovery.flush()
+  let second: Promise<void> | undefined
+  try {
+    for (let index = 0; index < 50 && delivered.size < 4; index++) await new Promise(resolve => setTimeout(resolve, 10))
+    second = recovery.flush()
+    for (let index = 0; index < 50 && !delivered.has(244); index++) await new Promise(resolve => setTimeout(resolve, 10))
+    assert.equal(delivered.has(244), true, 'remaining slots must serve unrelated PRs')
+  } finally { release(); await Promise.all([first, second]) }
 })

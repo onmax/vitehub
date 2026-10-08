@@ -563,7 +563,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
     await statusRecovery.recover();
-    void statusRecovery.flush().catch(failure => schedulerError("babysitter.status.flush.failed", failure));
+    void track(statusRecovery.flush().catch(failure => schedulerError("babysitter.status.flush.failed", failure)));
     let modelAdmission = true;
     if (options.admission) {
       const admission = await options.admission();

@@ -20,49 +20,81 @@ export function createBabysitterStatusRecovery(options: {
   revision: string;
   publish?: (pending: StatusDelivery, signal: AbortSignal) => Promise<unknown>;
   publishTimeoutMs?: number;
+  deliveryLeaseMs?: number;
   event?: (name: string, properties: Record<string, unknown>) => void;
   error?: (name: string, error: unknown, properties: Record<string, unknown>) => void;
 }): BabysitterStatusRecovery {
   const { inbox, revision, publish } = options;
   const publishTimeoutMs = options.publishTimeoutMs ?? 20_000;
   if (!Number.isFinite(publishTimeoutMs) || publishTimeoutMs <= 0) throw new Error("Status publication timeout must be positive.");
-  let flushing: Promise<void> | undefined;
+  const deliveryLeaseMs = options.deliveryLeaseMs ?? 300_000;
+  if (!Number.isFinite(deliveryLeaseMs) || deliveryLeaseMs < 3 || deliveryLeaseMs > 2_147_483_647) throw new Error("Status delivery lease must be between 3 and 2,147,483,647 milliseconds.");
+  let selecting = Promise.resolve();
+  const active = new Set<Promise<void>>();
   let initialized = false;
 
-  async function flushPending(): Promise<void> {
-    for (const pending of await inbox.claimStatusDeliveries()) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const snapshot = await inbox.get(pending.repository, pending.number);
-        if (!snapshot || snapshot.pr?.head?.sha !== pending.head) {
-          await inbox.finishStatusDelivery(pending, "discarded");
-          continue;
-        }
-        const controller = new AbortController();
-        await Promise.race([publish!(pending, controller.signal), new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => {
-            const failure = new DOMException("Status publication timed out.", "TimeoutError");
-            controller.abort(failure);
-            reject(failure);
-          }, publishTimeoutMs);
-        })]);
-        if (await inbox.finishStatusDelivery(pending, "delivered")) {
-          options.event?.("babysitter.status.delivered", { repository: pending.repository, pull_request: pending.number });
-        }
-      } catch (failure) {
-        await inbox.retryStatusDelivery(pending, failure);
-        options.error?.("babysitter.status.delivery.failed", failure, { repository: pending.repository, pull_request: pending.number });
-      } finally {
-        clearTimeout(timer);
+  async function deliver(pending: StatusDelivery): Promise<void> {
+    const controller = new AbortController();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let renewing: Promise<void> | undefined;
+    const stopTimers = async () => {
+      clearTimeout(deadline);
+      clearInterval(heartbeat);
+      await renewing;
+    };
+    try {
+      const snapshot = await inbox.get(pending.repository, pending.number);
+      if (!snapshot || snapshot.pr?.head?.sha !== pending.head) {
+        await inbox.finishStatusDelivery(pending, "discarded");
+        return;
       }
+      deadline = setTimeout(() => {
+        controller.abort(new DOMException("Status publication timed out.", "TimeoutError"));
+      }, publishTimeoutMs);
+      heartbeat = setInterval(() => {
+        if (renewing) return;
+        renewing = inbox.renewStatusDelivery(pending, deliveryLeaseMs).then(owned => {
+          if (!owned) controller.abort(new DOMException("Status delivery ownership lost.", "AbortError"));
+        }).catch(failure => { controller.abort(failure); }).finally(() => { renewing = undefined; });
+      }, Math.floor(deliveryLeaseMs / 3));
+      // Abort requests cancellation. Ownership stays held until the real external
+      // write settles, because a timeout cannot prove that its side effect stopped.
+      await publish!(pending, controller.signal);
+      await stopTimers();
+      controller.signal.throwIfAborted();
+      if (await inbox.finishStatusDelivery(pending, "delivered")) {
+        options.event?.("babysitter.status.delivered", { repository: pending.repository, pull_request: pending.number });
+      }
+    } catch (failure) {
+      await stopTimers();
+      await inbox.retryStatusDelivery(pending, failure);
+      options.error?.("babysitter.status.delivery.failed", failure, { repository: pending.repository, pull_request: pending.number });
+    } finally {
+      clearTimeout(deadline);
+      clearInterval(heartbeat);
     }
   }
 
   return {
     async flush(): Promise<void> {
       if (!publish) return;
-      if (!flushing) flushing = flushPending().finally(() => { flushing = undefined; });
-      await flushing;
+      // Serialize selection only. A stalled publisher occupies one slot while
+      // unrelated saved statuses can use the other four.
+      const batch = selecting.then(async () => {
+        const available = 5 - active.size;
+        if (available > 0) {
+          for (const pending of await inbox.claimStatusDeliveries(available, deliveryLeaseMs)) {
+            const work = deliver(pending).finally(() => { active.delete(work); });
+            active.add(work);
+          }
+        }
+        return [...active];
+      });
+      selecting = batch.then(() => {}, () => {});
+      // Drain must wait for every actual write, even if another delivery failed.
+      const outcomes = await Promise.allSettled(await batch);
+      for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
     },
     async recordWorkerBlocker(snapshot: Snapshot, reason: string): Promise<void> {
       if (isWorkerBlocker({ lastResult: snapshot.lastResult, wait: { kind: "external", headSha: snapshot.pr?.head?.sha ?? "", reason, evidenceKey: "worker-blocker" } })) {
