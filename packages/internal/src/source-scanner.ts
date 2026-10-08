@@ -127,7 +127,7 @@ function isRegexLiteralStart(source: string, index: number, previousSignificant:
       throw error
     }
   }
-  if (!token || token === "/" || /[({[=,:!&|?;>+\-*%^~]/.test(token)) return true
+  if (!token || token === "/" || /[({[=,:!&|?;<>+\-*%^~]/.test(token)) return true
   if (token === ".") {
     const end = previousCodeIndex(source, index - 1, controlFlowRegexes)
     return source.slice(end - 2, end + 1) === "..."
@@ -522,6 +522,7 @@ export function findMatching(source: string, index: number, open: string, close:
 
 export function splitTopLevel(source: string, separator = ",") {
   const parts: string[] = []
+  const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let depth = 0
   let previousSignificant = ""
   let start = 0
@@ -529,7 +530,7 @@ export function splitTopLevel(source: string, separator = ",") {
     const char = source[index]
     const next = source[index + 1]
     if (isQuote(char)) {
-      index = skipQuoted(source, index) - 1
+      index = skipQuoted(source, index, controlFlowRegexes) - 1
       previousSignificant = "literal"
       continue
     }
@@ -541,13 +542,13 @@ export function splitTopLevel(source: string, separator = ",") {
       index = skipBlockComment(source, index) - 1
       continue
     }
-    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant) || isControlFlowRegexStart(source, index))) {
+    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant, controlFlowRegexes) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
       index = skipRegexLiteral(source, index) - 1
       previousSignificant = "literal"
       continue
     }
     if (char === "<") {
-      const genericEnd = findMatching(source, index, "<", ">")
+      const genericEnd = findMatching(source, index, "<", ">", controlFlowRegexes)
       if (genericEnd !== undefined && nextNonWhitespace(source, genericEnd + 1) === "(") {
         index = genericEnd
         previousSignificant = ">"
@@ -577,12 +578,13 @@ export function splitTopLevel(source: string, separator = ",") {
 
 export function findIdentifierCalls(source: string, name: string): IdentifierCall[] {
   const calls: IdentifierCall[] = []
+  const controlFlowRegexes: ControlFlowRegexCache = new Map()
   let previousSignificant = ""
   for (let index = 0; index < source.length; index++) {
     const char = source[index]
     const next = source[index + 1]
     if (isQuote(char)) {
-      index = skipQuoted(source, index) - 1
+      index = skipQuoted(source, index, controlFlowRegexes) - 1
       previousSignificant = "literal"
       continue
     }
@@ -594,7 +596,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
       index = skipBlockComment(source, index) - 1
       continue
     }
-    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant) || isControlFlowRegexStart(source, index))) {
+    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant, controlFlowRegexes) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
       index = skipRegexLiteral(source, index) - 1
       previousSignificant = "literal"
       continue
@@ -612,7 +614,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
 
     let openParen = skipWhitespaceAndComments(source, index + name.length)
     if (source[openParen] === "<") {
-      const genericEnd = findMatching(source, openParen, "<", ">")
+      const genericEnd = findMatching(source, openParen, "<", ">", controlFlowRegexes)
       if (genericEnd === undefined) {
         previousSignificant = trackSignificant(previousSignificant, char)
         continue
@@ -624,7 +626,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
       continue
     }
 
-    const closeParen = findMatching(source, openParen, "(", ")")
+    const closeParen = findMatching(source, openParen, "(", ")", controlFlowRegexes)
     if (closeParen === undefined) {
       previousSignificant = trackSignificant(previousSignificant, char)
       continue

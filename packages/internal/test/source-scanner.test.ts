@@ -14,7 +14,8 @@ describe("source scanner", () => {
     "fn(... /* gap */ /['\"]/u)",
     "value / /['\"]/u.test(text)",
     "value / /* gap */ /['\"]/u.test(text)",
-  ])("scans regex operands after spread and division: %s", (value) => {
+    "value < /['\"]/u.source",
+  ])("scans regex operands after expression operators: %s", (value) => {
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
     expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
     const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
@@ -103,10 +104,17 @@ describe("source scanner", () => {
   })
 
   it("shares regex classifications across repeated declarations", () => {
-    const value = Array.from({ length: 24 }, (_, index) => `function task${index}(): void {} /['"]/u.test(value)`).join("\n")
+    const value = Array.from({ length: 200 }, (_, index) => `function task${index}(): void {} /['"]/u.test(value)`).join("\n")
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
     const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
     expect(call?.argument).toBe(`{ value: "real" }`)
+  }, 1_000)
+
+  it("shares regex classifications inside large definition arguments", () => {
+    const body = Array.from({ length: 200 }, (_, index) => `function f${index}() {} /x/.test('x')`).join("\n")
+    const argument = `{ handler() {\n${body}\n}, value: "real" }`
+    const call = findDefaultExportCall(`export default defineThing(${argument})`, ["defineThing"])
+    expect(call?.argument).toBe(argument)
   }, 1_000)
 
   it.each([
