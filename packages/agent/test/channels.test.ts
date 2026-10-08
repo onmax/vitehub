@@ -234,6 +234,52 @@ describe("agent channels", () => {
     }
   })
 
+  it("starts each GitHub activity request deadline after its target queue", async () => {
+    const { github } = await import("../src/channels.ts")
+    let release!: () => void
+    let entered!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    let storedBody = ""
+    const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(hasRuntimeType(input, "string") || input instanceof URL ? input : input.url)
+      if (url.pathname === "/user") {
+        entered()
+        await blocked
+        return Response.json({ login: "deadline-worker" })
+      }
+      if (!init?.method || init.method === "GET") return Response.json(storedBody
+        ? [{ body: storedBody, id: 7, user: { login: "deadline-worker" } }] : [])
+      const payload: unknown = JSON.parse(String(init.body))
+      if (!isRuntimeRecord(payload) || !hasRuntimeType(payload.body, "string")) throw new Error("Invalid comment body")
+      storedBody = payload.body
+      return Response.json({ id: 7 }, { status: init.method === "POST" ? 201 : 200 })
+    })
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(ms => timeout(ms === 30_000 ? 50 : ms))
+    vi.stubEnv("GITHUB_TOKEN", "target-queue-deadline-test-token")
+    vi.stubGlobal("fetch", fetcher)
+    try {
+      const channel = github({ activity: true })
+      const update = channel.activity?.update
+      if (!update) throw new Error("Missing activity updater")
+      const context = (status: "queued" | "running", abortSignal?: AbortSignal) => ({
+        activity: { agentName: "deadline-reviewer", links: [], runId: "deadline-run", status, tasks: [] },
+        abortSignal, channel, memo: vi.fn(), run: { runId: "deadline-run" },
+        runtime: "unknown", target: { repository: "acme/deadline", issue: 999 }, waitUntil: vi.fn(),
+      })
+      // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
+      const first = update(context("queued", new AbortController().signal) as never)
+      await started
+      // SAFETY: These fixtures supply all activity callback fields consumed by the GitHub updater.
+      const second = update(context("running") as never)
+      await new Promise(resolve => setTimeout(resolve, 120))
+      release()
+      await Promise.all([first, second])
+      expect(storedBody).toContain("| Running |")
+    } finally { release(); vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals() }
+  })
+
   it("creates queued GitHub activity when a pull request opens", async () => {
     const { github } = await import("../src/channels.ts")
     let storedBody = ""

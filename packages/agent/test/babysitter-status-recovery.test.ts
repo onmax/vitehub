@@ -110,7 +110,10 @@ test('stale claims and replaced heads do not publish an obsolete result', async 
   const [current] = await inbox.claim(1)
   await inbox.finish(current!, blocked())
   await inbox.seed(repository, { ...pr, head: { ...pr.head, sha: 'c'.repeat(40) } })
-  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: () => assert.fail('obsolete head must not be published') }).flush()
+  const delivered: StatusDelivery[] = []
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { delivered.push(pending) } }).flush()
+  assert.deepEqual(delivered.map(pending => ({ head: pending.head, projection: pending.projection, status: pending.activity.status })),
+    [{ head: 'c'.repeat(40), projection: true, status: 'queued' }], 'only the new head may publish its queued projection')
   assert.equal((await inbox.metaEntries('status-outbox:v1:')).length, 0)
 })
 
@@ -912,4 +915,15 @@ test('a status writer heartbeat preserves its marker beyond the original retirem
   assert.ok(stored.some(entry => entry.lease === writer.lease && entry.expiresAt > originalLeaseUntil + 20 * 60_000), 'live renewal must extend durable writer retirement')
   assert.equal(await inbox.finishStatusDelivery(writer, 'delivered'), true)
   assert.deepEqual(await inbox.metaEntries('status-writers:v1:'), [])
+})
+
+
+test('ordinary feedback persists queued status before another worker can claim the PR', async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, blocked())
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async () => {} }).flush()
+  assert.equal((await inbox.pendingStatusDeliveries()).length, 0)
+  await inbox.wake((await inbox.get(repository, 239))!, 'actionable-same-head-feedback')
+  assert.equal((await inbox.get(repository, 239))?.status, 'ready')
+  assert.equal((await inbox.pendingStatusDeliveries())[0]?.text, 'New pull request evidence is queued.')
 })

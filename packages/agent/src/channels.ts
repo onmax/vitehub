@@ -1889,7 +1889,7 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
     async update(context) {
       const trackActiveRuns = mode === "lifecycle" && context.run !== undefined
       const target = githubActivityTarget(context.target)
-      const deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
+      let deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
       deadline.throwIfAborted()
       const request = options.fetch || fetch
       const fetcher: typeof fetch = (input, init) => {
@@ -1904,6 +1904,8 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
       const updateKey = `${token}\0${commentsTarget}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
+        // Authentication and the serialized publication each get a request budget.
+        deadline = context.abortSignal ?? AbortSignal.timeout(30_000)
         deadline.throwIfAborted()
         const headers = githubApiHeaders(token, options.userAgent)
         const identity = await githubActivityIdentity(fetcher, apiBaseUrl, headers, token, scopedApp, context)
