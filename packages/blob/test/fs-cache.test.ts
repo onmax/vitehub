@@ -59,9 +59,9 @@ describe("filesystem content hash snapshots", () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-cache-"))
     directories.push(base)
     const driver = createDriver({ base, driver: "fs" })
-    vi.mocked(rename).mockImplementationOnce(async (...args) => {
+    vi.mocked(rename).mockImplementation(async (...args) => {
       await fs.rename(...args)
-      await fs.writeFile(join(base, "photo"), "later")
+      if (args[1] === join(base, "photo")) await fs.writeFile(join(base, "photo"), "later")
     })
 
     const object = await driver.put("photo", "first")

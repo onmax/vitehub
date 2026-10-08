@@ -13,19 +13,81 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-async function fixture(source: string, server: boolean) {
+async function fixture(source: string, server: boolean, extension = ".ts") {
   const rootDir = await mkdtemp(join(tmpdir(), "vitehub-schedule-options-"))
   directories.push(rootDir)
   const directory = server ? join(rootDir, "server", "schedules") : rootDir
   await mkdir(directory, { recursive: true })
-  const file = join(directory, server ? "daily.ts" : "daily.schedule.ts")
+  const file = join(directory, `${server ? "daily" : "daily.schedule"}${extension}`)
   await writeFile(file, source)
   return { file, discover: () => discoverScheduleDefinitions(server
     ? { mode: "server-schedules", scanDirs: [join(rootDir, "server")] }
     : { rootDir }) }
 }
 
+describe("Schedule JSX discovery", () => {
+  it.each([
+    "<T extends Email>(value: T) => value",
+    "<T = Email>(value: T) => value",
+    "<T extends () => Email>(value: T) => value",
+    "<T extends Email>(value: T): Email => value",
+    "<const T extends Email>(value: T) => value",
+  ])("reads metadata after a server TSX generic arrow: %s", async (arrow) => {
+    const { discover } = await fixture(`const first = ${arrow};\nexport default defineSchedule({ cron: '0 9 * * *', handler() {}, manual: true, allowRuntimeSchedules: true });\nconst text = "</T></const>";`, true, ".tsx")
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
+  it.each([
+    "<Email></Email>",
+    '<Email /* " */></Email>',
+    '<Email></Email /* " */>',
+    '<Email / /* " */ >',
+    '<Email child=<Button />>"</Email>',
+    '<Email child=<><Button /></>>"</Email>',
+    '< /* comment */>raw import(fake) {import(target)}</>',
+    "<Email />",
+    "<T extends />",
+    "<Email<string>></Email>",
+    "<Email<{ subject: string }>>{import(target)}</Email>",
+    "<T>(value) =&gt; value</T>",
+    "<T extends={Email}>(value) {() => value}</T>",
+    "<><Email /></>",
+    String.raw`<Email subject="C:\"></Email>`,
+    `<Email></Email>*/['"]/u`,
+    `<Email></Email> * /['"]/u`,
+    "<Email></Email>*/ /",
+    "<Email></Email>*/a/*value",
+    "<Email></Email>*/a/*value*/b/",
+    "<Email></Email>*/a/*value + 1 /* after */",
+  ])("reads literal metadata from a server .tsx definition: %s", async (jsx) => {
+    const { discover } = await fixture(`export default defineSchedule({ cron: '0 9 * * *', handler: () => ${jsx}, manual: true, allowRuntimeSchedules: true })`, true, ".tsx")
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+})
+
 describe.each([false, true])("Schedule option discovery, server=%s", (server) => {
+  it.each([
+    "++/['\"]/u.lastIndex",
+    "--/['\"]/u.lastIndex",
+    "(() => { let value; return value = ++/['\"]/u.lastIndex })()",
+    "(() => { return --/['\"]/u.lastIndex })()",
+    "count!++ / total",
+    "count!-- / total",
+  ])("reads metadata after an update expression: %s", async (value) => {
+    const { discover } = await fixture(`export default defineSchedule({ cron: '0 9 * * *', handler: () => ${value}, manual: true, allowRuntimeSchedules: true })`, server)
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
+  it.each(['const text = "</Email>";', "/* </Email> */", "/* </Email> */ /* after */", "/* </Email> */ /* after; */", '/* </Email> */ /* after" */', "/* </Email> */ / /;", "/* </Email> */\nconst pattern = /Email/;"])("reads metadata after a TypeScript assertion with a later closing tag: %s", async (after) => {
+    const { discover } = await fixture(`const first = <Email>value;\nexport default defineSchedule({ cron: '0 9 * * *', handler() {}, manual: true, allowRuntimeSchedules: true });\n${after}`, server)
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
+  it.each(["function task<T>() {}", "class Task<T> {}"])("reads metadata after a generic declaration: %s", async (declaration) => {
+    const { discover } = await fixture(`${declaration}\n/['"]/u.test(value);\nexport default defineSchedule({ cron: '0 9 * * *', handler() {}, manual: true, allowRuntimeSchedules: true });`, server)
+    expect(discover()).toMatchObject([{ name: "daily", manual: true, allowRuntimeSchedules: true }])
+  })
+
   it("rejects positional runtime targets during discovery", async () => {
     const { discover } = await fixture('export default defineScheduleTarget("not-an-object", () => {})', server)
     expect(discover).toThrow(/literal options/)

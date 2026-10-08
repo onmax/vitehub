@@ -163,8 +163,21 @@ export interface BlobEnsureOptions {
 }
 
 export interface BlobServeEvent {
+  req: Pick<Request, "headers" | "method">
   res: {
     headers: Headers
+    status?: number
+  }
+}
+
+export interface BlobServeResponseOptions {
+  /** Defaults to the event's Cache-Control header, or private, no-cache. */
+  cacheControl?: string
+  /** Serve and cache a derived object without exposing the original. */
+  transform?: {
+    /** Change this key when the transformation or its parameters change. */
+    key: string
+    run: (original: Blob) => Blob | Promise<Blob>
   }
 }
 
@@ -183,7 +196,8 @@ export interface BlobStorage {
   /** Continue a multipart upload in a later request. */
   resumeMultipartUpload(pathname: string, uploadId: string): Promise<BlobResult<BlobMultipartUpload>>
   sign(pathname: string, options: BlobSignOptions): Promise<BlobResult<BlobSignedRequest>>
-  serve(event: BlobServeEvent, pathname: string): Promise<BlobResult<ReadableStream>>
+  /** Returns null for a conditional 304 response. */
+  serve(event: BlobServeEvent, pathname: string, options?: BlobServeResponseOptions): Promise<BlobResult<ReadableStream | null>>
   store(name: BlobStoreName): BlobStorage
 }
 

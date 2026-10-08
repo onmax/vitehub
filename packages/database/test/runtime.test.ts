@@ -393,6 +393,33 @@ describe("database definition runtime", () => {
     })
   })
 
+  it("inherits remote D1 settings when a local definition supplies a partial Cloudflare config", async () => {
+    const fetchMock = vi.fn(async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => createD1Response([[1, "page-view"]]))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const { createDefinitionRuntime } = await import("../src/runtime/definition-local.ts")
+    const db = createDefinitionRuntime({
+      cloudflare: { binding: "ANALYTICS_DB" },
+      drizzle: {},
+      name: "analytics",
+      schema: analyticsSchema,
+    }, {
+      cloudflare: {
+        binding: "DEFAULT_DB",
+        databaseId: "analytics-d1-id",
+        http: { authToken: "proxy-token", url: "https://d1.example.com/raw" },
+      },
+    })
+
+    await expect(db.select().from(analyticsSchema.analyticsEvents)).resolves.toEqual([{ id: 1, name: "page-view" }])
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expectD1HttpRequest(fetchMock.mock.calls[0]!, {
+      authToken: "proxy-token",
+      table: "analytics_events",
+      url: "https://d1.example.com/raw",
+    })
+  })
+
   it("requires a database id when local D1 HTTP is selected", async () => {
     const { createDefinitionRuntime } = await import("../src/runtime/definition-local.ts")
     const db = createDefinitionRuntime({

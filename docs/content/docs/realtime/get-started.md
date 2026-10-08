@@ -1,28 +1,39 @@
 ---
-title: Realtime get started
+
+title: Create your first collaborative room
 description: Install Realtime, enable it with Workspace, define a room, and connect a TipTap editor.
-navigation.title: Get started
+layout: tutorial
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
+::tutorial-step{title="Configure Realtime"}
 ## Configure Realtime
 
-Install the ViteHub distribution in a Vue or Nuxt application.
+Start with an existing Vite + Vue + TypeScript application and Node.js 24.15 or newer.
+Run the commands from the application root. This tutorial uses Nitro to host
+the generated Realtime routes alongside the Vue app.
 
-```bash [Terminal]
-pnpm add vite-hub @tiptap/vue-3
+```bash [commands/install]
+pnpm add vite-hub @tiptap/vue-3 h3
+pnpm add -D nitro
 ```
 
 Enable Workspace and Realtime. The memory authority is suitable for local
-development and a single-process Node server.
+development and a single-process Node server. Keep the Vue plugin from your
+application; Nitro consumes the generated WebSocket route configuration.
 
 ```ts [vite.config.ts]
+import vue from '@vitejs/plugin-vue'
+import { nitro } from 'nitro/vite'
 import { vitehub } from 'vite-hub'
 import { defineConfig } from 'vite'
 
 export default defineConfig({
   plugins: [
+    vue(),
+    nitro() as never,
     vitehub({
       preset: 'node',
       realtime: { authority: 'memory' },
@@ -64,12 +75,15 @@ Set `auth: true` on the Realtime Definition when every WebSocket and checkpoint
 request must have a valid ViteHub Auth session. Connections are public when
 `auth` is omitted.
 
+::
+
+::tutorial-step{title="Connect a TipTap editor"}
 ## Connect a TipTap editor
 
 Call `useRealtimeTiptap()` with the Realtime Definition name and a safe
 Workspace path. Its editor state is exposed as Vue refs.
 
-```ts [app/composables/useDocumentEditor.ts]
+```ts [src/composables/useDocumentEditor.ts]
 import { useEditor } from '@tiptap/vue-3'
 import { useRealtimeTiptap } from 'vite-hub/realtime/vue'
 
@@ -80,12 +94,32 @@ export function useDocumentEditor() {
     extensions: realtime.extensions.value,
   })
 
-  realtime.people.value // Connected people
-  realtime.status.value // connected, connecting, or disconnected
-  realtime.synced.value // Whether the initial Yjs sync has completed
-
   return { editor, realtime }
 }
+```
+
+Render the editor in the Vite scaffold's root component. Destructure the status
+refs so Vue unwraps them in the template. `useEditor()` disposes the editor when
+the component unmounts.
+
+```vue [src/App.vue]
+<script setup lang="ts">
+import { EditorContent } from '@tiptap/vue-3'
+import { useDocumentEditor } from './composables/useDocumentEditor'
+
+const { editor, realtime } = useDocumentEditor()
+const { status, synced } = realtime
+</script>
+
+<template>
+  <main>
+    <h1>Collaborative document</h1>
+    <p role="status">
+      Realtime: {{ status }}, {{ synced ? 'Document synced' : 'Waiting for sync' }}
+    </p>
+    <EditorContent :editor="editor" />
+  </main>
+</template>
 ```
 
 The composable connects to ViteHub's generated
@@ -97,3 +131,26 @@ session. It must not be used as an authorization or verified-identity boundary.
 `realtime.workspace.change` reports file changes published by other Workspace
 clients. Call `realtime.workspace.notify(change)` after an application changes
 a Workspace path outside the collaborative editor.
+::
+
+::tutorial-step{title="Verify synchronization"}
+## Verify synchronization
+
+Start the server and leave it running:
+
+```bash [commands/dev]
+pnpm vite dev
+```
+
+Open the local URL printed by Vite in two browser tabs. Both tabs should show
+`Realtime: connected, Document synced`. Click the editor below the status in
+one tab and type a sentence; it should appear in the other tab. Edit from the
+second tab and verify that the first updates too. Both editors use the same
+`docs` Definition and `guides/getting-started.md` document path.
+
+Room updates synchronize the editors but do not write a Workspace file. An
+explicit `realtime.history.checkpoint()` saves the current Markdown to the
+Workspace. Both the room authority and Workspace store in this tutorial are
+in memory, so restarting the server loses their state. Use a durable setup
+before relying on documents surviving a restart.
+::

@@ -1,28 +1,53 @@
 ---
-title: Content get started
+
+title: Read your first Content document
 description: Install Comark Content, define server/content.ts, and read the first document.
-navigation.title: Get started
+layout: tutorial
+navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-## Quick start
+Content turns Source files into parsed documents, navigation, and search. This
+tutorial reads one Markdown file from a local Source through a generated route.
 
-::steps{level="3"}
+::note
+You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
+SQLite search plugin in this example writes local state. Choose a hosted
+database before deploying more than one process.
+::
 
-### Install
+::tutorial-step{title="Install"}
+## Install
 
 `comark-content` is an optional peer dependency of `vite-hub`. Install it with the framework package.
 
-```bash [Terminal]
-pnpm add vite-hub comark-content
+```bash [commands/install]
+pnpm add vite-hub comark-content nitro h3
+pnpm add -D vite
 ```
 
-### Configure
+::
+
+::tutorial-step{title="Configure"}
+## Configure
 
 Content needs no extra configuration key. The `vitehub()` Vite plugin and the Nuxt module discover `server/content.ts` and serve its exported `content` instance at `/api/content/**`. Do not add a framework route or a `fetch()` wrapper.
 
-### Start using it
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { nitro } from 'nitro/vite'
+import { vitehub } from 'vite-hub'
+
+export default defineConfig({
+  plugins: [vitehub({ preset: 'node' }), nitro() as never],
+})
+```
+
+::
+
+::tutorial-step{title="Define and read Content"}
+## Define and read Content
 
 ```ts [server/content.ts]
 import sqlite from 'comark-content/database/sqlite-node'
@@ -38,13 +63,22 @@ export const content = defineContent({
 })
 ```
 
+Add the document that the route will read:
+
+```md [docs/intro.md]
+# Hello from Content
+
+This page came from a local Source.
+```
+
 Read it from server code:
 
 ```ts [server/api/guide.get.ts]
+import { defineEventHandler } from 'h3'
 import { content } from '../content'
 
 export default defineEventHandler(async () => {
-  return await content.get('/guide')
+  return await content.get('/intro')
 })
 ```
 
@@ -63,4 +97,22 @@ await content.search('runtime', { instances: ['docs'] })
 
 ::
 
-Read [Server API](/docs/content/server-api) for every Content method.
+::tutorial-step{title="Read one document"}
+## Read one document
+
+Start Vite and read the generated Content route:
+
+```bash [commands/start]
+pnpm vite dev
+```
+
+Keep the server running. In another terminal, run:
+
+```bash [commands/request]
+curl http://localhost:5173/api/guide
+```
+
+The response contains the parsed `Hello from Content` document. Read
+[Server API](/docs/content/server-api) for every Content method.
+
+::

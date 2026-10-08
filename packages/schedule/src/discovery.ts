@@ -10,7 +10,7 @@ import {
   normalizeSuffixDefinitionName,
   resolveDefinitionScanRoots,
 } from "@vite-hub/internal/definition-catalog"
-import { findDefaultExportCall, findIdentifierCalls, readObjectProperty, readObjectPropertyNames, splitTopLevel, stripBoundaryComments } from "@vite-hub/internal/source-scanner"
+import { createSourceScanner } from "@vite-hub/internal/source-scanner"
 
 import type { DiscoveredScheduleDefinition } from "./types.ts"
 import { scheduleErrorDiagnostics } from "./error-diagnostics.ts"
@@ -19,6 +19,7 @@ const scheduleSuffixPattern = /\.schedule\.(?:c|m)?[jt]s$/i
 
 function readScheduleDiscoveryMetadata(file: string): Pick<DiscoveredScheduleDefinition, "allowRuntimeSchedules" | "manual" | "runtimeOnly"> {
   const source = readFileSync(file, "utf8")
+  const { findDefaultExportCall, findIdentifierCalls, readObjectProperty, readObjectPropertyNames, splitTopLevel, stripBoundaryComments } = createSourceScanner(file)
   const names = ["defineSchedule", "defineScheduleTarget"]
   const definition = findDefaultExportCall(source, ["defineSchedule"], { positionalOptionsIndex: 2 })
     ?? findDefaultExportCall(source, ["defineScheduleTarget"])

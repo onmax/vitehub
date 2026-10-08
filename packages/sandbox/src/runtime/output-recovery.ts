@@ -1,6 +1,7 @@
 import { CLOUDFLARE_RETRIABLE_STARTUP_ERROR_RE, collectCloudflareErrorMessages } from '../internal/shared/cloudflare-retry'
 import { sleep } from '../internal/shared/utils'
 import { sandboxError } from '../sandbox/errors'
+import { hasRuntimeType } from '@vite-hub/runtime/internal/runtime-type'
 import { readSandboxErrorMetadata } from './error-normalization'
 import { EXEC_STDIO_OUTPUT_MARKER } from './entry-script'
 
@@ -74,7 +75,11 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
     return null
 
   try {
-    return JSON.parse(outputRaw) as {
+    const output: unknown = JSON.parse(outputRaw)
+    if (!hasRuntimeType(output, 'object') || output === null || Array.isArray(output) || !hasRuntimeType(Reflect.get(output, 'ok'), 'boolean'))
+      return null
+    // SAFETY: The runtime checks above establish an object with a boolean `ok` field before this generic result cast.
+    return output as {
       ok?: boolean
       result?: TResult
       error?: { message?: string, name?: string, stack?: string, cause?: string }
@@ -82,6 +87,19 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
   }
   catch {
     return null
+  }
+}
+
+function isCompleteSandboxOutput(outputRaw: string) {
+  if (!outputRaw.trim())
+    return false
+
+  try {
+    JSON.parse(outputRaw)
+    return true
+  }
+  catch {
+    return false
   }
 }
 
@@ -219,7 +237,7 @@ async function recoverExecOutput(
     error,
     timeout,
     execution,
-    output => !!tryParseSandboxOutput(output),
+    output => isCompleteSandboxOutput(output),
   )
 }
 
@@ -241,7 +259,7 @@ async function waitForCloudflareOutput(
     error,
     timeout,
     execution,
-    output => !!tryParseSandboxOutput(output),
+    output => isCompleteSandboxOutput(output),
   )
 }
 
@@ -260,6 +278,11 @@ export async function readExecOutputWithRecovery(
   try {
     const output = await sandbox.readFile(outputPath)
     if (tryParseSandboxOutput(output))
+      return output
+    // A complete output file belongs to this execution. Preserve malformed
+    // envelopes so the caller can report the invalid contract instead of
+    // replacing the useful diagnostic with recovery failure.
+    if (isCompleteSandboxOutput(output))
       return output
   }
   catch {
