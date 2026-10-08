@@ -320,6 +320,22 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { 
     for (const conditional of [false, true]) expect(await view.readFile(`${conditional}.bin`, { encoding: "binary" })).toEqual(expected)
   })
 
+  it("rejects spoofed byte views and accepts genuine tagged bytes", async () => {
+    const { store, facade, uploads } = await setup(driver)
+    for (const content of [new Uint16Array([0x1234]), new Int8Array([1]), new Uint8ClampedArray([1]), new DataView(new ArrayBuffer(2))]) {
+      Object.defineProperty(content, Symbol.toStringTag, { value: "Uint8Array" })
+      // @ts-expect-error Other binary views are invalid JavaScript inputs.
+      await expect(facade().history.commit({ ifHead: null, files: { "invalid.bin": content } })).rejects.toThrow("Invalid history file content")
+      // @ts-expect-error The raw Store must reject the same invalid inputs.
+      await expect(store.history.commit({ ifHead: null, files: { "invalid.bin": { path: "invalid.bin", content } } })).rejects.toThrow("Invalid history file content")
+    }
+    expect(uploads).not.toHaveBeenCalled()
+    const bytes = new Uint8Array([0, 255, 128])
+    Object.defineProperty(bytes, Symbol.toStringTag, { value: "CustomBytes" })
+    const revision = await facade().history.commit({ ifHead: null, files: { "valid.bin": bytes } })
+    expect(await (await store.history.open(revision.id)).readFile("valid.bin", { encoding: "binary" })).toEqual(new Uint8Array([0, 255, 128]))
+  })
+
   it("retains a 200-file folder and uploads no bytes for an unchanged publication", async () => {
     const { facade, uploads } = await setup(driver)
     const workspace = facade()
