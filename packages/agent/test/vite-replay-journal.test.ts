@@ -75,8 +75,8 @@ export default defineAgent({ runtime: false, workspace: { mode: 'read' },
     const record = JSON.parse(String(rows.rows[0].record))
     expect(rows.rows[0].status).toBe("completed")
     expect(record.annotations).toMatchObject({ triggeredBy: "native-round", authored: "kept", "vitehub.channel.key": "m1", "vitehub.channel.thread": "t1" })
-    const observations = await client.execute("SELECT observation FROM vitehub_agent_invocations_observations")
-    const effects = observations.rows.map(row => JSON.parse(String(row.observation))).filter(observation => observation.name === "agent.channel.delivery.effect")
+    // Terminal SQLite records compact their observations into the record column.
+    const effects = record.observations.filter((observation: { name: string }) => observation.name === "agent.channel.delivery.effect")
     expect(effects).toHaveLength(1)
     expect(effects[0].attributes).toMatchObject({ "channel.effect.channel": "teams", "channel.effect.skipped": "dry-run", "channel.effect.content": "Synthetic raw draft" })
     const missingDelivery = await runAgentChannelReplayCli(["--server", origin, "--agent", "support", "--channel", "mailbox", "--dry-run", "--label", "missing-delivery", "--query", "turns=last", "--query", "delivery=skip", "--limit", "1"], { env: {}, rootDir: root, stdout, stderr: { write: chunk => errors.push(String(chunk)) } })

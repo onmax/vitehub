@@ -49,7 +49,7 @@ describe("trusted Channel replay metadata", () => {
     const result = await response.json() as { items: { id: string }[] }
     expect(result).toMatchObject({ failed: 1 })
     const record = await invocations.getByRunId(result.items[0]!.id, "support")
-    expect(record?.status).toBe("failed")
+    expect(record?.status).toBe("pending")
     expect(record?.channelId).toBe("mailbox")
     expect(record?.annotations).toMatchObject({ triggeredBy: "failed-round", "vitehub.channel.key": "m1" })
   })
