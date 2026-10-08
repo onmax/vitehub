@@ -1963,6 +1963,8 @@ export type AgentRegistry<TContext extends AgentRuntimeContext<any> = AgentRunti
 
 export interface AgentStateProviderOptions {
   authToken?: string
+  /** Persistent file databases default to WAL. Select delete for network-backed volumes. */
+  journalMode?: "wal" | "delete"
   provider?: "auto" | "cloudflare" | "cloudflare-agents" | "libsql" | "memory" | "sqlite" | (string & {})
   tablePrefix?: string
   url?: string

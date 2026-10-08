@@ -70,6 +70,8 @@ export interface LibsqlAgentStateClient {
 export interface LibsqlAgentStateOptions extends Omit<SqliteAgentStateOptions, "driver"> {
   authToken?: string
   client?: LibsqlAgentStateClient
+  /** Owned file databases default to WAL. Use delete on volumes without shared-memory support. */
+  journalMode?: "wal" | "delete"
   url?: string
 }
 
@@ -132,13 +134,14 @@ function isSqliteBusy(error: unknown): boolean {
   return false
 }
 
-async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
+async function retrySqliteBusy<T>(operation: () => Promise<T>, timeoutMs?: number): Promise<T> {
+  const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
   for (let attempt = 0; ; attempt++) {
     try {
       return await operation()
     } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= 7) throw error
-      await new Promise((resolve) => setTimeout(resolve, Math.min(50, 2 ** attempt)))
+      if (!isSqliteBusy(error) || (deadline === undefined ? attempt >= 7 : Date.now() >= deadline)) throw error
+      await new Promise((resolve) => setTimeout(resolve, Math.min(deadline === undefined ? 50 : 250, 2 ** attempt)))
     }
   }
 }
@@ -931,7 +934,23 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
     }
     const { createClient } = await import("@libsql/client")
     // SAFETY: The owning Agent runtime boundary establishes the asserted representation before this value is used.
-    return createClient({ authToken: options.authToken, url: options.url! }) as LibsqlAgentStateClient
+    const opened = createClient({ authToken: options.authToken, url: options.url! }) as LibsqlAgentStateClient
+    if (options.url?.startsWith("file:") && !options.url.includes(":memory:") && !/[?&]mode=memory(?:&|$)/.test(options.url)) {
+      try {
+        // A retained read snapshot must not block queue and lease commits.
+        // Configure only owned persistent files, leaving supplied clients and
+        // remote databases under their caller's connection policy.
+        // Give legacy readers a startup window to release the exclusive mode-change lock.
+        const requested = options.journalMode === "delete" ? "delete" : "wal"
+        const result = await retrySqliteBusy(async () => await opened.execute(`PRAGMA journal_mode = ${requested.toUpperCase()}`), 30_000)
+        const actual = rows(result)[0]?.journal_mode
+        if (actual !== requested) throw new Error(`SQLite journal mode ${requested} was requested, but the VFS retained ${String(actual)}.`)
+      } catch (error) {
+        await opened.close?.()
+        throw error
+      }
+    }
+    return opened
   }
 
   return createSqliteAgentState({

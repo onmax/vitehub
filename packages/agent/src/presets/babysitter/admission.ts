@@ -158,7 +158,12 @@ export function sumInvocationInputTokens(usage: Map<string, { updatedAt: number;
 }
 
 /** Dispatch shares fresh accounting; health may reuse a bounded, timestamped result. */
-export function coalesceBabysitterAdmission<T extends object>(read: (now?: number) => Promise<T>, clock = Date.now) {
+export interface CoalescedBabysitterAdmission<T extends object> {
+  (now?: number): Promise<T & { observedAt: number }>;
+  health(): Promise<T & { observedAt: number }>;
+}
+
+export function coalesceBabysitterAdmission<T extends object>(read: (now?: number) => Promise<T>, clock = Date.now): CoalescedBabysitterAdmission<T> {
   let pending: Promise<T & { observedAt: number }> | undefined;
   let latest: T & { observedAt: number } | undefined;
   function check(now?: number) {

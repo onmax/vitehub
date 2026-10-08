@@ -605,7 +605,7 @@ type BuildWithRolldownOptions = {
     }
   }
 }
-type GeneratedLibsqlAgentStateOptions = Pick<ResolvedAgentModuleOptions["providers"]["state"], "tablePrefix" | "url"> & {
+type GeneratedLibsqlAgentStateOptions = Pick<ResolvedAgentModuleOptions["providers"]["state"], "journalMode" | "tablePrefix" | "url"> & {
   authTokenEnvName?: string
   durableUrlRequired?: boolean
   ephemeralHosting?: "cloudflare" | "netlify" | "vercel"
@@ -680,7 +680,7 @@ function resolveLibsqlAgentState(
   config: unknown,
 ): GeneratedLibsqlAgentStateOptions | undefined {
   if (!options) return
-  const { authToken, provider, tablePrefix, url } = options.providers.state
+  const { authToken, journalMode, provider, tablePrefix, url } = options.providers.state
   const auto = provider === "auto"
   if (!auto && provider !== "sqlite" && provider !== "libsql") return
   if (auto && shouldInstallCloudflareAgentState(options, config)) return
@@ -700,6 +700,7 @@ function resolveLibsqlAgentState(
     ...(authTokenEnvName ? { authTokenEnvName } : {}),
     ...(!resolvedUrl ? { durableUrlRequired: true } : {}),
     ...(ephemeralHosting ? { ephemeralHosting } : {}),
+    ...(journalMode ? { journalMode } : {}),
     ...(tablePrefix ? { tablePrefix } : {}),
     ...(resolvedUrl ? { url: resolvedUrl } : {}),
   }
@@ -1577,20 +1578,22 @@ export async function transformEveExtensionCapabilities(
   return applyCodeReplacements(code, replacements)
 }
 
-const supportedEveExtensionContracts: Record<number, Record<string, number>> = {
+const supportedEveExtensionContracts = {
   1: {
-    config: 1,
-    dynamicTool: 8,
-    extension: 1,
-    tool: 5,
+    config: [1],
+    dynamicTool: [8],
+    extension: [1],
+    tool: [5],
   },
   2: {
-    config: 1,
-    dynamicTool: 20,
-    extension: 1,
-    tool: 20,
+    config: [1],
+    // Preserve ViteHub's accepted epochs alongside GitHub Tools 0.8.0.
+    // This adapter-specific list is independent of Eve's runtime support table.
+    dynamicTool: [20, 52],
+    extension: [1],
+    tool: [20, 54],
   },
-}
+} satisfies Record<number, Record<string, readonly number[]>>
 
 async function resolveEveExtensionPackage(
   config: Pick<ResolvedConfig, "createResolver">,
@@ -1616,14 +1619,14 @@ async function resolveEveExtensionPackage(
         const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"))
         const formatVersion = isRecord(manifest) ? manifest.formatVersion : undefined
         const requires = isRecord(manifest) && isRecord(manifest.requires) ? manifest.requires : undefined
-        const contracts = hasRuntimeType(formatVersion, "number")
-          ? supportedEveExtensionContracts[formatVersion]
-          : undefined
-        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !contracts || !requires) {
-          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported manifest.` })
+        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !requires
+          || (formatVersion !== 1 && formatVersion !== 2)) {
+          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
+        const contracts = supportedEveExtensionContracts[formatVersion]
         for (const [contract, version] of Object.entries(requires)) {
-          if (contracts[contract] !== version) {
+          const versions = Object.entries(contracts).find(([name]) => name === contract)?.[1]
+          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || !versions?.includes(version)) {
             throw agentDiagnostics.AGENT_B0015({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} requires unsupported ${contract}@${String(version)}.` })
           }
         }

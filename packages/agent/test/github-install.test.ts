@@ -144,6 +144,102 @@ it("rejects legacy npm versions with repository onload scripts before execution"
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/npm 7 or newer/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
 });
+it("serializes host installers while cancellation does not hold up later work", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  const third = await fixture();
+  const marker = join(first, "installer-active");
+  const sequence = join(first, "sequence");
+  await writeFile(join(third, "bin", "corepack"), `#!/bin/sh
+if ! mkdir '${marker}'; then exit 88; fi
+trap 'rmdir "${marker}"' EXIT
+printf '%s\n' "$PWD" >> '${sequence}'
+sleep 0.15
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const abort = new AbortController();
+  const running = installGitHubPullRequestWorkspace(first);
+  const cancelled = installGitHubPullRequestWorkspace(second, abort.signal);
+  const last = installGitHubPullRequestWorkspace(third);
+  abort.abort(new DOMException("Cancelled queued checkout", "AbortError"));
+  await expect(cancelled).rejects.toThrow("Cancelled queued checkout");
+  await expect(running).resolves.toBeUndefined();
+  await expect(last).resolves.toBeUndefined();
+  expect((await readFile(sequence, "utf8")).trim().split("\n")).toEqual([first, third]);
+  await expect(readFile(join(second, "args.txt"))).rejects.toThrow();
+});
+
+it("releases the installer slot after a failed predecessor", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  await writeFile(join(second, "bin", "corepack"), `#!/bin/sh
+if [ "$PWD" = '${first}' ]; then exit 7; fi
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const failed = installGitHubPullRequestWorkspace(first);
+  const next = installGitHubPullRequestWorkspace(second);
+  await expect(failed).rejects.toBeInstanceOf(GitHubWorkspaceInstallError);
+  await expect(next).resolves.toBeUndefined();
+});
+
+it("does not queue dependency-free workspaces behind an active installer", async () => {
+  const first = await fixture();
+  const empty = await fixture();
+  await rm(join(empty, "package.json"));
+  const started = join(first, "started");
+  const release = join(first, "release");
+  await writeFile(join(empty, "bin", "corepack"), `#!/bin/sh
+touch '${started}'
+while [ ! -f '${release}' ]; do sleep 0.02; done
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const running = installGitHubPullRequestWorkspace(first);
+  let completed = false;
+  let skipped: Promise<void> | undefined;
+  try {
+    await vi.waitFor(async () => { await readFile(started); });
+    skipped = installGitHubPullRequestWorkspace(empty).then(() => { completed = true; });
+    await vi.waitFor(() => expect(completed).toBe(true), { timeout: 1000 });
+  } finally {
+    await writeFile(release, "");
+    await Promise.all([running, skipped]);
+  }
+  await expect(readFile(join(empty, ".git", "vitehub-install.json"))).rejects.toThrow();
+});
+
+it("parks a queued installer before waiting can consume the repair pass lifetime", async () => {
+  const first = await fixture();
+  const second = await fixture();
+  const started = join(first, "started");
+  const release = join(first, "release");
+  await writeFile(join(second, "bin", "corepack"), `#!/bin/sh
+if [ "$PWD" = '${first}' ]; then
+  touch '${started}'
+  while [ ! -f '${release}' ]; do sleep 0.02; done
+fi
+printf '%s\n' "$@" > args.txt
+mkdir -p node_modules
+`, { mode: 0o755 });
+  const running = installGitHubPullRequestWorkspace(first);
+  let queued: Promise<void> | undefined;
+  try {
+    await vi.waitFor(async () => { await readFile(started); });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let settled = false;
+    queued = installGitHubPullRequestWorkspace(second);
+    const observed = queued.then(() => { settled = true; return undefined; }, error => { settled = true; return error; });
+    // Let the real filesystem preflight finish before advancing queue time.
+    for (let n = 0; n < 10; n++) await readFile(join(second, "package.json"));
+    await vi.advanceTimersByTimeAsync(2 * 60_000 + 1);
+    expect(settled).toBe(true);
+    expect(await observed).toBeInstanceOf(GitHubWorkspaceInstallError);
+    await expect(readFile(join(second, "args.txt"))).rejects.toThrow();
+  } finally {
+    vi.useRealTimers();
+    await writeFile(release, "");
+    await Promise.allSettled([running, queued]);
+  }
+});
 
 it.each(["cache", "cafile"])("rejects project npm %s paths before execution", async setting => {
   const root = await fixture();
@@ -232,6 +328,23 @@ it.each(["manifest", "lockfile"])("rejects Yarn executable fetch protocols in th
   await writeFile(join(root, "yarn.lock"), '__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: "unsafe@exec:./script.js"\n');
   await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol/);
   await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+});
+it.each([
+  "git+https://github.com/acme/unsafe.git",
+  "https://github.com/acme/unsafe.git",
+  "https://github.com/acme/unsafe",
+  "https://github.com/acme/unsafe/tarball/main",
+  "acme/unsafe",
+  "github:acme/unsafe",
+])("rejects Yarn Git preparation source %s before host execution", async source => {
+  for (const location of ["manifest", "lockfile"]) {
+    const root = await fixture();
+    await rm(join(root, "pnpm-lock.yaml"));
+    await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2", ...(location === "manifest" ? { dependencies: { unsafe: source } } : {}) }));
+    await writeFile(join(root, "yarn.lock"), location === "manifest" ? "" : `__metadata:\n  version: 8\n"unsafe@npm:1.0.0":\n  version: 1.0.0\n  resolution: ${JSON.stringify(`unsafe@${source}`)}\n`);
+    await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/protocol|Git dependencies/);
+    await expect(readFile(join(root, "args.txt"))).rejects.toThrow();
+  }
 });
 it("installs and fingerprints pnpm workspaces without a root manifest", async () => {
   const root = await fixture();

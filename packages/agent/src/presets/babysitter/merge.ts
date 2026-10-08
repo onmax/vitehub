@@ -71,7 +71,7 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<Babysitt
     .map(value => ({ id: value.id ?? value.context, name: value.name ?? value.context,
       state: value.conclusion ?? value.state, app: value.app, description: value.description, output: value.output }))
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  const threads = snapshot.threads.map(thread => ({ id: thread.node_id ?? thread.id, path: thread.path,
+  const threads = snapshot.threads.map(thread => ({ id: thread.node_id ?? thread.id, path: thread.path, isResolved: thread.isResolved,
     comments: (Array.isArray(thread.comments) ? thread.comments : thread.comments?.nodes ?? [])
       .filter(comment => !comment.deleted).map(comment => ({ id: comment.node_id ?? comment.id,
         body: comment.body, user: comment.user ?? comment.author, commit: comment.commit_id ?? comment.commit?.oid })) }))

@@ -340,6 +340,8 @@ export default defineConfig({
 
 `provider: "sqlite"` uses the built-in libSQL-compatible state backend, so `file:` URLs work for local or explicitly persistent Node deployments and hosted libSQL URLs work remotely. Cloudflare, Vercel, and Netlify production output rejects `file:` Agent state before it can write to an ephemeral filesystem.
 
+Built-in persistent `file:` connections use SQLite WAL so queue commits can complete while another connection retains a read snapshot. WAL requires a local filesystem with shared-memory support. For NFS, EFS, or another network-backed volume, set `agent.providers.state.journalMode: "delete"` to use rollback journaling. The low-level `createLibsqlAgentState()` accepts the same `journalMode` option. Keep the database and its journal files on the same persistent volume. Supplied clients and remote connections keep their own connection policy.
+
 Queued webhook deliveries in this state survive a restart. A persistent Nitro server resumes them when it starts, without an inbound request. Before the queue resumes, the server fails each Agent's pending or running invocations that started before this process. An invocation that a persisted queued delivery runs again under the same run ID stays active and continues with that delivery. Agents with a durable Workflow runtime are skipped. Vercel and Netlify output resumes the queue on the first webhook request and does not recover invocations.
 
 A queued delivery gets three execution attempts. When the queue stops retrying it, after the last failed attempt or after the delivery used all its execution leases, ViteHub dispatches the Trigger's `failed` callback at most once with `{ attempts, deliveryId, error, publicError, input?, invocation?, run? }`. An error from `failed` is logged and does not change the delivery outcome. Pending notifications survive restart with built-in state providers; a process exit after the durable notification claim leaves an uncertain outcome that is not replayed automatically. See [Report a failed webhook delivery](../../docs/content/docs/agents/triggers.md#report-a-failed-webhook-delivery).
@@ -764,7 +766,8 @@ default) or `"claude-code"`. Set its model and other provider settings with the
 ordinary `driver` field. Model and custom run Drivers cannot repair a checkout.
 
 `install` defaults to `true`. The host installs dependencies from the frozen
-pnpm, npm, or Yarn lockfile before starting the provider. Lifecycle scripts and
+pnpm, npm, or Yarn lockfile before starting the provider. Installers run one at a
+time per host process to bound dependency setup memory. Lifecycle scripts and
 repository package-manager hooks, plugins, and binary delegation stay disabled.
 The package manager must name an official version, rather than a URL. Corepack
 uses the trusted npm registry and ignores checkout environment files. npm must
@@ -772,7 +775,7 @@ be version 7 or newer. A manifest without a package-manager version uses a pinne
 default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
 retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
 Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`.
-Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:` and unsupported source protocols are rejected before Corepack runs.
+Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:`, Git dependencies that prepare remote projects, and unsupported source protocols are rejected before Corepack runs. Use registry packages or HTTPS archives instead, or set `install: false` when dependencies must be prepared in the provider sandbox.
 Workers call `commitRepair` with a message and explicit repair paths, then
 `pushRepair`. The host commits because the provider sandbox protects Git metadata. For a
 conflicting PR, the host first prepares a merge against the exact base commit.
@@ -838,11 +841,28 @@ PRs by accident.
 The host reads the GitHub App from `env.server.github` or `GITHUB_APP_ID`,
 `GITHUB_APP_PRIVATE_KEY` (or `GITHUB_APP_PRIVATE_KEY_PATH`), and
 `GITHUB_WEBHOOK_SECRET`. It resolves the App installation of each repository and
-commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins one installation.
+commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins the installation for
+`GITHUB_APP_OWNER`. `GITHUB_APP_INSTALLATIONS` accepts a JSON object mapping owner
+names to installation IDs. Other owners resolve their own installation. The host
+ignores an environment installation ID without an owner.
 A delivery without a configured webhook secret is rejected. Only the commit
 author and committer identity pass to the worker; credentials do not. On its
 first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
 earlier hand-wired Babysitter once.
+
+Pass results and their GitHub status deliveries commit in one inbox transaction.
+The host publishes the saved result through its verified GitHub identity, retries
+failed delivery after restart, and compares delivery versions before clearing an
+entry. A newer result cannot be erased by an older publication. Waiting comments
+include the blocker reason. A confirmed repair result waits for its head webhook
+if that webhook arrives after the pass finishes.
+
+Known worker setup failures receive one recovery attempt per Agent `version` and
+PR head. Bump the version with each deployed release. The wake and release marker
+commit together, so restarting the same release cannot repeat the wake. Timed
+retries, check dependencies, and maintainer credential blockers keep their existing
+wake conditions. Health can reuse admission accounting for at most two minutes
+and reports its observation time; dispatch shares a fresh accounting read.
 
 Each pass uses a disposable provider workspace with unattended edit permission.
 Native permission escalation is denied without prompting; the provider does not run

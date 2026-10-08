@@ -14,8 +14,44 @@ export class GitHubWorkspaceInstallError extends Error {
   constructor(cause: unknown) { super(`Frozen dependency installation failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
 }
 
+let installationTail: Promise<void> = Promise.resolve();
+
 /** Install frozen dependencies before entering the provider's network sandbox. */
 export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
+  signal?.throwIfAborted();
+  const previous = installationTail;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  // An aborted waiter releases its own reservation, but later work still waits
+  // for every predecessor. Installers can each use multiple GiB of host memory.
+  installationTail = previous.then(() => held);
+  let abort!: () => void;
+  let queueTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      previous,
+      new Promise<never>((_resolve, reject) => {
+        queueTimeout = setTimeout(() => reject(new GitHubWorkspaceInstallError(new Error("Dependency installer capacity remained busy for two minutes; retry when capacity is available."))), 2 * 60_000);
+      }),
+      new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal?.reason ?? new DOMException("Installation cancelled.", "AbortError"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
+    ]);
+    clearTimeout(queueTimeout);
+    signal?.throwIfAborted();
+    await installWorkspace(target, signal);
+  } finally {
+    clearTimeout(queueTimeout);
+    signal?.removeEventListener("abort", abort);
+    release();
+  }
+}
+
+async function installWorkspace(target: string, signal?: AbortSignal): Promise<void> {
   if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");

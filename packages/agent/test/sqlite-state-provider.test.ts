@@ -5,6 +5,11 @@ import { join } from "node:path"
 import { createClient } from "@libsql/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
+vi.mock("@libsql/client", async importOriginal => {
+  const actual = await importOriginal<typeof import("@libsql/client")>()
+  return { ...actual, createClient: vi.fn(actual.createClient) }
+})
+
 import { createLibsqlAgentState, createSqliteAgentState, type LibsqlAgentStateClient, type SqliteAgentStateDriver, ViteHubSqliteAgentStateAdapter } from "../src/state/sqlite.ts"
 
 import type { QueueEntry, StateAdapter } from "chat"
@@ -162,6 +167,87 @@ describe("SQLite Agent State Provider", () => {
     await restored.connect()
     await expect(restored.get("seen")).resolves.toEqual({ id: 1 })
     await restored.disconnect()
+  })
+
+  it("keeps rollback journaling available for network-backed volumes", async () => {
+    const { url } = await createState()
+    const state = createLibsqlAgentState({ url, journalMode: "delete" })
+    await state.connect()
+    const client = createClient({ url })
+    try {
+      expect((await client.execute("PRAGMA journal_mode")).rows[0]?.journal_mode).toBe("delete")
+      await state.set("network-volume", "persisted")
+      await expect(state.get("network-volume")).resolves.toBe("persisted")
+    } finally {
+      client.close()
+      await state.disconnect()
+    }
+  })
+
+  it.each(["wal", "delete"] as const)("rejects a VFS that silently retains a different journal mode than %s", async journalMode => {
+    const { url } = await createState()
+    // A real memory VFS returns 'memory' even when PRAGMA requests WAL.
+    const opened = createClient({ url: "file::memory:" })
+    const close = vi.spyOn(opened, "close")
+    const factory = vi.mocked(createClient).mockReturnValueOnce(opened)
+    const state = createLibsqlAgentState({ url, journalMode })
+    try {
+      await expect(state.connect()).rejects.toThrow(new RegExp(`journal mode.*${journalMode}.*memory`, "i"))
+      expect(close).toHaveBeenCalledOnce()
+    } finally {
+      factory.mockClear()
+      await state.disconnect()
+      opened.close()
+    }
+  })
+
+  it("waits for a legacy reader before switching to WAL", async () => {
+    const { url } = await createState()
+    const legacy = createLibsqlAgentState({ url, journalMode: "delete", tablePrefix: "test_agent_state_" })
+    await legacy.connect()
+    await legacy.set("snapshot", "before")
+    const client = createClient({ url })
+    const reader = await client.transaction("read")
+    await reader.execute("SELECT value FROM test_agent_state_cache")
+    const upgraded = createLibsqlAgentState({ url, tablePrefix: "test_agent_state_" })
+    // Hold the rollback-journal snapshot beyond the ordinary write retry budget.
+    const release = new Promise<void>((resolve, reject) => setTimeout(() => {
+      void reader.rollback().then(resolve, reject)
+    }, 350))
+    try {
+      await expect(upgraded.connect()).resolves.toBeUndefined()
+      await release
+      const inspection = createClient({ url })
+      try {
+        expect((await inspection.execute("PRAGMA journal_mode")).rows[0]?.journal_mode).toBe("wal")
+      } finally { inspection.close() }
+      await expect(upgraded.get("snapshot")).resolves.toBe("before")
+    } finally {
+      await release
+      reader.close()
+      client.close()
+      await upgraded.disconnect()
+      await legacy.disconnect()
+    }
+  })
+
+  it("commits state while another connection retains a read snapshot", async () => {
+    const { state, url } = await createState()
+    await state.connect()
+    await state.set("snapshot", "before")
+    const client = createClient({ url })
+    const reader = await client.transaction("read")
+    try {
+      expect((await reader.execute("SELECT value FROM test_agent_state_cache WHERE key = 'snapshot'")).rows[0]?.value).toBe(JSON.stringify("before"))
+      await expect(state.set("snapshot", "after")).resolves.toBeUndefined()
+      expect((await reader.execute("SELECT value FROM test_agent_state_cache WHERE key = 'snapshot'")).rows[0]?.value).toBe(JSON.stringify("before"))
+      await expect(state.get("snapshot")).resolves.toBe("after")
+    } finally {
+      await reader.rollback()
+      reader.close()
+      client.close()
+      await state.disconnect()
+    }
   })
 
   it("leases webhook deliveries under global and per-key concurrency", async () => {

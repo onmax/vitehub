@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { GitHubDependencyConflictError } from "../../server/github-install-inputs.ts";
 import * as v from "valibot";
 import { execFile } from "node:child_process";
@@ -861,6 +862,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               const abortSignal = AbortSignal.any([prepared.signal, passSignal]);
               // Check durable ownership at dispatch, including after admission I/O.
               // The cancellation watcher alone leaves a window for a reclaimed worker.
+              const repairOperation = new AsyncLocalStorage<boolean>();
+              const repairEvidenceKey = (snapshot: Snapshot) => mergeReviewEvidenceKey({
+                ...snapshot,
+                // Metadata edits are re-evaluated by merge gates. They must not
+                // discard an exact-head repair with unchanged actionable feedback.
+                pr: snapshot.pr && { ...snapshot.pr, title: undefined, body: undefined,
+                  base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
+              }, waitPolicy);
               const assertLease = async () => {
                 abortSignal.throwIfAborted();
                 const current = await pullRequestInbox.get(repository, number);
@@ -869,11 +878,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 }
                 const stopped = claimStopReason(inboxClaim, current, pushedHead);
                 if (stopped) throw new DOMException(stopped, "AbortError");
-                // A proven repair head may finish resolving addressed feedback after synchronize.
-                // A generation change on the original head still invalidates the worker's evidence.
-                if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)) {
+                // Merge and feedback mutations require the original generation.
+                // Repair publication may coalesce metadata and successful-check
+                // updates when its head and actionable feedback are unchanged.
+                if (current.generation !== inboxClaim.generation && (!pushedHead || current.pr?.head?.sha !== pushedHead)
+                  && !(repairOperation.getStore() && repairEvidenceKey(current) === repairEvidenceKey(inboxClaim.snapshot))) {
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
+                return current;
               };
               let preparedMergeBase: string | undefined;
               const assertRepairBase = async () => {
@@ -925,14 +937,27 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
                   await assertRepairBase();
+                  const renewLease = async () => {
+                    let current = await assertLease();
+                    for (;;) {
+                      if (await pullRequestInbox.renew({ ...inboxClaim, generation: current.generation, snapshot: current }, Date.now() + 2 * 60 * 60_000)) return;
+                      // A generation can advance between validation and CAS.
+                      // Recheck ownership, head and feedback before adopting it.
+                      const latest = await assertLease();
+                      if (latest.generation === current.generation) throw new DOMException("Pull request lease renewal failed.", "AbortError");
+                      current = latest;
+                    }
+                  };
+                  let renewing = false;
                   const renew = setInterval(() => {
-                    void pullRequestInbox.renew(inboxClaim, Date.now() + 2 * 60 * 60_000)
-                      .then((renewed) => { if (!renewed) passController.abort(); }, () => passController.abort());
+                    if (renewing) return;
+                    renewing = true;
+                    void renewLease().catch(() => passController.abort()).finally(() => { renewing = false; });
                   }, 30_000);
                   try {
                     const result = await prepared.push(providerDirectory, {
                       signal: abortSignal,
-                      beforePush: assertLease,
+                      beforePush: async () => { await assertLease(); },
                     });
                     // A no-op push does not advance the remote head and emits
                     // no synchronize webhook; do not park this generation as
@@ -985,7 +1010,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return [name, sanitized];
               }));
               const baseCapabilities = workerSettings.capabilities;
-              const repair = repairCapability(operations, merge.mode === "auto");
+              const repair = repairCapability({
+                ...operations,
+                commitRepair: input => repairOperation.run(true, () => operations.commitRepair(input)),
+                push: () => repairOperation.run(true, () => operations.push()),
+              }, merge.mode === "auto");
               // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
               const workerCapabilities = typeof baseCapabilities === "function"
                 ? async (context: Parameters<AgentCapabilitiesResolver>[0]) => [

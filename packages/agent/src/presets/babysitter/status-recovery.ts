@@ -8,6 +8,12 @@ export function isWorkerBlocker(snapshot: Pick<Snapshot, "wait" | "lastResult">)
   return /MCP tool call requires approval|approval policy is never|read.only[^\n]{0,80}\.git|\.git[^\n]{0,80}read.only|writable (?:\.git|Git (?:metadata|checkout))|restore frozen-lockfile dependency installation|host must prepare (?:the )?exact.base merge/i.test(text);
 }
 
+export interface BabysitterStatusRecovery {
+  flush(): Promise<void>;
+  recover(): Promise<void>;
+  recordWorkerBlocker(snapshot: Snapshot, reason: string): Promise<void>;
+}
+
 /** Publish durable results and retry host failures once per worker release and PR head. */
 export function createBabysitterStatusRecovery(options: {
   inbox: PullRequestInbox;
@@ -15,7 +21,7 @@ export function createBabysitterStatusRecovery(options: {
   publish?: (pending: StatusDelivery) => Promise<unknown>;
   event?: (name: string, properties: Record<string, unknown>) => void;
   error?: (name: string, error: unknown, properties: Record<string, unknown>) => void;
-}) {
+}): BabysitterStatusRecovery {
   const { inbox, revision, publish } = options;
   let flushing: Promise<void> | undefined;
   let initialized = false;
