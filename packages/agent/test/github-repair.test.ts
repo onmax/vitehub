@@ -34,6 +34,33 @@ it("commits selected repair files on the exact ancestry without running checkout
   expect(await readFile(join(root, "unrelated.txt"), "utf8")).toBe("unrelated edit\n");
 });
 
+it.each([false, true])("stages an explicitly restored instruction file marked skip-worktree, preparedMerge=%s", async preparedMerge => {
+  const { root } = await fixture();
+  await writeFile(join(root, "AGENTS.md"), "Original PR instructions\n");
+  await git(root, "add", "AGENTS.md");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "track instructions");
+  const expectedHead = await git(root, "rev-parse", "HEAD");
+  let base: string | undefined;
+  if (preparedMerge) {
+    await git(root, "checkout", "-b", "main");
+    await writeFile(join(root, "base-only.txt"), "Live base addition\n");
+    await git(root, "add", "base-only.txt");
+    await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "advance base");
+    base = await git(root, "rev-parse", "HEAD");
+    await git(root, "checkout", "repair");
+    await prepareGitHubRepairBase(root, { expectedHead, base });
+  }
+  await git(root, "update-index", "--skip-worktree", "AGENTS.md");
+  await writeFile(join(root, "AGENTS.md"), "Restored PR repair instructions\n");
+  await writeFile(join(root, "unrelated.txt"), "Unrelated local edit\n");
+  const head = await commitGitHubPullRequestWorkspace(root, { message: "restore reviewed instructions", paths: ["AGENTS.md"] }, { expectedHead });
+  expect(await git(root, "show", `${head}:AGENTS.md`)).toBe("Restored PR repair instructions");
+  expect(await git(root, "rev-parse", `${head}^1`)).toBe(expectedHead);
+  if (base) expect(await git(root, "rev-parse", `${head}^2`)).toBe(base);
+  expect(await git(root, "show", `${head}:unrelated.txt`)).toBe("keep");
+  expect(await readFile(join(root, "unrelated.txt"), "utf8")).toBe("Unrelated local edit\n");
+});
+
 it.each(["../outside", "/tmp/outside", ".git/config", ".", "./", "a/../../outside"])("rejects unsafe repair path %s", async path => {
   const { root, expectedHead } = await fixture();
   await expect(commitGitHubPullRequestWorkspace(root, { message: "repair", paths: [path] }, { expectedHead })).rejects.toThrow(/paths/);
