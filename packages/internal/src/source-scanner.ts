@@ -277,13 +277,32 @@ function isDeclarationBlockStart(source: string, openBrace: number, controlFlowR
   const head = source.slice(0, openBrace).replace(/\/\*[\s\S]*?\*\/|\/\/[^\r\n\u2028\u2029]*/g, comment => comment.replace(/[^\r\n\u2028\u2029]/g, " "))
   const declaration = /(?:^|[;{}\r\n\u2028\u2029])\s*(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?function\s*\*?\s*(?:[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?\s*\([^{}]*\)(?:\s*:[^;{}]+)?|class(?:\s+[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)?(?:\s+extends\s+[^;{}]+)?)\s*$/u.exec(head)
   if (!declaration) return false
-  const before = head.slice(0, declaration.index).trimEnd()
+  const before = declarationPrefix(source, head, declaration.index, controlFlowRegexes)
   if (/[=([,:?!&|+\-*/%^~<>.]$/.test(before)) return false
   if (/(?:^|[^.$\p{ID_Continue}\u200C\u200D])(?:await|delete|in|instanceof|new|typeof|void)$/u.test(before)) return false
   const keyword = /\b(?:class|function)\b/.exec(declaration[0])
   if (!keyword) return false
   const keywordStart = declaration.index + keyword.index
   return maskSourceLiteralsWithContext(source.slice(0, keywordStart + keyword[0].length), controlFlowRegexes).slice(keywordStart) === keyword[0]
+}
+
+function declarationPrefix(source: string, head: string, offset: number, controlFlowRegexes: ControlFlowRegexCache) {
+  let end = previousCodeIndex(source, offset - 1, controlFlowRegexes) + 1
+  while (end > 0) {
+    let decoratorEnd = end
+    if (source[end - 1] === ")") {
+      let openParen = end - 2
+      while (openParen >= 0 && (source[openParen] !== "(" || findMatching(source, openParen, "(", ")", controlFlowRegexes) !== end - 1)) openParen -= 1
+      if (openParen < 0) break
+      decoratorEnd = previousCodeIndex(source, openParen - 1, controlFlowRegexes) + 1
+    }
+    const decorator = source[decoratorEnd - 1] === "@"
+      ? { index: decoratorEnd - 1 }
+      : /@\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*(?:\s*\.\s*[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*)*$/u.exec(head.slice(0, decoratorEnd))
+    if (!decorator) break
+    end = previousCodeIndex(source, decorator.index - 1, controlFlowRegexes) + 1
+  }
+  return head.slice(0, end).trimEnd()
 }
 
 function isLabeledStatementRegexStart(source: string, index: number, labelEnd: number, controlFlowRegexes: ControlFlowRegexCache) {

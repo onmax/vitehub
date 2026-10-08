@@ -70,6 +70,8 @@ describe("source scanner", () => {
     "prepare()\nfunction task() {}",
     "function task(): void {}",
     "class Task {}",
+    "@dec\nclass Task {}",
+    "@dec()\nclass Task {}",
   ])("scans a regex statement after a closed block: %s", (statement) => {
     const value = `${statement} /['"]/u.test(value)`
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
@@ -92,6 +94,8 @@ describe("source scanner", () => {
     "const value = a\u200Cvoid / total",
     "const text = `x${{} / total}`",
     "const text = `x${ /* object */ {} / total}`",
+    "const value = @dec\nclass Task {} / total",
+    "const value =\n@dec\nclass Task {} / total",
   ])("preserves division after an expression-owned closing brace: %s", (value) => {
     expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
     const call = findDefaultExportCall(`${value}\nexport default defineThing({ value: "real" })`, ["defineThing"])
