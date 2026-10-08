@@ -78,6 +78,7 @@ export function tryParseSandboxOutput<TResult>(outputRaw: string) {
     const output: unknown = JSON.parse(outputRaw)
     if (!hasRuntimeType(output, 'object') || output === null || Array.isArray(output) || !hasRuntimeType(Reflect.get(output, 'ok'), 'boolean'))
       return null
+    // SAFETY: The runtime checks above establish an object with a boolean `ok` field before this generic result cast.
     return output as {
       ok?: boolean
       result?: TResult
