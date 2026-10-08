@@ -54,13 +54,28 @@ function createReadonlyError() {
 
 function toShellContent(content: ShellContent, encoding?: BufferEncoding): Uint8Array {
   if (!hasRuntimeType(content, "string")) return content
-  return encoding ? Buffer.from(content, encoding) : new TextEncoder().encode(content)
+  // Match Just Bash's filesystem conversion, including malformed input behavior.
+  if (encoding === "base64") return Uint8Array.from(atob(content), char => char.charCodeAt(0))
+  if (encoding === "hex") {
+    const bytes = new Uint8Array(content.length / 2)
+    for (let index = 0; index < content.length; index += 2) {
+      bytes[index / 2] = Number.parseInt(content.slice(index, index + 2), 16)
+    }
+    return bytes
+  }
+  if (encoding === "binary" || encoding === "latin1") {
+    if (content.length <= 65536) return Uint8Array.from(content, char => char.charCodeAt(0))
+    const bytes = new Uint8Array(content.length)
+    for (let index = 0; index < content.length; index++) bytes[index] = content.charCodeAt(index)
+    return bytes
+  }
+  return new TextEncoder().encode(content)
 }
 
 function decodeContent(content: Uint8Array, encoding?: BufferEncoding | null) {
   if (encoding === "base64") return Buffer.from(content).toString("base64")
   if (encoding === "hex") return Buffer.from(content).toString("hex")
-  if (encoding === "ascii" || encoding === "latin1" || encoding === "binary") return Buffer.from(content).toString(encoding)
+  if (encoding === "latin1" || encoding === "binary") return Buffer.from(content).toString(encoding)
   return new TextDecoder().decode(content)
 }
 
