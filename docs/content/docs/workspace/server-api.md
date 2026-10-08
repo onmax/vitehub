@@ -104,7 +104,7 @@ const next = page.cursor
 const usage = await workspace.history.usage()
 ```
 
-`files` is the whole desired file set. Omitted paths are deleted from the next version. Earlier versions keep their bytes. Paths, write rules, `maxBytes`, validators, hooks, and Source write grants apply to additions, changes, and deletions. Unchanged files keep their MIME type and metadata. Validators can change content and file attributes but cannot rename paths or change operations during a history commit. Revision metadata must follow the same JSON-safe value contract as file metadata.
+`files` is the whole desired file set. Omitted paths are deleted from the next version. Earlier versions keep their bytes. Paths, write rules, `maxBytes`, validators, hooks, and Source write grants apply to additions, changes, and deletions. Unchanged files keep their MIME type and metadata. Validators can change content and file attributes but cannot rename paths or change operations during a history commit. Revision metadata must contain JSON-safe values. The Source ownership restriction on file `metadata.source` does not apply to revision metadata.
 
 `ifHead` is required. Use `null` for the first publication and a revision id for later publications. If the head changes, the commit fails with `WORKSPACE_CONFLICT` and `details.expected` and `details.actual`. Catch `isWorkspaceConflict(error)` and load the new head before resolving the edits. A head conflict never changes the published folder. On an operational error, read the head before retrying; Database responses and post-write hooks can fail after publication.
 

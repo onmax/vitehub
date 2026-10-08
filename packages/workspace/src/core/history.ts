@@ -2,7 +2,7 @@ import { lookup } from "mrmime"
 import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 import { workspaceConflict, workspaceError } from "./errors.ts"
-import { copyJsonFileMetadata } from "./file-metadata.ts"
+import { copyJsonFileMetadata, copyJsonWorkspaceMetadata } from "./file-metadata.ts"
 import { normalizeSafeWorkspacePath, sha256 } from "./path.ts"
 import { createWorkspaceWritePolicy } from "./rules.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
@@ -61,7 +61,7 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
         if (!hasRuntimeType(content, "string") && !(content instanceof Uint8Array)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
         desired[normalized] = { path: normalized, content: content instanceof Uint8Array ? content.slice() : content, mediaType: lookup(normalized) || "application/octet-stream" }
       }
-      const metadata = copyJsonFileMetadata("history revision", options.metadata)
+      const metadata = copyJsonWorkspaceMetadata("history revision", options.metadata)
       const current = await retained.head()
       if ((current?.id ?? null) !== options.ifHead) {
         throw workspaceConflict("[vitehub] Workspace head changed before the history commit.", { details: { expected: options.ifHead, actual: current?.id ?? null } })

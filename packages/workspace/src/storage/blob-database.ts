@@ -3,7 +3,7 @@ import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { ViteHubError } from "@vite-hub/runtime"
 
 import { workspaceConflict, workspaceError } from "../core/errors.ts"
-import { copyJsonFileMetadata } from "../core/file-metadata.ts"
+import { copyJsonFileMetadata, copyJsonWorkspaceMetadata } from "../core/file-metadata.ts"
 import { normalizeHistoryPath } from "../core/history.ts"
 import { contentToBytes, decodeFile, isExcludedWorkspacePath, normalizeSafeWorkspacePath, sha256 } from "../core/path.ts"
 import { createMemoryWorkspaceStore } from "./memory.ts"
@@ -221,7 +221,7 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
       parentId: options.ifHead,
       createdAt: new Date().toISOString(),
       message: options.message ?? null,
-      metadata: copyJsonFileMetadata("history revision", options.metadata) ?? null,
+      metadata: copyJsonWorkspaceMetadata("history revision", options.metadata) ?? null,
       entries,
     }
     const id = await sha256(manifest)
