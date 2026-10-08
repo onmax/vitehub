@@ -22,11 +22,15 @@ Shell Runtime, Session, Policy, Boundary, Observation, Provider, process, and Wo
 
 Writable Workspace filesystems keep content unchanged when a move resolves to the same source and destination. Missing sources fail. Moves into descendants fail before changing content.
 
+Workspace filesystem adapters preserve binary output from redirection and `tee`. Their read, write, and append methods honor Just Bash encoding options.
+
 Custom providers can return Shell Processes as class instances. Sessions read the process ID, command, and working directory from the provider handle when inspected. These public metadata fields are readonly. A failed metadata read does not prevent process cleanup.
 
 `createWritableWorkspaceFs(useWorkspace(name, { mode: "write" }).fs)` accepts the public writable Workspace facade directly. Workspace writes can return revision receipts. The Shell adapter waits for each write and returns `void` from `writeFile()` and `appendFile()`.
 
 Writable Workspace filesystems create absent files on append. A read failure for an existing file fails the append before changing its content.
+
+Custom providers can return Shell Observations as class instances. Sessions preserve every declared observation field, including fields exposed through getters.
 
 ## Use Shell sessions
 
