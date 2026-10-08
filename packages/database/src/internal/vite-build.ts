@@ -211,7 +211,7 @@ function hasConfigValue(value: DatabaseConfigValue | undefined) {
 function getCloudflareUnsupportedDatabases(runtimeConfig: ResolvedDBViteConfig, provisionState: ProvisionState) {
   return runtimeConfig.databaseNames.filter((name) => {
     const database = runtimeConfig.databases[name]
-    const hasD1Binding = Boolean(resolveDatabaseId(runtimeConfig, name, provisionState))
+    const hasD1Binding = hasConfigValue(resolveDatabaseId(runtimeConfig, name, provisionState))
     return !hasD1Binding && !isRemoteLibsqlConnectionUrl(database?.connection?.url)
   })
 }
@@ -219,7 +219,8 @@ function getCloudflareUnsupportedDatabases(runtimeConfig: ResolvedDBViteConfig, 
 function getCloudflareDatabasesMissingNames(runtimeConfig: ResolvedDBViteConfig, provisionState: ProvisionState) {
   return runtimeConfig.databaseNames.filter((name) => {
     const cloudflare = runtimeConfig.databases[name]?.cloudflare
-    return Boolean(resolveDatabaseId(runtimeConfig, name, provisionState)) && !resolveConfigValue(cloudflare?.databaseName)
+    return hasConfigValue(resolveDatabaseId(runtimeConfig, name, provisionState))
+      && !hasConfigValue(resolveConfigValue(cloudflare?.databaseName))
   })
 }
 

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { build as buildWorker } from "esbuild"
 import { contributeProviderRuntime, createDefaultCloudflareOutputRoot, createProviderOutputCatalog, getProviderRuntimeModule } from "@vite-hub/internal/build/deployment-output"
 
@@ -712,6 +712,49 @@ describe("Vite db provider outputs", () => {
     expect(getProviderRuntimeModule(providerOutput, "database", "cloudflare-definition-defaults")).toContain("definition-defaults.mjs")
     expect(getProviderRuntimeModule(providerOutput, "database", "vercel")).toContain("vercel-runtime.mjs")
     expect(getProviderRuntimeModule(providerOutput, "database", "vercel-definition-defaults")).toContain("definition-defaults.mjs")
+  })
+
+  it.each([
+    { field: "databaseId", source: "literal" },
+    { field: "databaseName", source: "literal" },
+    { field: "databaseId", source: "env" },
+    { field: "databaseName", source: "env" },
+    { field: "databaseId", source: "provisioned" },
+  ])("excludes inherited D1 output and runtime aliases for a blank $source $field", async ({ field, source }) => {
+    const rootDir = await createWorkspaceTempDir("vitehub-db-vite-blank-inherited-")
+    await writeDatabaseDefinition(rootDir, "primary")
+    if (source === "provisioned") {
+      await mkdir(join(rootDir, ".vitehub"), { recursive: true })
+      await writeFile(join(rootDir, ".vitehub/provision.json"), JSON.stringify({ cloudflare: { d1: { primary: " \t\n" } } }))
+    }
+    const envName = "VITEHUB_TEST_BLANK_INHERITED_IDENTITY"
+    vi.stubEnv(envName, source === "env" ? " \t\n" : undefined)
+    try {
+      const runtimeConfig = resolveDBViteConfig({
+        binding: "HOST_DB",
+        databaseId: "native-id",
+        databaseName: "native-db",
+        driver: "d1",
+        [field]: source === "literal" ? " \t\n" : { kind: "env-variable", source: { kind: "env", name: envName } },
+      }, rootDir)!
+      expect(runtimeConfig.definitionDefaults.cloudflareProjections.primary?.resource).toBe("inherited")
+      const providerOutput = createProviderOutputCatalog()
+      const artifacts = await prepareDatabaseProviderOutputs({ providerOutput, rootDir, runtimeConfig })
+      expect(getProviderRuntimeModule(providerOutput, "database", "cloudflare")).toBeUndefined()
+      expect(getProviderRuntimeModule(providerOutput, "database", "cloudflare-definition-defaults")).toBeUndefined()
+
+      await generateDatabaseProviderOutputs({
+        artifacts,
+        clientOutDir: "dist/client",
+        providerOutput,
+        rootDir,
+        runtimeConfig,
+      }, async (output) => { expect(output.cloudflare).toBeUndefined() })
+      expect(getProviderRuntimeModule(providerOutput, "database", "cloudflare")).toBeUndefined()
+      expect(getProviderRuntimeModule(providerOutput, "database", "cloudflare-definition-defaults")).toBeUndefined()
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it("keeps Blob runtime aliases local to the prepared Database generation", async () => {
