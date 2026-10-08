@@ -1240,6 +1240,23 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it.each(["commitRepair", "pushRepair"] as const)("fences %s when the source branch is renamed on the same head", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    f.onAdmission(() => {});
+    f.onRepair(async () => {
+      await f.runtime.inbox.ingest("source-renamed", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), head: { ...f.pr().head, ref: "renamed" } },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("renews a slow repair push against a validated same-head base advance", async () => {
     const f = await fixture(true, false, { allowOperationAfterAdmission: true });
     f.choose("pushRepair");
@@ -1466,6 +1483,25 @@ describe("Babysitter preset runtime", () => {
       expect(f.commit).not.toHaveBeenCalled();
       expect(f.push).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("rejects a live base move at the push boundary before mutating the remote", async () => {
+    const settings = { mergeableState: "dirty", baseBranchHead: "e".repeat(40) };
+    const f = await fixture(false, false, settings);
+    f.choose("pushRepair");
+    const originalPush = f.push.getMockImplementation()!;
+    let remoteMutated = false;
+    f.push.mockImplementationOnce(async (...args) => {
+      settings.baseBranchHead = "f".repeat(40);
+      await args[1]?.beforePush?.();
+      remoteMutated = true;
+      return await originalPush(...args);
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      expect(remoteMutated).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 
