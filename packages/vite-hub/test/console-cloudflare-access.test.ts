@@ -115,6 +115,7 @@ describe("Cloudflare Access Console Auth", () => {
   })
 
   it("refreshes Access keys immediately after signing-key rotation", async () => {
+    vi.useFakeTimers()
     const fetch = certsFetch()
     const verify = createCloudflareAccessVerifier({ fetch })
     await expect(verify(await accessToken(), { audience, issuer })).resolves.toEqual({ email: "maintainer@example.com" })
@@ -131,12 +132,13 @@ describe("Cloudflare Access Console Auth", () => {
       .sign(rotated.privateKey)
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1_100))
+      await vi.advanceTimersByTimeAsync(1_100)
       await expect(verify(rotatedToken, { audience, issuer })).resolves.toEqual({ email: "maintainer@example.com" })
       expect(fetch).toHaveBeenCalledTimes(2)
     }
     finally {
       jwks = originalJwks
+      vi.useRealTimers()
     }
   })
 
