@@ -16,6 +16,8 @@ Shell providers implement `ShellExecutionProvider`. Shell has provider adapters,
 | Cloudflare | `createCloudflareShellProvider({ sandbox })` | Delegates to a client that exposes `exec(command, args, options)`. The command is split into an executable and arguments, with no shell syntax. CWD and env support come from `sandbox.supports`. Network is reported as `unknown`. Streams output. |
 | Custom | A `ShellExecutionProvider` object | Implement `boundary`, `exec`, and optional `analyze` and `startProcess`. |
 
+Just Bash starts in `/workspace` when you omit `cwd`. A provider `cwd` sets the default directory, and an `exec` `cwd` takes precedence. The provider reports the selected directory in its observations, including controlled curl and timeout results. Set `cwd` when your custom filesystem uses another root.
+
 Read `runtime.boundary` or `session.boundary` to check what the provider declares: CWD, env, filesystem mount point and write access, network, background and interactive processes, streaming, and timeout enforcement.
 
 ViteHub has no adapter for Cloudflare's `@cloudflare/shell` package, which is not a Bash interpreter. `createCloudflareShellProvider()` needs a client with the `exec(command, args, options)` shape above. To translate Shell calls into another runtime, implement a custom `ShellExecutionProvider`.

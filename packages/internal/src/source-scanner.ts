@@ -788,13 +788,50 @@ export function findDefaultExportCall(source: string, names: string[], options: 
   }
 }
 
-export function readObjectProperty(objectSource: string, propertyName: string): string | undefined {
+function readObjectMemberKey(source: string, offset: number) {
+  let start = skipWhitespaceAndComments(source, offset)
+  if (source[start] === "*") start = skipWhitespaceAndComments(source, start + 1)
+  if (source[start] === "'" || source[start] === "\"") {
+    const end = skipQuoted(source, start)
+    const name = source.slice(start + 1, end - 1)
+    return { name: name.includes("\\") ? undefined : name, end }
+  }
+  if (source[start] === "[") return { name: undefined, end: start }
+  const name = /^[$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D]*/u.exec(source.slice(start))?.[0]
+  if (name) {
+    const end = start + name.length
+    return { name: source[end] === "\\" ? undefined : name, end }
+  }
+  const numeric = /^(?:0[xX][\da-fA-F](?:_?[\da-fA-F])*n?|0[bB][01](?:_?[01])*n?|0[oO][0-7](?:_?[0-7])*n?|(?:0|[1-9](?:_?\d)*)n|(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)(?:[eE][+-]?\d(?:_?\d)*)?)/.exec(source.slice(start))?.[0]
+  if (numeric) {
+    const end = start + numeric.length
+    const next = source[skipWhitespaceAndComments(source, end)]
+    return { name: next === ":" || next === "(" ? numeric : undefined, end }
+  }
+}
+
+function* readObjectMembers(objectSource: string) {
   const normalized = stripBoundaryComments(objectSource)
   if (!normalized.startsWith("{") || !normalized.endsWith("}")) return
-  for (const property of splitTopLevel(normalized.slice(1, -1))) {
-    const parts = splitTopLevel(property, ":")
-    if (parts.length < 2) continue
-    const key = stripBoundaryComments(parts.shift()!).replace(/^["'`](.*)["'`]$/s, "$1")
-    if (key === propertyName) return stripBoundaryComments(parts.join(":"))
+  for (const source of splitTopLevel(normalized.slice(1, -1))) {
+    if (skipWhitespaceAndComments(source, 0) === source.length) continue
+    let key = readObjectMemberKey(source, 0)
+    if (key?.name === "get" || key?.name === "set" || key?.name === "async") {
+      key = readObjectMemberKey(source, key.end) ?? key
+    }
+    yield { name: key?.name, end: key?.end ?? 0, source }
+  }
+}
+
+/** Names are undefined for spread, computed, or escaped keys. */
+export function readObjectPropertyNames(objectSource: string): (string | undefined)[] {
+  return Array.from(readObjectMembers(objectSource), member => member.name)
+}
+
+export function readObjectProperty(objectSource: string, propertyName: string): string | undefined {
+  for (const member of readObjectMembers(objectSource)) {
+    if (member.name !== propertyName) continue
+    const colon = skipWhitespaceAndComments(member.source, member.end)
+    if (member.source[colon] === ":") return stripBoundaryComments(member.source.slice(colon + 1))
   }
 }
