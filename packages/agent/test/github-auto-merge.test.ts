@@ -72,8 +72,9 @@ function fixture(options: Partial<GitHubPullRequestOperationsOptions> = {}) {
 
 describe("native auto-merge", () => {
   it("exposes accepted mention logins and omits unconfigured mentions", async () => {
-    const f = fixture({ mentionAllowlist: [" stefina ", "MAXI"] })
-    const capability = repairCapability(f.operations, false, [" stefina ", "MAXI"])
+    const logins = [" stefina ", "MAXI", "octocat-", "octo--cat"]
+    const f = fixture({ mentionAllowlist: logins })
+    const capability = repairCapability(f.operations, false, logins)
     const resolveTools = async (definition: ReturnType<typeof repairCapability>) =>
       (await resolveAgentCapabilities({ capabilities: [definition] }, {
         capabilities: {}, memo: vi.fn(), runtime: "unknown", runtimeConfig: {}, waitUntil: vi.fn(),
@@ -88,6 +89,7 @@ describe("native auto-merge", () => {
     )
     expect(await resolveTools(repairCapability(f.operations, false))).not.toHaveProperty("mentionOnPullRequest")
     expect(await resolveTools(repairCapability(f.operations, false, [" "]))).not.toHaveProperty("mentionOnPullRequest")
+    expect(await resolveTools(repairCapability(f.operations, false, ["octocat-", "octo--cat"]))).not.toHaveProperty("mentionOnPullRequest")
   })
 
   it("marks both comments and mentions as host-authored repair activity", async () => {
@@ -200,6 +202,12 @@ describe("native auto-merge", () => {
     const explicit = fixture({ mentionAllowlist: ["stefina"] })
     await expect(explicit.operations.mention("stefina", body)).rejects.toThrow(/another mention/)
     expect(explicit.command).not.toHaveBeenCalled()
+  })
+
+  it.each(["octocat-", "octo--cat"])("rejects malformed allowlisted login %s before contacting GitHub", async (login) => {
+    const f = fixture({ mentionAllowlist: [login] })
+    await expect(f.operations.mention(login, "Please restore the service.")).rejects.toThrow(/login|allowlist/)
+    expect(f.command).not.toHaveBeenCalled()
   })
 
   it("accepts managed-user logins in the mention allowlist", async () => {
