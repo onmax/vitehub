@@ -85,7 +85,7 @@ import type {
   WorkspaceSessionOptions,
 } from "@vite-hub/workspace"
 import { agentProviderCleanupTask } from "./internal/provider-cleanup-task.ts"
-import { boxSharesHostNetwork, openProviderBox, providerBoxEnvironment, startProviderBoxRelay } from "./internal/provider-box.ts"
+import { boxSharesHostNetwork, setActiveProviderBox, openProviderBox, providerBoxEnvironment, startProviderBoxRelay } from "./internal/provider-box.ts"
 import type { ProviderBoxRelay, ProviderBoxSession } from "./internal/provider-box.ts"
 import type { BoxDefinition, BoxToolchain } from "@vite-hub/box"
 import { redactCredentialText } from "./internal/credential-redaction.ts"
@@ -2820,6 +2820,7 @@ async function* runProvider<
   let runtime: ProviderRuntime | undefined
   let providerLaunchDiagnosticPath: string | undefined
   let providerBox: ProviderBoxSession | undefined
+  let clearActiveBox: (() => void) | undefined
   let providerBoxRelay: ProviderBoxRelay | undefined
   const providerBoxHomeFiles: Record<string, string | Uint8Array> = {}
   let claudeBoxPromptFile: string | undefined
@@ -3271,6 +3272,7 @@ async function* runProvider<
         lateBox => lateBox.session.close(),
         observeLateCleanup,
       )
+      clearActiveBox = setActiveProviderBox(context.context, providerBox)
       if (claudeBoxPromptFile) claudePromptFile = posix.join(providerBox.home, claudeBoxPromptFile)
       const explicitEnvironment = Object.keys(providerEnvironmentOverrides || {})
       const preparedEnvironment = { ...providerRuntimeEnvironment }
@@ -3580,6 +3582,7 @@ async function* runProvider<
   finally {
     acceptingSteering = false
     unregister?.()
+    clearActiveBox?.()
     clearActiveWorkspaceCommands?.()
     clearActiveWorkspaceFiles?.()
     if (abort) effectiveSignal?.removeEventListener("abort", abort)

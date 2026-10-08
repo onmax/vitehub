@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
 import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts";
+import { assertGitHubDependenciesCurrent } from "../src/server/github-install.ts";
+import { validateGitHubInstallInputs } from "../src/server/github-install-inputs.ts";
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -71,4 +73,44 @@ it("prepares and commits a conflicting exact-base merge through host tools", asy
   expect(await git(root, "rev-parse", `${head}^2`)).toBe(base);
   expect(await git(root, "show", `${head}:base-only.txt`)).toBe("base addition");
   expect(await git(root, "status", "--porcelain")).toBe("");
+});
+
+it.each([false, true])("rejects dependency inputs changed between validation and staging, deletedAfterStaging=%s", async deletedAfterStaging => {
+  const { root, expectedHead } = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "repair", version: "1.0.0" }));
+  await writeFile(join(root, "package-lock.json"), JSON.stringify({ name: "repair", lockfileVersion: 3, packages: {} }));
+  await writeFile(join(root, ".git", "vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await assertGitHubDependenciesCurrent(root);
+  const bin = await mkdtemp(join(tmpdir(), "vitehub-staging-race-")); roots.push(bin);
+  await writeFile(join(bin, "git"), `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "add" ]; then
+    printf '%s' '{"name":"repair","version":"2.0.0"}' > package.json
+  fi
+done
+if [ "${deletedAfterStaging ? "true" : "false"}" = "true" ]; then
+  for arg in "$@"; do
+    if [ "$arg" = "checkout-index" ]; then rm -f package.json; fi
+  done
+fi
+exec /usr/bin/git "$@"
+`, { mode: 0o755 });
+  const previousPath = process.env.PATH;
+  try {
+    process.env.PATH = `${bin}:${previousPath}`;
+    const options = { expectedHead, verifyDependencies: true };
+    await expect(commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["package.json", "package-lock.json"] }, options)).rejects.toThrow(/refreshDependencies/);
+  } finally { process.env.PATH = previousPath; }
+  expect(await git(root, "rev-parse", "HEAD")).toBe(expectedHead);
+  expect(await git(root, "diff", "--cached", "--name-only")).toBe("");
+});
+
+it("commits unchanged dependency inputs after staged validation", async () => {
+  const { root, expectedHead } = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "repair", version: "1.0.0" }));
+  await writeFile(join(root, "package-lock.json"), JSON.stringify({ name: "repair", lockfileVersion: 3, packages: {} }));
+  await writeFile(join(root, ".git", "vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  const options = { expectedHead, verifyDependencies: true };
+  const head = await commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["package.json", "package-lock.json"] }, options);
+  expect(JSON.parse(await git(root, "show", `${head}:package.json`)).version).toBe("1.0.0");
 });
