@@ -33,10 +33,10 @@ function labeller(run = vi.fn((_context: { input: { data?: unknown } }) => ({ la
 }
 
 function interceptChannel() {
-  const messageSchema = v.object({
+  const messageSchema = v.pipe(v.object({
     from: v.string(),
     subject: v.string(),
-  })
+  }), v.transform(message => ({ ...message, subject: message.subject.toUpperCase() })))
   return defineChannel("mail", {
     message: { data: messageSchema },
     messages: false,
@@ -44,7 +44,7 @@ function interceptChannel() {
       received: defineChannelTrigger({
         input: v.object({
           data: v.optional(v.object({ marker: v.string() })),
-          message: messageSchema,
+          message: v.looseObject({ subject: v.string() }),
         }),
         invoke(context, input) {
           return {
@@ -133,7 +133,7 @@ describe("Agent data and intercept", () => {
     expect(seen).toEqual([{ count: 2 }, { count: 2 }, { count: 2 }])
   })
 
-  it("passes a Channel message to intercept when invocation data is absent", async () => {
+  it("validates and transforms a Channel message before intercept", async () => {
     const message = { from: "friend@example.com", subject: "Dinner" }
     const intercept = vi.fn(({ data }) => data.subject)
     const agent = defineAgent({
@@ -143,8 +143,21 @@ describe("Agent data and intercept", () => {
       runtime: false,
     })
 
-    await expect(runAgentTrigger(agent, runtime(), "mail.received", { message })).resolves.toBe("Dinner")
-    expect(intercept).toHaveBeenCalledWith(expect.objectContaining({ data: message }))
+    await expect(runAgentTrigger(agent, runtime(), "mail.received", { message })).resolves.toBe("DINNER")
+    expect(intercept).toHaveBeenCalledWith(expect.objectContaining({ data: { from: message.from, subject: "DINNER" } }))
+  })
+
+  it("rejects an invalid Channel message before intercept", async () => {
+    const intercept = vi.fn(({ data }) => data)
+    const agent = defineAgent({
+      channels: { mail: interceptChannel() },
+      driver: { run: () => "driver" },
+      intercept,
+      runtime: false,
+    })
+
+    await expect(runAgentTrigger(agent, runtime(), "mail.received", { message: { subject: "Dinner" } })).rejects.toThrow(/Channel "mail" message data/)
+    expect(intercept).not.toHaveBeenCalled()
   })
 
   it("keeps explicit invocation data for intercept when a Channel message exists", async () => {
@@ -174,6 +187,19 @@ describe("Agent data and intercept", () => {
     })
 
     await expect(runAgentTrigger(agent, runtime(), "mail.received", { message })).resolves.toBe("driver")
+    expect(intercept).toHaveBeenCalledWith(expect.objectContaining({ data: undefined }))
+  })
+
+  it("leaves Channel fallback data absent for direct invocations", async () => {
+    const intercept = vi.fn(({ data }) => data === undefined ? "handled" : data)
+    const agent = defineAgent({
+      channels: { mail: interceptChannel() },
+      driver: { run: () => "driver" },
+      intercept,
+      runtime: false,
+    })
+
+    await expect(runAgent(agent, runtime(), { prompt: "direct" })).resolves.toBe("handled")
     expect(intercept).toHaveBeenCalledWith(expect.objectContaining({ data: undefined }))
   })
 

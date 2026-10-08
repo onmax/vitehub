@@ -2446,19 +2446,6 @@ export type AgentChannelMessageOf<TChannels> =
     ? undefined
     : { [TName in keyof TChannels & string]: AgentChannelMessageFromInput<TName, NonNullable<TChannels[TName]>> }[keyof TChannels & string] | undefined
 
-type AgentChannelInputData<TInput> =
-  TInput extends (...args: never[]) => infer TResult
-    ? AgentChannelInputData<TResult>
-    : TInput extends { message?: infer TMessage }
-      ? TMessage extends { data?: infer TSchema }
-        ? NonNullable<TSchema> extends StandardSchemaV1<unknown, infer TData> ? TData : unknown
-        : unknown
-      : unknown
-
-/** Invocation data carried by the configured Channel messages. */
-export type AgentChannelDataOf<TChannels> =
-  TChannels extends Record<string, infer TInput> ? AgentChannelInputData<TInput> : unknown
-
 /** Request query for a Channel history Collection: one string or repeated strings per key. */
 export type AgentChannelHistoryQuery = Record<string, string | readonly string[] | undefined>
 

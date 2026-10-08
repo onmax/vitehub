@@ -166,7 +166,6 @@ import type {
   AgentCapabilitiesInput,
   AgentCapabilitiesResolver,
   AgentChannelDefinition,
-  AgentChannelDataOf,
   AgentChannelInputs,
   AgentChannelMessage,
   AgentChannelMessageContext,
@@ -368,7 +367,6 @@ export type {
   AgentChannelDeliveryStatusInput,
   AgentChannelDeliveryStatusPayload,
   AgentChannelDeliveryStatusState,
-  AgentChannelDataOf,
   AgentChatAgentHookArgs,
   AgentChatErrorHookArgs,
   AgentChatEventHookArgs,
@@ -2993,7 +2991,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = AgentChannelDataOf<TChannels>,
+    TData = unknown,
     TIntercept = never,
     TDataInput = TData,
     const TOptions extends Omit<WorkspaceAgentOptions<
@@ -3032,7 +3030,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig, Name> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig, Name>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = AgentChannelDataOf<TChannels>,
+    TData = unknown,
     TIntercept = never,
     TDataInput = TData,
     const TOptions extends Omit<WorkspaceAgentOptions<
@@ -3070,7 +3068,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = AgentChannelDataOf<TChannels>,
+    TData = unknown,
     TIntercept = never,
     TDataInput = TData,
   >(
@@ -3094,7 +3092,7 @@ export interface DefineAgent {
     const TCapabilities extends AgentStaticCapabilitiesList<TRuntimeConfig> | undefined = readonly AgentCapabilityDefinition<TRuntimeConfig>[] | undefined,
     TOutput = unknown,
     const TChannels extends AgentSettings<TRuntimeConfig>["channels"] = undefined,
-    TData = AgentChannelDataOf<TChannels>,
+    TData = unknown,
     TIntercept = never,
     TDataInput = TData,
   >(
@@ -4399,7 +4397,8 @@ async function createAgentInvocationContext<
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   const internalDefinition = definition as AgentDefinitionWithBaseResolve<TRuntimeConfig, CALL_OPTIONS> | undefined
   const capabilitiesResolver = internalDefinition?.[baseAgentCapabilitiesResolver]
-  const activeChannel = activeAgentChannel(definition?.channels, invocationContext, context.run)?.channel
+  const activeChannelContext = activeAgentChannel(definition?.channels, invocationContext, context.run)
+  const activeChannel = activeChannelContext?.channel
   const channelCapabilities = activeChannel?.capabilities || []
   const initialTelemetry = agentCapabilityTelemetry([
     ...(definition?.capabilities || []),
@@ -4705,9 +4704,9 @@ async function createAgentInvocationContext<
         }
         await validateCapabilityInput(false)
         if (intercept) {
-          const channelMessage = internalDefinition?.[baseAgentData]
-            ? undefined
-            : invocationContext.get(channelMessageContextKey)
+          const channelMessage = !internalDefinition?.[baseAgentData] && activeChannelContext
+            ? await channelMessageData(activeChannelContext.channel, activeChannelContext.channelId, invocationContext, false)
+            : undefined
           const value = await runObservedAgentHook(observedHooks, {
             name: "agent:intercept",
             owner: "agent",
