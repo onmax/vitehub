@@ -4705,11 +4705,19 @@ async function createAgentInvocationContext<
         }
         await validateCapabilityInput(false)
         if (intercept) {
+          const channelMessage = internalDefinition?.[baseAgentData]
+            ? undefined
+            : invocationContext.get(channelMessageContextKey)
           const value = await runObservedAgentHook(observedHooks, {
             name: "agent:intercept",
             owner: "agent",
             phase: "input",
-          }, () => intercept({ ...hookContext(), data: capabilities.input.data }))
+          }, () => intercept({
+            ...hookContext(),
+            data: capabilities.input.data === undefined && channelMessage !== undefined
+              ? channelMessage
+              : capabilities.input.data,
+          }))
           if (value !== undefined) intercepted = { value }
         }
       }
