@@ -1,4 +1,5 @@
 import * as v from "valibot";
+import { hasRuntimeType } from "../../internal/runtime-type.ts";
 import type { GitHubHost } from "../../server/github-host.ts";
 import type { BabysitterMergeMethod } from "./merge.ts";
 
@@ -19,7 +20,7 @@ export async function requestAsyncMerge(github: Pick<GitHubHost, "command">, rep
   } catch (error) {
     // A 409 contains the existing request. Only accept a validated pending result,
     // never treat an arbitrary command failure as an accepted merge.
-    if (!(error instanceof Error) || !/HTTP 409/.test(error.message) || !("stdout" in error) || typeof error.stdout !== "string") throw error;
+    if (!(error instanceof Error) || !/HTTP 409/.test(error.message) || !("stdout" in error) || !hasRuntimeType(error.stdout, "string")) throw error;
     stdout = error.stdout;
   }
   const response = v.parse(result, JSON.parse(stdout));

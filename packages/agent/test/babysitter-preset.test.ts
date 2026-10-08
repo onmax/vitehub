@@ -15,6 +15,11 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
+vi.mock("../src/server/github-repair.ts", async importOriginal => ({
+  ...await importOriginal<typeof import("../src/server/github-repair.ts")>(),
+  prepareGitHubRepairBase: vi.fn(async () => {}),
+}));
+
 import { agentWithColocatedInstructions, defineAgent, defineCapability, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
 import { boundedMergeReady, createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
@@ -38,6 +43,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
   await mkdir(checkout);
   await writeFile(join(checkout, "source.ts"), "export const value = 1\n");
   let head = "a".repeat(40);
+  let baseHead = "c".repeat(40);
   let pushed = false;
   let checkoutFailure: Error | undefined;
   const checkoutController = new AbortController();
@@ -53,7 +59,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
     user: { login: "developer" },
     labels: [{ name: "repair" }],
     head: { sha: head, ref: "fix", repo: { full_name: "acme/app" } },
-    base: { sha: "c".repeat(40), ref: preset.base ?? "main", repo: { full_name: "acme/app", default_branch: "main", owner: { login: "acme" } } },
+    base: { sha: baseHead, ref: preset.base ?? "main", repo: { full_name: "acme/app", default_branch: "main", owner: { login: "acme" } } },
     html_url: "https://github.com/acme/app/pull/12",
     mergeable_state: preset.mergeableState ?? "clean",
   });
@@ -73,6 +79,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
         headRefOid: head,
         headRefName: "fix",
         baseRefName: "main",
+        baseRefOid: baseHead,
         title: "Fix value",
         body: "Repair the exported value.",
         author: { login: "developer", __typename: "User" },
@@ -165,6 +172,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
   });
   let workerDirectory: string | undefined;
   const prepare = vi.fn(async (directory: string) => { workerDirectory = directory });
+  const commit = vi.fn(async () => head);
   const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void }) => {
     pushed = true;
     head = "b".repeat(40);
@@ -198,7 +206,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
       const result = await run({
         path: checkout,
         prepareWorkspace: prepare,
-        commitRepair: async () => head,
+        commitRepair: commit,
         push,
         signal: checkoutController.signal,
         env: { GIT_AUTHOR_NAME: "Repair bot", GIT_AUTHOR_EMAIL: "repair@example.test", GIT_COMMITTER_NAME: "Repair bot", GIT_COMMITTER_EMAIL: "repair@example.test", GH_TOKEN: "host-secret" },
@@ -243,7 +251,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
   const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
-  let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
+  let operation: "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async (options: { settings?: { launchArgs?: string }; environment?: NodeJS.ProcessEnv }) => {
     let threadId = `pass-${passes.length}`;
@@ -341,6 +349,8 @@ async function fixture(autoMerge = false, discovered = false, preset: { actionsD
     runtime,
     reconcile,
     passes,
+    commit,
+    advanceBase: (sha: string) => { baseHead = sha },
     push,
     prepare,
     command,
@@ -437,6 +447,18 @@ describe("Babysitter preset runtime", () => {
       });
       await f.reconcile();
       expect(f.passes).toHaveLength(2);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["commitRepair", "pushRepair"] as const)("rejects %s after the prepared conflict base changes", async operation => {
+    const f = await fixture(false, false, { mergeableState: "dirty" });
+    f.choose(operation, operation === "commitRepair" ? { message: "resolve base conflict", paths: ["source.ts"] } : {});
+    f.onAdmission(() => { f.advanceBase("d".repeat(40)); });
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
     } finally { await f.runtime.inbox.close(); }
   });
 

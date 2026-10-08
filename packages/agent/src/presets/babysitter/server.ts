@@ -831,6 +831,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
               };
+              let preparedMergeBase: string | undefined;
+              const assertRepairBase = async () => {
+                if (!preparedMergeBase) return;
+                const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", abortSignal);
+                if (!isRuntimeRecord(live) || !isRuntimeRecord(live.base) || live.base.sha !== preparedMergeBase) {
+                  throw new DOMException("Pull request base changed; retry the conflict repair against current GitHub state.", "AbortError");
+                }
+              };
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
                 command: async (args, request) => {
                   await assertLease();
@@ -853,6 +861,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 commitRepair: async (input) => {
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
+                  await assertRepairBase();
                   const head = await prepared.commitRepair(providerDirectory, input);
                   await assertLease();
                   return head;
@@ -860,6 +869,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 push: async () => {
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
+                  await assertRepairBase();
                   const renew = setInterval(() => {
                     void pullRequestInbox.renew(inboxClaim, Date.now() + 2 * 60 * 60_000)
                       .then((renewed) => { if (!renewed) passController.abort(); }, () => passController.abort());
@@ -990,6 +1000,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                         if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
                           if (!pullRequest.baseRefOid) throw new Error("Conflict repair requires the exact base commit.");
                           await prepareGitHubRepairBase(context.cwd, { expectedHead: pullRequest.headRefOid, base: pullRequest.baseRefOid, signal: abortSignal });
+                          preparedMergeBase = pullRequest.baseRefOid;
                         }
                         preparedDirectories.add(context.cwd);
                       }

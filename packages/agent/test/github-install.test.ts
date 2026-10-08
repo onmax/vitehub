@@ -11,7 +11,7 @@ async function fixture() {
   await mkdir(join(root, ".git")); await mkdir(join(root, "bin"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6" }));
   await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
-  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > args.txt\nif [ -n "$GITHUB_APP_PRIVATE_KEY" ]; then exit 99; fi\nmkdir -p node_modules\n', { mode: 0o755 });
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > args.txt\nif [ -n "$GITHUB_APP_PRIVATE_KEY" ]; then exit 99; fi\nif [ "$COREPACK_ENV_FILE" != 0 ] || [ "$COREPACK_NPM_REGISTRY" != https://registry.npmjs.org ]; then exit 98; fi\nmkdir -p node_modules\n', { mode: 0o755 });
   vi.stubEnv("PATH", `${join(root, "bin")}:${process.env.PATH}`);
   vi.stubEnv("GITHUB_APP_PRIVATE_KEY", "host-secret");
   return root;
