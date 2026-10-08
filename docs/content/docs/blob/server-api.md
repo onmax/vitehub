@@ -96,6 +96,8 @@ The optional `transform` receives the original `Blob` and returns the response `
 
 Change the key when the transformation changes, and include any size or format variants in it. Each source and key has one cache object, which source updates replace on the next request. Distinct keys remain separate variants. `blob.del(originalPath)` removes the original and its cached variants; serving a missing source also clears its variants. Cleanup failures are logged without undoing deletion. Operators can inspect variants with `blob.list({ prefix: '_vitehub/derived/' })` and remove unused ones with `blob.del`. No background eviction runs.
 
+Filesystem cache keys normalize dot segments and separators. Use consistent filename casing on case-insensitive filesystems; differently cased aliases can leave unused variants that require operator cleanup.
+
 Configure a private store when originals and derived objects must be accessible only through your application. The transform does not change provider access settings. The original remains unchanged. Deleting it prevents serving the cached result, including a conditional `304`. An in-flight transform does not recreate its cache after the source is removed.
 
 ```ts [server/api/photos/[id].get.ts]
