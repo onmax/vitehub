@@ -7,6 +7,7 @@ import {
   nuxtHubMigration,
   sharedApi,
 } from "../app/components/landing/content";
+import { primitiveLandings } from "../app/data/primitive-landings";
 
 const landingFiles = [
   "Hero.vue",
@@ -104,7 +105,7 @@ describe("landing page", () => {
 
     expect(source).toContain("Any agent, anywhere.");
     expect(source).toContain("The server layer for Vite apps");
-    expect(source).toContain("One server API, Agents included.");
+    expect(source).toContain("Server pieces, Agents, and UI in one place.");
     expect(source).toContain("Coming from NuxtHub?");
     expect(normalizedSource).toContain(
       "Bring any model or coding provider, compose your own Capabilities around a persistent Workspace",
@@ -131,6 +132,7 @@ describe("landing page", () => {
 
     expect(landingPrimitives.map((primitive) => primitive.id)).toEqual([
       "agent",
+      "ui",
       "workspace",
       "sandbox",
       "connections",
@@ -146,6 +148,7 @@ describe("landing page", () => {
       "source",
       "content",
       "email",
+      "channels",
       "env",
       "rate-limit",
       "realtime",
@@ -153,6 +156,15 @@ describe("landing page", () => {
     for (const primitive of landingPrimitives) {
       expect(primitiveMotion).toContain(`name === '${primitive.id}'`);
       expect(primitive.to).toMatch(/^\/docs\//);
+    }
+  });
+
+  it("keeps the package selector aligned with docs section paths", () => {
+    expect(Object.keys(primitiveLandings).sort()).toContain("channels");
+    for (const landing of Object.values(primitiveLandings)) {
+      expect(landing.docsTo, landing.slug).toMatch(/^\/docs\//);
+      expect(landing.docsTo, landing.slug).not.toContain("/docs/server-primitives");
+      expect(landing.docsTo, landing.slug).not.toContain("/docs/reference/realtime");
     }
   });
 

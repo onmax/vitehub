@@ -13,7 +13,7 @@ import { createImportPath, ensureGeneratedDir } from "@vite-hub/internal/build/p
 import { publishProviderSourcesToDeploymentOutputs, rebasePublishedProviderSourceLinks, removeProviderOutputArtifactDir, rewriteRetainedProviderSourcePaths } from "@vite-hub/internal/build/provider-output-sources"
 import { createNodeFunctionConfig, createVercelConfigJson } from "@vite-hub/internal/build/vercel-config"
 import { writeRuntimeRegistryFile } from "@vite-hub/internal/definition-catalog"
-import { findDefaultExportCall, readObjectProperty } from "@vite-hub/internal/source-scanner"
+import { createSourceScanner } from "@vite-hub/internal/source-scanner"
 
 import { discoverScheduleDefinitions } from "../discovery.ts"
 import { getVercelSchedulePath } from "../integrations/vercel.ts"
@@ -186,6 +186,7 @@ export function validateProviderCron(cron: string, scheduleName: string): void {
 }
 
 function readStaticScheduleCron(file: string, scheduleName: string): string {
+  const { findDefaultExportCall, readObjectProperty } = createSourceScanner(file)
   const source = readFileSync(file, "utf8")
   const definition = findDefaultExportCall(source, ["defineSchedule"], { positionalOptionsIndex: 2 })
   const cron = definition && readStaticString(definition.arguments.length > 1 ? definition.arguments[0] : readObjectProperty(definition.argument, "cron"))

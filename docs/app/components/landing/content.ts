@@ -146,6 +146,12 @@ export const landingPrimitives = [
     to: "/docs/agents",
   },
   {
+    id: "ui",
+    name: "UI",
+    description: "Agent interfaces",
+    to: "/docs/ui",
+  },
+  {
     id: "workspace",
     name: "Workspace",
     description: "Persistent file trees",
@@ -234,6 +240,12 @@ export const landingPrimitives = [
     name: "Email",
     description: "Transactional email",
     to: "/docs/email",
+  },
+  {
+    id: "channels",
+    name: "Channels",
+    description: "Named message delivery",
+    to: "/docs/channels",
   },
   {
     id: "env",

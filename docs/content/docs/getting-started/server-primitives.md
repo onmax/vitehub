@@ -10,39 +10,55 @@ icon: i-lucide-server-cog
 
 ViteHub adds storage, queues, schedules, email, and other server APIs to Vite apps. Call them from routes, handlers, jobs, or workers. You don't need an Agent Definition.
 
-Start with [Your first server primitive](/docs/getting-started/first-server-primitive) for a runnable example. Read [Concepts](/docs/getting-started/concepts) when you need to understand generated imports or host configuration. Read [Agents](/docs/agents) only when a model needs access to one of these APIs.
+Start with [Your first server primitive](/docs/getting-started/first-server-primitive) for a runnable example. Use the path cards below to keep the learning step separate from concepts, guides, and reference pages.
 
 ::u-page-grid{class="not-prose mt-8"}
   :::u-page-card
   ---
-  title: First primitive
-  description: Add KV to an app, register the Vite Integration, and call the Runtime Helper from server code.
+  title: Tutorial
+  description: Add KV to an app, register the Vite integration, and call the runtime helper from server code.
   icon: i-lucide-rocket
   to: /docs/getting-started/first-server-primitive
   ---
   :::
   :::u-page-card
   ---
-  title: Server model
-  description: Learn how generated imports and host configuration keep application code independent from providers.
+  title: Concepts
+  description: Learn how Definitions, generated output, and host selection fit together.
   icon: i-lucide-map
-  to: /docs/getting-started/concepts/vite-integrations-and-provider-output
+  to: /docs/getting-started/concepts
   ---
   :::
   :::u-page-card
   ---
-  title: Runtime imports
-  description: Call primitives through ViteHub-owned imports instead of generated files or provider SDK wiring.
+  title: Guides
+  description: Call a primitive from server code, then connect selected access to an Agent.
   icon: i-lucide-code-2
-  to: /docs/getting-started/concepts/runtime-helpers-and-stable-imports
+  to: /docs/agents/capabilities
   ---
   :::
   :::u-page-card
   ---
-  title: Agents
-  description: Give an Agent selected access to server APIs through Capabilities.
-  icon: i-lucide-bot
-  to: /docs/agents
+  title: Reference
+  description: Find stable runtime imports, file conventions, and API contracts.
+  icon: i-lucide-book-marked
+  to: /docs/reference
+  ---
+  :::
+  :::u-page-card
+  ---
+  title: Deploy
+  description: Choose a host and inspect the provider output that ViteHub generates.
+  icon: i-lucide-cloud-cog
+  to: /docs/frameworks-hosts
+  ---
+  :::
+  :::u-page-card
+  ---
+  title: Operate
+  description: Read limits, errors, and recovery guidance before production traffic.
+  icon: i-lucide-activity
+  to: /docs/reference/provider-output
   ---
   :::
 ::
@@ -75,7 +91,7 @@ Server code calls runtime helpers directly. Agents receive only the abilities ad
 | Isolated provider-managed execution | [Sandbox](/docs/sandbox) |
 | Controlled Unix-like command sessions | [Shell](/docs/shell) |
 
-## Use primitives from server code
+## Guide: use primitives from server code
 
 Most primitives expose the same application import on every host. ViteHub connects that import to the selected provider during the build.
 
@@ -91,7 +107,7 @@ export default defineEventHandler(async (event) => {
 
 The route doesn't need to know whether KV uses local files, Cloudflare, Vercel, or another driver.
 
-## Definitions and generated output
+## Concepts: Definitions and generated output
 
 Some primitives work directly after configuration. Env, KV, Blob, Source, and Shell can often be called from server code without a discovered Definition.
 
@@ -109,7 +125,7 @@ Other primitives need a Definition so ViteHub can discover runtime behavior or n
 | Emit Deno Agent server output and Deno cron wake output | [Deno](/docs/frameworks-hosts/deno) |
 | Run the generated server output yourself | [Node/self-hosted](/docs/frameworks-hosts/node-self-hosted) |
 
-## Connect primitives to Agents
+## Guide: connect primitives to Agents
 
 Capabilities expose controlled agent-facing access to primitives. A storage Capability can expose scoped read/edit tools, a Schedule Capability can manage allowed Runtime Schedules, and `workspaceShell()` can expose file inspection through Workspace and Shell boundaries.
 

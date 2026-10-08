@@ -1741,13 +1741,18 @@ describe("agent channels", () => {
     }
   })
 
-  it("uses token fallback to fetch GitHub PR metadata", async () => {
+  it.each([
+    { apiBaseUrl: "https://api.github.test", webhookBaseUrl: "https://api.github.test" },
+    { apiBaseUrl: undefined, webhookBaseUrl: "https://github.enterprise.test/api/v3" },
+    { apiBaseUrl: "https://api.github.test", webhookBaseUrl: "https://github.enterprise.test/api/v3" },
+  ])("uses token fallback to fetch GitHub PR metadata ($apiBaseUrl, $webhookBaseUrl)", async ({ apiBaseUrl, webhookBaseUrl }) => {
     const { github } = await import("../src/channels.ts")
     const previousToken = process.env.VITEHUB_GITHUB_TOKEN
     process.env.VITEHUB_GITHUB_TOKEN = "metadata-token"
     try {
       const fetcher = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
         const href = String(url)
+        expect(href).toMatch(`${apiBaseUrl ?? webhookBaseUrl}/repos/acme/app/`)
         expect(init?.headers).toMatchObject({ authorization: "Bearer metadata-token" })
         if (href.endsWith("/pulls/42")) {
           return Response.json({
@@ -1768,7 +1773,7 @@ describe("agent channels", () => {
       })
       const channel = github({
         app: {
-          apiBaseUrl: "https://api.github.test",
+          apiBaseUrl,
           // SAFETY: This test fixture intentionally supplies a Fetch-compatible mock.
           fetch: fetcher as typeof fetch,
         },
@@ -1777,12 +1782,15 @@ describe("agent channels", () => {
       const trigger = channel.triggers?.webhook
       if (!trigger) throw new Error("Missing GitHub webhook trigger.")
 
+      const payload = githubIssueCommentPayload()
+      payload.issue.pull_request.url = `${webhookBaseUrl}/repos/acme/app/pulls/42`
+
       // SAFETY: This test fixture intentionally constructs the exact asserted channel contract.
       const result = await trigger.invoke({
         capabilities: [],
         channel,
         trigger: { channelId: "github", id: "github.webhook", name: "webhook", source: "channel" },
-      } as never, { payload: githubIssueCommentPayload() })
+      } as never, { payload })
       if (result instanceof Response) throw new Error("Expected GitHub webhook invocation.")
 
       expect(result.input.context?.pullRequest).toMatchObject({
@@ -2232,8 +2240,8 @@ describe("agent channels", () => {
       "https://api.github.test/repos/vite-hub/vitehub/pulls/42/reviews",
       expect.objectContaining({
         body: JSON.stringify({
-          body: "Review body\n\n![Login badge](<https://assets.example/review/screenshots/login.png>)",
           event: "COMMENT",
+          body: "Review body\n\n![Login badge](<https://assets.example/review/screenshots/login.png>)",
         }),
         headers: expect.objectContaining({ authorization: "Bearer installation-token" }),
         method: "POST",

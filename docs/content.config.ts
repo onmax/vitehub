@@ -20,6 +20,7 @@ const pageSchema = z.object({
   featured: z.boolean().optional(),
   icon: z.string().optional(),
   image: z.string().optional(),
+  layout: z.enum(["article", "tutorial"]).optional(),
   links: z.array(z.object({
     label: z.string(),
     icon: z.string(),
