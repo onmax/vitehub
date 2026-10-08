@@ -73,7 +73,7 @@ function skipTemplateLiteral(source: string, index: number, controlFlowRegexes: 
       index = skipBlockComment(source, index)
       continue
     }
-    if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
+    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant, controlFlowRegexes) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
       index = skipRegexLiteral(source, index)
       previousSignificant = "/"
       continue
@@ -106,10 +106,58 @@ function isIdentifierChar(char: string | undefined) {
   return !!char && /[\w$]/.test(char)
 }
 
-function isRegexLiteralStart(previousSignificant: string) {
+function isRegexLiteralStart(source: string, index: number, previousSignificant: string, controlFlowRegexes: ControlFlowRegexCache = new Map()): boolean {
   const token = previousSignificant.trimEnd()
   if (/^\.[\w$]+$/.test(token)) return false
+  if (token === "+" || token === "-" || token === "of") {
+    const cached = controlFlowRegexes.get(index)
+    if (cached !== undefined) return cached
+    if (controlFlowRegexes.has(index)) return true
+    controlFlowRegexes.set(index, undefined)
+    try {
+      const previous = previousCodeIndex(source, index - 1, controlFlowRegexes)
+      const result = token === "of"
+        ? isForOfRegexStart(source, index, controlFlowRegexes)
+        : source[previous] !== token || source[previous - 1] !== token
+      controlFlowRegexes.set(index, result)
+      return result
+    }
+    catch (error) {
+      controlFlowRegexes.delete(index)
+      throw error
+    }
+  }
   return !token || /[({[=,:!&|?;>+\-*%^~]/.test(token) || /\b(?:await|case|delete|do|else|in|instanceof|return|throw|typeof|void|yield)$/.test(token)
+}
+
+function isForOfRegexStart(source: string, index: number, controlFlowRegexes: ControlFlowRegexCache): boolean {
+  const operatorEnd = previousCodeIndex(source, index - 1, controlFlowRegexes)
+  let current = previousCodeIndex(source, operatorEnd - 2, controlFlowRegexes)
+  if (!/[\w$\])}]/.test(source[current] ?? "")) return false
+  const word = /[\w$]+$/.exec(source.slice(0, current + 1))?.[0]
+  if (word && /^(?:const|let|var|in|instanceof)$/.test(word)
+    && source[previousCodeIndex(source, current - word.length, controlFlowRegexes)] !== ".") return false
+
+  while (current >= 0) {
+    const char = source[current]
+    if (char === ";" || char === "{") return false
+    if (char === "(") {
+      let headEnd = previousCodeIndex(source, current - 1, controlFlowRegexes)
+      if (/\bawait$/.test(source.slice(0, headEnd + 1))) {
+        headEnd = previousCodeIndex(source, headEnd - 5, controlFlowRegexes)
+      }
+      return /(?:^|[^\w$])for$/.test(source.slice(0, headEnd + 1))
+    }
+    const open = char === ")" ? "(" : char === "]" ? "[" : char === "}" ? "{" : undefined
+    if (open) {
+      let start = current - 1
+      while (start >= 0 && (source[start] !== open || findMatching(source, start, open, char, controlFlowRegexes) !== current)) start -= 1
+      if (start < 0) return false
+      current = start
+    }
+    current = previousCodeIndex(source, current - 1, controlFlowRegexes)
+  }
+  return false
 }
 
 function findLineCommentStart(source: string, start: number, end: number, controlFlowRegexes: ControlFlowRegexCache) {
@@ -144,7 +192,7 @@ function previousCodeIndex(source: string, index: number, controlFlowRegexes: Co
     while (lineStart > 0 && !isLineTerminator(source[lineStart - 1])) lineStart -= 1
     const lineComment = findLineCommentStart(source, lineStart, current, controlFlowRegexes)
     if (lineComment !== -1 && lineComment <= current) {
-      current = lineStart - 1
+      current = lineComment - 1
       continue
     }
     return current
@@ -285,7 +333,7 @@ export function stripBoundaryComments(source: string): string {
       index = skipQuoted(source, index, controlFlowRegexes)
       previousSignificant = "literal"
     }
-    else if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
+    else if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant, controlFlowRegexes) || isControlFlowRegexStart(source, index, controlFlowRegexes))) {
       index = skipRegexLiteral(source, index)
       previousSignificant = "/"
     }
@@ -317,7 +365,7 @@ export function maskSourceLiterals(source: string): string {
     }
     else if (char === "/" && next === "/") end = skipLineComment(source, index)
     else if (char === "/" && next === "*") end = skipBlockComment(source, index)
-    else if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, index))) {
+    else if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant) || isControlFlowRegexStart(source, index))) {
       end = skipRegexLiteral(source, index)
       previousSignificant = "/"
     }
@@ -364,7 +412,7 @@ export function findMatching(source: string, index: number, open: string, close:
       current = skipBlockComment(source, current) - 1
       continue
     }
-    if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, current, controlFlowRegexes))) {
+    if (char === "/" && (isRegexLiteralStart(source, current, previousSignificant, controlFlowRegexes) || isControlFlowRegexStart(source, current, controlFlowRegexes))) {
       current = skipRegexLiteral(source, current) - 1
       previousSignificant = "/"
       continue
@@ -405,7 +453,7 @@ export function splitTopLevel(source: string, separator = ",") {
       index = skipBlockComment(source, index) - 1
       continue
     }
-    if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, index))) {
+    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant) || isControlFlowRegexStart(source, index))) {
       index = skipRegexLiteral(source, index) - 1
       previousSignificant = "/"
       continue
@@ -458,7 +506,7 @@ export function findIdentifierCalls(source: string, name: string): IdentifierCal
       index = skipBlockComment(source, index) - 1
       continue
     }
-    if (char === "/" && (isRegexLiteralStart(previousSignificant) || isControlFlowRegexStart(source, index))) {
+    if (char === "/" && (isRegexLiteralStart(source, index, previousSignificant) || isControlFlowRegexStart(source, index))) {
       index = skipRegexLiteral(source, index) - 1
       previousSignificant = "/"
       continue

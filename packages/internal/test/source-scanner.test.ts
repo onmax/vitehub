@@ -5,9 +5,41 @@ import {
   findIdentifierCalls,
   readObjectProperty,
   splitTopLevel,
+  stripBoundaryComments,
 } from "../src/source-scanner.ts"
 
 describe("source scanner", () => {
+  it.each(["count++ / total", "count-- / total"])("trims comments after postfix division: %s", (value) => {
+    for (const comment of ["// after\n", "/* after */"]) {
+      expect(readObjectProperty(`{ value: ${value} ${comment}}`, "value")).toBe(value)
+    }
+  })
+
+  it.each([
+    "for (const x of /['\"]/u) {}",
+    "for await (const x of /['\"]/u) {}",
+    "for // loop\n(const [x = f()] of // list\n /['\"]/u) {}",
+  ])("preserves a regex in a for-of expression: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+    const handler = `async () => { ${value} }`
+    expect(readObjectProperty(`{ handler: ${handler} /* after */, manual: true }`, "handler")).toBe(handler)
+  })
+
+  it.each([
+    "of / total",
+    "for (of / total; false;) {}",
+    "left + + /['\"]/u",
+  ])("keeps identifier division and separated unary operators: %s", (value) => {
+    expect(stripBoundaryComments(`${value} /* after */`)).toBe(value)
+  })
+
+  it.each([
+    "`value: ${count++ / total}`",
+    "`value: ${(async () => { for (const x of /['\"]/u) {} })()}`",
+  ])("scans contextual slashes inside template expressions: %s", (value) => {
+    expect(readObjectProperty(`{ value: ${value} /* after */ }`, "value")).toBe(value)
+  })
+
   it("finds identifier calls outside comments and strings", () => {
     const calls = findIdentifierCalls([
       `const docs = "defineThing('docs')"`,
