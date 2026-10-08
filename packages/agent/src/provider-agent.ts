@@ -3205,7 +3205,9 @@ async function* runProvider<
         ? [
           ...(toolServer ? [`-c 'mcp_servers.t3-code.url=${JSON.stringify(toolServer.mcp.endpoint)}'`] : []),
           '-c \'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"\'',
-          '-c \'shell_environment_policy.exclude=["T3_MCP_BEARER_TOKEN"]\'',
+          // Clear only this invocation's transport token in native shell tools.
+          // Preserve the caller's existing environment exclusions.
+          '-c \'shell_environment_policy.set.T3_MCP_BEARER_TOKEN=""\'',
           // CLI override paths split on dots without parsing quoted TOML keys.
           // An inline table preserves the exact tool names, including punctuation.
           `-c '${(`mcp_servers.t3-code.tools={${Object.keys(context.tools ?? {}).map(name => `${JSON.stringify(name)}={approval_mode="approve"}`).join(",")}}`).replaceAll("'", "'\\''")}'`,

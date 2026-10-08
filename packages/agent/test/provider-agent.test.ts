@@ -2475,7 +2475,8 @@ cli_auth_credentials_store = "keyring"
     const args = String(createProviderRuntime.mock.lastCall?.[0].settings?.launchArgs);
     expect(args).toContain('mcp_servers.t3-code.tools={"pushRepair"={approval_mode="approve"}}');
     expect(args).toContain('bearer_token_env_var="T3_MCP_BEARER_TOKEN"');
-    expect(args).toContain('shell_environment_policy.exclude=["T3_MCP_BEARER_TOKEN"]');
+    expect(args).toContain('shell_environment_policy.set.T3_MCP_BEARER_TOKEN=""');
+    expect(args).not.toContain("shell_environment_policy.exclude=");
     expect(createProviderRuntime.mock.lastCall?.[0].environment?.T3_MCP_BEARER_TOKEN).toEqual(expect.any(String));
     expect(args).not.toContain("default_tools_approval_mode");
     expect(provider.startSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "auto-accept-edits", approvalPolicy: "never", mcp: undefined }));
