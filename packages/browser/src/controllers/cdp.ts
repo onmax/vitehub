@@ -49,6 +49,9 @@ function parseMessage(data: unknown): CDPMessage {
     const hasError = Object.hasOwn(parsed, "error")
     const hasResult = Object.hasOwn(parsed, "result")
     if (hasError === hasResult) throw new TypeError("CDP response must include exactly one result or error")
+    if (hasResult && !isRecord(parsed.result)) {
+      throw new TypeError("CDP response result must be an object")
+    }
     let error: { message: string } | undefined
     if (hasError) {
       const candidate = parsed.error
@@ -72,6 +75,9 @@ function parseMessage(data: unknown): CDPMessage {
   }
 
   if (!isString(parsed.method) || !parsed.method) throw new TypeError("CDP event method must be a non-empty string")
+  if (Object.hasOwn(parsed, "params") && !isRecord(parsed.params)) {
+    throw new TypeError("CDP event parameters must be an object")
+  }
   const sessionId = parsed.sessionId
   if (sessionId !== undefined && !isString(sessionId)) {
     throw new TypeError("CDP event sessionId must be a string")
