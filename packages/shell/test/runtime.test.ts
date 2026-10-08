@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { InMemoryFs } from "just-bash"
 
 import {
   analyzeShellCommand,
@@ -592,6 +593,81 @@ describe("@vite-hub/shell just-bash runtime", () => {
     await createWritableWorkspaceFs(workspace).appendFile("/workspace/notes.md", "new content\n")
 
     await expect(workspace.readFile("notes.md")).resolves.toBe("new content\n")
+  })
+
+  it.each([
+    { encoding: "binary", content: "\u0000\u0080\u00ff" },
+    { encoding: "latin1", content: "\u0000\u0080\u00ff" },
+    { encoding: "hex", content: "0080ff" },
+    { encoding: "base64", content: "AID/" },
+  ] as const)("honors $encoding encoding in Workspace file writes and appends", async ({ encoding, content }) => {
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({}))
+
+    await fs.writeFile("/workspace/data.bin", content, encoding)
+    await fs.appendFile("/workspace/data.bin", content, { encoding })
+
+    expect(Array.from(await fs.readFileBuffer("/workspace/data.bin"))).toEqual([0, 128, 255, 0, 128, 255])
+  })
+
+  it.each([
+    { encoding: "ascii", content: "\u0080é" },
+    { encoding: "utf8", content: "\u0080é" },
+    { encoding: "utf-8", content: "\u0080é" },
+    { encoding: "binary", content: "\u0000\u0080\u00ff" },
+    { encoding: "latin1", content: "\u0000\u0080\u00ff" },
+    { encoding: "binary", content: "🙂" },
+    { encoding: "latin1", content: "🙂" },
+    { encoding: "binary", content: "x".repeat(65536) + "🙂" },
+    { encoding: "latin1", content: "x".repeat(65536) + "🙂" },
+    { encoding: "hex", content: "0080ff" },
+    { encoding: "hex", content: "ff0" },
+    { encoding: "hex", content: "fgzz80" },
+    { encoding: "base64", content: "AID/" },
+    { encoding: "base64", content: " AID/\n" },
+    { encoding: "base64", content: "A" },
+    { encoding: "base64", content: "AA!=" },
+    { encoding: "base64", content: "__8=" },
+  ] as const)("matches Just Bash writes for $encoding case %#", async ({ encoding, content }) => {
+    for (const method of ["writeFile", "appendFile"] as const) {
+      const path = "/workspace/data.bin"
+      const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": "prefix" }))
+      const reference = new InMemoryFs({ [path]: "prefix" })
+      const options = method === "writeFile" ? encoding : { encoding }
+      const results = await Promise.allSettled([
+        reference[method](path, content, options),
+        fs[method](path, content, options),
+      ])
+      expect(results[1]).toEqual(results[0])
+      expect(Array.from(await fs.readFileBuffer(path))).toEqual(Array.from(await reference.readFileBuffer(path)))
+    }
+  })
+
+  it.each(["utf8", "utf-8", "ascii", "binary", "latin1", "hex", "base64"] as const)("matches Just Bash %s reads", async (encoding) => {
+    const bytes = new Uint8Array([0, 128, 255, 195, 169])
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": bytes }))
+    const reference = new InMemoryFs({ "/workspace/data.bin": bytes })
+
+    expect(await fs.readFile("/workspace/data.bin", { encoding })).toBe(await reference.readFile("/workspace/data.bin", { encoding }))
+  })
+
+  it.each(["binary", "latin1"] as const)("reads Workspace bytes with %s encoding", async (encoding) => {
+    const fs = createWritableWorkspaceFs(new MemoryWorkspace({ "data.bin": new Uint8Array([0, 128, 255]) }))
+
+    await expect(fs.readFile("/workspace/data.bin", { encoding })).resolves.toBe("\u0000\u0080\u00ff")
+  })
+
+  it.each(["> data.bin", ">> data.bin", "| tee data.bin"])("preserves binary command bytes through %s", async (destination) => {
+    const workspace = new MemoryWorkspace({})
+    const shell = createShellRuntime({ provider: createJustBashProvider({
+      commands: ["printf", "base64", "tee"],
+      cwd: "/workspace",
+      fs: createWritableWorkspaceFs(workspace),
+    }) })
+
+    const result = await shell.exec(`printf '%s' 'AID/' | base64 -d ${destination}`)
+
+    expect(result.exitCode).toBe(0)
+    expect(Array.from(await workspace.readFile("data.bin", { encoding: "binary" }) as Uint8Array)).toEqual([0, 128, 255])
   })
 
   it("does not refresh workspace paths when creating a shell filesystem", () => {

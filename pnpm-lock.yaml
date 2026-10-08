@@ -2044,6 +2044,9 @@ importers:
 
   packages/shell:
     dependencies:
+      '@vite-hub/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       just-bash:
         specifier: catalog:shell
         version: 3.6.0
