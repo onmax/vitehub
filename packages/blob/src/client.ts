@@ -59,14 +59,86 @@ function multipartUrl(baseURL: string, action: string, pathname: string, query: 
   return `${baseURL.replace(/\/+$/, "")}/${action}/${path}${search ? `?${search}` : ""}`
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Upload responses cross an untrusted HTTP boundary.
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function isString(value: unknown): value is string {
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Upload responses cross an untrusted HTTP boundary.
+  return typeof value === "string"
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every(isString)
+}
+
+function isDenseArray(value: unknown): value is unknown[] {
+  if (!Array.isArray(value)) return false
+  for (let index = 0; index < value.length; index++) {
+    if (!Object.hasOwn(value, index)) return false
+  }
+  return true
+}
+
+function isSerializedBlobObject(value: unknown): value is SerializedBlobObject {
+  if (!isRecord(value)
+    || !isString(value.pathname)
+    || (value.contentType !== undefined && !isString(value.contentType))
+    || (value.httpEtag !== undefined && !isString(value.httpEtag))
+    || (value.size !== undefined && typeof value.size !== "number")
+    || !isString(value.uploadedAt)
+    || !isStringRecord(value.httpMetadata)
+    || !isStringRecord(value.customMetadata)
+    || (value.url !== undefined && !isString(value.url))) return false
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Upload responses cross an untrusted HTTP boundary.
+  return value.size === undefined || typeof value.size === "number" && Number.isFinite(value.size) && value.size >= 0
+}
+
+function parseSerializedBlobObject(value: unknown): SerializedBlobObject {
+  if (!isSerializedBlobObject(value)) throw new Error("Upload request returned malformed JSON.")
+  return value
+}
+
+function parseSerializedBlobObjectArray(value: unknown): SerializedBlobObject[] {
+  if (!isDenseArray(value) || value.some(item => !isSerializedBlobObject(item))) {
+    throw new Error("Upload request returned malformed JSON.")
+  }
+  return value
+}
+
+function parseMultipartCreate(value: unknown): { pathname: string, uploadId: string } {
+  if (!isRecord(value) || !isString(value.pathname) || !isString(value.uploadId)) {
+    throw new Error("Upload request returned malformed JSON.")
+  }
+  return { pathname: value.pathname, uploadId: value.uploadId }
+}
+
+function parseMultipartPart(value: unknown): { part: BlobMultipartPart } {
+  if (!isRecord(value) || !isRecord(value.part) || !isString(value.part.etag)) {
+    throw new Error("Upload request returned malformed JSON.")
+  }
+  // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Upload responses cross an untrusted HTTP boundary.
+  if (typeof value.part.partNumber !== "number" || !Number.isSafeInteger(value.part.partNumber) || value.part.partNumber < 1) {
+    throw new Error("Upload request returned malformed JSON.")
+  }
+  return { part: { etag: value.part.etag, partNumber: value.part.partNumber } }
+}
+
+function parseMultipartComplete(value: unknown): { object: SerializedBlobObject } {
+  if (!isRecord(value) || !isSerializedBlobObject(value.object)) {
+    throw new Error("Upload request returned malformed JSON.")
+  }
+  return { object: value.object }
+}
+
 // doctor-disable-next-line typescript/evidence/no-caller-chosen-result-type -- The matching upload route defines each response shape at its call site.
-async function readJson<T>(response: Response): Promise<T> {
+async function readJson<T>(response: Response, parse: (value: unknown) => T): Promise<T> {
   if (!response.ok) {
     const message = await response.text().catch(() => "")
     throw new Error(`Upload request failed with status ${response.status}${message ? `: ${message}` : ""}`)
   }
-  // SAFETY: Callers name the JSON shape that the matching ViteHub upload handler returns.
-  return await response.json() as T
+  return parse(await response.json())
 }
 
 /**
@@ -80,7 +152,7 @@ export async function uploadFiles(apiBase: string, input: UploadInput, options: 
   for (const file of files) form.append(options.formKey ?? "files", file)
   const request = options.fetch ?? globalThis.fetch
   const response = await request(apiBase, { body: form, headers: mergeHeaders(options.headers), method: options.method ?? "POST" })
-  return await readJson<SerializedBlobObject[]>(response)
+  return await readJson(response, parseSerializedBlobObjectArray)
 }
 
 /**
@@ -102,12 +174,12 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
     let aborted = false
 
     const completed = (async () => {
-      upload = await readJson<{ pathname: string, uploadId: string }>(await send("create", pathname, {
+      upload = await readJson(await send("create", pathname, {
         body: JSON.stringify({ contentType: file.type || undefined }),
         headers: { "content-type": "application/json" },
         method: "POST",
         signal: controller.signal,
-      }))
+      }), parseMultipartCreate)
       const { pathname: uploadPathname, uploadId } = upload
       // Drivers accept at most 10,000 parts. Increase the requested size for very large files.
       const effectivePartSize = Math.max(partSize, Math.ceil(file.size / 10_000))
@@ -119,11 +191,11 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
       const sendParts = async () => {
         while (nextPart <= partCount && !aborted) {
           const partNumber = nextPart++
-          const result = await readJson<{ part: BlobMultipartPart }>(await send("upload", uploadPathname, {
+          const result = await readJson(await send("upload", uploadPathname, {
             body: file.slice((partNumber - 1) * effectivePartSize, partNumber * effectivePartSize),
             method: "PUT",
             signal: controller.signal,
-          }, { partNumber: String(partNumber), uploadId }))
+          }, { partNumber: String(partNumber), uploadId }), parseMultipartPart)
           parts.push(result.part)
           options.onProgress?.(Math.round((parts.length / partCount) * 100))
         }
@@ -131,12 +203,12 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
       await Promise.all(Array.from({ length: Math.min(concurrency, partCount) }, sendParts))
       if (aborted) return undefined
 
-      const result = await readJson<{ object: SerializedBlobObject }>(await send("complete", uploadPathname, {
+      const result = await readJson(await send("complete", uploadPathname, {
         body: JSON.stringify({ parts }),
         headers: { "content-type": "application/json" },
         method: "POST",
         signal: controller.signal,
-      }, { uploadId }))
+      }, { uploadId }), parseMultipartComplete)
       return result.object
     })().catch(async (error: unknown) => {
       if (aborted) return undefined
@@ -144,7 +216,7 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
       controller.abort()
       if (upload) {
         try {
-          await readJson(await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId }))
+          await readJson(await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId }), value => value)
         }
         catch {
           // Preserve the original upload error. Cleanup is best effort here.
@@ -157,7 +229,7 @@ export function createMultipartUploader(baseURL: string, options: MultipartUploa
       if (aborted) return
       aborted = true
       controller.abort()
-      if (upload) await readJson(await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId }))
+      if (upload) await readJson(await send("abort", upload.pathname, { method: "DELETE" }, { uploadId: upload.uploadId }), value => value)
     }
 
     return { abort, completed }
