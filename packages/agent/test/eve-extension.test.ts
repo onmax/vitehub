@@ -119,7 +119,7 @@ describe("Eve extension capabilities", () => {
       peerDependenciesMeta?: Record<string, { optional?: boolean }>
     }
     expect(packageJson.devDependencies?.eve).toBe("0.72.1")
-    expect(packageJson.peerDependencies?.eve).toBe("0.72.1")
+    expect(packageJson.peerDependencies?.eve).toBe("0.46.1 || 0.72.1")
     expect(packageJson.peerDependenciesMeta?.eve).toEqual({ optional: true })
 
     const extensionEntry = fileURLToPath(import.meta.resolve("@github-tools/eve-extension"))
@@ -1451,6 +1451,27 @@ describe("Eve extension capabilities", () => {
       .resolves.toEqual({})
   })
 
+  it("supplies a non-aborted signal during static dynamic-tool inspection", async () => {
+    const started = vi.fn((_event: unknown, context: { abortSignal: AbortSignal }) => {
+      context.abortSignal.throwIfAborted()
+      return { run: { execute: async () => "ok" } }
+    })
+    const capability = await eveExtensionCapability(
+      "test-extension",
+      "test",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({ dynamic: { events: { "session.started": started }, kind: "eve:dynamic" } }),
+    )
+    const context = capabilityContext()
+    delete context.invocation
+
+    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
+
+    expect(started).toHaveBeenCalledOnce()
+    expect(started.mock.calls[0]![1].abortSignal.aborted).toBe(false)
+    expect(tools.test__run).toBeDefined()
+  })
+
   it("maps Eve session.started tools to each Agent Invocation", async () => {
     const started = vi.fn((event: { data: Record<string, unknown> }, context: { session: { id: string } }) => ({
       run: {
@@ -1486,42 +1507,43 @@ describe("Eve extension capabilities", () => {
     await expect(secondTools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("run-2")
   })
 
-  it("maps Eve step.started tools to each Agent Invocation", async () => {
-    const started = vi.fn((event: { data: { sequence: number, stepIndex: number, turnId: string }, type: string }, context: { session: { id: string, turn: { id: string, sequence: number } } }) => ({
-      run: {
-        description: `${event.type}:${context.session.id}:${event.data.stepIndex}`,
-        execute: async () => context.session.id,
-      },
-    }))
+  it.each(["turn.started", "step.started"])("rejects unavailable authoritative data when %s handlers read it", async event => {
+    const handler = vi.fn((input: { data: { sequence: number, modelId: string } }) => ({ run: { description: String(event === "step.started" ? input.data.modelId : input.data.sequence), execute: () => "ok" } }))
     const capability = await eveExtensionCapability(
-      "test-extension",
-      "test",
+      "test-extension", "test",
       async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
-      async () => ({
-        dynamic: {
-          events: { "step.started": started },
-          kind: "eve:dynamic",
-        },
-      }),
+      async () => ({ dynamic: { events: { [event]: handler }, kind: "eve:dynamic" } }),
     )
-    const context = capabilityContext()
-    context.run = { runId: "run-1", threadId: "session-1" }
-
-    const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
-
-    expect(started).toHaveBeenCalledOnce()
-    const [event, resolvedContext] = started.mock.calls[0]!
-    expect(event.data).toEqual({ sequence: resolvedContext.session.turn.sequence, stepIndex: 0, turnId: resolvedContext.session.turn.id })
-    expect(event.data).not.toHaveProperty("modelId")
-    expect(tools.test__run!.description).toBe("step.started:session-1:0")
-    await expect(tools.test__run!.execute?.({}, { toolCallId: "call-1" } as never)).resolves.toBe("session-1")
+    await expect((capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(capabilityContext()))
+      .rejects.toMatchObject({ code: "AGENT_R0415", message: expect.stringContaining(event === "step.started" ? "modelId" : "sequence") })
+    expect(handler).toHaveBeenCalledOnce()
   })
 
-  it("maps Eve turn.started tools and the current tool context", async () => {
+  it.each(["execute", "approval"])("rejects unavailable authoritative turn sequence in Eve %s contexts", async mode => {
+    const readSequence = (context: { session: { turn: { sequence: number } } }) => context.session.turn.sequence
+    const capability = await eveExtensionCapability(
+      "test-extension", "test",
+      async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
+      async () => ({ run: {
+        execute: (_input: unknown, context: { session: { turn: { sequence: number } } }) => mode === "execute" ? readSequence(context) : "ok",
+        approval: (context: { session: { turn: { sequence: number } } }) => { readSequence(context); return "not-applicable" },
+      } }),
+    )
+    for (const runId of ["turn-1", "turn-2"]) {
+      const context = capabilityContext()
+      context.run = { runId, threadId: "session-1" }
+      const tools = await (capability.tools as (context: AgentCapabilityContext) => Promise<Record<string, AgentToolDefinition>>)(context)
+      const tool = tools.test__run as AgentToolDefinition & { needsApproval: (input: unknown) => Promise<boolean> }
+      await expect(mode === "execute" ? tool.execute!({}) : tool.needsApproval({}))
+        .rejects.toMatchObject({ code: "AGENT_R0415", message: expect.stringContaining("session.turn.sequence") })
+    }
+  })
+
+  it("preserves Eve execution context from preparation-time dynamic tools", async () => {
     const abortSignal = new AbortController().signal
-    const started = vi.fn((event: { data: { sequence: number, turnId: string }, type: string }, context: { messages: readonly ModelMessage[], session: { id: string, turn: { id: string, sequence: number } } }) => ({
+    const started = vi.fn((event: { data: Record<string, unknown>, type: string }, context: { messages: readonly ModelMessage[], session: { id: string, turn: { id: string } } }) => ({
       turn: {
-        description: `${event.type}:${context.session.id}:${event.data.sequence}`,
+        description: `${event.type}:${context.session.id}`,
         inputSchema: { type: "object" },
         outputSchema: { type: "object" },
         execute: async (_input: unknown, toolContext: { abortSignal: AbortSignal, messages: readonly ModelMessage[], session: { id: string, turn: { id: string } } }) => ({
@@ -1542,7 +1564,7 @@ describe("Eve extension capabilities", () => {
       async () => ({ default: () => ({ [Symbol.for("eve.mounted-extension")]: true }) }),
       async () => ({
         dynamic: {
-          events: { "turn.started": started },
+          events: { "session.started": started },
           kind: "eve:dynamic",
         },
       }),
@@ -1562,14 +1584,15 @@ describe("Eve extension capabilities", () => {
       toModelOutput: (options: { output: unknown }) => Promise<unknown>
     }
 
-    expect(started).toHaveBeenCalledWith({ data: { sequence: 0, turnId: "turn-2" }, type: "turn.started" }, expect.objectContaining({
+    expect(started).toHaveBeenCalledWith({ data: {}, type: "session.started" }, expect.objectContaining({
       abortSignal,
       model: null,
       session: expect.objectContaining({ id: "session-1" }),
     }))
     const [event, resolvedContext] = started.mock.calls[0]!
-    expect(event.data).toEqual({ sequence: resolvedContext.session.turn.sequence, turnId: resolvedContext.session.turn.id })
-    expect(tool.description).toBe("turn.started:session-1:0")
+    expect(event.data).toEqual({})
+    expect(resolvedContext.session.turn.id).toBe("turn-2")
+    expect(tool.description).toBe("session.started:session-1")
     expect(tool.outputSchema).toEqual({ type: "object" })
     await expect(tool.execute({}, { messages: [{ role: "user", content: "Hello" }], toolCallId: "call-1" })).resolves.toEqual({
       hasAbortSignal: true,
