@@ -368,6 +368,15 @@ describe("mcpResources", () => {
     await expect(readSource.getItem("example/item.txt", { rootDir: "/tmp" })).rejects.toThrow(/invalid readResource response/i)
   })
 
+  it("rejects inherited pagination cursors instead of truncating the resource list", async () => {
+    const page = Object.assign(Object.create({ nextCursor: "second-page" }), {
+      resources: [{ name: "first.txt", uri: "resource://example/first.txt" }],
+    })
+    const source = mcpResources({ server: malformedListClient(page) })
+
+    await expect(source.getKeys({ rootDir: "/tmp" })).rejects.toThrow(/invalid listResources response/i)
+  })
+
   it("rejects inherited MCP client and transport discriminators", async () => {
     const inheritedClient = Object.create({
       listResources: async () => ({ resources: [] }),

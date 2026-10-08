@@ -367,7 +367,7 @@ function parseResourceListPage(value: unknown): { nextCursor?: string, resources
   if (!isRecord(value)) {
     throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
   }
-  if (!Object.hasOwn(value, "resources")) {
+  if (!Object.hasOwn(value, "resources") || (Reflect.has(value, "nextCursor") && !Object.hasOwn(value, "nextCursor"))) {
     throw sourceError("[vitehub] mcpResources server returned an invalid listResources response.")
   }
   const resources = Reflect.get(value, "resources")
