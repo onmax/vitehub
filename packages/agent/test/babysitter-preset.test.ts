@@ -80,6 +80,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { activity
   const checkoutController = new AbortController();
   let abortOperation = false;
   let onAdmission: (() => void | Promise<void>) | undefined;
+  let onRepair: (() => void | Promise<void>) | undefined;
   let openPullRequests = true;
   const pr = () => ({
     number: 12,
@@ -344,6 +345,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { activity
             await git(remoteBox.path, "commit", "-am", "repair");
           }
           if (operation) {
+            await onRepair?.();
             const result = await client.callTool({ name: operation, arguments: operationArguments });
             if (onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
             else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
@@ -410,6 +412,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { activity
     failCheckout: (error: Error) => { checkoutFailure = error },
     abortOnOperation: () => { abortOperation = true },
     onAdmission: (callback: () => void | Promise<void>) => { onAdmission = callback },
+    onRepair: (callback: () => void | Promise<void>) => { onRepair = callback },
     closeOnGitHub: () => { openPullRequests = false },
   };
 }
@@ -1135,9 +1138,11 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
-  it.each(["successful check", "base advance", "failing check turns green", "failing status turns green"] as const)("keeps repair publication available after a same-head %s", async change => {
-    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
-    f.choose("pushRepair");
+  it.each((["successful check", "base advance", "failing check turns green", "failing status turns green"] as const).flatMap(change =>
+    ([{ box: false, operation: "pushRepair" }, { box: true, operation: "pushRepair" }, { box: true, operation: "commitRepair" }] as const).map(configuration => ({ change, ...configuration })),
+  ))("keeps $operation available after a same-head $change with Box=$box", async ({ change, box, operation }) => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true, box, remoteBox: box });
+    f.choose(operation, operation === "commitRepair" ? { message: "Repair source", paths: ["source.ts"] } : {});
     let changed = false;
     const command = f.command.getMockImplementation()!;
     f.command.mockImplementation(async (args, request) => {
@@ -1158,8 +1163,11 @@ describe("Babysitter preset runtime", () => {
           : { context: "repair-test", sha: f.pr().head.sha, state: "failure" }),
       });
     }
-    f.onAdmission(async () => {
+    f.onRepair(async () => {
       if (changed) return;
+      const before = await f.runtime.inbox.get("acme/app", 12);
+      if (!before?.lease) throw new Error("The provider must own an active claim before the evidence changes.");
+      expect(f.passes).toHaveLength(1);
       changed = true;
       if (change === "base advance") {
         f.advanceBase("d".repeat(40));
@@ -1174,14 +1182,15 @@ describe("Babysitter preset runtime", () => {
         await f.runtime.inbox.ingest("check-succeeded", "check_run", {
           repository: { full_name: "acme/app" }, action: "completed",
           check_run: { id: 2, name: change === "failing check turns green" ? "repair-test" : "test", head_sha: f.pr().head.sha,
-            status: "completed", conclusion: "success", app: { id: 1 }, pull_requests: [{ number: 12 }] },
+          status: "completed", conclusion: "success", app: { id: 1 }, pull_requests: [{ number: 12 }] },
         });
       }
+      expect((await f.runtime.inbox.get("acme/app", 12))?.generation).toBeGreaterThan(before.generation);
     });
     try {
       await f.reconcile();
       expect(changed).toBe(true);
-      expect(f.push).toHaveBeenCalledOnce();
+      expect(operation === "commitRepair" ? f.commit : f.push).toHaveBeenCalledOnce();
     } finally { await f.runtime.inbox.close(); }
   });
 
