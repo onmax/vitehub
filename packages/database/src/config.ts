@@ -186,21 +186,21 @@ function readDefinitionCloudflareConfig(file: string): { configured: boolean, va
 export function isStaticD1HttpDefinition(file: string) {
   if (!existsSync(file)) return false
   const definitionBody = readDefinitionObjectBody(file, true)
-  if (typeof definitionBody === "undefined") return false
+  if (definitionBody === undefined) return false
   const definitionEntries = splitTopLevel(definitionBody).filter(entry => entry.trim())
   if (definitionEntries.some(entry => !readEntryKey(entry))) return false
   const cloudflareEntries = definitionEntries.filter(entry => readEntryKey(entry) === "cloudflare")
   if (cloudflareEntries.length !== 1) return false
   const expression = readEntryValue(cloudflareEntries[0]!)?.trim()
   const body = objectLiteralBody(expression)
-  if (typeof body === "undefined" || expression !== `{${body}}`) return false
+  if (body === undefined || expression !== `{${body}}`) return false
   const entries = splitTopLevel(body).filter(entry => entry.trim())
   if (entries.some(entry => !readEntryKey(entry))) return false
   const httpEntries = entries.filter(entry => readEntryKey(entry) === "http")
   if (httpEntries.length !== 1) return false
   const http = readEntryValue(httpEntries[0]!)?.trim()
   const httpBody = objectLiteralBody(http)
-  return http === "true" || (typeof httpBody === "string" && http === `{${httpBody}}`)
+  return http === "true" || (httpBody !== undefined && http === `{${httpBody}}`)
 }
 
 function readDefinitionConnectionConfig(file: string) {
