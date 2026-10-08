@@ -1,7 +1,7 @@
 import { assertWorkspaceDigest, workspaceConflictError, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata } from "../core/file-metadata.ts"
 import { createWorkspaceGlobMatcher } from "../core/glob.ts"
-import { isExcludedWorkspacePath, normalizeWorkspacePath, sha256 } from "../core/path.ts"
+import { isExcludedWorkspacePath, isWorkspaceBytes, normalizeWorkspacePath, sha256 } from "../core/path.ts"
 import { workspaceStoreTarget } from "./target.ts"
 
 import type {
@@ -56,7 +56,7 @@ class MemoryWorkspaceStore implements WorkspaceStore {
     if (!node || node.type !== "file") return undefined
     return {
       path: normalized,
-      content: node.content || "",
+      content: isWorkspaceBytes(node.content) ? new Uint8Array(node.content) : node.content || "",
       mediaType: node.mediaType,
       metadata: structuredClone(node.metadata),
     }
@@ -184,7 +184,7 @@ class MemoryWorkspaceStore implements WorkspaceStore {
     this.#ensureParents(normalized)
     this.#nodes.set(normalized, {
       type: "file",
-      content: file.content,
+      content: isWorkspaceBytes(file.content) ? new Uint8Array(file.content) : file.content,
       revision: crypto.randomUUID(),
       mediaType: file.mediaType,
       metadata: structuredClone(file.metadata),

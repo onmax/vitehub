@@ -5,7 +5,7 @@ import { ViteHubError } from "@vite-hub/runtime"
 import { workspaceConflict, workspaceError } from "../core/errors.ts"
 import { copyJsonFileMetadata, copyJsonWorkspaceMetadata } from "../core/file-metadata.ts"
 import { normalizeHistoryPath } from "../core/history.ts"
-import { contentToBytes, decodeFile, isExcludedWorkspacePath, normalizeSafeWorkspacePath, sha256 } from "../core/path.ts"
+import { contentToBytes, decodeFile, isExcludedWorkspacePath, isWorkspaceBytes, normalizeSafeWorkspacePath, sha256 } from "../core/path.ts"
 import { createMemoryWorkspaceStore, forkMemoryWorkspaceStore } from "./memory.ts"
 import { workspaceStoreTarget } from "./target.ts"
 import { createSnapshotFromEntries, diffSnapshots } from "./utils.ts"
@@ -203,8 +203,8 @@ class ContentAddressedWorkspaceStore implements BlobDatabaseWorkspaceStore {
     for (const [path, file] of Object.entries(options.files).sort(([left], [right]) => left.localeCompare(right))) {
       const normalized = normalizeHistoryPath(path)
       if (Object.hasOwn(entries, normalized)) throw workspaceError(`[vitehub] Duplicate history file path: ${normalized}.`)
-      if (!hasRuntimeType(file.content, "string") && !(file.content instanceof Uint8Array)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
-      const bytes = contentToBytes(file.content).slice()
+      if (!hasRuntimeType(file.content, "string") && !isWorkspaceBytes(file.content)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
+      const bytes = new Uint8Array(contentToBytes(file.content))
       const digest = await sha256(bytes)
       const entry: HistoryManifestFile = { digest, size: bytes.byteLength, mediaType: file.mediaType || "application/octet-stream" }
       if (file.metadata !== undefined) entry.metadata = copyJsonFileMetadata(normalized, file.metadata)

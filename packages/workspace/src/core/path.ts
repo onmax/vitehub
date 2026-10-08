@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path"
 import { createHash } from "node:crypto"
 import { minimatch } from "minimatch"
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 import { workspacePathError } from "./errors.ts"
 
@@ -80,6 +81,11 @@ export function matchesAny(path: string, patterns?: string | string[]): boolean 
   return list.some(pattern => minimatch(normalizedPath, normalizeWorkspacePath(pattern), { dot: true }))
 }
 
+/** Recognize byte arrays from VM and sandbox realms. */
+export function isWorkspaceBytes(value: unknown): value is Uint8Array {
+  return ArrayBuffer.isView(value) && Object.prototype.toString.call(value) === "[object Uint8Array]"
+}
+
 export function contentToBytes(content: string | Uint8Array): Uint8Array {
   return typeof content === "string" ? new TextEncoder().encode(content) : content
 }
@@ -142,6 +148,6 @@ export function decodeFile<TOptions extends ReadFileOptions | undefined>(
 }
 
 export async function sha256(input: unknown): Promise<string> {
-  const bytes = contentToBytes(typeof input === "string" || input instanceof Uint8Array ? input : JSON.stringify(input))
+  const bytes = contentToBytes(hasRuntimeType(input, "string") || isWorkspaceBytes(input) ? input : JSON.stringify(input))
   return createHash("sha256").update(bytes).digest("hex")
 }

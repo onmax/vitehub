@@ -3,7 +3,7 @@ import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 
 import { workspaceConflict, workspaceError } from "./errors.ts"
 import { copyJsonFileMetadata, copyJsonWorkspaceMetadata } from "./file-metadata.ts"
-import { normalizeSafeWorkspacePath, sha256 } from "./path.ts"
+import { isWorkspaceBytes, normalizeSafeWorkspacePath, sha256 } from "./path.ts"
 import { createWorkspaceWritePolicy } from "./rules.ts"
 import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 
@@ -58,8 +58,8 @@ export function createWorkspaceHistory(definition: WorkspaceDefinition, store: W
       for (const [path, content] of Object.entries(options.files)) {
         const normalized = normalizeHistoryPath(path)
         if (Object.hasOwn(desired, normalized)) throw workspaceError(`[vitehub] Duplicate history file path: ${normalized}.`)
-        if (!hasRuntimeType(content, "string") && !(content instanceof Uint8Array)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
-        desired[normalized] = { path: normalized, content: content instanceof Uint8Array ? content.slice() : content, mediaType: lookup(normalized) || "application/octet-stream" }
+        if (!hasRuntimeType(content, "string") && !isWorkspaceBytes(content)) throw workspaceError(`[vitehub] Invalid history file content: ${normalized}.`)
+        desired[normalized] = { path: normalized, content: isWorkspaceBytes(content) ? new Uint8Array(content) : content, mediaType: lookup(normalized) || "application/octet-stream" }
       }
       const metadata = copyJsonWorkspaceMetadata("history revision", options.metadata)
       const current = await retained.head()

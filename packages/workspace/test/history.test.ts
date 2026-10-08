@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir } from "node:os"
+import { runInNewContext } from "node:vm"
 import { createClient } from "@libsql/client"
 import { drizzle as drizzleLibsql } from "drizzle-orm/libsql"
 import { drizzle as drizzleD1 } from "drizzle-orm/d1"
@@ -280,6 +281,43 @@ describe.each(["libsql", "d1", "d1-http"] as const)("retained history on %s", { 
     await store.snapshot()
     const revision = await store.history.head()
     expect(await (await store.history.open(revision!.id)).readFile("keep.txt")).toBe("accepted")
+  })
+
+  it("accepts cross-realm binary content through both history entry points", async () => {
+    const { store, facade, uploads } = await setup(driver)
+    // SAFETY: This fixed VM expression creates exactly the declared byte array.
+    const foreign: Uint8Array = runInNewContext("new Uint8Array([0, 255, 128])")
+    expect(foreign).not.toBeInstanceOf(Uint8Array)
+    const expected = new Uint8Array([0, 255, 128])
+    const first = await facade().history.commit({ ifHead: null, files: { "foreign.bin": foreign } })
+    const second = await store.history.commit({ ifHead: first.id, files: rawFiles({ "foreign.bin": foreign }) })
+    foreign.fill(0)
+    for (const revision of [first, second]) {
+      expect(await (await store.history.open(revision.id)).readFile("foreign.bin", { encoding: "binary" })).toEqual(expected)
+    }
+    expect(uploads).toHaveBeenCalledTimes(1)
+    expect(await store.history.usage()).toEqual({ bytes: 3, objects: 1 })
+  })
+
+  it("isolates binary buffers passed to and returned from staged writes", async () => {
+    const { store } = await setup(driver)
+    const expected = new Uint8Array([0, 255, 128])
+    for (const conditional of [false, true]) {
+      const path = `${conditional}.bin`
+      const input = expected.slice()
+      const file = { path, content: input }
+      if (conditional) await store.writeFileConditional!(path, file, null)
+      else await store.writeFile(path, file)
+      input.fill(0)
+      const firstRead = await store.readFile(path)
+      expect(firstRead?.content).toEqual(expected)
+      if (firstRead?.content instanceof Uint8Array) firstRead.content.fill(0)
+      expect((await store.readFile(path))?.content).toEqual(expected)
+    }
+    await store.snapshot()
+    const revision = await store.history.head()
+    const view = await store.history.open(revision!.id)
+    for (const conditional of [false, true]) expect(await view.readFile(`${conditional}.bin`, { encoding: "binary" })).toEqual(expected)
   })
 
   it("retains a 200-file folder and uploads no bytes for an unchanged publication", async () => {
