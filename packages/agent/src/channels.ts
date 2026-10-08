@@ -597,7 +597,10 @@ export interface PullRequestTrigger {
   prompt?: string
 }
 
-export interface PullRequestOptions {
+/** Pull request lifecycle events. Forgejo does not report `ready_for_review`. */
+export type PullRequestLifecycleEvent = "opened" | "reopened" | "synchronize" | "ready_for_review"
+
+export interface PullRequestOptions<TLifecycleEvent extends PullRequestLifecycleEvent = PullRequestLifecycleEvent> {
   filter?: PullRequestFilter
   when?: (context: GitHubPullRequestFilterContext) => MaybePromise<boolean>
   maxBodyLength?: number
@@ -611,7 +614,7 @@ export interface PullRequestOptions {
     concurrencyLimit?: number
     mentions?: readonly string[]
     prompt?: string
-    events?: readonly ("opened" | "reopened" | "synchronize" | "ready_for_review")[]
+    events?: readonly TLifecycleEvent[]
     comments?: boolean | {
       events?: PullRequestTrigger["events"]
       filter?: PullRequestFilter
@@ -640,6 +643,12 @@ export interface CodeHostChannelOptions<TRuntimeConfig extends AgentRuntimeConfi
   statusContext?: string
   pullRequest?: boolean | PullRequestOptions
 }
+
+/** Forgejo sends no draft to ready event, so its lifecycle events are `opened`, `reopened` and `synchronize`. */
+export type ForgejoChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown> =
+  Omit<CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>, "pullRequest"> & {
+    pullRequest?: boolean | PullRequestOptions<Exclude<PullRequestLifecycleEvent, "ready_for_review">>
+  }
 
 interface CodeHostChannelServices<TRuntimeConfig extends AgentRuntimeConfig> {
   kind: "gitlab" | "forgejo"
@@ -3271,9 +3280,9 @@ export function gitlab<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
   return codeHostChannel("gitlab", options)
 }
 
-export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods>
-export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options?: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods>
-export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {}): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods> {
+export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: ForgejoChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods>
+export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options?: ForgejoChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods>
+export function forgejo<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options: ForgejoChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> = {}): AgentChannelDefinitionOf<TRuntimeConfig, "forgejo", TData, TMethods> {
   return codeHostChannel("forgejo", options)
 }
 

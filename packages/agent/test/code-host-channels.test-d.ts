@@ -10,6 +10,10 @@ it("keeps Code Host options neutral and infers message methods", () => {
   expectTypeOf(pullRequest.read({ context: { get: () => undefined } }).provider).toEqualTypeOf<CodeHostKind>()
   const options: PullRequestOptions = { reconcile: { comments: { events: ["comment", "review", "review_comment"] } } }
   gitlab({ pullRequest: options })
+  gitlab({ pullRequest: { reconcile: { events: ["ready_for_review"] } } })
+  forgejo({ pullRequest: { reconcile: { events: ["opened", "synchronize"] } } })
+  // @ts-expect-error Forgejo sends no ready for review event.
+  forgejo({ pullRequest: { reconcile: { events: ["ready_for_review"] } } })
   // @ts-expect-error Code Host Channels do not provide checkout.
   gitlab({ pullRequest: { workspace: true } })
   // @ts-expect-error Code Host Channels always verify webhooks.

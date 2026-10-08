@@ -5,12 +5,12 @@ import { fixtureFetch, signDelivery } from "forges/testing"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { defineAgent } from "../src/index.ts"
 import { forgejo, gitlab, pullRequest } from "../src/channels.ts"
-import type { CodeHostChannelOptions, GitHubPullRequestRunContext } from "../src/channels.ts"
-import type { AgentRunInput } from "../src/types.ts"
+import type { ForgejoChannelOptions, GitHubPullRequestRunContext } from "../src/channels.ts"
+import type { AgentChannelDeliveryEffectContext, AgentRunInput } from "../src/types.ts"
 import { defineCapability } from "../src/capability-runtime.ts"
 import { createChannelWebhookRouteHandler } from "../src/server/internal.ts"
 import { createLibsqlAgentState } from "../src/state/sqlite.ts"
-import { codeHostActivityComments } from "../src/internal/code-host-channel.ts"
+import { codeHostActivityComments, codeHostDeliveryEffects } from "../src/internal/code-host-channel.ts"
 import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { codeHostProvider } from "../src/internal/code-host.ts"
 
@@ -86,13 +86,14 @@ function transport(kind: typeof kinds[number]) {
   return { ...fetcher, comment, overrides, user }
 }
 
-async function harness(kind: typeof kinds[number], options: CodeHostChannelOptions = {}) {
+// Forgejo options are the subset that both Channels accept.
+async function harness(kind: typeof kinds[number], options: ForgejoChannelOptions = {}) {
   const directory = await mkdtemp(join(tmpdir(), "vitehub-code-host-channels-"))
   const state = createLibsqlAgentState({ url: `file:${join(directory, "state.db")}` })
   fixtures.push({ directory, state })
   const inputs: AgentRunInput[] = []
   const run = vi.fn(({ input }: { input: AgentRunInput }) => { inputs.push(input); return { text: "Reviewed" } })
-  const settings: CodeHostChannelOptions = {
+  const settings: ForgejoChannelOptions = {
     baseUrl: baseUrl[kind], token: "token", webhookSecret: "secret",
     pullRequest: { reconcile: { mentions: ["@review-bot"] } }, ...options,
   }
@@ -196,7 +197,9 @@ describe("Code Host Channels through the webhook route", { timeout: 20_000 }, ()
     expect(run).not.toHaveBeenCalled()
   })
 
-  it.each(kinds.flatMap(kind => ["opened", "reopened", "synchronize", "ready_for_review"].map(action => ({ kind, action }))))("maps $kind $action into a pull request reconcile run", async ({ kind, action }) => {
+  // Forgejo sends no draft to ready event, so only GitLab covers ready_for_review.
+  it.each(kinds.flatMap(kind => ["opened", "reopened", "synchronize", "ready_for_review"].map(action => ({ kind, action })))
+    .filter(({ kind, action }) => kind === "gitlab" || action !== "ready_for_review"))("maps $kind $action into a pull request reconcile run", async ({ kind, action }) => {
     transport(kind)
     const { inputs, send } = await harness(kind, { pullRequest: { reconcile: true } })
     const value = kind === "gitlab" ? {
@@ -292,6 +295,75 @@ describe("Code Host Channels through the webhook route", { timeout: 20_000 }, ()
     const comments = codeHostActivityComments(provider, { host: kind, instance: provider.instance, repository: repository[kind], number: 42 }, 100)
     expect((await comments.get(7))?.body).toBe("owned")
     expect(fixture.calls).toHaveLength(1)
+  })
+
+  it.each(kinds)("filters %s comments by author and labels from the webhook body", async kind => {
+    transport(kind)
+    const value = kind === "gitlab" ? payload(kind) : { ...payload(kind), issue: { number: 42, title: "Fix app", user: { id: 1, login: "maxi" }, labels: [{ name: "review" }] } }
+    const allowed = await harness(kind, { pullRequest: { filter: { author: { allow: ["maxi"] }, labels: { allow: ["review"] } }, reconcile: { mentions: ["@review-bot"] } } })
+    expect((await allowed.send(await request(kind, value, "allowed"))).status).toBe(200)
+    expect(allowed.run).toHaveBeenCalledOnce()
+    const denied = await harness(kind, { pullRequest: { filter: { author: { deny: ["maxi"] } }, reconcile: { mentions: ["@review-bot"] } } })
+    expect((await denied.send(await request(kind, value, "denied"))).status).toBe(200)
+    expect(denied.run).not.toHaveBeenCalled()
+  })
+
+  it("lists the newest GitLab notes first for the activity lookup", async () => {
+    const page = (number: number) => `GET ${api.gitlab}${notes("gitlab")}?sort=desc&order_by=created_at&per_page=100&page=${number}`
+    const fixture = fixtureFetch([], {
+      [page(1)]: { status: 200, body: Array.from({ length: 100 }, (_, index) => ({ id: 700 - index, body: `note ${700 - index}` })) },
+      [page(2)]: { status: 200, body: Array.from({ length: 100 }, (_, index) => ({ id: 600 - index, body: `note ${600 - index}` })) },
+    })
+    const provider = await codeHostProvider({ host: "gitlab", baseUrl: baseUrl.gitlab, token: "token", fetch: fixture.fetch as typeof fetch })
+    const comments = await codeHostActivityComments(provider, { host: "gitlab", instance: provider.instance, repository: repository.gitlab, number: 42 }, 150).list()
+    expect(comments).toHaveLength(150)
+    expect(comments[0]?.body).toBe("note 700")
+    expect(comments.at(-1)?.body).toBe("note 551")
+    expect(fixture.calls).toHaveLength(2)
+  })
+
+  it.each([
+    ["Link rel=last", (last: number) => ({ link: `<${api.forgejo}${notes("forgejo")}?limit=50&page=${last}>; rel="last"` })],
+    ["x-total-count", (last: number) => ({ "x-total-count": String(last * 50) })],
+  ] as const)("reads the newest Forgejo comments first from the %s page", async (_name, headers) => {
+    const comment = (id: number) => ({ id, body: `comment ${id}`, user: { login: "maxi" } })
+    const page = (number: number) => Array.from({ length: 50 }, (_, index) => comment((number - 1) * 50 + index + 1))
+    const url = (query: string) => `GET ${api.forgejo}${notes("forgejo")}?${query}`
+    const fixture = fixtureFetch([], {
+      [url("limit=100")]: { status: 200, body: page(1), headers: headers(20) },
+      ...Object.fromEntries([20, 19, 18].map(number => [url(`limit=100&page=${number}`), { status: 200, body: page(number) }])),
+    })
+    const provider = await codeHostProvider({ host: "forgejo", baseUrl: baseUrl.forgejo, token: "token", fetch: fixture.fetch as typeof fetch })
+    const comments = await codeHostActivityComments(provider, { host: "forgejo", instance: provider.instance, repository: repository.forgejo, number: 42 }, 120).list()
+    expect(comments).toHaveLength(120)
+    expect(comments[0]?.body).toBe("comment 1000")
+    expect(comments.at(-1)?.body).toBe("comment 881")
+  })
+
+  it("approves a GitLab merge request without a body and posts the review text as a note", async () => {
+    const approve = `POST ${api.gitlab}${threadPath("gitlab")}/approve`
+    const fixture = fixtureFetch([], {
+      [approve]: { status: 201, body: { approved_by: [{ user: { id: 2, username: "review-bot" } }] } },
+      [`GET ${api.gitlab}/user`]: { status: 200, body: { id: 2, username: "review-bot" } },
+      [`POST ${api.gitlab}${notes("gitlab")}`]: { status: 201, body: { id: 8, body: "Looks good", author: { username: "review-bot" } } },
+    })
+    const provider = await codeHostProvider({ host: "gitlab", baseUrl: baseUrl.gitlab, token: "token", fetch: fixture.fetch as typeof fetch })
+    const effects = codeHostDeliveryEffects({ provider: async () => provider, target: () => ({ host: "gitlab", instance: provider.instance, repository: repository.gitlab, number: 42 }), statusContext: "Agent", reactions: "content" })
+    if (typeof effects.review !== "function") throw new Error("Missing review effect.")
+    // SAFETY: These fixtures supply all callback fields that the review effect uses.
+    const context = (payload: unknown) => ({ effect: { kind: "review", payload }, input: { context: {} } }) as AgentChannelDeliveryEffectContext
+    await effects.review(context({ body: "Looks good", event: "APPROVE" }))
+    expect(fixture.calls.filter(call => call.method === "POST").map(call => [call.url, call.body])).toEqual([
+      [`${api.gitlab}${threadPath("gitlab")}/approve`, undefined],
+      [`${api.gitlab}${notes("gitlab")}`, JSON.stringify({ body: "Looks good" })],
+    ])
+    fixture.calls.splice(0)
+    await effects.review(context({ event: "APPROVE" }))
+    expect(fixture.calls.filter(call => call.method === "POST").map(call => call.url)).toEqual([`${api.gitlab}${threadPath("gitlab")}/approve`])
+    fixture.calls.splice(0)
+    await effects.review(context({ body: "Please look", event: "COMMENT" }))
+    expect(fixture.calls.filter(call => call.method === "POST").map(call => call.url)).toEqual([`${api.gitlab}${notes("gitlab")}`])
+    await expect(effects.review(context({ body: "Fix it", event: "REQUEST_CHANGES" }))).rejects.toMatchObject({ code: "AGENT_R0946" })
   })
 
   it("keeps the GitHub default when reading existing pull request context", () => {
