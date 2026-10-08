@@ -985,6 +985,24 @@ test('reopening a closed PR replaces its acknowledged status without an availabl
   assert.equal(projection, 'New pull request evidence is queued.')
 })
 
+test('reopening replaces a closed status and releases an orphaned worker claim', async t => {
+  const { inbox, open } = await fixture(t)
+  await inbox.ingest('closed-before-worker-crash', 'pull_request', { repository: { full_name: repository }, action: 'closed', pull_request: { ...pr, state: 'closed' } })
+  await inbox.close()
+  const restored = open()
+  t.onTestFinished(() => restored.close())
+  let projection = ''
+  const recovery = createBabysitterStatusRecovery({ inbox: restored, revision: 'release-2', publish: async delivery => { projection = delivery.text } })
+  await recovery.flush()
+  assert.equal(projection, 'Pull request closed.')
+  await restored.ingest('reopened-with-orphaned-worker', 'pull_request', { repository: { full_name: repository }, action: 'reopened', pull_request: pr })
+  const current = await restored.get(repository, 239)
+  assert.equal(current?.status, 'ready')
+  assert.equal(current?.lease, null)
+  await recovery.flush()
+  assert.equal(projection, 'New pull request evidence is queued.')
+})
+
 test('a status writer heartbeat preserves its marker beyond the original retirement deadline', async t => {
   const { inbox, claim, setClock } = await fixture(t)
   await inbox.finish(claim, blocked())

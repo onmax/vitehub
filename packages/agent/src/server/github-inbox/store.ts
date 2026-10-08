@@ -726,7 +726,10 @@ export class PullRequestInbox {
     if (pr.state === 'closed') s.status = 'terminal'
     else if (s.status === 'terminal') {
       delete s.wait
-      s.status = s.lease ? 'working' : 'ready'
+      // A reopened PR starts new work. A claim from its closed lifetime
+      // cannot retain publication authority or defer the new status.
+      s.lease = null; s.leaseUntil = 0
+      s.status = 'ready'
     }
     return true
   }
