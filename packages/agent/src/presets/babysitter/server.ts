@@ -969,12 +969,12 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   await assertLease();
                   await assertRepairBase();
                   const renewLease = async () => {
-                    let current = await assertLease();
+                    let current = await assertLease(pullRequest.headRefOid);
                     for (;;) {
                       if (await pullRequestInbox.renew({ ...inboxClaim, generation: current.generation, snapshot: current }, Date.now() + 2 * 60 * 60_000)) return;
                       // A generation can advance between validation and CAS.
                       // Recheck ownership, head and feedback before adopting it.
-                      const latest = await assertLease();
+                      const latest = await assertLease(pullRequest.headRefOid);
                       if (latest.generation === current.generation) throw new DOMException("Pull request lease renewal failed.", "AbortError");
                       current = latest;
                     }

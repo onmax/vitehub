@@ -1345,6 +1345,39 @@ describe("Babysitter preset runtime", () => {
     }
   });
 
+  it("keeps an in-flight renewal alive after a push while the head webhook is pending", async () => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const getOriginal = f.runtime.inbox.get.bind(f.runtime.inbox);
+    const get = vi.spyOn(f.runtime.inbox, "get");
+    let release!: () => void, entered!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    let completed = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      get.mockImplementationOnce(async (...args) => { entered(); await blocked; return await getOriginal(...args); });
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await started;
+      await options?.afterPush?.("b".repeat(40));
+      release();
+      await vi.waitFor(() => {
+        if (options?.signal?.aborted) throw options.signal.reason;
+        expect(renew).toHaveBeenCalledOnce();
+      });
+      expect(await renew.mock.results[0]?.value).toBe(true);
+      completed = true;
+      return "b".repeat(40);
+    });
+    try {
+      await f.reconcile();
+      expect(completed).toBe(true);
+    } finally { release?.(); timers.mockRestore(); get.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
   it("revalidates an equivalent generation arriving between renewal read and CAS", async () => {
     const f = await fixture(true, false, { allowOperationAfterAdmission: true });
     f.choose("pushRepair");

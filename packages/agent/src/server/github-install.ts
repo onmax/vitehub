@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { access, cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, chmod, lstat, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { validateGitHubInstallInputs } from "./github-install-inputs.ts";
 import { createGitHubInstallSnapshot, publishGitHubInstallSnapshot } from "./github-install-snapshot.ts";
@@ -143,10 +144,32 @@ export async function assertGitHubDependenciesCurrent(target: string, inputs = t
       const info = await lstat(source).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; });
       if (!info) continue;
       if (!info.isFile()) throw new Error("Linked dependency bin targets must be regular files.");
-      const part = relative(checkout, await realpath(source));
+      const resolved = await realpath(source);
+      const part = relative(checkout, resolved);
       if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part)) throw new Error("Linked dependency bin targets must stay inside the checkout.");
-      await mkdir(dirname(destination), { recursive: true });
-      await cp(source, destination);
+      // Bind the read to the validated file. A parent swap must never make
+      // pathname-based copying import a different host file into this snapshot.
+      const file = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const opened = await file.stat();
+        const assertSource = async () => {
+          const current = await lstat(source);
+          if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino
+            || !current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino
+            || await realpath(source) !== resolved) throw new Error("Linked dependency bin target changed during snapshot validation.");
+        };
+        await assertSource();
+        await mkdir(dirname(destination), { recursive: true });
+        await assertSource();
+        const contents = await file.readFile();
+        const settled = await file.stat();
+        await assertSource();
+        if (settled.size !== opened.size || settled.mtimeMs !== opened.mtimeMs || settled.ctimeMs !== opened.ctimeMs || settled.mode !== opened.mode) {
+          throw new Error("Linked dependency bin target changed during snapshot validation.");
+        }
+        await writeFile(destination, contents, { flag: "wx", mode: opened.mode & 0o777 });
+        await chmod(destination, opened.mode & 0o777);
+      } finally { await file.close(); }
     }
   });
   const record = v.parse(v.object({ status: v.string(), fingerprint: v.optional(v.string()) }), JSON.parse(await readFile(join(target, ".git", "vitehub-install.json"), "utf8")));
