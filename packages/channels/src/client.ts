@@ -39,6 +39,7 @@ function logDelivery(event: string, deliveryId: string, channel: string, connect
   }
 }
 
+// doctor-disable-next-line typescript/evidence/no-object-parameters -- Connector results are arbitrary provider objects; this helper reads only own enumerable metadata and id.
 function normalizeConnectorResult(result: object): ChannelConnectorResult {
   const entries: Array<[PropertyKey, unknown]> = []
   try {
