@@ -97,11 +97,19 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
   const scanner = createSourceScanner(file)
   const masked = scanner.maskSourceLiterals(source)
   const escapedExportName = exportName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  // Match the exported initializer itself, including an optional type annotation
-  // and parenthesized call, while keeping unrelated defineCollection calls out.
-  const declaration = new RegExp(`(?:^|[;\\n])\\s*(?:export\\s+)?(?:const|let|var)\\s+${escapedExportName}(?:\\s*:\\s*[^=;]+)?\\s*=\\s*\\(?\\s*$`)
-  const call = scanner.findIdentifierCalls(source, "defineCollection").find(candidate =>
-    declaration.test(masked.slice(0, candidate.start)))
+  // Bind the call to the exported declaration itself. Looking only at the
+  // prefix up to a call can accidentally select an earlier local declaration
+  // with the same name, so first locate the exported initializer and then
+  // inspect calls inside that initializer.
+  const declaration = new RegExp(`(?:^|[;\\n])\\s*export\\s+(?:const|let|var)\\s+${escapedExportName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
+  const calls = scanner.findIdentifierCalls(source, "defineCollection")
+  let call
+  for (const match of masked.matchAll(declaration)) {
+    const initializerStart = (match.index ?? 0) + match[0].length
+    const nextStatement = masked.indexOf(";", initializerStart)
+    call = calls.find(candidate => candidate.start >= initializerStart && (nextStatement < 0 || candidate.start < nextStatement))
+    if (call) break
+  }
   if (!call) return false
   const options = call.arguments[1] ?? call.arguments[0]
   return options !== undefined && scanner.readObjectProperty(options, "route") === "false"

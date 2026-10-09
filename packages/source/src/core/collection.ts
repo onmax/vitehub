@@ -326,10 +326,13 @@ export function defineCollection<
     ...(authorize ? { authorize } : {}),
     ...(definition.route === false ? { route: false as const } : {}),
     ...(definition.get ? { get: async (key: string, options?: { signal?: AbortSignal }): Promise<TItem | null | undefined> => {
-      const item = await definition.get!(key, options ?? {}) as TSourceItem | null | undefined
-      if (item === null || item === undefined) return item
+      const item = await definition.get!(key, options ?? {})
+      if (item === null || item === undefined) return item as TItem | null | undefined
       // SAFETY: Without a transform the public overload fixes TItem to TSourceItem.
-      return definition.transform ? await definition.transform(item) as TItem : item as TItem
+      return definition.transform
+        ? await definition.transform(item as TSourceItem) as TItem
+        // SAFETY: Without a transform the public overload fixes TItem to TSourceItem.
+        : item as unknown as TItem
     } } : {}),
     async page(request) {
       const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
