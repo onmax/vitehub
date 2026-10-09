@@ -335,6 +335,32 @@ describe("Jev decisions for ask Driver Agents", () => {
     }, expect.objectContaining({ apiKey: "ts-key" }))
   })
 
+  it("splits large question sets into bounded requests and preserves key order", async () => {
+    const questions = Object.fromEntries(Array.from({ length: 4 }, (_, index) => [
+      `question-${index}`,
+      ask.if("x".repeat(16_000)),
+    ]))
+
+    await expect(askRuntime.askJev({}, "state", questions)).resolves.toEqual(
+      Object.fromEntries(Object.keys(questions).map(name => [name, true])),
+    )
+    expect(askJev.mock.calls.length).toBeGreaterThan(1)
+    expect(askJev.mock.calls.flatMap(([, batch]) => Object.keys(batch))).toEqual(Object.keys(questions))
+  })
+
+  it("skips Jev and credentials for an empty question map", async () => {
+    await expect(askRuntime.askJev({}, "state", {})).resolves.toEqual({})
+    expect(askJev).not.toHaveBeenCalled()
+  })
+
+  it("rejects missing answers and malformed choice probabilities", async () => {
+    askJev.mockResolvedValueOnce({})
+    await expect(askRuntime.askJev({}, "state", { answer: ask.if("Answer?") })).rejects.toThrow('missing answer "answer"')
+
+    askJev.mockResolvedValueOnce({ answer: { choice: "yes", probabilities: { yes: 2 }, type: "choice" } })
+    await expect(askRuntime.askJev({}, "state", { answer: ask.choice("Answer?", ["yes", "no"]) })).rejects.toThrow("valid probability distribution")
+  })
+
   it("rejects with a Jev gate decision", async () => {
     askJev.mockResolvedValueOnce({ decision: { choice: "unsafe", confidence: 0.6, probabilities: { safe: 0.2, unsafe: 0.8 }, type: "choice" } })
     const agent = defineAgent({
