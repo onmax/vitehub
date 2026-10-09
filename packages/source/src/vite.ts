@@ -110,6 +110,28 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
     call = calls.find(candidate => candidate.start >= initializerStart && (nextStatement < 0 || candidate.start < nextStatement))
     if (call) break
   }
+  // Named exports may also re-export a local binding (`export { articles }`).
+  // Resolve that binding before inspecting its initializer so route metadata
+  // stays attached to the Collection that discovery imports.
+  if (!call) {
+    const exportList = new RegExp(`\\bexport\\s*\\{([^}]*)\\}`, "g")
+    for (const match of masked.matchAll(exportList)) {
+      const localName = match[1]
+        .split(",")
+        .map(entry => entry.trim().match(new RegExp(`^(\\w+)\\s+as\\s+${escapedExportName}$|^${escapedExportName}$`)))
+        .find(Boolean)?.[1] ?? (match[1].split(",").map(entry => entry.trim()).find(entry => entry === exportName) ? exportName : undefined)
+      if (!localName) continue
+      const localDeclaration = new RegExp(`(?:^|[;\\n])\\s*(?:const|let|var)\\s+${localName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
+      let declarationMatch
+      for (const candidate of masked.matchAll(localDeclaration)) {
+        if ((candidate.index ?? 0) < (match.index ?? 0)) declarationMatch = candidate
+      }
+      if (!declarationMatch) continue
+      const initializerStart = (declarationMatch.index ?? 0) + declarationMatch[0].length
+      call = calls.find(candidate => candidate.start >= initializerStart && candidate.start < (masked.indexOf(";", initializerStart) < 0 ? source.length : masked.indexOf(";", initializerStart)))
+      if (call) break
+    }
+  }
   if (!call) return false
   const options = call.arguments[1] ?? call.arguments[0]
   return options !== undefined && scanner.readObjectProperty(options, "route") === "false"
