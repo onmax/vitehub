@@ -97,6 +97,7 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
   const scanner = createSourceScanner(file)
   const masked = scanner.maskSourceLiterals(source)
   const escapedExportName = exportName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const identifier = String.raw`[$\p{ID_Start}_][$\p{ID_Continue}]*`
   // Bind the call to the exported declaration itself. Looking only at the
   // prefix up to a call can accidentally select an earlier local declaration
   // with the same name, so first locate the exported initializer and then
@@ -104,10 +105,10 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
   const declaration = new RegExp(`(?:^|[;\\n])\\s*export\\s+(?:const|let|var)\\s+${escapedExportName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
   const calls = scanner.findIdentifierCalls(source, "defineCollection")
   let call
+  const findDeclarationCall = (initializerStart: number) => calls.find(candidate => candidate.start >= initializerStart)
   for (const match of masked.matchAll(declaration)) {
     const initializerStart = (match.index ?? 0) + match[0].length
-    const nextStatement = masked.indexOf(";", initializerStart)
-    call = calls.find(candidate => candidate.start >= initializerStart && (nextStatement < 0 || candidate.start < nextStatement))
+    call = findDeclarationCall(initializerStart)
     if (call) break
   }
   // Named exports may also re-export a local binding (`export { articles }`).
@@ -118,17 +119,17 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
     for (const match of masked.matchAll(exportList)) {
       const localName = match[1]
         .split(",")
-        .map(entry => entry.trim().match(new RegExp(`^(\\w+)\\s+as\\s+${escapedExportName}$|^${escapedExportName}$`)))
+        .map(entry => entry.trim().match(new RegExp(`^(${identifier})\\s+as\\s+${escapedExportName}$|^${escapedExportName}$`, "u")))
         .find(Boolean)?.[1] ?? (match[1].split(",").map(entry => entry.trim()).find(entry => entry === exportName) ? exportName : undefined)
       if (!localName) continue
       // The export list may appear before or after the local declaration. Include
       // `export const` declarations as well, then bind the name to its own
       // initializer rather than relying on statement order.
-      const localDeclaration = new RegExp(`(?:^|[;\\n])\\s*(?:export\\s+)?(?:const|let|var)\\s+${localName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
+      const escapedLocalName = localName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      const localDeclaration = new RegExp(`(?:^|[;\\n])\\s*(?:export\\s+)?(?:const|let|var)\\s+${escapedLocalName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
       for (const declarationMatch of masked.matchAll(localDeclaration)) {
         const initializerStart = (declarationMatch.index ?? 0) + declarationMatch[0].length
-        const statementEnd = masked.indexOf(";", initializerStart)
-        const candidateCall = calls.find(candidate => candidate.start >= initializerStart && candidate.start < (statementEnd < 0 ? source.length : statementEnd))
+        const candidateCall = findDeclarationCall(initializerStart)
         if (candidateCall) {
           call = candidateCall
           break
