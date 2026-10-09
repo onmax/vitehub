@@ -447,7 +447,7 @@ describe("Babysitter preset runtime", () => {
   it("retries a direct-source worker blocker only when its source revision changes", async () => {
     vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", undefined);
     const revision = vi.spyOn(buildRevisions, "agentBuildRevision").mockReturnValue("source-first");
-    const result = { wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
+    const result = { disposition: "park", wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
     const first = await fixture(false, false, { result });
     const inboxPath = join(first.checkout, "..", "inbox.sqlite");
     const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal",
@@ -469,7 +469,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("retries an unversioned Agent worker blocker once per package build", async () => {
-    const result = { wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
+    const result = { disposition: "park", wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
     vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", "build-first");
     const first = await fixture(false, false, { result });
     const inboxPath = join(first.checkout, "..", "inbox.sqlite");
@@ -750,7 +750,7 @@ describe("Babysitter preset runtime", () => {
   it("retains a worker blocker instead of replacing it with an idle CI permission wait", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const reason = "Host commitRepair repeatedly rejects dependency state despite successful refreshDependencies and repeated focused validation.";
-    const f = await fixture(false, false, { actionsDenied: true, result: { text: reason, wait: { kind: "external", reason } } });
+    const f = await fixture(false, false, { actionsDenied: true, result: { disposition: "park", text: reason, wait: { kind: "external", reason } } });
     try {
       await f.reconcile();
       expect(f.passes).toHaveLength(1);
