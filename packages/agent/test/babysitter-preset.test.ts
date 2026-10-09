@@ -610,6 +610,25 @@ describe("Babysitter preset runtime", () => {
     } finally { install.mockRestore(); await f.runtime.inbox.close(); }
   });
 
+  it("rechecks Box admission after run metadata preparation", async () => {
+    let accepting = true;
+    const retryAt = Date.now() + 300_000;
+    const admission = vi.fn(async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true, reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }));
+    const f = await fixture(false, false, { box: true, admission });
+    const createOriginal = githubRuns.createGitHubPullRequestRun;
+    const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun").mockImplementationOnce(async (...args) => { const run = await createOriginal(...args); accepting = false; return run; });
+    try {
+      await f.reconcile();
+      expect(createRun).toHaveBeenCalledOnce();
+      expect(f.passes).toHaveLength(0);
+      expect(admission.mock.calls.length).toBeGreaterThan(1);
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(current.status).toBe("waiting");
+      expect(current.wait?.retryAt).toBe(retryAt);
+      expect(current.lease).toBeNull();
+    } finally { createRun.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
   it("keeps a recovery claim parked when admission permits only host work", async () => {
     const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {

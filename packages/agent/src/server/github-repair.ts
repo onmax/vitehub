@@ -43,7 +43,12 @@ export async function commitGitHubPullRequestWorkspace(
       || (await readFile(join(target, ".git", "MERGE_HEAD"), "utf8")).trim() !== mergeRecord.base
       || digest(await git("ls-files", "--stage", "-z")) !== mergeRecord.index) throw new Error("Prepared merge metadata or index changed outside the host repair tools.");
   } else if (await git("diff", "--cached", "--name-only")) throw new Error("Repair checkout contains unrelated staged changes.");
-  await git("add", "--", ...input.paths);
+  // Restored tracked instructions can retain the provider's skip-worktree flag.
+  // Only the explicitly authorized paths may cross that sparse boundary.
+  const skipped = (await git("ls-files", "-v", "-z", "--", ...input.paths)).split("\0")
+    .filter(entry => /^[Ss] /.test(entry)).map(entry => entry.slice(2));
+  if (skipped.length) await git("update-index", "--no-skip-worktree", "--", ...skipped);
+  await git("add", "--sparse", "--", ...input.paths);
   if (mergeRecord) {
     await writeFile(recordPath, JSON.stringify({ ...mergeRecord, index: digest(await git("ls-files", "--stage", "-z")) }));
     const unresolved = await git("diff", "--name-only", "--diff-filter=U");
