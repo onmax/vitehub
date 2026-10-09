@@ -171,6 +171,31 @@ const astNodeSchema = v.looseObject({ type: v.string() })
 type StorageBinding = { helper?: boolean, init?: unknown }
 type StorageScope = { parent?: StorageScope, functionScope: boolean, bindings: Map<string, StorageBinding> }
 
+function namespaceIdentifier(node: unknown): v.InferOutput<typeof identifierSchema> | undefined {
+  if (v.is(identifierSchema, node)) return node
+  if (v.is(astNodeSchema, node) && node.type === "TSQualifiedName") return namespaceIdentifier(node.left)
+}
+
+// Empty/type-only namespaces are erased, including nested namespace bodies.
+function instantiatesNamespace(node: unknown): boolean {
+  if (!v.is(astNodeSchema, node) || node.declare === true) return false
+  switch (node.type) {
+    case "TSInterfaceDeclaration":
+    case "TSTypeAliasDeclaration":
+      return false
+    case "TSModuleDeclaration":
+      return Boolean(namespaceIdentifier(node.id)) && instantiatesNamespace(node.body)
+    case "TSModuleBlock":
+      return Array.isArray(node.body) && node.body.some(instantiatesNamespace)
+    case "ExportNamedDeclaration":
+      return node.exportKind !== "type" && (node.declaration
+        ? instantiatesNamespace(node.declaration)
+        : Array.isArray(node.specifiers) && node.specifiers.some(specifier => v.is(astNodeSchema, specifier) && specifier.exportKind !== "type"))
+    default:
+      return true
+  }
+}
+
 function storageScopes(root: unknown) {
   const scopes = new WeakMap<object, StorageScope>()
   const rootScope: StorageScope = { functionScope: true, bindings: new Map() }
@@ -198,9 +223,10 @@ function storageScopes(root: unknown) {
 
   function walk(node: unknown, enclosing: StorageScope, parent?: v.InferOutput<typeof astNodeSchema>, ambient = false) {
     if (!v.is(astNodeSchema, node)) return
-    ambient ||= node.declare === true || (node.type === "TSModuleDeclaration" && !v.is(identifierSchema, node.id))
+    ambient ||= node.declare === true || (node.type === "TSModuleDeclaration" && !namespaceIdentifier(node.id))
     if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") bind(node.id, enclosing)
-    if (node.type === "TSModuleDeclaration" && !ambient) bind(node.id, enclosing)
+    // Any runtime declaration in a merge binds the name; erased declarations leave it intact.
+    if (node.type === "TSModuleDeclaration" && !ambient && instantiatesNamespace(node)) bind(namespaceIdentifier(node.id), enclosing)
     const isFunction = ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     const isModule = node.type === "TSModuleDeclaration" || node.type === "TSModuleBlock"
     const createsScope = isFunction || isModule || ["BlockStatement", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "ClassDeclaration", "ClassExpression", "StaticBlock"].includes(node.type)

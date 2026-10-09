@@ -172,6 +172,33 @@ describe("vitehub/destructure-storage-results", () => {
     }, "nuxt")).toEqual([])
   })
 
+  it.each(["kv", "blob"])("preserves auto-imports across erased %s namespaces", async (name) => {
+    for (const body of ["", "export interface X {}", "export type X = string", "interface X {} export { type X }", "export namespace Types { export interface X {} }", "export namespace Types.Deep { export type X = string }"]) {
+      expect(await codes(destructureStorageResults, {
+        "server/api/erased.ts": `namespace ${name} { ${body} }; const result = await ${name}.get("x")`,
+      }, "nuxt")).toEqual(["VHUB0003"])
+    }
+    expect(await codes(destructureStorageResults, {
+      "server/api/merged-types.ts": `namespace ${name} { export interface X {} }; namespace ${name} { export type Y = string }; const result = await ${name}.get("x")`,
+    }, "nuxt")).toEqual(["VHUB0003"])
+  })
+
+  it.each(["kv", "blob"])("retains runtime bindings for nested and merged %s namespaces", async (name) => {
+    for (const body of ["export namespace Values { export const x = 1 }", "export namespace Values.Deep { export const x = 1 }"]) {
+      expect(await codes(destructureStorageResults, {
+        "server/api/nested.ts": `namespace ${name} { ${body} }; const result = await ${name}.get("x")`,
+      }, "nuxt")).toEqual([])
+    }
+    expect(await codes(destructureStorageResults, {
+      "server/api/qualified.ts": `namespace ${name}.Values { export const x = 1 }; const result = await ${name}.get("x")`,
+    }, "nuxt")).toEqual([])
+    for (const bodies of [["export interface X {}", "export const x = 1"], ["export const x = 1", "export interface X {}"]]) {
+      expect(await codes(destructureStorageResults, {
+        "server/api/merged.ts": `${bodies.map(body => `namespace ${name} { ${body} }`).join("; ")}; const result = await ${name}.get("x")`,
+      }, "nuxt")).toEqual([])
+    }
+  })
+
   it.each([
     'declare namespace kv { const x: number }',
     'declare module "kv" { const x: number }',
