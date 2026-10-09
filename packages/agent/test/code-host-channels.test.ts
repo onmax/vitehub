@@ -13,6 +13,7 @@ import { createLibsqlAgentState } from "../src/state/sqlite.ts"
 import { codeHostActivityComments, codeHostDeliveryEffects } from "../src/internal/code-host-channel.ts"
 import { hasRuntimeType, isRuntimeRecord } from "../src/internal/runtime-type.ts"
 import { codeHostProvider } from "../src/internal/code-host.ts"
+import { createAgentRuntimeContext } from "../src/runtime/context.ts"
 
 const fixtures: Array<{ directory: string, state: ReturnType<typeof createLibsqlAgentState> }> = []
 afterEach(async () => {
@@ -227,6 +228,77 @@ describe("Code Host Channels through the webhook route", { timeout: 20_000 }, ()
     expect(inputs).toHaveLength(2)
   })
 
+  it.each(kinds)("keeps rotating %s webhook settings stable through authentication and invocation", async kind => {
+    transport(kind)
+    const settings = {
+      baseUrl: vi.fn().mockResolvedValueOnce(baseUrl[kind]).mockResolvedValue("https://changed.invalid"),
+      token: vi.fn().mockResolvedValueOnce("token").mockResolvedValue("changed-token"),
+      webhookSecret: vi.fn().mockResolvedValueOnce("secret").mockResolvedValue("changed-secret"),
+    }
+    const { send, channel } = await harness(kind, settings)
+    const trigger = channel.triggers?.webhook
+    if (!trigger) throw new Error("Missing webhook trigger.")
+    const invoke = trigger.invoke
+    let invocation: unknown
+    vi.spyOn(trigger, "invoke").mockImplementation(async (context, input) => {
+      invocation = await invoke(context, input)
+      // Inspect authenticated translation before its separate durable execution.
+      return Response.json({ accepted: true })
+    })
+    expect((await send(await request(kind, payload(kind), "rotating-settings"))).status).toBe(200)
+    expect(invocation).toMatchObject({ input: { context: { pullRequest: { host: { kind, instance: new URL(baseUrl[kind]).hostname } } } } })
+    for (const setting of Object.values(settings)) expect(setting).toHaveBeenCalledOnce()
+  })
+
+  it.each(kinds)("retains authenticated %s translation when the webhook secret rotates before durable execution", async kind => {
+    const fixture = transport(kind)
+    const webhookSecret = vi.fn().mockResolvedValueOnce("secret").mockResolvedValue("rotated-secret")
+    const { send, run } = await harness(kind, { webhookSecret })
+    expect((await send(await request(kind, payload(kind), "authenticated-queue"))).status).toBe(200)
+    expect(run).toHaveBeenCalledOnce()
+    expect(webhookSecret).toHaveBeenCalledOnce()
+    expect(fixture.calls.some(call => call.method === "POST" && call.url.startsWith(`${api[kind]}${notes(kind)}`) && call.body?.includes("Reviewed"))).toBe(true)
+  })
+
+  it.each(kinds.flatMap(kind => (["baseUrl", "token"] as const).map(field => ({ kind, field }))))("reserves $kind activity order before a delayed $field callback", async ({ kind, field }) => {
+    const fixture = transport(kind)
+    let stored = fixture.comment
+    let created = false
+    const recorded = fixture.fetch
+    vi.stubGlobal("fetch", async (input: string, init?: RequestInit) => {
+      const url = new URL(input)
+      const method = init?.method || "GET"
+      if (url.pathname === new URL(`${api[kind]}${notes(kind)}`).pathname) {
+        if (method === "GET") return Response.json(created ? [stored] : [])
+        if (method === "POST") { created = true; stored = { ...stored, ...JSON.parse(String(init?.body)) }; return Response.json(stored, { status: 201 }) }
+      }
+      const edit = kind === "gitlab" ? `${notes(kind)}/7` : `${project(kind)}/issues/comments/7`
+      if (url.pathname === new URL(`${api[kind]}${edit}`).pathname && method !== "GET") { stored = { ...stored, ...JSON.parse(String(init?.body)) }; return Response.json(stored) }
+      return recorded(input, init)
+    })
+    let release!: (value: string) => void
+    const firstSetting = new Promise<string>(resolve => { release = resolve })
+    const setting = vi.fn().mockImplementationOnce(() => firstSetting).mockResolvedValue(field === "baseUrl" ? baseUrl[kind] : "rotated-token")
+    const { channel } = await harness(kind, { activity: true, [field]: setting })
+    const update = channel.activity?.update
+    if (!update) throw new Error("Missing activity.")
+    const context = () => ({ ...createAgentRuntimeContext({ runtime: "unknown", waitUntil: vi.fn() }), capabilities: {}, channel, target: { repository: repository[kind], issue: 42 },
+      activity: { agentName: "reviewer", runId: `ordered-${field}`, status: "running" as const, tasks: [], links: [] } })
+    const first = update(context())
+    await vi.waitFor(() => expect(setting).toHaveBeenCalledOnce())
+    const lastContext = context()
+    const last = update({ ...lastContext, activity: { ...lastContext.activity, status: "completed", summary: "Latest completed update" } })
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve))
+      expect(setting).toHaveBeenCalledOnce()
+    } finally {
+      release(field === "baseUrl" ? baseUrl[kind] : "first-token")
+      await Promise.all([first, last])
+    }
+    expect(stored.body).toContain("Latest completed update")
+    expect(setting).toHaveBeenCalledTimes(2)
+  })
+
   it.each(kinds)("creates then edits one owned %s activity comment", async kind => {
     const fetcher = transport(kind)
     let stored = fetcher.comment
@@ -246,7 +318,7 @@ describe("Code Host Channels through the webhook route", { timeout: 20_000 }, ()
     const { channel } = await harness(kind, { activity: true })
     const update = channel.activity?.update
     if (!update) throw new Error("Missing activity.")
-    const context = { capabilities: {}, memo: vi.fn(), runtime: "unknown" as const, waitUntil: vi.fn(), channel, target: { repository: repository[kind], issue: 42 },
+    const context = { ...createAgentRuntimeContext({ runtime: "unknown", waitUntil: vi.fn() }), capabilities: {}, channel, target: { repository: repository[kind], issue: 42 },
       activity: { agentName: "reviewer", runId: "activity-run", status: "running" as const, tasks: [], links: [] } }
     await update(context)
     expect(stored.body).toContain("<!-- vitehub-agent-activity:")

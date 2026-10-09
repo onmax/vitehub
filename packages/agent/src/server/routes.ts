@@ -32,7 +32,7 @@ import {
   resolveChatTriggerHistory,
   uiMessagesToAgentMessages,
 } from "../chat-message-input.ts"
-import { normalizeCapabilities } from "../capability-runtime.ts"
+import { channelDeliveryFinishEffectsContextKey, normalizeCapabilities } from "../capability-runtime.ts"
 import { deliveryArtifactAttachments } from "../delivery-artifacts.ts"
 import { createAgentInvocationContextStore } from "../invocation-context.ts"
 import { withAgentInvocationResponseOwner } from "../internal/agent-invocation-response-owner.ts"
@@ -1109,13 +1109,20 @@ function isJsonSafe(value: unknown, seen = new Set<object>()): boolean {
   if (!value || !isRuntimeObject(value) || seen.has(value)) return false
   if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false
   seen.add(value)
-  const safe = Object.values(value).every((entry) => isJsonSafe(entry, seen))
+  // JSON omits undefined object properties. Optional translated fields must not
+  // discard an authenticated invocation and force the queue to ingest it again.
+  const safe = Object.values(value).every((entry) => (!Array.isArray(value) && entry === undefined) || isJsonSafe(entry, seen))
   seen.delete(value)
   return safe
 }
 
-function persistedWebhookInvocation(invocation: { input: AgentRunInput; run?: unknown }): { input: Record<string, unknown>; run?: unknown } {
+function persistedWebhookInvocation(invocation: { input: AgentRunInput; run?: unknown }, rehydrate = false): { input: Record<string, unknown>; run?: unknown } {
   const input = Object.fromEntries(Object.entries(invocation.input).filter(([key]) => key !== "abortSignal"))
+  if (rehydrate && invocation.input.context) {
+    // Rehydration restores definition-owned finish callbacks. Persist the
+    // authenticated logical input, without executable callbacks or credentials.
+    input.context = Object.fromEntries(Object.entries(invocation.input.context).filter(([key]) => key !== channelDeliveryFinishEffectsContextKey))
+  }
   return {
     input,
     ...(invocation.run ? { run: invocation.run } : {}),
@@ -8219,7 +8226,7 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
               )
             }
             const backendId = await resolveWebhookStateBackendId(webhookState.state)
-            const persistedInvocation = persistedWebhookInvocation({ input: invocation.input, run: invocation.run })
+            const persistedInvocation = persistedWebhookInvocation({ input: invocation.input, run: invocation.run }, Boolean(invocation.webhook.rehydrate))
             const delivery = persistedWebhookRequest(
               deliveryId,
               channelDelivery.delivery.id,

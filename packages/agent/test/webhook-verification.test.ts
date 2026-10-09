@@ -4,14 +4,13 @@ import { describe, expect, it, vi } from "vitest"
 import { defineChatCapability as chat } from "../src/chat-trigger.ts"
 import { defineAgent, runAgentTrigger, verifyAgentWebhookRequest } from "../src/index.ts"
 import type { ForgejoChannelOptions } from "../src/channels.ts"
+import { createAgentRuntimeContext } from "../src/runtime/context.ts"
 
 function runtime(request?: Request) {
   return {
+    ...createAgentRuntimeContext({ runtime: "unknown", waitUntil: vi.fn() }),
     ...(request ? { request } : {}),
     capabilities: {},
-    memo: vi.fn(),
-    runtime: "unknown" as const,
-    waitUntil: vi.fn(),
   }
 }
 

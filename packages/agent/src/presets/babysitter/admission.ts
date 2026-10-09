@@ -157,11 +157,30 @@ export function sumInvocationInputTokens(usage: Map<string, { updatedAt: number;
   return total;
 }
 
+/** Dispatch shares fresh accounting; health may reuse a bounded, timestamped result. */
+export interface CoalescedBabysitterAdmission<T extends object> {
+  (now?: number): Promise<T & { observedAt: number }>;
+  health(): Promise<T & { observedAt: number }>;
+}
+
+export function coalesceBabysitterAdmission<T extends object>(read: (now?: number) => Promise<T>, clock = Date.now): CoalescedBabysitterAdmission<T> {
+  let pending: Promise<T & { observedAt: number }> | undefined;
+  let latest: T & { observedAt: number } | undefined;
+  function check(now?: number) {
+    pending ??= Promise.resolve().then(() => read(now)).then(result => {
+      latest = { ...result, observedAt: clock() };
+      return latest;
+    }).finally(() => { pending = undefined; });
+    return pending;
+  }
+  return Object.assign(check, { health: () => latest && clock() - latest.observedAt <= 120_000 ? Promise.resolve(latest) : check() });
+}
+
 export function createBabysitterAdmission(options: { invocations?: Pick<AgentInvocations, "list" | "get">; limits: BabysitterAdmissionLimits }) {
   const usage = new Map<string, { updatedAt: number; tokens: number }>();
   let readAt: number | undefined;
   let cursor: number | undefined;
-  return async function check(now = Date.now()): Promise<BabysitterAdmissionResult> {
+  return coalesceBabysitterAdmission(async function check(now = Date.now()): Promise<BabysitterAdmissionResult> {
     const windows = babysitterBudgetWindows(now);
     const state: BabysitterAdmissionState = { windows, tmpDir: tmpdir() };
     try { const stats = await statfs(state.tmpDir); state.freeTmpBytes = stats.bavail * stats.bsize; }
@@ -183,5 +202,5 @@ export function createBabysitterAdmission(options: { invocations?: Pick<AgentInv
       state.proxy = { state: code === "ENOENT" ? "unknown" : "unreadable" };
     }
     return { ...babysitterAdmissionDecision(state, options.limits), accounting: "best-effort-retained-journal", state, limits: options.limits };
-  };
+  });
 }

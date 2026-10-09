@@ -7,7 +7,7 @@ import type { CodeHostTarget } from "./internal/code-host-channel.ts"
 import { codeHostChannelFetch, codeHostActivityComments, codeHostDeliveryEffects, codeHostIdentity, codeHostPullRequest, codeHostPullRequestMetadata, codeHostThreadRef, codeHostChannelRequest, codeHostChannelRead, codeHostChannelWrite } from "./internal/code-host-channel.ts"
 import { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
 export { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { CodeHostResponseError, codeHostErrorStatus, codeHostProvider, githubAppCredentials, readGitHubAppPrivateKey } from "./internal/code-host.ts"
 import { AgentHttpError } from "./http-error.ts"
 import { CHAT_FINISH_EXTENSION_CONTEXT_KEY } from "./chat-trigger.ts"
@@ -244,7 +244,7 @@ type GitHubAppContext<TRuntimeConfig extends AgentRuntimeConfig> =
 
 export interface GitHubAppOptions<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> {
   /** Use a host-managed credential resolver instead of minting another installation token. */
-  token?: string | ((context: GitHubAppContext<TRuntimeConfig>, scope: { repository?: string }) => string | undefined | Promise<string | undefined>)
+  token?: string | ((context: GitHubAppContext<TRuntimeConfig>, scope: { repository?: string, signal?: AbortSignal }) => string | undefined | Promise<string | undefined>)
   /** Trusted login of the host's authenticated GitHub identity. */
   identity?: { login: string }
   apiBaseUrl?: string
@@ -656,7 +656,7 @@ export type ForgejoChannelOptions<TRuntimeConfig extends AgentRuntimeConfig = Ag
 
 interface CodeHostChannelServices<TRuntimeConfig extends AgentRuntimeConfig> {
   kind: "gitlab" | "forgejo"
-  provider: (context: AgentCallbackContext<TRuntimeConfig>) => ReturnType<typeof codeHostProvider>
+  provider: (context: AgentCallbackContext<TRuntimeConfig>, fetcher?: typeof fetch) => ReturnType<typeof codeHostProvider>
 }
 
 export interface DiscordAdapterOptions {
@@ -1551,11 +1551,13 @@ async function githubAppInstallationToken<TRuntimeConfig extends AgentRuntimeCon
   context: GitHubAppContext<TRuntimeConfig>,
   installation?: number,
   repository?: string,
+  signal?: AbortSignal,
 ) {
   const options = githubAppOptions(app) || {}
   if (options.token) {
     const token = hasRuntimeType(options.token, "function") ? await options.token(context, {
       repository: repository ?? ("effect" in context ? githubCommandFromEffect(context)?.repository : undefined),
+      signal,
     }) : options.token
     return requiredString(token, 'token')
   }
@@ -1574,7 +1576,7 @@ async function githubAppInstallationToken<TRuntimeConfig extends AgentRuntimeCon
     userAgent: options.userAgent,
   })
   try {
-    return (await credentials.installationToken(installationId)).token
+    return (await credentials.installationToken(installationId, { signal })).token
   }
   catch (error) {
     const status = codeHostErrorStatus(error)
@@ -1589,12 +1591,13 @@ async function githubPullRequestMetadataToken<TRuntimeConfig extends AgentRuntim
   context: GitHubAppContext<TRuntimeConfig>,
   installation?: number,
   repository?: string,
+  signal?: AbortSignal,
 ) {
   const env = await githubEnv(context)
   const token = cleanSecret(env.token)
   if (!app) return token
   try {
-    return await githubAppInstallationToken(app, context, installation, repository)
+    return await githubAppInstallationToken(app, context, installation, repository, signal)
   }
   catch (error) {
     if (token) return token
@@ -1644,6 +1647,22 @@ const githubActivityTaskLimit = 25
 const githubActivityActiveRuns = new Map<string, Set<string>>()
 const githubActivityUpdates = new Map<string, Promise<void>>()
 
+function githubActivityDeadline(parent?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(30_000)
+  return parent ? AbortSignal.any([parent, timeout]) : timeout
+}
+
+async function githubActivityAwait<T>(value: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) { void value.catch(() => {}); signal.throwIfAborted() }
+  let abort!: () => void
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason)
+    signal.addEventListener("abort", abort, { once: true })
+    if (signal.aborted) abort()
+  })
+  try { return await Promise.race([value, cancelled]) }
+  finally { signal.removeEventListener("abort", abort) }
+}
 interface GitHubActivityTarget {
   deliveryId?: string
   installationId?: number
@@ -1674,6 +1693,7 @@ interface GitHubActivityIdentity {
 async function githubAppIdentity<TRuntimeConfig extends AgentRuntimeConfig>(
   app: true | GitHubAppOptions<TRuntimeConfig>,
   context: GitHubAppContext<TRuntimeConfig>,
+  signal?: AbortSignal,
 ): Promise<GitHubActivityIdentity> {
   const options = githubAppOptions(app) || {}
   if (options.identity) return options.identity
@@ -1687,7 +1707,7 @@ async function githubAppIdentity<TRuntimeConfig extends AgentRuntimeConfig>(
     userAgent: options.userAgent,
   })
   try {
-    return { appId: (await credentials.app()).id }
+    return { appId: (await credentials.app(signal)).id }
   }
   catch (error) {
     const status = codeHostErrorStatus(error)
@@ -1702,6 +1722,7 @@ async function githubActivityIdentity<TRuntimeConfig extends AgentRuntimeConfig>
   token: string,
   app: true | GitHubAppOptions<TRuntimeConfig> | undefined,
   context: GitHubAppContext<TRuntimeConfig>,
+  signal?: AbortSignal,
 ): Promise<GitHubActivityIdentity> {
   try {
     return await codeHostIdentity(provider, { kind: "token" })
@@ -1718,7 +1739,7 @@ async function githubActivityIdentity<TRuntimeConfig extends AgentRuntimeConfig>
   ) {
     return { login: "github-actions[bot]" }
   }
-  if (app) return githubAppIdentity(app, context)
+  if (app) return githubAppIdentity(app, context, signal)
   throw agentDiagnostics.AGENT_R0356({ message: "[vitehub] GitHub Agent activity could not resolve the authenticated identity." })
 }
 
@@ -1921,103 +1942,139 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
   mode: "initialize" | "lifecycle" = "lifecycle",
   services?: CodeHostChannelServices<TRuntimeConfig>,
 ): NonNullable<AgentChannelDefinition<TRuntimeConfig>["activity"]> {
-  const trackActiveRuns = mode === "lifecycle"
   const options = githubAppOptions(app) || {}
   const commentIds = new Map<string, number>()
   return {
     async update(context) {
+      const trackActiveRuns = mode === "lifecycle" && context.run !== undefined
       const target = services ? codeHostActivityTarget(context.target) : githubActivityTarget(context.target)
-      const hostProvider = services ? await services.provider(context) : undefined
-      const apiBaseUrl = hostProvider?.baseUrl || options.apiBaseUrl || "https://api.github.com"
-      const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
-      const token = services ? services.kind : await githubPullRequestMetadataToken(app, context, target.installationId, target.repository)
-      if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
-      const updateKey = `${token}\0${commentsTarget}`
+      let deadline = githubActivityDeadline(context.abortSignal)
+      deadline.throwIfAborted()
+      const request = options.fetch || fetch
+      const pendingWrites = new Set<Promise<Response>>()
+      const fetcher: typeof fetch = (input, init) => {
+        deadline.throwIfAborted()
+        const signal = init?.signal ? AbortSignal.any([deadline, init.signal]) : deadline
+        const pending = request(input, { ...init, signal })
+        if (!["GET", "HEAD"].includes((init?.method ?? "GET").toUpperCase())) {
+          pendingWrites.add(pending)
+          void pending.then(() => pendingWrites.delete(pending), () => pendingWrites.delete(pending))
+        }
+        return githubActivityAwait(pending, signal)
+      }
+      const githubApiBaseUrl = options.apiBaseUrl || "https://api.github.com"
+      // Token rotation must not let writes to the same comment run concurrently.
+      // Reserve the target before authentication to preserve lifecycle ordering.
+      // Different channel instances and credential callbacks can authenticate
+      // as the same bot. Serialize the PR target before authentication; owned
+      // comment lookup and run tracking still use the authenticated identity.
+      // Code Host base URLs can be callbacks too. Reserve before resolving them;
+      // matching targets on distinct instances conservatively share this queue.
+      const updateKey = `${services?.kind || "github"}\0${services ? "" : githubApiBaseUrl}\0${target.repository.toLowerCase()}\0${target.issue}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
-        const provider = hostProvider || await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(options.fetch || fetch), userAgent: options.userAgent })
-        const identity = services ? await codeHostIdentity(provider, { kind: "token" }) : await githubActivityIdentity(provider, token, app, context)
-        const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
-        const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
-        const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
-        const knownActiveRun = trackActiveRuns && activeRuns.has(runId)
-        const terminal = ["cancelled", "completed", "failed"].includes(context.activity.status)
-        const knownCommentId = commentIds.get(activityKey)
-        const activityComments = codeHostActivityComments(provider, { host: services?.kind || "github", instance: provider.instance, repository: target.repository, number: target.issue },
-          knownCommentId ? githubActivityCommentLookupLimit : githubActivityRestartLookupLimit)
-        const comments = (await activityComments.list()).map(comment => services ? codeHostActivityComment(comment) : comment.raw)
-        const owned = comments.filter(comment => maybeNumber(isRecord(comment) ? comment.id : undefined)
-          && isOwnedGithubActivityComment(comment, identity))
-        let existing = owned.find(comment => maybeNumber(isRecord(comment) ? comment.id : undefined) === knownCommentId)
-        if (knownCommentId && !existing) {
-          const known = await activityComments.get(knownCommentId)
-          const raw = known && (services ? codeHostActivityComment(known) : known.raw)
-          if (known && isOwnedGithubActivityComment(raw, identity)) existing = raw
-        }
-        existing ||= owned[0]
-        if (knownCommentId && !existing) commentIds.delete(activityKey)
-        if (mode === "initialize" && existing) return
-        const previous = decodeGithubActivityState(isRecord(existing) ? existing.body : undefined)
-        const sameRun = previous.current?.runId === runId ? previous.current : undefined
-        const current: GitHubActivityHistoryEntry = {
-          links: githubActivityLinksState(context.activity.links),
-          runId,
-          status: context.activity.status,
-          startedAt: githubActivityDate(context.activity.startedAt) ?? sameRun?.startedAt
-            ?? (context.activity.status === "running" ? new Date().toISOString() : undefined),
-          updatedAt: githubActivityDate(context.activity.updatedAt) ?? new Date().toISOString(),
-          summary: terminal ? context.activity.summary?.replace(/<!--[^]*?-->/g, "").trim().slice(0, 2_000) : undefined,
-        }
-        const reconcileDuplicates = async () => {
-          for (const duplicate of owned.filter(comment => comment !== existing)) {
-            const duplicateId = isRecord(duplicate) ? maybeNumber(duplicate.id) : undefined
-            if (!duplicateId) continue
-            await activityComments.edit(duplicateId, "This Agent activity was superseded by a newer managed comment.")
+        // Authentication and the serialized publication each get a request budget.
+        deadline = githubActivityDeadline(context.abortSignal)
+        deadline.throwIfAborted()
+        const hostProvider = services ? await githubActivityAwait(services.provider(context, fetcher), deadline) : undefined
+        const apiBaseUrl = hostProvider?.baseUrl || githubApiBaseUrl
+        const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
+        const token = services ? services.kind : await githubActivityAwait(githubPullRequestMetadataToken(app, context, target.installationId, target.repository, deadline), deadline)
+        if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
+        deadline = githubActivityDeadline(context.abortSignal)
+        deadline.throwIfAborted()
+        const publication = async () => {
+          const provider = hostProvider || await codeHostProvider({ host: "github", baseUrl: apiBaseUrl, token, fetch: codeHostChannelFetch(fetcher), userAgent: options.userAgent })
+          const identity = services ? await githubActivityAwait(codeHostIdentity(provider, { kind: "token" }), deadline) : await githubActivityIdentity(provider, token, app, context, deadline)
+          const activityKey = `${githubActivityIdentityKey(identity)}\0${commentsTarget}`
+          const runId = githubActivityRunId(context.activity.agentName || "", context.activity.runId)
+          const activeRuns = githubActivityActiveRuns.get(activityKey) || new Set<string>()
+          const knownActiveRun = trackActiveRuns && activeRuns.has(runId)
+          const terminal = ["cancelled", "completed", "failed"].includes(context.activity.status)
+          const knownCommentId = commentIds.get(activityKey)
+          const activityComments = codeHostActivityComments(provider, { host: services?.kind || "github", instance: provider.instance, repository: target.repository, number: target.issue },
+            knownCommentId ? githubActivityCommentLookupLimit : githubActivityRestartLookupLimit)
+          const comments = (await activityComments.list()).map(comment => services ? codeHostActivityComment(comment) : comment.raw)
+          const owned = comments.filter(comment => maybeNumber(isRecord(comment) ? comment.id : undefined)
+            && isOwnedGithubActivityComment(comment, identity))
+          let existing = owned.find(comment => maybeNumber(isRecord(comment) ? comment.id : undefined) === knownCommentId)
+          if (knownCommentId && !existing) {
+            const known = await activityComments.get(knownCommentId)
+            const raw = known && (services ? codeHostActivityComment(known) : known.raw)
+            if (known && isOwnedGithubActivityComment(raw, identity)) existing = raw
           }
-        }
-        const staleRun = previous.current?.runId !== current.runId
-          && (knownActiveRun
-            || previous.previousRunIds.includes(current.runId)
-            || owned.filter(comment => comment !== existing).some(comment => {
-              const state = decodeGithubActivityState(isRecord(comment) ? comment.body : undefined)
-              return state.current?.runId === current.runId || state.previousRunIds.includes(current.runId)
-            }))
-        if (staleRun) {
+          existing ||= owned[0]
+          if (knownCommentId && !existing) commentIds.delete(activityKey)
+          if (mode === "initialize" && existing) return
+          const previous = decodeGithubActivityState(isRecord(existing) ? existing.body : undefined)
+          const sameRun = previous.current?.runId === runId ? previous.current : undefined
+          const current: GitHubActivityHistoryEntry = {
+            links: githubActivityLinksState(context.activity.links),
+            runId,
+            status: context.activity.status,
+            startedAt: githubActivityDate(context.activity.startedAt) ?? sameRun?.startedAt
+              ?? (context.activity.status === "running" ? new Date().toISOString() : undefined),
+            updatedAt: githubActivityDate(context.activity.updatedAt) ?? new Date().toISOString(),
+            summary: terminal || context.activity.status === "waiting" ? context.activity.summary?.replace(/<!--[^]*?-->/g, "").trim().slice(0, 2_000) : undefined,
+          }
+          const reconcileDuplicates = async () => {
+            for (const duplicate of owned.filter(comment => comment !== existing)) {
+              const duplicateId = isRecord(duplicate) ? maybeNumber(duplicate.id) : undefined
+              if (!duplicateId) continue
+              await activityComments.edit(duplicateId, "This Agent activity was superseded by a newer managed comment.")
+            }
+          }
+          const staleRun = previous.current?.runId !== current.runId
+            && (knownActiveRun
+              || previous.previousRunIds.includes(current.runId)
+              || owned.filter(comment => comment !== existing).some(comment => {
+                const state = decodeGithubActivityState(isRecord(comment) ? comment.body : undefined)
+                return state.current?.runId === current.runId || state.previousRunIds.includes(current.runId)
+              }))
+          if (staleRun) {
+            await reconcileDuplicates()
+            if (terminal) activeRuns.delete(runId)
+            if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
+            return
+          }
+          if (previous.current?.runId === current.runId
+            && previous.current.status && ["cancelled", "completed", "failed"].includes(previous.current.status)
+            && !terminal) {
+            activeRuns.delete(runId)
+            if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
+            return
+          }
+          const state: GitHubActivityCommentState = previous.current?.runId === current.runId
+            ? { current, history: previous.history, previousRunIds: previous.previousRunIds }
+            : {
+                current,
+                history: [previous.current, ...previous.history]
+                  .filter((entry): entry is GitHubActivityHistoryEntry => entry !== undefined && entry.runId !== current.runId && (entry.links.length > 0 || entry.status !== "queued"))
+                  .slice(0, githubActivityHistoryLimit),
+                previousRunIds: [previous.current?.runId, ...previous.previousRunIds]
+                  .filter((runId): runId is string => runId !== undefined && runId !== current.runId)
+                  .slice(0, githubActivityPreviousRunLimit),
+              }
+          const body = renderGithubActivity(context.activity, state)
+          const commentId = isRecord(existing) ? maybeNumber(existing.id) : undefined
+          const written = (commentId ? await activityComments.edit(commentId, body) : await activityComments.create(body)).raw
+          const writtenCommentId = commentId || maybeNumber(isRecord(written) ? written.id : undefined)
+          if (writtenCommentId) commentIds.set(activityKey, writtenCommentId)
+          if (!terminal && trackActiveRuns && (current.links.length > 0 || current.status !== "queued")) {
+            activeRuns.add(runId)
+            githubActivityActiveRuns.set(activityKey, activeRuns)
+          }
           await reconcileDuplicates()
           if (terminal) activeRuns.delete(runId)
           if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
-          return
         }
-        if (previous.current?.runId === current.runId
-          && previous.current.status && ["cancelled", "completed", "failed"].includes(previous.current.status)
-          && !terminal) {
-          activeRuns.delete(runId)
-          if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
-          return
+        try { await githubActivityAwait(publication(), deadline) }
+        finally {
+          // A deadline stops reads and requests cancellation, but cannot revoke
+          // an accepted write. Keep target ordering and durable delivery custody
+          // until a transport that ignores cancellation actually settles.
+          await Promise.allSettled([...pendingWrites])
         }
-        const state: GitHubActivityCommentState = previous.current?.runId === current.runId
-          ? { current, history: previous.history, previousRunIds: previous.previousRunIds }
-          : {
-              current,
-              history: [previous.current, ...previous.history]
-                .filter((entry): entry is GitHubActivityHistoryEntry => entry !== undefined && entry.runId !== current.runId && (entry.links.length > 0 || entry.status !== "queued"))
-                .slice(0, githubActivityHistoryLimit),
-              previousRunIds: [previous.current?.runId, ...previous.previousRunIds]
-                .filter((runId): runId is string => runId !== undefined && runId !== current.runId)
-                .slice(0, githubActivityPreviousRunLimit),
-            }
-        const body = renderGithubActivity(context.activity, state)
-        const commentId = isRecord(existing) ? maybeNumber(existing.id) : undefined
-        const written = (commentId ? await activityComments.edit(commentId, body) : await activityComments.create(body)).raw
-        const writtenCommentId = commentId || maybeNumber(isRecord(written) ? written.id : undefined)
-        if (writtenCommentId) commentIds.set(activityKey, writtenCommentId)
-        if (!terminal && trackActiveRuns && (current.links.length > 0 || current.status !== "queued")) {
-          activeRuns.add(runId)
-          githubActivityActiveRuns.set(activityKey, activeRuns)
-        }
-        await reconcileDuplicates()
-        if (terminal) activeRuns.delete(runId)
-        if (!activeRuns.size) githubActivityActiveRuns.delete(activityKey)
       })
       githubActivityUpdates.set(updateKey, update)
       try {
@@ -2818,6 +2875,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
           }
           const invocation: AgentTriggerRunInvokeResult = {
             ...accepted,
+            delivery: { finishEffects: githubPullRequestCommentFinishEffects(options) },
             input: {
               ...accepted.input,
               ...pullRequestCommandInput(acceptedCommand, refreshed),
@@ -3128,11 +3186,11 @@ export function github<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeC
   const identity = isAgentGitHub(appInput) ? appInput : undefined
   const appOptions = isAgentGitHub(appInput)
     ? {
-        token: async (_context: unknown, scope: { repository?: string }) => (await appInput.access(scope.repository ? { repository: scope.repository } : {})).token,
+        token: async (_context: unknown, scope: { repository?: string, signal?: AbortSignal }) => (await appInput.access(scope)).token,
         ...(appInput.identity?.() ? { identity: { login: appInput.identity()! } } : {}),
       }
     : appInput
-  const activityDefinition = activity ? githubAgentActivity(appOptions) : undefined
+  const activityDefinition = activity ? githubAgentActivity(appOptions, "lifecycle") : undefined
   const openedActivityDefinition = activity ? githubAgentActivity(appOptions, "initialize") : undefined
   const app = githubAppOptions(appOptions)
   const pullRequestOptions = pullRequest === true ? {} : pullRequest || {}
@@ -3195,8 +3253,9 @@ function codeHostChannelSetting<TRuntimeConfig extends AgentRuntimeConfig>(
   kind: "gitlab" | "forgejo",
   options: Pick<CodeHostChannelOptions<TRuntimeConfig>, "baseUrl" | "token" | "webhookSecret">,
 ) {
+  const settingsKey = `vitehub:code-host:${kind}:${randomUUID()}`
   return async (field: "baseUrl" | "token" | "webhookSecret", context: AgentCallbackContext<TRuntimeConfig>) =>
-    cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context))
+    await context.memo(`${settingsKey}:${field}`, async () => cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context)))
 }
 
 function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem, TKind extends "gitlab" | "forgejo">(
@@ -3207,7 +3266,7 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
   const setting = codeHostChannelSetting(kind, options)
   const services: CodeHostChannelServices<TRuntimeConfig> = {
     kind,
-    provider: async context => await codeHostProvider({ host: kind, baseUrl: await setting("baseUrl", context), token: await setting("token", context), fetch: codeHostChannelFetch(globalThis.fetch) }),
+    provider: async (context, fetcher) => await codeHostProvider({ host: kind, baseUrl: await setting("baseUrl", context), token: await setting("token", context), fetch: codeHostChannelFetch(fetcher || globalThis.fetch) }),
   }
   const secret = async (context: AgentCallbackContext<TRuntimeConfig>) => {
     const value = await setting("webhookSecret", context)
@@ -3287,10 +3346,10 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
     webhooks: codeHostWebhookRegistrations(channelOptions.webhooks, {
       secretToken: secret,
       signature: {
-        async verify({ context, rawBody, request }) {
+        async verify({ context, rawBody, request, secret: verifiedSecret }) {
           if (!context) throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host webhook verification requires a runtime context." })
           const provider = await services.provider(context)
-          await codeHostIngest(provider, { headers: request.headers, body: rawBody, secret: await secret(context) })
+          await codeHostIngest(provider, { headers: request.headers, body: rawBody, secret: verifiedSecret })
           return true
         },
       },

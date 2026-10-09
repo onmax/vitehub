@@ -1,5 +1,6 @@
 import type { EventKind, ForgeOptionsBase, ForgeProvider, WebhookInput, WebhookUpdate } from "forges"
 import { fake } from "forges/fake"
+import { createRuntimeContext } from "@vite-hub/runtime"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { forgejo, gitlab } from "../src/channels.ts"
 import type { ForgejoChannelOptions } from "../src/channels.ts"
@@ -81,8 +82,8 @@ const token = "private-access-token"
 const secret = "private-hook-secret"
 const url = "https://app.example.com/api/_vitehub/agents/reviewer/webhooks/code"
 const fetcher = vi.fn<typeof fetch>(async () => { throw new Error("Unexpected network request") })
-// SAFETY: Sync resolution only reads the option callbacks and Channel Env in this fixture.
-const context = {} as AgentCallbackContext
+// SAFETY: Sync resolution needs only runtime settings and request-scoped memoization in this fixture.
+const context = createRuntimeContext({ capabilities: {}, runtime: "unknown", runtimeConfig: {} }) as AgentCallbackContext
 const events: EventKind[] = ["comment", "review", "review_comment", "state_change"]
 // Forgejo options are the subset that both Channels accept.
 const options: ForgejoChannelOptions = {

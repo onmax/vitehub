@@ -874,11 +874,56 @@ PRs by accident.
 The host reads the GitHub App from `env.server.github` or `GITHUB_APP_ID`,
 `GITHUB_APP_PRIVATE_KEY` (or `GITHUB_APP_PRIVATE_KEY_PATH`), and
 `GITHUB_WEBHOOK_SECRET`. It resolves the App installation of each repository and
-commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins one installation.
+commits as the App's bot. `GITHUB_APP_INSTALLATION_ID` pins the installation for
+`GITHUB_APP_OWNER`. `GITHUB_APP_INSTALLATIONS` accepts a JSON object mapping owner
+names to installation IDs. Other owners resolve their own installation. The host
+ignores an environment installation ID without an owner.
 A delivery without a configured webhook secret is rejected. Only the commit
 author and committer identity pass to the worker; credentials do not. On its
 first start, the host imports `.vitehub/pull-request-inbox.sqlite` from an
 earlier hand-wired Babysitter once.
+
+Pass results and their GitHub status deliveries commit in one inbox transaction.
+The host publishes the saved result through its verified GitHub identity, retries
+failed delivery after restart, and compares delivery versions before clearing an
+entry. Delivery claims are atomic across hosts and expire after five minutes if
+a host stops. Active writers renew their leases until publication settles, even
+when the twenty-second deadline requests cancellation. Up to five publications
+run outside queue reconciliation and remain tracked during process drain.
+Deferred repair heads yield the bounded batch to other PRs. Saved results use
+separate activity run IDs so completed invocations can publish their wait reason.
+Older acknowledgements are backfilled with the corrected activity identity.
+New same-head feedback discards obsolete saved results. Confirmed repair-head and
+closure transitions retain their result. If a writer settles after another host
+replaces its expired lease, the latest settled result is requeued with a fresh
+activity identity. A late saved-status write during an active worker queues a
+running projection bound to that worker's claim. Its correction can publish
+before the pass finishes, while an obsolete claim cannot authorize it.
+GitHub comment writes cannot be fenced: a lease cannot
+revoke an HTTP write already accepted by GitHub. A crashed writer's marker
+expires fifteen minutes after its last delivery lease. Corrective replay stops
+at that deadline. If an expired writer later settles in a live process, the host
+queues the latest status again. An unobserved remote write after the deadline
+can still overwrite the comment. Channels serialize activity publication by PR target before resolving credentials.
+Separate token callbacks and token rotation cannot split that queue. Credential
+resolution and read stages have thirty-second bounds. Caller cancellation can
+shorten them, and a stalled credential or lookup callback releases the local queue
+even when it ignores cancellation. An already-started write requests cancellation
+at the deadline but retains target ordering and its durable delivery lease until
+the actual transport settles. A custom transport that never settles after
+cancellation can hold that target queue. Waiting comments
+include the blocker reason. A confirmed repair result waits for its head webhook
+if that webhook arrives after the pass finishes.
+
+Known worker setup failures receive one recovery attempt per Agent `version` and
+PR head. Bump an explicit version with each deployed Agent release. An Agent without
+a version uses the installed package build identity, which changes with package
+source and dependency updates even when preview builds reuse a manifest version.
+Hosts that run package sources compute the same fingerprint at startup. The wake and release marker
+commit together, so restarting the same release cannot repeat the wake. Timed
+retries, check dependencies, and maintainer credential blockers keep their existing
+wake conditions. Health can reuse admission accounting for at most two minutes
+and reports its observation time; dispatch shares a fresh accounting read.
 
 Each pass uses a disposable provider workspace with unattended edit permission.
 Native permission escalation is denied without prompting; the provider does not run
@@ -895,6 +940,8 @@ they arrive before the source-push and synchronize webhooks. This association do
 not count as a successful push and expires with the claim. A wait after several
 repair pushes retains every verified push receipt, including when host admission
 closes during a provider retry.
+When a candidate becomes the PR head, earlier unpublished candidates stop accepting
+CI evidence. Later pending candidates and separately verified push receipts remain valid.
 
 A pass can resolve several addressed review threads without cancelling itself
 when its own resolution webhooks arrive. New comments and external thread reopens

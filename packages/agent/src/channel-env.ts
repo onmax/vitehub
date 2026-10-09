@@ -12,6 +12,8 @@ export const builtInCodeHostEnv = {
   github: {
     appId: { names: ["GITHUB_APP_ID"] },
     appInstallationId: { names: ["GITHUB_APP_INSTALLATION_ID"] },
+    appOwner: { names: ["GITHUB_APP_OWNER"] },
+    appInstallations: { names: ["GITHUB_APP_INSTALLATIONS"] },
     appPrivateKey: { names: ["GITHUB_APP_PRIVATE_KEY"], secret: true },
     appPrivateKeyPath: { names: ["GITHUB_APP_PRIVATE_KEY_PATH"] },
     token: { names: ["VITEHUB_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"], secret: true },
