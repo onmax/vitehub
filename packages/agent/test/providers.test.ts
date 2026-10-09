@@ -9643,7 +9643,8 @@ describe("server helpers", () => {
         streamController.enqueue(new TextEncoder().encode("handled"))
         streamController.close()
       }
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 5_000 })
+      // Exhaustion includes two exponential retry delays plus queue and SQLite work.
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 15_000 })
       if (kind === "recovery") {
         await expect(complete.mock.results[0]?.value).rejects.toThrow("completion outage")
         expect(failed).toHaveBeenCalledOnce()
@@ -9681,7 +9682,7 @@ describe("server helpers", () => {
       await rm(stateDir, { force: true, recursive: true })
       consoleError.mockRestore()
     }
-  }, 10_000)
+  }, 20_000)
 
   it("recovers handled webhook rehydration failure without adding Invocation evidence", async () => {
     const { github } = await import("../src/channels.ts")
