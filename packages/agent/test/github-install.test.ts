@@ -319,10 +319,13 @@ mkdir -p node_modules
 `, { mode: 0o755 });
   const abort = new AbortController();
   const running = installGitHubPullRequestWorkspace(first);
+  await vi.waitFor(async () => expect(await readFile(sequence, "utf8")).toContain(first));
+  const queued = vi.spyOn(abort.signal, "addEventListener");
   const cancelled = installGitHubPullRequestWorkspace(second, abort.signal);
-  const last = installGitHubPullRequestWorkspace(third);
+  await vi.waitFor(() => expect(queued).toHaveBeenCalledWith("abort", expect.any(Function), { once: true }));
   abort.abort(new DOMException("Cancelled queued checkout", "AbortError"));
   await expect(cancelled).rejects.toThrow("Cancelled queued checkout");
+  const last = installGitHubPullRequestWorkspace(third);
   await expect(running).resolves.toBeUndefined();
   await expect(last).resolves.toBeUndefined();
   expect((await readFile(sequence, "utf8")).trim().split("\n")).toEqual([first, third].map(root => join(root, ".git", "vitehub-install-home")));
