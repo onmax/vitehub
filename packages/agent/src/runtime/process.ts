@@ -189,18 +189,18 @@ async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessRes
   }
   const groups = await Promise.all(roots.map(async ({ path: root, rootCandidate }) => {
     const [current, high, max, events, cpuPressure, memoryPressure] = await Promise.all([
-      readFile(`${root}/memory.current`, { encoding: "utf8", signal }),
-      readCgroupMemoryLimit(`${root}/memory.high`, signal, rootCandidate),
-      readCgroupMemoryLimit(`${root}/memory.max`, signal, rootCandidate),
-      readFile(`${root}/memory.events`, { encoding: "utf8", signal }),
+      readCgroupMemoryFile(`${root}/memory.current`, signal, rootCandidate),
+      readCgroupMemoryFile(`${root}/memory.high`, signal, rootCandidate),
+      readCgroupMemoryFile(`${root}/memory.max`, signal, rootCandidate),
+      readCgroupMemoryFile(`${root}/memory.events`, signal, rootCandidate),
       readOptionalCgroupFile(`${root}/cpu.pressure`, signal),
       readOptionalCgroupFile(`${root}/memory.pressure`, signal),
     ])
     return {
       cpuPressure: parsePressure(cpuPressure ?? ""),
-      memoryCurrent: Number(current.trim()),
+      memoryCurrent: current === undefined ? 0 : Number(current.trim()),
       memoryHigh: high === undefined ? Infinity : parseLimit(high),
-      memoryHighEvents: parseEvent(events, "high"),
+      memoryHighEvents: parseEvent(events ?? "", "high"),
       memoryMax: max === undefined ? Infinity : parseLimit(max),
       memoryPressure: parsePressure(memoryPressure ?? ""),
     }
@@ -217,9 +217,9 @@ async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessRes
   }
 }
 
-// Only the actual hierarchy root may omit memory limit files. A cgroup namespace
+// Only the actual hierarchy root may omit memory controller files. A cgroup namespace
 // can also expose a delegated cgroup as `/`; kernfs inode 1 identifies the real root.
-async function readCgroupMemoryLimit(path: string, signal: AbortSignal, rootCandidate: boolean): Promise<string | undefined> {
+async function readCgroupMemoryFile(path: string, signal: AbortSignal, rootCandidate: boolean): Promise<string | undefined> {
   try { return await readFile(path, { encoding: "utf8", signal }) }
   catch (error) {
     if (rootCandidate && !signal.aborted && isRuntimeRecord(error) && error.code === "ENOENT") {

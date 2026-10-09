@@ -140,12 +140,12 @@ describe("process Agent capacity", () => {
     await expect(sample(context)).resolves.toMatchObject({ concurrency: 1 });
   });
 
-  it("keeps service bounds when the hierarchy root has no memory limit files", async () => {
+  it("keeps service bounds when the real hierarchy root has no memory controller files", async () => {
     delegatedHierarchy();
     const original = vi.mocked(readFile).getMockImplementation();
     if (!original) throw new Error("Expected resource reader");
     vi.mocked(readFile).mockImplementation(async (path, options) => {
-      if (["/sys/fs/cgroup/memory.high", "/sys/fs/cgroup/memory.max"].includes(String(path))) throw Object.assign(new Error("absent root limit"), { code: "ENOENT" });
+      if (["memory.current", "memory.events", "memory.high", "memory.max"].some(file => String(path) === `/sys/fs/cgroup/${file}`)) throw Object.assign(new Error("absent root metric"), { code: "ENOENT" });
       return original(path, options);
     });
     await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 1 });
@@ -160,8 +160,6 @@ describe("process Agent capacity", () => {
     "service/memory.events",
     "service/memory.high",
     "service/memory.max",
-    "memory.current",
-    "memory.events",
   ])("reports missing required cgroup file %s instead of admitting workers", async file => {
     delegatedHierarchy();
     const original = vi.mocked(readFile).getMockImplementation();
@@ -185,7 +183,7 @@ describe("process Agent capacity", () => {
     await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("missing namespaced limit");
   });
 
-  it.each(["memory.high", "memory.max"])("requires %s at a remounted cgroup namespace root", async file => {
+  it.each(["memory.current", "memory.events", "memory.high", "memory.max"])("requires %s at a remounted cgroup namespace root", async file => {
     vi.mocked(stat).mockResolvedValue({ ino: 1234 } as Awaited<ReturnType<typeof stat>>);
     const original = vi.mocked(readFile).getMockImplementation();
     if (!original) throw new Error("Expected resource reader");
