@@ -59,6 +59,7 @@ interface DiscoveredCollection {
   exportName: string
   file: string
   name: string
+  route: boolean
 }
 
 interface NitroGeneratedConfig {
@@ -256,7 +257,8 @@ async function discoverCollections(options: SourceGenerationOptions): Promise<Di
       if (!findExportNames(await readFile(file, "utf8")).includes(exportName)) {
         throw sourceErrorDiagnostics.SOURCE_B0004({ message: `[vitehub] Collection file ${JSON.stringify(relative(options.projectRoot, file))} must export a Collection named ${JSON.stringify(exportName)} to match its filename.` })
       }
-      return { exportName, file, name }
+      const source = await readFile(file, "utf8")
+      return { exportName, file, name, route: !/\broute\s*:\s*false\b/.test(source) }
     }))
   }))).flat().sort((left, right) => left.name.localeCompare(right.name))
 
@@ -319,10 +321,11 @@ async function writeCollectionArtifacts(
   ].join("\n"))
   await writeFileIfChanged(packageOutput, '/// <reference path="./collections.d.ts" />\n')
 
-  const expectedRoutes = new Set(collections.map(({ name }) => resolve(routesDirectory, `${name}.mjs`)))
+  const routedCollections = collections.filter(collection => collection.route)
+  const expectedRoutes = new Set(routedCollections.map(({ name }) => resolve(routesDirectory, `${name}.mjs`)))
   const existingRoutes = await collectCollectionFiles(routesDirectory)
   await Promise.all(existingRoutes.filter(file => !expectedRoutes.has(file)).map(file => rm(file, { force: true })))
-  return await Promise.all(collections.map(async ({ exportName, file, name }) => {
+  return await Promise.all(routedCollections.map(async ({ exportName, file, name }) => {
     const handler = resolve(routesDirectory, `${name}.mjs`)
     await writeFileIfChanged(handler, [
       `import { defineCollectionHandler } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/source"}/server`)}`,
