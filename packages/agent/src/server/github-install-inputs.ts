@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { glob, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { glob, lstat, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
 import { parseSyml } from "@yarnpkg/parsers";
@@ -63,7 +63,7 @@ function validateNpmConfig(source: string): void {
 export class GitHubDependencyConflictError extends Error {}
 
 /** Validate decoded manifests and lockfiles before a package manager can read host paths. */
-export async function validateGitHubInstallInputs(target: string): Promise<string> {
+export async function validateGitHubInstallInputs(target: string, prepareLinkedBins?: (paths: readonly string[]) => Promise<void>): Promise<string> {
   const hash = createHash("sha256");
   const root = await realpath(target);
   const inside = (path: string) => { const part = relative(root, path); return part !== ".." && !part.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(part); };
@@ -73,6 +73,8 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     || await stat(join(root, "npm-shrinkwrap.json")).then(info => info.isFile(), () => false));
   const dependencyFiles = new Set<string>();
   const dependencyDirectories = new Set<string>();
+  const linkedDirectories = new Set<string>();
+  const linkedBinFiles = new Set<string>();
   async function checkPath(value: string, base: string, workspace = false) {
     // Workspace exclusions still contribute crawler roots. File dependencies
     // use literal paths and must keep their leading exclamation marks.
@@ -95,8 +97,9 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     let current = path;
     for (;;) {
       try {
-        if (!inside(await realpath(current))) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
-        break;
+        const canonical = await realpath(current);
+        if (!inside(canonical)) throw new Error("Host-local dependency symlinks must stay inside the checkout.");
+        return canonical;
       } catch (error) {
         if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
         const parent = dirname(current);
@@ -105,14 +108,17 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       }
     }
   }
-  async function selectLocalPackage(value: string, base: string) {
+  async function selectLocalPackage(value: string, base: string, copyContents = true) {
     await checkPath(value, base);
     const path = resolve(base, decodeURIComponent(value));
     const info = await stat(path).catch(() => undefined);
     if (info?.isDirectory()) {
       const canonical = await realpath(path);
       packageRoots.add(canonical);
-      dependencyDirectories.add(canonical);
+      // Link and portal dependencies read live source files. Installation
+      // fingerprints their manifests and command targets, not unrelated output.
+      if (copyContents) dependencyDirectories.add(canonical);
+      else linkedDirectories.add(canonical);
     }
     else if (info?.isFile()) dependencyFiles.add(path);
   }
@@ -153,9 +159,10 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       if ((dependency || sourceFields.has(field)) && await inspectYarnPatch(value, base)) return;
       if (dependency || sourceFields.has(field)) checkDownloadSource(value);
       if (/^git(?:\+file)?:/i.test(value) && !/^git:\/\//i.test(value)) throw new Error("Host-local Git dependencies are not allowed.");
-      const local = value.match(/(?:^|@)(?:file|link|portal):(.+)/i);
-      if (local) await selectLocalPackage(local[1]!, base);
-      else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\]|~(?:$|[^/\\]*[/\\])|[a-z]:[/\\])/i.test(value)) await selectLocalPackage(value, base);
+      const local = value.match(/(?:^|@)(file|link|portal):(.+)/i);
+      if (local) await selectLocalPackage(local[2]!, base, local[1]!.toLowerCase() === "file");
+      else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\]|~(?:[^/\\]*[/\\]|$)|[a-z]:[/\\])/i.test(value)) await selectLocalPackage(value, base);
+
       else if (field === "directory") await selectLocalPackage(value, base);
       return;
     }
@@ -166,7 +173,7 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
       if (!hasRuntimeType(value.resolved, "string") || /^[a-z][a-z\d+.-]*:/i.test(decodeURIComponent(value.resolved))) {
         throw new Error("npm workspace links must reference checkout-relative paths.");
       }
-      await selectLocalPackage(value.resolved, root);
+      await selectLocalPackage(value.resolved, root, false);
     }
     for (const [key, entry] of Object.entries(value)) {
       if (npmLink && key === "resolved") continue;
@@ -247,6 +254,26 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
   }
   for (const directory of packageRoots) await visit(directory);
+  for (const directory of linkedDirectories) {
+    const source = await readFile(join(directory, "package.json"), "utf8").catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    });
+    if (source === undefined) continue;
+    const manifest: unknown = JSON.parse(source);
+    if (!isRuntimeRecord(manifest) || manifest.bin === undefined) continue;
+    const targets = hasRuntimeType(manifest.bin, "string") ? [manifest.bin]
+      : isRuntimeRecord(manifest.bin) ? Object.values(manifest.bin) : undefined;
+    if (!targets) throw new Error("Linked dependency bin targets must be file paths.");
+    for (const target of targets) {
+      if (!hasRuntimeType(target, "string") || !target) throw new Error("Linked dependency bin targets must be file paths.");
+      const canonical = await checkPath(encodeURIComponent(target), directory);
+      const path = resolve(directory, target);
+      if ([path, canonical].some(candidate => relative(root, candidate).split(/[\\/]/).includes(".git"))) throw new Error("Linked dependency bin targets must not read Git metadata.");
+      linkedBinFiles.add(path);
+    }
+  }
+  await prepareLinkedBins?.([...linkedBinFiles].map(path => relative(root, path)));
   const fingerprintedDirectories = new Set<string>();
   async function collectDependencyFiles(directory: string): Promise<void> {
     if (fingerprintedDirectories.has(directory)) return;
@@ -261,9 +288,16 @@ export async function validateGitHubInstallInputs(target: string): Promise<strin
     }
   }
   for (const directory of dependencyDirectories) await collectDependencyFiles(directory);
-  for (const path of [...dependencyFiles].sort()) {
+  for (const path of [...new Set([...dependencyFiles, ...linkedBinFiles])].sort()) {
     hash.update(relative(root, path)).update("\0");
-    hash.update((await stat(path)).mode & 0o111 ? "executable\0" : "regular\0");
+    const info = linkedBinFiles.has(path) ? await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== "ENOENT") throw error;
+      return undefined;
+    }) : await stat(path);
+    // Package managers skip missing commands; their later appearance changes shims.
+    if (!info) { hash.update("missing-bin\0"); continue; }
+    if (linkedBinFiles.has(path) && !info.isFile()) throw new Error("Linked dependency bin targets must be regular files.");
+    hash.update(info.mode & 0o111 ? "executable\0" : "regular\0");
     for await (const chunk of createReadStream(path)) hash.update(chunk);
     hash.update("\0");
   }

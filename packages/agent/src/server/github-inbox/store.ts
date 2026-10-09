@@ -19,6 +19,11 @@ export type Snapshot = {
   lease: string | null; leaseUntil: number; attempts: number
   progressBudget?: ProgressBudget
   recoveryHead?: string
+  sourcePushHead?: string
+  sourcePushHeads?: string[]
+  sourcePushOverflow?: boolean
+  prospectivePush?: { token: string; heads: string[] }
+  threadReopens?: Record<string, number>
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
@@ -61,6 +66,11 @@ function parseSnapshot(value: unknown): Snapshot {
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
     throw new TypeError('Invalid inbox snapshot')
   }
+  if (input.prospectivePush !== undefined) v.parse(v.object({ token: v.string(), heads: v.array(v.pipe(v.string(), v.regex(/^[a-f\d]{40}$/i))) }), input.prospectivePush)
+  if (input.threadReopens !== undefined) v.parse(v.record(v.string(), v.pipe(v.number(), v.integer(), v.minValue(0))), input.threadReopens)
+  if (input.sourcePushHeads !== undefined) v.parse(v.array(v.string()), input.sourcePushHeads)
+  if (input.sourcePushOverflow !== undefined) v.parse(v.boolean(), input.sourcePushOverflow)
+  if (input.sourcePushHead !== undefined) v.parse(v.string(), input.sourcePushHead)
   if (input.recoveryHead !== undefined) v.parse(v.string(), input.recoveryHead)
   if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
   if (input.wait !== undefined) parseWait(input.wait)
@@ -238,6 +248,7 @@ export class PullRequestInbox {
     s.feedbackRefresh = true
   }
   private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
+    if (!s.lease) delete s.prospectivePush
     this.compactTerminal(s)
     const head = s.pr?.head?.sha
     await tx.execute(`INSERT OR REPLACE INTO ${this.tables.pullRequests} (scope, repository, number, value, summary, status, generation, handled,
@@ -416,6 +427,12 @@ export class PullRequestInbox {
       return false
     }
     const newHead = previous?.head?.sha !== pr.head?.sha
+    if (newHead && s.prospectivePush) {
+      const position = s.prospectivePush.heads.indexOf(pr.head?.sha ?? '')
+      if (position < 0) delete s.prospectivePush
+      else s.prospectivePush.heads = s.prospectivePush.heads.slice(position)
+    }
+    if (pr.state === 'closed') delete s.prospectivePush
     // A wait on a pushed head survives that head's synchronize event.
     if (newHead && pr.head?.sha !== s.wait?.headSha || pr.state === 'closed') delete s.wait
     s.pr = { ...previous, ...pr }
@@ -497,6 +514,15 @@ export class PullRequestInbox {
       const matches = await tx.execute(`SELECT number FROM ${t.pullRequests} WHERE scope=? AND repository=? AND state='open'
         AND ((? IS NOT NULL AND head_sha=?) OR (? IS NOT NULL AND (base_ref=? OR head_ref=?)))`, [this.scope, repository, sha ?? null, sha ?? null, pushedRef, pushedRef, pushedRef])
       for (const row of matches) numbers.add(Number(row.number))
+      if (sha && (check || event === 'status')) {
+        // Source-push and check deliveries can precede synchronize. Retain CI
+        // for an active publication or its durable pushed-head wait.
+        const pending = await tx.execute(`SELECT number, value FROM ${t.pullRequests} WHERE scope=? AND repository=? AND state='open' AND (lease IS NOT NULL OR waiting=1)`, [this.scope, repository])
+        for (const row of pending) {
+          const snapshot = parseSnapshot(JSON.parse(stringValue(row.value)))
+          if (snapshot.wait?.headSha === sha || snapshot.lease && snapshot.leaseUntil > this.clock() && (snapshot.sourcePushHeads?.includes(sha) || snapshot.prospectivePush?.token === snapshot.lease && snapshot.prospectivePush.heads.includes(sha))) numbers.add(Number(row.number))
+        }
+      }
       for (const number of numbers) {
         const existing = await this.getIn(tx, repository, number)
         const s = existing ?? this.empty(repository, number)
@@ -504,7 +530,8 @@ export class PullRequestInbox {
         // invalidate active work when the author, labels, head, or state changes.
         if (!existing && !matchesGitHubPullRequestFilter({ ...pullRequestFilterContext(repository, payload.pull_request ?? null), actor: payload.sender?.login ?? payload.comment?.user?.login, action: payload.action }, { actor: this.filter?.actor, action: this.filter?.action }, 'event')) continue
         const pushRefMatch = event === 'push' && (payload.ref === `refs/heads/${s.pr?.base?.ref}` || payload.ref === `refs/heads/${s.pr?.head?.ref}`)
-        if (sha && s.pr?.head?.sha && s.pr.head.sha !== sha && !pushRefMatch) continue // old-head CI cannot wake current head
+        const pendingHead = sha && (check || event === 'status') && (s.wait?.headSha === sha || s.lease && s.leaseUntil > this.clock() && (s.sourcePushHeads?.includes(sha) || s.prospectivePush?.token === s.lease && s.prospectivePush.heads.includes(sha)))
+        if (sha && s.pr?.head?.sha && s.pr.head.sha !== sha && !pushRefMatch && !pendingHead) continue // unrelated old-head CI cannot wake current head
         let changed = false
         if (payload.pull_request) changed = this.updatePr(s, payload.pull_request)
         const upsert = (map: Record<string, GitHubEvidence>, value: GitHubEvidence | undefined, itemKey?: string) => {
@@ -546,6 +573,11 @@ export class PullRequestInbox {
             upsert(s.reviewComments, comment)
           }
           const isResolved = payload.action === 'resolved'
+          if (!isResolved) {
+            const reopens = s.threadReopens ??= {}
+            reopens[id] = (reopens[id] ?? 0) + 1
+            changed = true
+          }
           if (!previous || previous.isResolved !== isResolved || digest(previousComments) !== digest([...comments.values()])) {
             const thread = { ...previous, id, node_id: id, isResolved,
               resolutionSource: 'webhook', resolutionObservedAt: new Date(this.clock()).toISOString(), comments: [...comments.values()] }
@@ -563,7 +595,21 @@ export class PullRequestInbox {
         }
         if (check) upsert(s.checks, check, `${event}:${check.id}`)
         if (event === 'status') upsert(s.statuses, payload, payload.context)
-        if (event === 'push') { s.refresh = true; s.feedbackRefresh = true; changed = true }
+        if (event === 'push') {
+          // Preserve source-branch evidence before synchronize updates the PR head.
+          // A same-named branch in the base repository is not a fork's source.
+          if (payload.ref === `refs/heads/${s.pr?.head?.ref}` && (s.pr?.head?.repo?.full_name ?? repository).toLowerCase() === repository.toLowerCase()) {
+            s.sourcePushHead = sha ?? 'unknown'
+            if (s.lease) {
+              const heads = s.sourcePushHeads ??= []
+              if (!heads.includes(s.sourcePushHead)) {
+                if (heads.length < 64) heads.push(s.sourcePushHead)
+                else s.sourcePushOverflow = true
+              }
+            }
+          }
+          s.refresh = true; s.feedbackRefresh = true; changed = true
+        }
         // Pending CI is evidence to retain, not another repair task. Terminal
         // results still wake the PR; revision invalidates in-flight hydration
         // even when this update does not need a new agent generation.
@@ -613,7 +659,8 @@ export class PullRequestInbox {
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
         if (options.only && !options.only(s)) continue
         if (options.skip && options.skip(s)) continue
-        s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
+        s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'; s.sourcePushHeads = []
+        delete s.sourcePushOverflow
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
       return claims
@@ -647,6 +694,24 @@ export class PullRequestInbox {
       await this.put(tx, s); return true
     })
   }
+  /** Retain CI for an exact candidate before its source-push webhook arrives. This is not a publication receipt. */
+  async registerProspectivePush(claim: Claim, head: string): Promise<boolean> {
+    if (!/^[a-f\d]{40}$/i.test(head)) throw new TypeError('Expected an exact publication commit SHA.')
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      if (!s || s.status === 'terminal' || s.sourcePushOverflow || s.lease !== claim.token || s.leaseUntil <= this.clock()
+        || s.generation !== claim.generation || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) return false
+      const heads = s.prospectivePush?.token === claim.token ? s.prospectivePush.heads : []
+      if (!heads.includes(head)) {
+        if (heads.length >= 64) throw new Error('Publication candidate limit reached.')
+        heads.push(head)
+      }
+      s.prospectivePush = { token: claim.token, heads }
+      s.revision = (s.revision ?? 0) + 1
+      await this.put(tx, s)
+      return true
+    })
+  }
   async release(claim: Claim): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
@@ -678,15 +743,22 @@ export class PullRequestInbox {
    * unchanged evidence. A wait with `headSha`, such as the head of a repair push, keeps later events
    * unhandled, so `waitsToEvaluate()` returns the PR and the host decides whether they need work.
    */
-  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
+  async finish(claim: Claim, result: { text: string; retry?: boolean; terminal?: boolean; progress?: ProgressOutcome; verifiedPushHeads?: readonly string[]; wait?: Omit<PullRequestWait, 'headSha'> & { headSha?: string } }): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
-      if (!s || s.lease !== claim.token) return false
+      if (!s || s.lease !== claim.token || s.leaseUntil <= this.clock()) return false
       const pinnedHead = result.wait?.headSha
       if (result.wait && pinnedHead) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
-        // The synchronize event for the pinned head may arrive before or after this finish.
-        if (s.status === 'terminal' || (s.pr?.head?.sha !== pinnedHead && s.pr?.head?.sha !== claim.snapshot.pr?.head?.sha)) {
+        if (result.verifiedPushHeads && (result.progress?.kind !== 'verified' || result.progress.evidence !== `push:${pinnedHead}`)) throw new Error('Published ancestry requires a verified push receipt')
+        const pushed = new Set([pinnedHead, ...result.verifiedPushHeads ?? []])
+        const published = new Set([claim.snapshot.pr?.head?.sha, ...pushed])
+        // Synchronize can lag several successful pushes. Accept only this pass's
+        // verified publication chain, and fence a different source push even
+        // while the PR snapshot still exposes its original head.
+        if (s.status === 'terminal' || s.sourcePushOverflow || !published.has(s.pr?.head?.sha)
+          || s.sourcePushHead !== claim.snapshot.sourcePushHead && !pushed.has(s.sourcePushHead ?? "")
+          || s.sourcePushHeads?.some(head => !pushed.has(head))) {
           s.lease = null; s.leaseUntil = 0
           if (s.status !== 'terminal') { s.status = 'ready'; s.nextAt = 0 }
           await this.put(tx, s)

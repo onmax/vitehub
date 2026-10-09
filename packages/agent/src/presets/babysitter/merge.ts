@@ -71,13 +71,18 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: Pick<Babysitt
     .map(value => ({ id: value.id ?? value.context, name: value.name ?? value.context,
       state: value.conclusion ?? value.state, app: value.app, description: value.description, output: value.output }))
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  const threads = snapshot.threads.map(thread => ({ id: thread.node_id ?? thread.id, path: thread.path,
+  const threads = snapshot.threads.map(thread => ({ id: thread.node_id ?? thread.id, path: thread.path, isResolved: thread.isResolved,
     comments: (Array.isArray(thread.comments) ? thread.comments : thread.comments?.nodes ?? [])
       .filter(comment => !comment.deleted).map(comment => ({ id: comment.node_id ?? comment.id,
         body: comment.body, user: comment.user ?? comment.author, commit: comment.commit_id ?? comment.commit?.oid })) }))
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
-  return createHash("sha256").update(JSON.stringify({ head, title: snapshot.pr?.title, body: snapshot.pr?.body,
-    base: snapshot.pr?.base, comments: feedback(snapshot.comments, policy), reviews: feedback(snapshot.reviews, policy),
+  return createHash("sha256").update(JSON.stringify({ head, headRef: snapshot.pr?.head?.ref, headRepository: snapshot.pr?.head?.repo?.full_name,
+    draft: snapshot.pr?.draft, title: snapshot.pr?.title, body: snapshot.pr?.body,
+    // Repository counters and timestamps change on unrelated pushes. Only the
+    // target ref, commit and repository identity define this merge input.
+    base: snapshot.pr?.base && { sha: snapshot.pr.base.sha, ref: snapshot.pr.base.ref,
+      repository: (snapshot.pr.base.repo?.full_name ?? snapshot.repository).toLowerCase() },
+    comments: feedback(snapshot.comments, policy), reviews: feedback(snapshot.reviews, policy),
     reviewComments: feedback(snapshot.reviewComments, policy), threads, failures })).digest("hex");
 }
 
