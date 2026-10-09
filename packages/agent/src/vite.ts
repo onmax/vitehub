@@ -606,7 +606,7 @@ type BuildWithRolldownOptions = {
     }
   }
 }
-type GeneratedLibsqlAgentStateOptions = Pick<ResolvedAgentModuleOptions["providers"]["state"], "tablePrefix" | "url"> & {
+type GeneratedLibsqlAgentStateOptions = Pick<ResolvedAgentModuleOptions["providers"]["state"], "journalMode" | "tablePrefix" | "url"> & {
   authTokenEnvName?: string
   durableUrlRequired?: boolean
   ephemeralHosting?: "cloudflare" | "netlify" | "vercel"
@@ -681,7 +681,7 @@ function resolveLibsqlAgentState(
   config: unknown,
 ): GeneratedLibsqlAgentStateOptions | undefined {
   if (!options) return
-  const { authToken, provider, tablePrefix, url } = options.providers.state
+  const { authToken, journalMode, provider, tablePrefix, url } = options.providers.state
   const auto = provider === "auto"
   if (!auto && provider !== "sqlite" && provider !== "libsql") return
   if (auto && shouldInstallCloudflareAgentState(options, config)) return
@@ -701,6 +701,7 @@ function resolveLibsqlAgentState(
     ...(authTokenEnvName ? { authTokenEnvName } : {}),
     ...(!resolvedUrl ? { durableUrlRequired: true } : {}),
     ...(ephemeralHosting ? { ephemeralHosting } : {}),
+    ...(journalMode ? { journalMode } : {}),
     ...(tablePrefix ? { tablePrefix } : {}),
     ...(resolvedUrl ? { url: resolvedUrl } : {}),
   }

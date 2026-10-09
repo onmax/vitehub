@@ -149,7 +149,7 @@ describe("generated process hosts", () => {
   it("writes the host entry, plugin, and routes for a Babysitter Agent on Node", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const root = await project(babysitterSource)
-    const plugin = hubAgent({ providers: { state: { provider: "libsql", url: "file:state.sqlite" } } })
+    const plugin = hubAgent({ providers: { state: { provider: "libsql", journalMode: "delete", url: "file:state.sqlite" } } })
     if (!isRuntimeFunction(plugin.configResolved)) throw new TypeError("Expected Agent configResolved hook.")
     // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
     await plugin.configResolved.call({} as never, { command: "build", root } as never)
@@ -158,6 +158,7 @@ describe("generated process hosts", () => {
     expect(entry).toContain('createAgentProcessHosts({ names: ["babysitter"], registry, state: agentProcessHostState })')
     expect(await readFile(join(root, ".vitehub/agent/process-hosts-plugin.ts"), "utf8")).toContain("setTimeout(() => host.start(), 0)")
     expect(await readFile(join(root, ".vitehub/agent/chat-webhook-route.ts"), "utf8")).toContain("export const agentProcessHostState = () => chatStateFromLibsql()")
+    expect(await readFile(join(root, ".vitehub/agent/chat-webhook-route.ts"), "utf8")).toContain('"journalMode":"delete"')
 
     // The extends form is discovered the same way.
     await writeFile(join(root, "server", "agents", "babysitter", "agent.ts"), babysitterSource.replace('preset: "babysitter", presets: { babysitter }', "extends: babysitter"), "utf8")
