@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
+import { posix } from "node:path"
 
 import { resolveLinuxCgroupV2Path } from "@vite-hub/runtime/node"
 
@@ -153,7 +154,7 @@ function assertPressurePolicy(value: PressurePolicy, name: "cpu" | "memory"): vo
 
 async function readProcessResources(signal: AbortSignal): Promise<ProcessResourceSample> {
   const [cgroup, meminfo, cpu, memory] = await Promise.all([
-    readCgroupResources(signal).catch(error => { if (signal.aborted) throw error; return undefined }),
+    readCgroupResources(signal),
     readOptionalCgroupFile("/proc/meminfo", signal),
     readOptionalCgroupFile("/proc/pressure/cpu", signal),
     readOptionalCgroupFile("/proc/pressure/memory", signal),
@@ -172,28 +173,60 @@ async function readProcessResources(signal: AbortSignal): Promise<ProcessResourc
   }
 }
 
-async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessResourceSample, "availableMemory" | "hostAvailableMemory">> {
-  const membership = await readFile("/proc/self/cgroup", { encoding: "utf8", signal })
-  const relative = membership.split(/\r?\n/).find((line) => line.startsWith("0::"))?.slice(3)
-  if (relative === undefined) throw agentDiagnostics.AGENT_R0742({ message: "cgroup v2 membership is unavailable" })
-  const mountinfo = await readFile("/proc/self/mountinfo", { encoding: "utf8", signal })
-  const root = resolveLinuxCgroupV2Path(mountinfo, relative)
-  if (root === undefined) throw agentDiagnostics.AGENT_R0743({ message: "cgroup v2 mount is unavailable" })
-  const [current, high, max, events, cpuPressure, memoryPressure] = await Promise.all([
-    readFile(`${root}/memory.current`, { encoding: "utf8", signal }),
-    readFile(`${root}/memory.high`, { encoding: "utf8", signal }),
-    readFile(`${root}/memory.max`, { encoding: "utf8", signal }),
-    readFile(`${root}/memory.events`, { encoding: "utf8", signal }),
-    readOptionalCgroupFile(`${root}/cpu.pressure`, signal),
-    readOptionalCgroupFile(`${root}/memory.pressure`, signal),
-  ])
+async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessResourceSample, "availableMemory" | "hostAvailableMemory"> | undefined> {
+  const membership = await readOptionalCgroupFile("/proc/self/cgroup", signal)
+  const relative = membership?.split(/\r?\n/).find((line) => line.startsWith("0::"))?.slice(3)
+  if (relative === undefined) return
+  const mountinfo = await readOptionalCgroupFile("/proc/self/mountinfo", signal)
+  if (mountinfo === undefined) return
+  const roots: { path: string, rootCandidate: boolean }[] = []
+  // Resolve each visible ancestor through the mount mapping. Never read above a namespaced mount.
+  for (let member = relative; ; member = posix.dirname(member)) {
+    const root = resolveLinuxCgroupV2Path(mountinfo, member)
+    if (root === undefined) break
+    roots.push({ path: root, rootCandidate: member === "/" })
+    if (member === "/") break
+  }
+  const groups = await Promise.all(roots.map(async ({ path: root, rootCandidate }) => {
+    const [current, high, max, events, cpuPressure, memoryPressure] = await Promise.all([
+      readFile(`${root}/memory.current`, { encoding: "utf8", signal }),
+      readCgroupMemoryLimit(`${root}/memory.high`, signal, rootCandidate),
+      readCgroupMemoryLimit(`${root}/memory.max`, signal, rootCandidate),
+      readFile(`${root}/memory.events`, { encoding: "utf8", signal }),
+      readOptionalCgroupFile(`${root}/cpu.pressure`, signal),
+      readOptionalCgroupFile(`${root}/memory.pressure`, signal),
+    ])
+    return {
+      cpuPressure: parsePressure(cpuPressure ?? ""),
+      memoryCurrent: Number(current.trim()),
+      memoryHigh: high === undefined ? Infinity : parseLimit(high),
+      memoryHighEvents: parseEvent(events, "high"),
+      memoryMax: max === undefined ? Infinity : parseLimit(max),
+      memoryPressure: parsePressure(memoryPressure ?? ""),
+    }
+  }))
+  let limiting = groups[0]
+  if (!limiting) return
+  const headroom = (group: typeof limiting) => Math.min(group.memoryHigh, group.memoryMax) - group.memoryCurrent
+  for (const group of groups) if (headroom(group) < headroom(limiting)) limiting = group
   return {
-    cpuPressure: parsePressure(cpuPressure ?? ""),
-    memoryCurrent: Number(current.trim()),
-    memoryHigh: parseLimit(high),
-    memoryHighEvents: parseEvent(events, "high"),
-    memoryMax: parseLimit(max),
-    memoryPressure: parsePressure(memoryPressure ?? ""),
+    ...limiting,
+    cpuPressure: Math.max(...groups.map(group => group.cpuPressure)),
+    memoryHighEvents: groups.reduce((sum, group) => sum + group.memoryHighEvents, 0),
+    memoryPressure: Math.max(...groups.map(group => group.memoryPressure)),
+  }
+}
+
+// Only the actual hierarchy root may omit memory limit files. A cgroup namespace
+// can also expose a delegated cgroup as `/`; kernfs inode 1 identifies the real root.
+async function readCgroupMemoryLimit(path: string, signal: AbortSignal, rootCandidate: boolean): Promise<string | undefined> {
+  try { return await readFile(path, { encoding: "utf8", signal }) }
+  catch (error) {
+    if (rootCandidate && !signal.aborted && isRuntimeRecord(error) && error.code === "ENOENT") {
+      const directory = await stat(posix.dirname(path))
+      if (!signal.aborted && directory.ino === 1) return
+    }
+    throw error
   }
 }
 
