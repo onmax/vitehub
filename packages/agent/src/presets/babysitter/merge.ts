@@ -88,6 +88,13 @@ function feedback(values: Record<string, GitHubEvidence>, policy: FeedbackPolicy
       user: value.user ?? value.author, commit: value.commit_id ?? value.commit?.oid, path: value.path, line: value.line }));
 }
 
+function mergeTarget(snapshot: Snapshot) {
+  const base = snapshot.pr?.base;
+  // Exclude transport metadata and repository counters from the target identity.
+  return base && { sha: base.sha, ref: base.ref,
+    repository: (base.repo?.full_name ?? snapshot.repository).toLowerCase() };
+}
+
 /** Assessment is bound to full feedback bodies and failed check evidence, never prose heuristics. */
 export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: FeedbackPolicy = {}): string {
   const head = snapshot.pr?.head?.sha;
@@ -107,21 +114,22 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: FeedbackPolic
     draft: snapshot.pr?.draft, title: snapshot.pr?.title, body: snapshot.pr?.body,
     // Repository counters and timestamps change on unrelated pushes. Only the
     // target ref, commit and repository identity define this merge input.
-    base: snapshot.pr?.base && { sha: snapshot.pr.base.sha, ref: snapshot.pr.base.ref,
-      repository: (snapshot.pr.base.repo?.full_name ?? snapshot.repository).toLowerCase() },
+    base: mergeTarget(snapshot),
     comments: feedback(snapshot.comments, policy, false), reviews: feedback(snapshot.reviews, policy),
     reviewComments: feedback(snapshot.reviewComments, policy), threads, failures })).digest("hex");
 }
 
 /**
  * Identities of the feedback items that need an assessment. An assessment or a repair push covers
- * the items it saw, so a later head needs another pass only for feedback that arrived since.
+ * the items it saw on the same merge target. A new base repository, ref or commit needs reassessment,
+ * while a later head on the same target only needs a pass for feedback that arrived since.
  */
 export function feedbackFingerprints(snapshot: Snapshot, policy: FeedbackPolicy = {}): string[] {
   const kinds: Array<[string, FeedbackItem[]]> = [["comment", feedback(snapshot.comments, policy, false)],
     ["review", feedback(snapshot.reviews, policy)], ["review-comment", feedback(snapshot.reviewComments, policy)]];
+  const target = mergeTarget(snapshot);
   return kinds.flatMap(([kind, values]) => values.map(value =>
-    createHash("sha256").update(JSON.stringify([kind, value.id, value.body, value.state])).digest("hex").slice(0, 32)));
+    createHash("sha256").update(JSON.stringify([target, kind, value.id, value.body, value.state])).digest("hex").slice(0, 32)));
 }
 
 export function resolveBabysitterMerge(merge: unknown, autoMerge: unknown): ResolvedBabysitterMerge {
