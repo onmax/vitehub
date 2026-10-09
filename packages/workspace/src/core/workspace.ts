@@ -5,7 +5,7 @@ import { createWorkspaceSourceView } from "../sources/view.ts"
 import { createWorkspaceStoreFromProvider } from "../storage/provider.ts"
 import { forwardWorkspaceRevisionMaterializer } from "../storage/materialization.ts"
 import { forwardWorkspaceStoreTarget } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, workspaceInternalMetadataCapability, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, workspaceInternalMetadataCapability, attachWorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { getCachedWorkspaceStore } from "./workspace-cache.ts"
@@ -32,8 +32,7 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
 
   const metadata = createWorkspaceMetadataTarget(store, definition.name)
   const rebaseStore = files.requireRebaseGrants(async options => await store.rebase?.(options))
-  const workspace: Workspace & { [workspaceMetadataTarget]: () => WorkspaceMetadataTarget } = {
-    [workspaceMetadataTarget]: () => metadata,
+  const workspace: Workspace = {
     name: definition.name,
     history: createWorkspaceHistory(definition, store, files),
     async capabilities() {
@@ -112,6 +111,7 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
     },
   }
 
+  attachWorkspaceMetadataTarget(workspace, () => metadata)
   forwardWorkspaceStoreTarget(store, workspace)
   if (!normalizeWorkspaceSources(definition.sources).some(source => source.requestDescriptor || source.livePaths)) {
     forwardWorkspaceRevisionMaterializer(store, workspace)

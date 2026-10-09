@@ -119,12 +119,7 @@ describe("internal metadata keys", () => {
     const writable = useWorkspace("support", { mode: "write" })
     const resolveMetadata = Reflect.get(writable, Symbol.for("vitehub.workspace.metadataTarget"))
 
-    expect(resolveMetadata).toBeTypeOf("function")
-    const metadata = await Reflect.apply(resolveMetadata as (...args: never[]) => unknown, writable, []) as { setMeta?: unknown; writeFile?: unknown; mkdir?: unknown; rm?: unknown }
-    expect(metadata?.setMeta).toBeUndefined()
-    expect(metadata?.writeFile).toBeUndefined()
-    expect(metadata?.mkdir).toBeUndefined()
-    expect(metadata?.rm).toBeUndefined()
+    expect(resolveMetadata).toBeUndefined()
   })
 
   it("does not expose raw mutations through a resolved facade", async () => {
@@ -132,10 +127,7 @@ describe("internal metadata keys", () => {
     const base = useWorkspace("support", { mode: "write" })
     const resolved = await createWorkspaceSourceResolutionFacade(base, { name: "support" }, { invocation, overlay: true })
     const resolver = Reflect.get(resolved.workspace, Symbol.for("vitehub.workspace.metadataTarget"))
-    const metadata = await Reflect.apply(resolver, resolved.workspace, []) as object
-    for (const method of ["setMeta", "writeFile", "mkdir", "rm"]) {
-      expect(Reflect.get(metadata, method)).toBeUndefined()
-    }
+    expect(resolver).toBeUndefined()
   })
 
   it("does not let a caller forge sync state that removes a user file", async () => {
