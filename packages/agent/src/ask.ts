@@ -133,7 +133,7 @@ function askIf(instructions: string, options: { threshold?: number } = {}): AskI
 
 /**
  * Builds TypeSafe Jev questions for `defineAgent({ driver: { ask } })`.
- * Each builder returns a plain question object. The Driver sends all questions in one request.
+ * Each builder returns a plain question object. The Driver sends questions in deterministic sequential batches when needed; shared state and each question must serialize below 30,000 bytes.
  */
 export const ask: {
   chance: typeof chance

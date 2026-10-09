@@ -105,13 +105,18 @@ function validateQuestionCriteria(name: string, question: AskQuestion): void {
 }
 
 function hasValidChoiceAnswer(question: Extract<AskQuestion, { type: "choice" }>, answer: unknown): answer is Record<string, unknown> {
-  if (!isRuntimeRecord(answer) || typeof answer.choice !== "string" || !isRuntimeRecord(answer.probabilities)) return false
+  if (!isRuntimeRecord(answer) || answer.type !== "choice" || typeof answer.choice !== "string" || !isRuntimeRecord(answer.probabilities)) return false
+  if (typeof answer.confidence !== "number" || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) return false
   if (!isRuntimeRecord(question.criteria) || !Object.hasOwn(question.criteria, answer.choice)) return false
   const probabilities = answer.probabilities
-  return Object.keys(question.criteria).every(label => {
+  const labels = Object.keys(question.criteria)
+  const probabilityLabels = Object.keys(probabilities)
+  if (labels.length !== probabilityLabels.length || probabilityLabels.some(label => !Object.hasOwn(question.criteria, label))) return false
+  const total = labels.reduce((sum, label) => {
     const probability = probabilities[label]
-    return typeof probability === "number" && Number.isFinite(probability) && probability >= 0 && probability <= 1
-  })
+    return sum + (typeof probability === "number" && Number.isFinite(probability) && probability >= 0 && probability <= 1 ? probability : Number.NaN)
+  }, 0)
+  return Number.isFinite(total) && Math.abs(total - 1) <= 1e-6
 }
 
 function toAdvocaatQuestion(name: string, question: AskQuestion): AdvocaatQuestion {

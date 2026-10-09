@@ -359,6 +359,14 @@ describe("Jev decisions for ask Driver Agents", () => {
 
     askJev.mockResolvedValueOnce({ answer: { choice: "yes", probabilities: { yes: 2 }, type: "choice" } })
     await expect(askRuntime.askJev({}, "state", { answer: ask.choice("Answer?", ["yes", "no"]) })).rejects.toThrow("valid probability distribution")
+
+    for (const probabilities of [{ yes: 0.2, no: 0.2 }, { yes: 0.5, no: 0.5, other: 0 }]) {
+      askJev.mockResolvedValueOnce({ answer: { choice: "yes", confidence: 0.5, probabilities, type: "choice" } })
+      await expect(askRuntime.askJev({}, "state", { answer: ask.choice("Answer?", ["yes", "no"]) })).rejects.toThrow("valid probability distribution")
+    }
+
+    askJev.mockResolvedValueOnce({ answer: { choice: "yes", probabilities: { yes: 1, no: 0 } } })
+    await expect(askRuntime.askJev({}, "state", { answer: ask.choice("Answer?", ["yes", "no"]) })).rejects.toThrow("valid probability distribution")
   })
 
   it("rejects with a Jev gate decision", async () => {
