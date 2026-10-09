@@ -10,6 +10,12 @@ it("keeps Code Host options neutral and infers message methods", () => {
   expectTypeOf(pullRequest.read({ context: { get: () => undefined } }).provider).toEqualTypeOf<CodeHostKind>()
   const options: PullRequestOptions = { reconcile: { comments: { events: ["comment", "review", "review_comment"] } } }
   gitlab({ pullRequest: options })
+  gitlab({ sync: { repositories: ["platform/team/api"] as const } })
+  forgejo({ sync: { repositories: ["platform/api"] as const } })
+  // @ts-expect-error Webhook sync requires repository names.
+  gitlab({ sync: {} })
+  // @ts-expect-error Repository names must be strings.
+  forgejo({ sync: { repositories: [1] } })
   gitlab({ pullRequest: { reconcile: { events: ["ready_for_review"] } } })
   forgejo({ pullRequest: { reconcile: { events: ["opened", "synchronize"] } } })
   // @ts-expect-error Forgejo sends no ready for review event.

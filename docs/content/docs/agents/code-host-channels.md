@@ -49,6 +49,45 @@ Explicit options take precedence over Server Env. The Channel reads the host var
 
 The matching options are `baseUrl`, `token`, and `webhookSecret`. Each accepts a runtime callback. Tokens and secrets also accept a Server Env secret value with `unseal()`.
 
+## Webhook setup
+
+Set `sync.repositories` to let the Channel sync command create or update repository webhooks:
+
+```ts
+channels: {
+  gitlab: gitlab({
+    sync: { repositories: ['platform/team/api'] },
+    pullRequest: { reconcile: { mentions: ['@review-bot'] } },
+  }),
+  codeberg: forgejo({
+    sync: { repositories: ['platform/api'] },
+    pullRequest: { reconcile: { comments: true } },
+  }),
+}
+```
+
+GitLab paths can include nested groups. Each Channel uses its `baseUrl`, `token`, and `webhookSecret` options, then Server Env. Sync requires a token and webhook secret. GitLab needs the `api` token scope and Maintainer access to each project. Forgejo and Codeberg need the `write:repository` token scope and admin access to each repository.
+
+Deploy the webhook route first. Inspect a dry run:
+
+```bash [Terminal]
+vitehub channels sync --stage <name> --url <https-origin> --channel <id>
+```
+
+Apply the reviewed plan:
+
+```bash [Terminal]
+vitehub channels sync --stage <name> --url <https-origin> --channel <id> --apply --confirm-origin <https-origin>
+```
+
+The plan shows the current and desired URL and each repository's hook ID, events, and active state. It lists each create or update. Events follow the enabled pull request and activity features. Host event groups can also deliver related issue events, which the Channel ignores.
+
+Tokens and webhook secrets are never shown. The plan lists `webhookSecret` as unverifiable because hosts do not return it. Use `--force` to resend the secret to existing hooks. Sync never deletes hooks. It leaves hooks with other URLs unchanged and fails if a repository has duplicate hooks at the desired URL. Remove those duplicates before sync.
+
+Without `sync.repositories`, the Channel appears in the plan with no change and an unverifiable entry that names the option. You can still set up webhooks by hand. See [Channel Env and sync](/docs/agents/channels#channel-env) and [CLI channel synchronization](/docs/development/cli#synchronize-channel-webhooks) for deployment checks and origin confirmation.
+
+Sync manages JSON payloads for Forgejo hooks and accounts for its grouped event subscriptions. Auto-disabled GitLab hooks must be re-enabled with a successful test request in GitLab before sync can proceed. Distinct deployed webhook URLs can manage hooks on the same repositories.
+
 ## Configure webhooks
 
 Create the project or repository webhook for the generated Agent Channel route. Set the secret to the same value as `webhookSecret` or its Server Env field.
