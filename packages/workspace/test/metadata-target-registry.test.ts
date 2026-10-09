@@ -101,7 +101,7 @@ describe("Workspace metadata target", () => {
     expectNoGlobalCarrier(target)
 
     // A source without a target gives nothing.
-    const empty: ReadonlyWorkspaceFacade = { fs: readonly.fs, tools: readonly.tools }
+    const empty: ReadonlyWorkspaceFacade = { fs: { ...readonly.fs }, tools: readonly.tools }
     forwardWorkspaceMetadataView({}, empty)
     await expect(resolveWorkspaceMetadataTarget(empty)).resolves.toBeUndefined()
   })

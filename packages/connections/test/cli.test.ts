@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { agentEnvAccess } from "../../env/test/agent-access.ts"
 
 import { createConnectionsCliContributor, runConnectionsCli } from "../src/cli.ts"
 import { createConnectionsHandler } from "../src/http.ts"
@@ -41,8 +42,12 @@ describe("vitehub connections", () => {
     expect(redirect.hostname).toBe("127.0.0.1")
     harness.test.provider.tokenResponses.push({ body: { access_token: ACCESS_TOKEN, expires_in: 3600, id_token: "account-1", refresh_token: REFRESH_TOKEN, scope: "mail.modify" } })
 
-    expect((await fetch(`${redirect.href}?code=code-1&state=wrong`)).status).toBe(400)
-    expect((await fetch(`${redirect.href}?code=code-1&state=${authorization.searchParams.get("state")}`)).status).toBe(200)
+    const state = authorization.searchParams.get("state")!
+    const sameLength = `${state.slice(0, -1)}${state.endsWith("A") ? "B" : "A"}`
+    for (const wrong of ["wrong", `${state}x`, sameLength]) {
+      expect((await fetch(`${redirect.href}?code=code-1&state=${encodeURIComponent(wrong)}`)).status).toBe(400)
+    }
+    expect((await fetch(`${redirect.href}?code=code-1&state=${state}`)).status).toBe(200)
     expect(await done).toBe(0)
     expect(JSON.parse(harness.output.stdout)).toMatchObject({ account: { email: "owner@example.com" }, status: "connected" })
     expect(harness.output.stdout + harness.output.stderr).not.toContain(ACCESS_TOKEN)
@@ -80,7 +85,7 @@ describe("vitehub connections", () => {
     expect(await harness.run("list")).toBe(0)
     expect(harness.output.stdout).toContain("mail  example  connected  owner@example.com")
 
-    await harness.test.runtime.client("mail", { actor: "agent:labeller" }).call("mail.messages.modify", { id: "m1", userId: "me" }).catch(() => undefined)
+    await harness.test.runtime.client("mail", { access: agentEnvAccess({ name: "labeller" }) }).call("mail.messages.modify", { id: "m1", userId: "me" }).catch(() => undefined)
     harness.output.stdout = ""
     expect(await harness.run("approvals", ["--json"])).toBe(0)
     const { approvals: [approval] } = JSON.parse(harness.output.stdout) as { approvals: Array<{ id: string }> }

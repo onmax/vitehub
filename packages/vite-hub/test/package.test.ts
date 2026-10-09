@@ -44,6 +44,7 @@ import * as frameworkRuntimeNode from "vite-hub/runtime/node";
 import { setActiveCloudflareEnv as frameworkDatabaseStateSetter } from "vite-hub/_internal/database/runtime/state";
 import * as ownerRuntimeNode from "@vite-hub/runtime/node";
 import { distributionBinEntries, distributionEntriesFromManifest } from "../vite.config.ts";
+import { hostManagedAuthorize } from "./support/console-authorize.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -87,6 +88,7 @@ const consolidatedOwnerExports = new Set(["@vite-hub/blob/ensure", "@vite-hub/wo
 const lowLevelOwnerExports = new Set([
   "@vite-hub/agent/ai-sdk",
   "@vite-hub/agent/cloudflare/state",
+  "@vite-hub/agent/env-identity",
   "@vite-hub/agent/eve",
   "@vite-hub/agent/mcp/stdio",
   "@vite-hub/agent/messages",
@@ -101,6 +103,7 @@ const lowLevelOwnerExports = new Set([
   "@vite-hub/database/config",
   "@vite-hub/env/seal",
   "@vite-hub/kv/errors",
+  "@vite-hub/ui/primitive-rail",
   "@vite-hub/workspace/source-metadata",
 ]);
 
@@ -108,6 +111,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/agent/runtime/empty-registry",
   "@vite-hub/agent/runtime/invocations-dev",
   "@vite-hub/agent/runtime/workflow",
+  "@vite-hub/agent/server/registry",
   "@vite-hub/blob/runtime/cloudflare-vite",
   "@vite-hub/blob/runtime/dev",
   "@vite-hub/blob/runtime/state",
@@ -115,6 +119,7 @@ const generatedRuntimeOwnerExports = new Set([
   "@vite-hub/database/runtime/agent",
   "@vite-hub/database/runtime/cloudflare-env",
   "@vite-hub/database/runtime/cloudflare-vite",
+  "@vite-hub/database/runtime/d1",
   "@vite-hub/database/runtime/hosted",
   "@vite-hub/database/runtime/state",
   "@vite-hub/database/runtime/vercel-vite",
@@ -364,10 +369,13 @@ describe("framework package contract", () => {
     expect(existsSync(`${packageRoot}/dist/console/runtime/client/request.d.ts`)).toBe(true);
     expect(existsSync(`${packageRoot}/dist/console/runtime/client/time.js`)).toBe(true);
     expect(existsSync(`${packageRoot}/dist/console/runtime/client/time.d.ts`)).toBe(true);
+    expect(existsSync(`${packageRoot}/dist/console/runtime/client/appearance.js`)).toBe(true);
+    expect(existsSync(`${packageRoot}/dist/console/runtime/client/appearance.d.ts`)).toBe(true);
     expect(manifest.exports).not.toHaveProperty("./console/runtime/console-route");
     expect(manifest.exports).not.toHaveProperty("./console/runtime/sections");
     expect(manifest.exports).not.toHaveProperty("./console/runtime/client/request");
     expect(manifest.exports).not.toHaveProperty("./console/runtime/client/time");
+    expect(manifest.exports).not.toHaveProperty("./console/runtime/client/appearance");
     expect(consolePage).toContain("AgentInvocationList");
     expect(consolePage).toContain('aria-label="Filter sessions"');
     expect(consolePage).toContain("selectedCapabilityId");
@@ -456,8 +464,7 @@ describe("framework package contract", () => {
     expect(consolePage).toContain(':maximizable="Boolean(selectedInvocationId)"');
     expect(consoleSessionNavbar).toContain('data-slot="session-details-toggle"');
     expect(consoleSessionNavbar).toContain(':disabled="!hasSelection"');
-    expect(consoleSessionNavbar).toContain('v-if="externalTarget.github"');
-    expect(consoleSessionNavbar).toContain('fill="currentColor"');
+    expect(consoleSessionNavbar).toContain('icon: "i-lucide-github"');
     expect(consoleSessionNavbar).toContain('label: "Open on GitHub"');
     expect(consolePage).toMatch(/scrollbar-width: none;/);
     expect(consolePage).toMatch(/::-webkit-scrollbar[\s\S]*?display: none;/);
@@ -570,8 +577,10 @@ describe("framework package contract", () => {
     expect(consolePage).toContain("list.loadMoreError.value");
     expect(consolePage).toContain("Retry loading older sessions");
     expect(consolePage).toContain('@click="list.loadMore"');
-    expect(consolePage).toContain("Switch Agent");
-    expect(consolePage).toContain("agentMenuItems");
+    expect(consolePage).toContain('import {\n  readConsoleAgentListOpen,');
+    expect(consolePage).toContain('aria-controls="vitehub-console-agent-list"');
+    expect(consolePage).toContain('group-by="recency"');
+    expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-agent-list.ts`)).toBe(true);
     expect(consolePage).toContain("invocation.agentName !== selectedAgentName.value");
     expect(consolePage).toContain("invocation.agentName === agentName");
     expect(consolePage).toContain(
@@ -668,8 +677,10 @@ describe("framework package contract", () => {
     expect(consoleSearch).toContain(
       'resolveConsoleRouteName(route.name, "vitehub-console-invocation")',
     );
-    expect(consoleSearch).toContain('label: "All primitives"');
-    expect(consoleSearch).toContain('label: "Pages"');
+    expect(consoleSearch).toContain('[{ id: "actions", items: props.actions, label: "Actions" }]');
+    expect(consoleSearch).toContain('label: "Overview"');
+    expect(consoleSearch).toContain('label: "Go to"');
+    expect(consoleSearch).toContain("kbds: [...shortcut]");
     expect(consoleSearch).toContain(
       'label: debouncedSearchTerm.value ? "Sessions" : "Recent sessions"',
     );
@@ -690,24 +701,20 @@ describe("framework package contract", () => {
     expect(consoleSearch).toContain("if (!open.value) return");
     expect(consoleSearch).toContain("if (open.value) debouncedSearchTerm.value = value.trim()");
     expect(consoleSearch).toContain("debouncedSearchTerm.value = nextSearchTerm");
-    const consoleBrand = readFileSync(
-      `${packageRoot}/dist/console/runtime/components/console-brand.vue`,
-      "utf8",
-    );
-    expect(consoleBrand).toContain("<RouterLink");
-    expect(consoleBrand).toContain("resolveConsoleRouteName(route.name, 'vitehub-console')");
-    expect(consoleBrand).toContain("subscribeConsoleNavigation(props.sectionsBase");
     const consoleHome = readFileSync(
       `${packageRoot}/dist/console/runtime/components/console-home.vue`,
       "utf8",
     );
     expect(consoleHome).toContain("loadConsoleNavigation(props.sectionsBase)");
-    const consolePrimitiveSwitcher = readFileSync(
-      `${packageRoot}/dist/console/runtime/components/console-primitive-switcher.vue`,
+    const consoleRail = readFileSync(
+      `${packageRoot}/dist/console/runtime/components/console-rail.vue`,
       "utf8",
     );
-    expect(consolePrimitiveSwitcher).toContain("navigationFailed.value = true");
-    expect(consolePrimitiveSwitcher).toContain('aria-label="Retry loading primitives"');
+    expect(consoleRail).toContain("navigationFailed.value = true");
+    expect(consoleRail).toContain('<PrimitiveRailItem label="Retry loading primitives" @click="loadNavigation">');
+    expect(consoleRail).toContain("open('vitehub-console')");
+    expect(consoleRail).toContain("subscribeConsoleNavigation(props.sectionsBase");
+    expect(consoleRail).toContain('import { defineShortcuts } from "@nuxt/ui/composables";');
     expect(existsSync(`${packageRoot}/dist/console/runtime/components/console-usage.vue`)).toBe(
       true,
     );
@@ -722,6 +729,9 @@ describe("framework package contract", () => {
     expect(consoleClient).toContain('"folder-tree":{"width":24');
     expect(consoleClient).toContain("prefers-color-scheme: dark");
     expect(consoleClient).toMatch(/classList\.toggle\(["`]dark["`]/);
+    // The Console appearance module is the only color scheme writer. Nuxt UI color mode stays off.
+    expect(consoleClient).toContain("vitehub-console:appearance");
+    expect(consoleClient).not.toContain("vueuse-color-scheme");
     expect(consoleClient).toContain("ViteHub");
     expect(consoleClient).toContain("/agents/:agent/invocations/:invocation");
     expect(consoleClient).toContain("/blob");
@@ -768,7 +778,7 @@ describe("framework package contract", () => {
       const plugin = framework
         .vitehub({
           agent: true,
-          console: { exposure: "host-managed" },
+          console: { exposure: "host-managed", authorize: hostManagedAuthorize },
           kv: true,
           preset: "node",
           queue: true,

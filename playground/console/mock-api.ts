@@ -704,6 +704,23 @@ async function handleAPI(request: IncomingMessage, response: ServerResponse, url
       json(response, { kind: "record-table", records: readEmailOutboxConsoleRecords(), section })
       return true
     }
+    if (section === "databases") {
+      // Console search reads the Database catalog, like the real definitions route.
+      json(response, {
+        definitions: [{
+          fields: [
+            { label: "Mode", value: "Default" },
+            { label: "Tables", value: databaseFixture.tables.map(table => table.name).join(", ") },
+          ],
+          file: "server/database/schema.ts",
+          name: databaseFixture.schema,
+          source: "database",
+        }],
+        kind: "definition-catalog",
+        section,
+      })
+      return true
+    }
     if (section === "schedules") {
       json(response, { kind: "record-table", records: scheduleRecords, section })
       return true

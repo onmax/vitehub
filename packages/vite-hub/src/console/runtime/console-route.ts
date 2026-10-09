@@ -36,6 +36,19 @@ export function decodeAgentRouteParam(value: string | string[] | undefined): str
   return name && name.trim() === name && name.length <= 512 ? name : undefined
 }
 
+/** Prefer the Usage filter when opening sessions, then return to the originating Agent. */
+export function resolveUsageSessionsAgent(
+  query: { agent?: string | null | (string | null)[]; returnAgent?: string | null | (string | null)[] },
+  selectedAgent?: string,
+): string | undefined {
+  for (const value of [query.agent, selectedAgent, query.returnAgent]) {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Query values can also be arrays or null.
+    if (typeof value !== "string") continue
+    const name = value.trim()
+    if (name && name.length <= 512) return name
+  }
+}
+
 export function resolveConsoleRouteName(currentRouteName: string | symbol | null | undefined, targetRouteName: string): string {
   // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Vue Router defines route names as strings or symbols; only host-decorated string names can carry a suffix.
   if (typeof currentRouteName !== "string") return targetRouteName

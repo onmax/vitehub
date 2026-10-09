@@ -11,6 +11,24 @@ ViteHub adds server features to Vite applications and lets Agents use selected f
 
 For setup and API options, go to [Server primitives](/docs/getting-started/server-primitives), [Agents](/docs/agents), [Capabilities](/docs/agents/capabilities), or [Reference](/docs/reference).
 
+## Choose the kind of page
+
+Each product section uses a small set of page types. Start with the page that
+matches the job you have now, then move to the exact contract when the first
+result works.
+
+| Page type | Use it for |
+| --- | --- |
+| Tutorial | Build one small result from an empty or existing app. |
+| Guide | Complete one focused task, such as adding a provider or a Capability. |
+| Reference | Check imports, options, return values, and errors. |
+| Deploy | Choose a host and inspect the output it needs. |
+| Operate | Understand limits, retries, timeouts, and failure recovery. |
+
+The sidebar keeps these pages together under the product that owns the API.
+The package selector at the top lets you move to another product without
+losing the same page structure.
+
 ## Start here
 
 | Page | Read it when |

@@ -228,9 +228,10 @@ function renderBlobServeRouteHandler(serve: BlobServeConfig, importBase = blobPa
     ?? (serve.authorize ? "private, no-cache" : undefined)
   return [
     `import { blob } from '${importBase}'`,
-    ...(serve.authorize ? [`import { authorizeRequest } from ${JSON.stringify(AUTH_SERVER_ID)}`] : []),
+    ...(serve.authorize ? [`import { withAuthorization } from ${JSON.stringify(AUTH_SERVER_ID)}`] : []),
     ...(authorizeModule ? [`import { authorize } from ${JSON.stringify(authorizeModule)}`] : []),
     `import { createError, ${serve.authorize ? "defineHandler, " : ""}getRouterParam${cacheControl !== undefined ? ", handleCacheHeaders, setResponseHeader" : ""}${headers ? ", removeResponseHeader, setResponseHeaders" : ""} } from 'h3'`,
+    ...(serve.authorize ? ["import type { H3Event } from 'h3'"] : []),
     "import { defineCachedHandler } from 'nitro/cache'",
     "",
     `const storeName = ${JSON.stringify(serve.store)}`,
@@ -277,11 +278,7 @@ function renderBlobServeRouteHandler(serve: BlobServeConfig, importBase = blobPa
       ? [
           "",
           "// Authorize before the store read and before conditional request handling.",
-          "export default defineHandler(async (event) => {",
-          `  const rejection = await authorizeRequest(event, ${authorizeModule ? "authorize" : "true"})`,
-          "  if (rejection) return rejection",
-          "  return serveBlob(event)",
-          "})",
+          `export default defineHandler(withAuthorization(${authorizeModule ? "authorize" : "true"}, (event: H3Event) => serveBlob(event)))`,
         ]
       : []),
     "",

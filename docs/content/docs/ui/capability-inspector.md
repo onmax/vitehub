@@ -17,7 +17,7 @@ icon: i-ph-plugs-connected-light
 <AgentCapabilityInspector :invocation="record" @select-activity="selectedActivityId = $event" />
 ```
 
-It takes the same `invocation` as `AgentInvocationInspector`. Set `:show-capabilities="false"` on the Invocation inspector when both are visible, so the Capabilities do not appear twice.
+It takes the same `invocation` as `AgentInvocationInspector`. The Invocation inspector hides its embedded Capability summary by default, so the two panels work together without overrides.
 
 ## Capability views
 

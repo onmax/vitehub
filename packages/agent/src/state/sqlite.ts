@@ -247,7 +247,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             candidate.concurrency_key, candidate.concurrency_limit, candidate.lease_ttl_ms, candidate.attempts
           FROM ${this.tables.webhookQueue} AS candidate
           WHERE candidate.scope = ? AND candidate.available_at <= ?
-            AND (candidate.status = 'queued' OR (candidate.status IN ('running', 'steering') AND candidate.lease_expires_at <= ?))
+            AND (candidate.status = 'queued' OR (candidate.status IN ('running', 'steering', 'notifying') AND COALESCE(candidate.lease_expires_at, 0) <= ?))
             AND (
               SELECT COUNT(*) FROM ${this.tables.webhookQueue} AS active_group
               WHERE active_group.status = 'running' AND active_group.lease_expires_at > ?
@@ -277,14 +277,14 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             SET attempts = attempts + CASE WHEN status IN ('running', 'steering') THEN 1 ELSE 0 END,
               status = 'running', lease_token = ?, lease_expires_at = ?
             WHERE scope = ? AND delivery_id = ?
-              AND (status = 'queued' OR (status IN ('running', 'steering') AND lease_expires_at <= ?))
+              AND (status = 'queued' OR (status IN ('running', 'steering', 'notifying') AND COALESCE(lease_expires_at, 0) <= ?))
             RETURNING value`,
           [leaseToken, now + leaseTtlMs, scope, candidate.delivery_id, now],
         )
         if (claimed.length === 0 || !isRuntimeString(candidate.value)) continue
         return {
           ...parseAgentWebhookQueueDelivery(candidate.value),
-          attempts: numberValue(candidate.attempts) + (candidate.status === "queued" ? 0 : 1),
+          attempts: numberValue(candidate.attempts) + (candidate.status === "running" || candidate.status === "steering" ? 1 : 0),
           leaseExpiresAt: now + leaseTtlMs,
           leaseToken,
         }
@@ -339,13 +339,49 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
             tx,
             `UPDATE ${this.tables.webhookQueue}
           SET status = 'completed', value = '{}', lease_token = NULL, lease_expires_at = NULL
-          WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
+          WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering', 'notifying') AND lease_token = ?
           RETURNING delivery_id`,
             [scope, deliveryId, leaseToken],
           ),
       )
     })
     return completed.length > 0
+  }
+
+  async beginWebhookFailureNotification(scope: string, deliveryId: string, leaseToken: string): Promise<boolean> {
+    const claimed = await retrySqliteBusy(() => this.transaction(async tx => {
+      const current = await execute(tx, `SELECT value FROM ${this.tables.webhookQueue}
+        WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?`, [scope, deliveryId, leaseToken])
+      if (current.length === 0 || !isRuntimeString(current[0]?.value)) return []
+      const delivery = parseAgentWebhookQueueDelivery(current[0].value)
+      if (!delivery.failure || delivery.failure.notificationStarted) return []
+      delivery.failure.notificationStarted = true
+      // Fence dispatch permanently, but retain the lease so finalization can
+      // recover even when no state write succeeds after the callback.
+      return await execute(tx, `UPDATE ${this.tables.webhookQueue}
+        SET status = 'notifying', value = ?
+        WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
+        RETURNING delivery_id`, [JSON.stringify(delivery), scope, deliveryId, leaseToken])
+    }))
+    return claimed.length > 0
+  }
+
+  async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number, invocationStarted?: false }): Promise<boolean> {
+    const marked = await retrySqliteBusy(async () => {
+      await this.cleanupExpiredStateIfDue()
+      return await this.transaction(async tx => {
+        const current = await execute(tx, `SELECT value FROM ${this.tables.webhookQueue}
+          WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?`, [scope, deliveryId, leaseToken])
+        if (current.length === 0 || !isRuntimeString(current[0]?.value)) return []
+        const delivery = parseAgentWebhookQueueDelivery(current[0].value)
+        delivery.failure = failure
+        return await execute(tx, `UPDATE ${this.tables.webhookQueue}
+          SET value = ?
+          WHERE scope = ? AND delivery_id = ? AND status IN ('running', 'steering') AND lease_token = ?
+          RETURNING delivery_id`, [JSON.stringify(delivery), scope, deliveryId, leaseToken])
+      })
+    })
+    return marked.length > 0
   }
 
   async connect(): Promise<void> {

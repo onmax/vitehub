@@ -71,6 +71,46 @@ Running the file prints:
 node:health
 ```
 
+## Bounded runtime preflight
+
+Hosts that start an Agent can check commands, files, browsers, MCP servers, or
+tools before model execution without making those checks part of the critical
+path. `startRuntimePreflight()` runs a bounded set of checks in parallel and
+returns a promise for a compact, serializable manifest. A failed or missing
+optional capability becomes data and a Nostics diagnostic; it never rejects the
+manifest or the invocation. The diagnostic callback is best effort and does not
+delay the checks.
+
+```ts
+import { startRuntimePreflight } from "@vite-hub/runtime"
+
+const preflight = startRuntimePreflight({
+  checks: [
+    { id: "command:git", kind: "command", required: true, check: ({ signal }) => runWhich("git", signal) },
+    { id: "file:AGENTS.md", kind: "file", check: ({ signal }) => readFile("AGENTS.md", signal) },
+  ],
+  onDiagnostic: issue => reportDiagnostic(issue.diagnostic),
+})
+
+// The host may expose this to inspection or model instructions when ready.
+const manifest = await preflight.manifest
+```
+
+Keep `details` on a check result small and redacted. The framework limits each
+reason and details object, caps the check count, and bounds asynchronous waiting
+time. Check IDs are limited to 128 characters and kinds to 64 characters.
+Results must be plain data records without proxies or accessors; only the first
+12 detail properties are inspected, with 64-character keys and 256-character
+string values. More checks than `maxChecks` rejects the configuration before
+any run.
+
+Checks run on the host event loop. Use non-blocking asynchronous APIs for
+external processes, filesystem work, and network requests, and honor the
+provided `AbortSignal`. ViteHub cannot interrupt a synchronous callback; when
+one runs past its budget, the result is reported as `unknown` after that
+callback returns. A timed-out asynchronous operation may still need to cancel
+its own underlying work when it observes the signal.
+
 `createRuntimeContext()` gives each operation a fresh memo cache and tracks work
 registered with `waitUntil()`. Pass the host's `waitUntil` method to forward that
 work to a real provider lifetime. Without one, await `flushWaitUntil()` before
@@ -156,6 +196,30 @@ and `requestId` at construction, and freezes the serialized snapshot and its
 details. Never put secrets in those fields; keep raw provider failures in `cause`.
 A `cause` is excluded from `toJSON()`, but remains available to code and loggers
 that inspect the Error instance.
+
+### Grants
+
+ViteHub packages use `defineGrant()` from the internal `@vite-hub/runtime/internal/grant` entry. It is not a public API. A grant connects a check to the sensitive action that it guards: the check issues a frozen grant, and the action requires the grant and verifies it at runtime.
+
+```ts
+const sourceWrite = defineGrant("vitehub.workspace.source-write", (path: string) => path)
+
+export function checkSourceWrite(path: string) {
+  // ...the owner check...
+  return sourceWrite.issue(path)
+}
+
+export function writeSource(grant: ReturnType<typeof checkSourceWrite>, data: string) {
+  const path = sourceWrite.verify(grant)
+  // ...write `data` to `path`...
+}
+```
+
+- Keep the definition module-private. Only the module that owns the check issues grants.
+- Bind the grant to what it authorizes, for example a path, a tool call, or a request. The second argument of `defineGrant()` copies or freezes that value.
+- `verify()` returns the bound value or throws a `ViteHubError` with code `GRANT_REQUIRED`. `check()` returns `undefined` instead; use `isValid()` when a bound value may itself be `undefined`. `consume()` makes a grant single-use. `attach(owner, grant)` and `attached(owner)` keep a grant with a request or context object.
+- Each definition has its own registry. A grant from another definition, another bundled copy of the package, or a forged object fails closed. The kind string brands the grant type, so use a unique `vitehub.<package>.<name>` kind.
+- Grants are request-scoped. Never persist one. Durable or resumed work must run the check again.
 
 ### Developer diagnostics
 

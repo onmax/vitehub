@@ -98,7 +98,7 @@ export function babysitterRepositories(filter: unknown): string[] {
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
 export async function createBabysitterProcessHost(context: AgentProcessHostContext): Promise<AgentProcessHostInstance> {
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
-  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number } };
+  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; capacity?: import("../babysitter.ts").BabysitterOptions["capacity"] } };
   const repositories = babysitterRepositories(agent.options.filter);
   await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
@@ -109,10 +109,13 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const host = await createProcessAgentHost({
     name: context.agentName,
     dataDir: context.dataDir,
+    invocations: agent.invocations,
+    invocationAgentName: `${context.agentName}-worker`,
     // A webhook claim owns a PR until its provider pass finishes or records a
     // durable wait. Keep transient provider pressure in this host queue rather
     // than failing the claim, while bounding how long a checkout can be held.
     capacity: {
+      ...agent.options.capacity,
       concurrency: agent.options.concurrency,
       queue: {
         maxPending: agent.options.concurrency,
@@ -122,7 +125,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     intervalMs: 10_000,
     run: async (reason, run, accepting) => await runtime?.reconcile(reason, run, accepting),
   });
-  // Workers record invocations and provider sessions in this host's directory.
+  // Workers share the assigned journal and keep provider sessions in the host directory.
   const worker = defineAgent({
     extends: agent,
     invocations: host.invocations,

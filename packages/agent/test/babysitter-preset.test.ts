@@ -13,9 +13,27 @@ vi.mock("../src/internal/provider-runtime-packages.ts", () => ({
   resolveInstalledProviderExecutable: () => "/bin/true",
 }));
 
+const boxDefinitions = vi.hoisted(() => vi.fn());
+const remoteBoxes = vi.hoisted(() => new Map<string, { path: string; closed: boolean }>());
+vi.mock("@vite-hub/box", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@vite-hub/box")>();
+  const resolveBox: typeof actual.resolveBox = async (definition, context, options) => {
+    boxDefinitions(definition);
+    const box = await actual.resolveBox(definition, context, options);
+    const remote = remoteBoxes.get(box.plan.workspace.path ?? "");
+    if (!remote) return box;
+    const copied = await actual.resolveBox({ ...definition, cwd: remote.path }, context, options);
+    return { plan: { ...copied.plan, runtime: "crabbox" }, async open(openOptions) {
+      const session = await copied.open(openOptions);
+      return { ...session, async close() { remote.closed = true; await session.close(); } };
+    } };
+  };
+  return { ...actual, resolveBox };
+});
+
 import { agentWithColocatedInstructions, defineAgent, defineCapability, getAgentFromRegistry } from "../src/index.ts";
 import { babysitter } from "../src/presets/babysitter.ts";
-import { createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
+import { boundedMergeReady, createBabysitterRuntime } from "../src/presets/babysitter/server.ts";
 import { getAgentLayerOptions } from "../src/agent-layers.ts";
 import { github as githubChannel, githubChannelIdentity } from "../src/channels.ts";
 import { liveMergeReadiness } from "../src/presets/babysitter/merge.ts";
@@ -26,16 +44,28 @@ import type { GitHubHost } from "../src/server/github.ts";
 const roots: string[] = [];
 afterEach(async () => {
   vi.clearAllMocks();
+  remoteBoxes.clear();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
   await mkdir(checkout);
   await writeFile(join(checkout, "source.ts"), "export const value = 1\n");
   let head = "a".repeat(40);
+  const git = async (cwd: string, ...args: string[]) => (await promisify(execFile)("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.test", ...args])).stdout.trim();
+  let remoteBox: { path: string; closed: boolean } | undefined;
+  if (preset.remoteBox) {
+    await git(checkout, "init");
+    await git(checkout, "add", ".");
+    await git(checkout, "commit", "-m", "base");
+    head = await git(checkout, "rev-parse", "HEAD");
+    remoteBox = { path: join(root, "remote"), closed: false };
+    await git(root, "clone", checkout, remoteBox.path);
+    remoteBoxes.set(checkout, remoteBox);
+  }
   let pushed = false;
   let checkoutFailure: Error | undefined;
   const checkoutController = new AbortController();
@@ -163,7 +193,12 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
   const prepare = vi.fn(async (directory: string) => { workerDirectory = directory });
   const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void }) => {
     pushed = true;
-    head = "b".repeat(40);
+    if (remoteBox) {
+      expect(remoteBox.closed).toBe(false);
+      head = await git(remoteBox.path, "rev-parse", "HEAD");
+      expect(await git(checkout, "rev-parse", "HEAD")).toBe(head);
+      expect(await git(checkout, "show", "HEAD:source.ts")).toContain("value = 2");
+    } else head = "b".repeat(40);
     return head;
   });
   const github: GitHubHost = {
@@ -221,12 +256,13 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
       },
     })] as never,
     // SAFETY: tests pass invalid merge values on purpose to cover runtime validation.
-    options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}) },
-    driver: { kind: "codex", env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
+    options: { filter: { labels: { allow: ["repair"] } }, autoMerge, ...(preset.merge === undefined ? {} : { merge: preset.merge as false }), ...(preset.driver ? { driver: preset.driver as "codex" } : {}), ...(preset.mentionAllowlist ? { mentionAllowlist: preset.mentionAllowlist } : {}) },
+    ...(preset.box ? { box: { runtime: "trusted-host" as const, requires: ["sh"], ...(preset.boxCheckout ? { checkout: { remote: "https://github.com/acme/other.git", ref: "main", sha: "d".repeat(40) } } : {}) } } : {}),
+    driver: { kind: "codex", ...(preset.box ? { providerSettings: { binaryPath: "/bin/true" } } : {}), env: { GH_TOKEN: "must-not-leak", OPENAI_API_KEY: "provider-only" } },
   }), "Preserve the documented API contract.");
   const runtime = createBabysitterRuntime({
     agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
-    ...(discovered ? { agentName: "babysitter" } : {}),
+    ...(discovered ? { agentName: preset.agentName ?? "babysitter" } : {}),
     github,
     inboxPath: join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
@@ -236,7 +272,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     ...(preset.postPushGraceMs === undefined ? {} : { postPushGraceMs: preset.postPushGraceMs }),
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
-  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
+  const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; schemas: Record<string, unknown>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
   let operation: "pushRepair" | "requestAutoMerge" | "updatePullRequest" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async () => {
@@ -273,12 +309,17 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
           passes.push({
             tools: listedTools.map((tool) => tool.name),
             descriptions: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.description])),
+            schemas: Object.fromEntries(listedTools.map((tool) => [tool.name, tool.inputSchema])),
             prompt: input.input,
             session: threadId,
-            instructions: await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
+            instructions: preset.box ? "Box Home instructions" : await readFile(join(workerDirectory!, "AGENTS.md"), "utf8"),
             runtimeMode,
             approvalPolicy,
           });
+          if (operation === "pushRepair" && remoteBox) {
+            await writeFile(join(remoteBox.path, "source.ts"), "export const value = 2\n");
+            await git(remoteBox.path, "commit", "-am", "repair");
+          }
           if (operation) {
             const result = await client.callTool({ name: operation, arguments: operationArguments });
             if (onAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
@@ -301,6 +342,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
               delta: JSON.stringify({
                 disposition: "park",
                 text: "Repair checked. Waiting for checks.",
+                ...preset.result,
               }),
               streamKind: "assistant_text",
             },
@@ -328,6 +370,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
     else expect(errors).toHaveBeenCalledOnce();
   }
   return {
+    checkout,
     runtime,
     reconcile,
     passes,
@@ -347,6 +390,40 @@ async function fixture(autoMerge = false, discovered = false, preset: { merge?: 
 }
 
 describe("Babysitter preset runtime", () => {
+  it("bounds stalled readiness hooks and propagates rejection and cancellation", async () => {
+    await expect(boundedMergeReady(() => new Promise(() => {}), new AbortController().signal, 5)).rejects.toThrow("timed out");
+    await expect(boundedMergeReady(() => Promise.reject(new Error("offline")), new AbortController().signal)).rejects.toThrow("offline");
+    const controller = new AbortController();
+    const pending = boundedMergeReady(() => new Promise(() => {}), controller.signal);
+    controller.abort(new Error("stopped"));
+    await expect(pending).rejects.toThrow("stopped");
+  });
+
+  it("retries a reviewed custom gate without another model pass", async () => {
+    let ready = false;
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => ready || "approval pending" }, result: { reviewedHead: "a".repeat(40) } });
+    try {
+      await f.reconcile();
+      const waiting = await f.runtime.inbox.get("acme/app", 12);
+      expect(waiting?.wait?.retryAt).toBeTypeOf("number");
+      expect(await f.runtime.inbox.waitsToEvaluate(true)).toHaveLength(1);
+      ready = true;
+      const now = vi.spyOn(Date, "now").mockReturnValue(waiting!.wait!.retryAt! + 1);
+      try { await f.reconcile(); } finally { now.mockRestore(); }
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("terminal");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("does not retain a merge assessment for an external wait", async () => {
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => "approval pending" }, result: { reviewedHead: "a".repeat(40), wait: { kind: "external", reason: "Needs approval" } } });
+    try {
+      await f.reconcile();
+      expect(await f.runtime.inbox.meta("review-assessment:acme/app#12")).toBeNull();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.kind).toBe("external");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("merges a ready PR directly before any model pass", async () => {
     const f = await fixture(false, false, { merge: "direct" });
     try {
@@ -445,6 +522,25 @@ describe("Babysitter preset runtime", () => {
     expect(() => defineAgent({ extends: babysitter, options: { driver: "model" } })).toThrow(/driver must be/);
     expect(() => defineAgent({ extends: babysitter, options: { noFindingsReviews: [""] } })).toThrow(/noFindingsReviews cannot contain an empty prefix/);
     expect(() => defineAgent({ extends: babysitter, options: { merge: { strategy: "direct", method: "fast-forward" as "squash" } } })).toThrow(/merge.method/);
+  });
+
+  it("preserves the Babysitter mention allowlist through Agent layer configuration", () => {
+    const agent = defineAgent({ extends: babysitter, options: { mentionAllowlist: [" Stefina ", "other-user"] } });
+    expect(getAgentLayerOptions(agent)).toMatchObject({ mentionAllowlist: [" Stefina ", "other-user"] });
+    expect(agent.options.mentionAllowlist).toEqual([" Stefina ", "other-user"]);
+  });
+
+  it("publishes only normalized configured mention recipients to the repair worker", async () => {
+    const configured = await fixture(false, false, { mentionAllowlist: [" Stefina ", "stefina", "other-user", "invalid login"] });
+    try {
+      await configured.reconcile();
+      expect(configured.passes[0]?.tools).toContain("mentionOnPullRequest");
+      expect(configured.passes[0]?.schemas.mentionOnPullRequest).toMatchObject({
+        properties: { login: { enum: ["stefina", "other-user"] } },
+      });
+    } finally {
+      await configured.runtime.inbox.close();
+    }
   });
 
   it("retargets a stacked PR to the default branch after its parent merged there", async () => {
@@ -559,6 +655,19 @@ describe("Babysitter preset runtime", () => {
     } finally {
       await f.runtime.inbox.close();
       vi.unstubAllGlobals();
+      createRun.mockRestore();
+    }
+  });
+
+  it.each(["first-babysitter", "second-babysitter"])("scopes the repair worker to discovered Agent %s", async (agentName) => {
+    const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun");
+    const f = await fixture(false, true, { agentName });
+    try {
+      await f.reconcile();
+      expect(createRun).toHaveBeenCalledOnce();
+      expect(createRun.mock.calls[0]![2].agentName).toBe(`${agentName}-worker`);
+    } finally {
+      await f.runtime.inbox.close();
       createRun.mockRestore();
     }
   });
@@ -718,6 +827,24 @@ describe("Babysitter preset runtime", () => {
     expect(state.attempts).toBe(1);
   });
 
+
+  it("pushes the committed remote Box HEAD while the provider and Box remain active", async () => {
+    const f = await fixture(false, false, { box: true, remoteBox: true });
+    f.choose("pushRepair");
+    await f.reconcile();
+    expect(f.push).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])("repairs through a trusted-host Box using the prepared PR working tree (inherited checkout: %s)", async (boxCheckout) => {
+    const f = await fixture(false, false, { box: true, boxCheckout });
+    f.choose("pushRepair");
+    await f.reconcile();
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(boxDefinitions).toHaveBeenCalledWith(expect.objectContaining({ requires: ["sh", "git"] }));
+    expect(f.push.mock.calls[0]?.[0]).toBe(f.checkout);
+    expect(f.passes).toHaveLength(1);
+  });
+
   it("repairs through broker tools, parks without polling, and resumes on new evidence with merge disabled", async () => {
     const f = await fixture();
     f.choose("pushRepair");
@@ -730,6 +857,8 @@ describe("Babysitter preset runtime", () => {
     expect(f.passes[0]?.tools).toContain("internalCheck");
     expect(f.passes[0]?.prompt).toContain("new-review-bot[bot]");
     expect(f.passes[0]?.instructions).toContain("Preserve the documented API contract.");
+    expect(f.passes[0]?.instructions).toContain("Use hosted CI for full typechecks");
+    expect(f.passes[0]?.instructions).toContain("stop after a memory-limit failure");
     expect(f.passes[0]?.instructions).not.toContain("{{{ instructions }}}");
     // An open thread disables the wait, so the pass resolves fixed threads before it parks.
     expect(f.passes[0]?.instructions).toContain("After pushing, resolve the review threads that push fixes, then stop");

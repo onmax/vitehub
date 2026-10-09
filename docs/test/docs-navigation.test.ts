@@ -5,7 +5,6 @@ import {
   docsRootSectionId,
   getDocsCatalog,
   getDocsSectionForPath,
-  getDocsSectionSelectItems,
   getDocsSectionSubpages,
   getDocsSidebarGroups,
   getUncategorizedDocsSections,
@@ -52,7 +51,7 @@ describe("docs product navigation", () => {
   });
 
   it("orders every Server Primitive section by the product page template", () => {
-    const template = ["Overview", "Get started", "Configure", "Server API", "Agent capability", "Hosts", "Limits and errors"];
+    const template = ["Overview", "Tutorial", "Configure", "Server API", "Agent capability", "Hosts", "Limits and errors"];
 
     for (const sectionId of serverPrimitiveSections) {
       const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
@@ -62,11 +61,17 @@ describe("docs product navigation", () => {
 
       expect(pages[0]?.path, sectionId).toBe(`/docs/${sectionId}`);
       expect(titles[0], sectionId).toBe("Overview");
-      expect(templateTitles, sectionId).toContain("Get started");
+      expect(templateTitles, sectionId).toContain("Tutorial");
       expect(templateTitles, sectionId).toContain("Server API");
-      // Template pages appear in template order. Product-specific pages such as Env Bridge come after them.
+      // Template pages appear in template order. Concepts pages may sit between
+      // template lanes without changing the order of the shared template pages.
       expect(templateTitles, sectionId).toEqual(template.filter(title => templateTitles.includes(title)));
-      expect(titles.slice(templateTitles.length).some(title => template.includes(title)), sectionId).toBe(false);
+      const laneLabels = getDocsSidebarGroups(section!).map(group => group.label).filter((label): label is string => label !== null);
+      const laneOrder = ["Tutorial", "Concepts", "Guides", "Reference", "Deploy", "Operate"];
+      const knownLaneIndexes = laneLabels
+        .map(label => laneOrder.indexOf(label))
+        .filter(index => index !== -1);
+      expect(knownLaneIndexes, sectionId).toEqual([...knownLaneIndexes].sort((left, right) => left - right));
 
       const capability = pages.find(page => page.id === "agent-capability");
       if (capability) {
@@ -94,16 +99,25 @@ describe("docs product navigation", () => {
     expect(getDocsSectionForPath(docsManifest.sections, "/docs/unknown")).toBeNull();
   });
 
-  it("lists each product once in the select, grouped by category", () => {
-    const groups = getDocsSectionSelectItems(docsManifest.sections);
+  it("keeps the UI sidebar Console-first", () => {
+    const ui = docsManifest.sections.find(section => section.id === "ui");
+    expect(getDocsSidebarGroups(ui!).map(group => group.label)).toEqual([
+      "Start",
+      "Console",
+      "Chat",
+      "Agent work",
+      "Utilities",
+    ]);
+    expect(getDocsSidebarGroups(ui!).find(group => group.label === "Console")?.pages.map(page => page.title))
+      .toEqual(["Chat App", "Invocation Dashboard", "Code Review"]);
+    expect(getDocsSidebarGroups(ui!).find(group => group.label === "Start")?.pages.map(page => page.title))
+      .toEqual(["Overview", "Tutorial", "Installation"]);
+  });
 
-    expect(groups.map(group => group[0]?.label)).toEqual([...docsCategoryOrder]);
-    expect(groups.every(group => group[0]?.type === "label")).toBe(true);
-
-    const values = groups.flat().filter(item => item.value).map(item => item.value);
-    expect(new Set(values).size).toBe(values.length);
-    expect(values).toHaveLength(docsManifest.sections.length);
-    expect(groups.flat().find(item => item.value === "kv")).toMatchObject({ label: "KV", to: "/docs/kv" });
+  it("publishes tutorials for public packages without product sections", () => {
+    expect(getDocsPageByPath("/docs/agents/box-tutorial")?.title).toBe("Box tutorial");
+    expect(getDocsPageByPath("/docs/reference/markdown-template-tutorial")?.title).toBe("Tutorial");
+    expect(getDocsPageByPath("/docs/ui/get-started")?.title).toBe("Tutorial");
   });
 
   it("groups every navigable page of a large section", () => {
@@ -116,7 +130,20 @@ describe("docs product navigation", () => {
     }
 
     const kv = docsManifest.sections.find(candidate => candidate.id === "kv");
-    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null]);
+    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null, "Tutorial", "Guides", "Reference", "Deploy"]);
+  });
+
+  it("gives execution primitives a Concepts lane before configuration guides", () => {
+    for (const sectionId of ["sandbox", "queue", "workflows"]) {
+      const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
+      const groups = getDocsSidebarGroups(section!);
+
+      expect(groups.map(group => group.label), sectionId).toContain("Concepts");
+      expect(groups.find(group => group.label === "Concepts")?.pages.map(page => page.title), sectionId)
+        .toEqual(["Concepts"]);
+      expect(groups.find(group => group.label === "Guides")?.pages.map(page => page.title), sectionId)
+        .toContain("Configure");
+    }
   });
 
   it("lists each topic once inside a section", () => {
@@ -145,7 +172,7 @@ describe("docs product navigation", () => {
     expect(isDocsLandingPath(docsManifest.sections, "/docs/ui")).toBe(false);
 
     const kv = docsManifest.sections.find(section => section.id === "kv");
-    expect(getDocsSectionSubpages(kv!).map(page => page.title)[0]).toBe("Get started");
+    expect(getDocsSectionSubpages(kv!).map(page => page.title)[0]).toBe("Tutorial");
     expect(getDocsSectionSubpages(kv!).some(page => page.id === "index")).toBe(false);
   });
 
@@ -157,7 +184,11 @@ describe("docs product navigation", () => {
   it("redirects each removed page, its trailing-slash form, and its raw Markdown copy to a published page", () => {
     const routeRules = createDocsRedirectRouteRules();
 
+    expect(routeRules["/databases"]).toEqual({ redirect: { statusCode: 301, to: "/database" } });
+    expect(routeRules["/rate-limits/"]).toEqual({ redirect: { statusCode: 301, to: "/rate-limit" } });
+
     expect(docsPageRedirects["/docs/server-primitives/kv"]).toBe("/docs/kv");
+    expect(docsPageRedirects["/blog/server-primitives"]).toBe("/docs/getting-started/server-primitives");
     expect(docsPageRedirects["/docs/capabilities/db"]).toBe("/docs/database/agent-capability");
     expect(docsPageRedirects["/docs/capabilities/mcp"]).toBe("/docs/agents/capabilities/mcp");
 

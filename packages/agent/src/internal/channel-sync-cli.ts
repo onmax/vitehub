@@ -41,6 +41,7 @@ export interface LoadedChannelTarget {
   channel: string
   defaultThreadId?: string
   mode: "account" | "disabled" | "webhook"
+  history?: boolean
   provider: string
   registration?: {
     id: string
@@ -328,13 +329,14 @@ async function loadQueuedChannelTargets(
         const syncDefinition = getAgentChannelSyncDefinition(channel)
         const sync = syncOnly && syncDefinition ? await syncDefinition.resolve(context, channel) : undefined
         if (syncOnly && !sync) continue
-        if (!sync && (channel.messages === false || channel.adapter === undefined || channel.webhooks === undefined || channel.webhooks === false || (Array.isArray(channel.webhooks) && channel.webhooks.length === 0))) continue
+        if (!sync && !channel.history && (channel.messages === false || channel.adapter === undefined || channel.webhooks === undefined || channel.webhooks === false || (Array.isArray(channel.webhooks) && channel.webhooks.length === 0))) continue
         const provider = syncDefinition?.provider || channel.kind
         const registration = await channelRegistration(channelId, channel, context, input.registration, true)
         if (input.registration && !registration) continue
         targets.push({
           agent: loaded.identity.name,
           channel: channelId,
+          history: channel.history !== undefined,
           defaultThreadId: !syncOnly && input.resolveDefaultThread !== false
             ? await getAgentChannelHistoryDefinition(channel)?.resolveDefaultThreadId?.(context, channel)
             : undefined,
