@@ -43,6 +43,7 @@ type WorkspaceAccessRuntime = Pick<
   | "attachWorkspaceSourceRequestExecution"
   | "assertModelWorkspaceGlobPattern"
   | "createWorkspaceSourceResolutionFacade"
+  | "createWorkspaceHistoryReader"
   | "createWorkspaceTools"
   | "getWorkspaceSourceRequestExecution"
   | "hasWorkspaceSourceResolvers"
@@ -982,6 +983,7 @@ function createScopedWorkspaceFacade<Name extends WorkspaceName>(
 
   const facade: ReadonlyWorkspaceFacade<Name> & Partial<WorkspaceSessionStarter> = {
     fs,
+    history: workspaceRuntime.createWorkspaceHistoryReader(workspace.history, scope.all),
     tools,
   }
   const metadataTarget = Symbol.for("vitehub.workspace.metadataTarget")

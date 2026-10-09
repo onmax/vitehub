@@ -91,6 +91,7 @@ function facade(workspace: ReturnType<typeof createWorkspace>): ReadonlyWorkspac
     none: () => ({}),
   } as never
   return {
+    history: workspace.history!,
     fs: {
       // SAFETY: This test fixture intentionally constructs the exact asserted Workspace contract.
       readFile: async (path, options) => await workspace.readFile(path, options as never),
@@ -151,6 +152,7 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     },
     getMeta: async key => await workspace.getMeta?.(key),
     history: {
+      ...workspace.history!,
       checkpoint: async options => await workspace.snapshot({ name: options?.message }),
       rebase: async options => await workspace.rebase(options),
     },
@@ -1347,13 +1349,22 @@ describe("Workspace Source Resolution", () => {
     const base = createWorkspace({ name: "support", store: { provider: "memory" } })
     class History {
       #base = base
+      #history = writableFacade(base).history
+      async head() { return await this.#history.head() }
+      async list(options: Parameters<WritableWorkspaceFacade["history"]["list"]>[0]) { return await this.#history.list(options) }
+      async open(id: string) { return await this.#history.open(id) }
+      async usage() { return await this.#history.usage() }
+      async commit(options: Parameters<WritableWorkspaceFacade["history"]["commit"]>[0]) { return await this.#history.commit(options) }
       async checkpoint() { return await this.#base.snapshot() }
       async rebase() {}
     }
     const facade = writableFacade(base)
     facade.history = new History()
     const resolved = await createWorkspaceSourceResolutionFacade(facade, { name: "support" }, { invocation, overlay: true })
-    await expect((resolved.workspace as WritableWorkspaceFacade).history.checkpoint()).resolves.toMatchObject({})
+    const history = (resolved.workspace as WritableWorkspaceFacade).history
+    await expect(history.checkpoint()).resolves.toMatchObject({})
+    await expect(history.head()).rejects.toMatchObject({ code: "WORKSPACE_R0069" })
+    await expect(history.commit({ ifHead: null, files: {} })).rejects.toMatchObject({ code: "WORKSPACE_R0069" })
   })
 
   it.each([false, true])("keeps parent Source guards during nested sync and ordinary writes (wrapped: %s)", async (wrapped) => {

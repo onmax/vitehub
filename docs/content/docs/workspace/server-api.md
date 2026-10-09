@@ -79,6 +79,53 @@ Explicit loaders that write through `ctx.store` must preserve the input item's `
 
 Each materialized Source reports its provider, cache disposition, revision, duration, and added, updated, unchanged, and removed file counts. Set `details: 'paths'` when the caller is allowed to inspect file names; path details stay out of the result by default.
 
+## Retained folder history
+
+Use retained history to publish a complete folder and read earlier versions. It is available when the Store implements `history`, including the [Blob + Database Store](/docs/workspace/configure#blob-database-store).
+
+```ts
+const workspace = useWorkspace('drop', { mode: 'write' })
+const base = await workspace.history.head()
+const revision = await workspace.history.commit({
+  ifHead: base?.id ?? null,
+  files: {
+    'index.html': '<h1>Hello</h1>',
+    'assets/data.bin': new Uint8Array([0, 255]),
+  },
+  message: 'Publish the site',
+  metadata: { author: 'maxi' },
+})
+
+const version = await workspace.history.open(revision.id)
+const html = await version.readFile('index.html')
+const bytes = await version.readFile('assets/data.bin', { encoding: 'binary' })
+const page = await workspace.history.list({ limit: 20 })
+const next = page.cursor
+  ? await workspace.history.list({ cursor: page.cursor, limit: 20 })
+  : undefined
+const usage = await workspace.history.usage()
+```
+
+`files` is the whole desired file set. Omitted paths are deleted from the next version. Earlier versions keep their bytes. Paths, write rules, `maxBytes`, validators, hooks, and Source write grants apply to additions, changes, and deletions. Unchanged files keep their MIME type and metadata. Validators can change content and file attributes but cannot rename paths or change operations during a history commit. Revision metadata must contain JSON-safe values. The Source ownership restriction on file `metadata.source` does not apply to revision metadata.
+
+`ifHead` is required. Use `null` for the first publication and a revision id for later publications. If the head changes, the commit fails with `WORKSPACE_CONFLICT` and `details.expected` and `details.actual`. Catch `isWorkspaceConflict(error)` and load the new head before resolving the edits. A head conflict never changes the published folder. On an operational error, read the head before retrying; Database responses and post-write hooks can fail after publication.
+
+| Method | Result |
+| --- | --- |
+| `history.commit({ ifHead, files, message?, metadata? })` | A revision with `id`, `parentId`, `createdAt`, optional message and metadata, file count `files`, and total file `bytes`. |
+| `history.head()` | Current revision or `null`. |
+| `history.list({ cursor?, limit? })` | `{ revisions, cursor? }`, newest first. Default limit `20`, maximum `100`. Pass the returned cursor unchanged to read older revisions. |
+| `history.open(id)` | Read-only view with `revision`, `list(path?, options?)`, `stat(path)`, and `readFile(path, { encoding? })`. Encoding defaults to UTF-8; `'binary'` returns `Uint8Array`. |
+| `history.usage()` | `{ bytes, objects }` for unique retained file content across all published revisions. This excludes manifests, Database storage, Blob metadata, and failed uploads. |
+
+Read mode exposes `head`, `list`, `open`, and `usage`. Commit requires write mode. `capabilities().retainedHistory` reports Store support on the writable facade. Stores without retained history throw `WORKSPACE_R0069` for these methods. `history.checkpoint()` and `history.rebase()` keep their existing contracts; a checkpoint is not proof of retained file bytes on every Store.
+
+History covers the Store file tree. It does not capture live Source responses, resumable drafts, or a running Session. Published revisions are immutable until the workspace is deleted. Empty directories are not part of the file-set history contract.
+
+A commit waits for Definition synchronization before checking Source ownership. Synchronization can publish a Source revision and advance the head. If that happens, the commit reports `WORKSPACE_CONFLICT`. Read the new head and retry with the complete file set. Source-owned files cannot be changed or deleted, including materialized files not yet retained in a revision.
+
+Retained history requires access to the complete Workspace. A facade restricted to selected paths or Sources throws `WORKSPACE_R0069` instead of exposing or replacing a complete folder outside that scope.
+
 ## Sync Sources
 
 Workspace Source Sync copies selected Source-backed paths into the Workspace Store when the Source sync policy permits it.

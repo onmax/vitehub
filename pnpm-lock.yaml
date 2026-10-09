@@ -2575,9 +2575,15 @@ importers:
       '@vercel/nft':
         specifier: catalog:vercel
         version: 1.11.0(rollup@4.64.0)
+      '@vite-hub/blob':
+        specifier: workspace:*
+        version: link:../blob
       '@vite-hub/box':
         specifier: workspace:*
         version: link:../box
+      '@vite-hub/database':
+        specifier: workspace:*
+        version: link:../database
       '@vite-hub/markdown-template':
         specifier: workspace:*
         version: link:../markdown-template
@@ -2627,6 +2633,9 @@ importers:
         specifier: npm:@voidzero-dev/vite-plus-core@0.3.3
         version: '@voidzero-dev/vite-plus-core@0.3.3(@types/node@24.19.1)(esbuild@0.27.7)(jiti@2.7.0)(publint@0.3.25)(terser@5.51.2)(tsx@4.23.15)(typescript@6.0.3)(unrun@0.2.36)(yaml@2.9.1)'
     devDependencies:
+      '@libsql/client':
+        specifier: catalog:database
+        version: 0.18.0
       '@types/node':
         specifier: catalog:tooling
         version: 24.19.1
@@ -2645,6 +2654,12 @@ importers:
       ai:
         specifier: catalog:ai
         version: 7.0.130(zod@4.6.5)
+      drizzle-orm:
+        specifier: catalog:database
+        version: 0.45.3(@cloudflare/workers-types@5.20261003.1)(@libsql/client@0.18.0)(@opentelemetry/api@1.9.1)(@upstash/redis@1.39.0)(better-sqlite3@12.9.0)(bun-types@1.4.2)(kysely@0.29.6)(postgres@3.4.9)(sql.js@1.14.2)
+      miniflare:
+        specifier: 4.20260730.0
+        version: 4.20260730.0
       ocache:
         specifier: catalog:unjs
         version: 0.3.0

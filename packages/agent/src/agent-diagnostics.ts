@@ -1535,7 +1535,7 @@ export const agentDiagnostics = defineDiagnostics({
       fix: "Set vitehub({ observability: { service } }) in the Vite config.",
     },
     AGENT_R0940: dynamicError,
-    AGENT_R0946: {
+    AGENT_R0947: {
       why: ({ requested, actual }: { requested: string; actual: string }) => `[vitehub] SQLite journal mode ${requested} was requested, but the VFS retained ${actual}.`,
       fix: "Use a local VFS that supports the requested journal mode. Set journalMode to delete for volumes that support rollback journaling only.",
     },
