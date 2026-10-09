@@ -20,22 +20,45 @@ type ProviderCollectionLoader<TSourceItem, TQuery extends object> = (
 
 export * from "@vite-hub/source"
 
-export interface CollectionSource<
+interface CollectionSourceBase<TSourceItem, TQueryInput extends object, TQuery extends object> {
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
+  defaultLimit?: number
+  maxLimit?: number
+  querySchema?: StandardSchemaV1<TQueryInput, TQuery>
+}
+
+interface CursorCollectionSource<
   TSourceItem,
   TQuery extends object,
   TCursorInput extends CollectionCursorValue,
   TCursorOutput extends CollectionCursorValue = TCursorInput,
   TQueryInput extends object = TQuery,
-> {
-  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
+> extends CollectionSourceBase<TSourceItem, TQueryInput, TQuery> {
   cursor(item: NoInfer<TSourceItem>): Readonly<TCursorInput>
   cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
-  defaultLimit?: number
-  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput> | ProviderCollectionLoader<TSourceItem, TQuery>
-  pagination?: "provider"
-  maxLimit?: number
-  querySchema?: StandardSchemaV1<TQueryInput, TQuery>
+  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput>
+  pagination?: undefined
 }
+
+interface ProviderCollectionSource<
+  TSourceItem,
+  TQuery extends object,
+  TQueryInput extends object = TQuery,
+> extends CollectionSourceBase<TSourceItem, TQueryInput, TQuery> {
+  load: ProviderCollectionLoader<TSourceItem, TQuery>
+  pagination: "provider"
+  cursor?: undefined
+  cursorSchema?: undefined
+}
+
+export type CollectionSource<
+  TSourceItem,
+  TQuery extends object,
+  TCursorInput extends CollectionCursorValue,
+  TCursorOutput extends CollectionCursorValue = TCursorInput,
+  TQueryInput extends object = TQuery,
+> = CursorCollectionSource<TSourceItem, TQuery, TCursorInput, TCursorOutput, TQueryInput>
+  | ProviderCollectionSource<TSourceItem, TQuery, TQueryInput>
 
 interface TableShape {
   readonly _: {
@@ -190,7 +213,7 @@ export function table<TTable extends TableShape>(
     querySchema?: undefined
   },
 ): CollectionSource<TTable["$inferSelect"], CollectionRequestQuery, KeysetCursor>
-export function table(input: unknown): CollectionSource<any, any, KeysetCursor> {
+export function table(input: unknown): CursorCollectionSource<TableShape["$inferSelect"], CollectionRequestQuery, KeysetCursor> {
   // SAFETY: Public overloads constrain input to TableSourceOptions before this implementation runs.
   const options = input as TableSourceOptions<TableShape, StandardSchemaV1<unknown, object> | undefined>
   const rawTable: unknown = options.table
@@ -221,7 +244,7 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
     cursor: row => columns.map((column, index) => driverValue(column, row[keys[index]!])),
     cursorSchema: keysetCursorSchema(columns),
     defaultLimit: options.defaultLimit,
-    async load({ cursor, limit, query, signal }: { cursor?: KeysetCursor; limit: number; query: any; signal?: AbortSignal }) {
+    async load({ cursor, limit, query, signal }: { cursor?: KeysetCursor; limit: number; query: CollectionRequestQuery; signal?: AbortSignal }) {
       signal?.throwIfAborted()
       // SAFETY: The where hook contract returns a Drizzle SQL expression when it returns a value.
       const filter = options.where?.({ query, table: options.table }) as SQL | undefined
@@ -237,7 +260,8 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
       return rows
     },
     maxLimit: options.maxLimit,
-    querySchema,
+    // SAFETY: Public overloads preserve the concrete schema input/output types.
+    querySchema: querySchema as StandardSchemaV1<CollectionRequestQuery, CollectionRequestQuery>,
   }
 }
 
@@ -275,18 +299,20 @@ const defineCollectionImplementation = (
   const callCore = core as (...args: unknown[]) => unknown
   if (input instanceof Function) return callCore(input, options)
   const { authorize, route, source, transform } = input
-  return callCore(source.load, {
+  const definition = {
     authorize,
     route,
     get: source.get,
     pagination: source.pagination,
-    cursor: source.cursor,
-    cursorSchema: source.cursorSchema,
     defaultLimit: source.defaultLimit,
     maxLimit: source.maxLimit,
     querySchema: source.querySchema,
     transform,
-  })
+    ...(source.pagination === "provider"
+      ? {}
+      : { cursor: source.cursor, cursorSchema: source.cursorSchema }),
+  }
+  return callCore(source.load, definition)
 }
 
 // SAFETY: The implementation dispatches the core loader and Source object overloads above.
