@@ -422,6 +422,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
     runtime,
     reconcile,
     passes,
+    errors,
     events,
     commit,
     advanceBase: (sha: string) => { baseHead = sha },
@@ -1267,8 +1268,9 @@ describe("Babysitter preset runtime", () => {
       expect(waiting?.status).toBe("waiting");
       expect(waiting?.wait?.retryAt).toEqual(expect.any(Number));
       expect(f.passes).toHaveLength(0);
+      f.errors.mockClear();
       const now = vi.spyOn(Date, "now").mockReturnValue(waiting!.wait!.retryAt! + 1);
-      try { await f.reconcile("babysitter.install.retry"); }
+      try { await f.reconcile(); }
       finally { now.mockRestore(); }
       expect(f.passes).toHaveLength(1);
     } finally { install.mockRestore(); await f.runtime.inbox.close(); }
