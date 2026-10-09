@@ -705,7 +705,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               : admitted
                 ? "CI reconciliation completed; the same-head repair budget is exhausted."
                 : "CI reconciliation completed; model work is waiting for host admission.",
-            ...(pushedHead ? { progress: { kind: "verified" as const, evidence: `push:${pushedHead}` } } : {}),
+            ...(pushedHead ? { progress: { kind: "verified" as const, evidence: `push:${pushedHead}` }, verifiedPushHeads: [...verifiedPushHeads] } : {}),
             wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy),
               ...(pushedHead ? { headSha: pushedHead } : {}),
               retryAt: admitted ? undefined : Math.max(retryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
@@ -871,6 +871,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // Check durable ownership at dispatch, including after admission I/O.
               // The cancellation watcher alone leaves a window for a reclaimed worker.
               const repairOperation = new AsyncLocalStorage<boolean>();
+              const ownedResolutions = new Map<string, number>();
               const repairEvidenceKey = (snapshot: Snapshot, current = snapshot) => {
                 const published = !!pushedHead && verifiedPushHeads.has(pushedHead);
                 const original = published && snapshot === inboxClaim.snapshot;
@@ -887,6 +888,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 // A self-push replaces old-head checks, but fresh failures and
                 // feedback still revoke further publication on every owned head.
                 return mergeReviewEvidenceKey({ ...snapshot, checks, statuses,
+                  threads: snapshot.threads.map(thread => ownedResolutions.has(String(thread.node_id ?? thread.id))
+                    ? { ...thread, isResolved: true } : thread),
                   pr: snapshot.pr && { ...snapshot.pr,
                     head: snapshot.pr.head && { ...snapshot.pr.head, sha: published ? pullRequest.headRefOid : snapshot.pr.head.sha },
                     base: snapshot.pr.base && { ...snapshot.pr.base, sha: undefined } },
@@ -901,6 +904,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   throw new DOMException("Pull request lease lost.", "AbortError");
                 }
                 observePendingPush?.(current);
+                for (const [id, reopens] of ownedResolutions) {
+                  if ((current.threadReopens?.[id] ?? 0) !== reopens) throw new DOMException("An addressed review thread was reopened.", "AbortError");
+                }
                 const observedHead = current.pr?.head?.sha;
                 if (current.sourcePushHeads?.some(head => !verifiedPushHeads.has(head)) || current.sourcePushHead !== inboxClaim.snapshot.sourcePushHead && !verifiedPushHeads.has(current.sourcePushHead ?? "")) {
                   throw new DOMException("Pull request source branch changed before synchronize.", "AbortError");
@@ -1034,7 +1040,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     const result = await prepared.push(providerDirectory, {
                       signal: abortSignal,
                       beforePush: async head => {
-                        await assertLease(); await assertRepairBase();
+                        const current = await assertLease(); await assertRepairBase();
+                        if (head && !await pullRequestInbox.registerProspectivePush({ ...inboxClaim, generation: current.generation, snapshot: current }, head)) {
+                          throw new DOMException("Publication candidate lease changed.", "AbortError");
+                        }
                         // The host supplies its exact validated local Git head.
                         // A signed source webhook can confirm publication before
                         // the local push subprocess returns its receipt.
@@ -1052,6 +1061,15 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                     clearInterval(renew);
                   }
                 },
+              });
+              const resolveThread = operations.resolveThread;
+              operations.resolveThread = id => repairOperation.run(true, async () => {
+                const current = await assertLease();
+                const reopens = current.threadReopens?.[id] ?? 0;
+                await resolveThread(id);
+                // Record only a successful, PR-owned resolution. New comments
+                // remain in the evidence hash; any external reopen revokes it.
+                ownedResolutions.set(id, reopens);
               });
               const settings = getAgentLayerOptions(baseAgent);
               const driver = settings?.driver;

@@ -56,7 +56,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { expectedOperationErrorAt?: number; operationCount?: number; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<BabysitterAdmissionResult>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -293,7 +293,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { expected
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
   const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; schemas: Record<string, unknown>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined }> = [];
-  let operation: "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | "readBaseCheckEvidence" | "readBaseCheckLogs" | undefined;
+  let operation: "resolveReviewThread" | "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | "readBaseCheckEvidence" | "readBaseCheckLogs" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async (options: { settings?: { launchArgs?: string }; environment?: NodeJS.ProcessEnv }) => {
     let threadId = `pass-${passes.length}`;
@@ -349,7 +349,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { expected
           if (operation) {
             await onRepair?.();
             for (let count = 0; count < (preset.operationCount ?? 1); count++) {
-              const result = await client.callTool({ name: operation, arguments: operationArguments });
+              const result = await client.callTool({ name: operation, arguments: preset.operationInputs?.[count] ?? operationArguments });
               if (preset.expectedOperationErrorAt === count || onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
               else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
             }
@@ -1486,13 +1486,13 @@ describe("Babysitter preset runtime", () => {
     } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
   });
 
-  it.each(["check", "status"])("fences a failed %s for an owned push before synchronize", async evidence => {
+  it.each([ ["check", false], ["status", false], ["check", true], ["status", true] ] as const)("fences a failed %s for an owned push before synchronize, CI first=%s", async (evidence, ciFirst) => {
     const f = await fixture(false, false, { operationCount: 2, expectedOperationErrorAt: 1 });
     f.choose("pushRepair");
     const head = "b".repeat(40);
     f.push.mockImplementationOnce(async (_target, options) => {
       await options?.beforePush?.(head);
-      await f.runtime.inbox.ingest("early-push", "push", {
+      if (!ciFirst) await f.runtime.inbox.ingest("early-push", "push", {
         repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
       });
       if (evidence === "check") await f.runtime.inbox.ingest("early-failure", "check_run", {
@@ -1503,6 +1503,13 @@ describe("Babysitter preset runtime", () => {
       });
       const current = (await f.runtime.inbox.get("acme/app", 12))!;
       expect(evidence === "check" ? current.checks["check_run:99"]?.conclusion : current.statuses["new failure"]?.state).toBe("failure");
+      if (ciFirst) await f.runtime.inbox.ingest("late-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      f.advanceHead(head);
+      await f.runtime.inbox.ingest("late-synchronize", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "synchronize", pull_request: f.pr(),
+      });
       await expect(options?.afterPush?.(head)).rejects.toThrow("evidence changed");
       return head;
     });
@@ -1510,6 +1517,76 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       expect(f.push).toHaveBeenCalledOnce();
       expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(head);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("parks all verified repair pushes when retry admission closes", async () => {
+    let accepting = true;
+    const retryAt = Date.now() + 300_000;
+    const admission = async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true,
+      reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}),
+      state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } });
+    const f = await fixture(false, false, { box: true, admission, operationCount: 2, providerRetryDelayMs: 1 });
+    f.choose("pushRepair");
+    let count = 0;
+    f.push.mockImplementation(async (_target, options) => {
+      const head = (++count === 1 ? "b" : "d").repeat(40);
+      f.advanceHead(head);
+      await options?.afterPush?.(head);
+      await f.runtime.inbox.ingest(`owned-push-${count}`, "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      return head;
+    });
+    const implementation = createProviderRuntime.getMockImplementation()!;
+    createProviderRuntime.mockImplementation(async (...args: unknown[]) => {
+      const runtime = await implementation(...args);
+      const sendTurn = runtime.sendTurn;
+      return { ...runtime, sendTurn: async (input: unknown) => {
+        await sendTurn(input); accepting = false; throw new Error("429 Too Many Requests");
+      } };
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledTimes(2);
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(current.status).toBe("waiting");
+      expect(current.wait?.headSha).toBe("d".repeat(40));
+      expect(current.wait?.retryAt).toBe(retryAt);
+      expect(current.lastResult).toContain("host admission");
+      expect(createProviderRuntime).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each([false, true])("keeps owned thread resolutions while fencing external reopens=%s", async reopen => {
+    const f = await fixture(false, false, { operationCount: 2, operationInputs: [{ id: "PRRT_1" }, { id: "PRRT_2" }],
+      ...(reopen ? { expectedOperationErrorAt: 1 } : {}) });
+    f.choose("resolveReviewThread");
+    const resolved = new Set<string>();
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const query = args.join(" ");
+      if (query.includes("reviewThreads")) return { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        nodes: ["PRRT_1", "PRRT_2"].map(id => ({ id, isResolved: resolved.has(id), comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } } }), stderr: "" };
+      if (query.includes("node(id:")) return { stdout: JSON.stringify({ data: { node: { pullRequest: { id: "PR_12" }, isResolved: false } } }), stderr: "" };
+      if (query.includes("resolveReviewThread(input:")) {
+        const id = args.find(arg => arg.startsWith("id="))!.slice(3);
+        resolved.add(id);
+        await f.runtime.inbox.ingest(`owned-resolve-${id}`, "pull_request_review_thread", {
+          repository: { full_name: "acme/app" }, action: "resolved", pull_request: f.pr(), thread: { node_id: id, comments: [] },
+        });
+        if (reopen && id === "PRRT_1") await f.runtime.inbox.ingest("external-reopen", "pull_request_review_thread", {
+          repository: { full_name: "acme/app" }, action: "unresolved", pull_request: f.pr(), thread: { node_id: id, comments: [] },
+        });
+        return { stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id } } } }), stderr: "" };
+      }
+      return await command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect([...resolved]).toEqual(reopen ? ["PRRT_1"] : ["PRRT_1", "PRRT_2"]);
     } finally { await f.runtime.inbox.close(); }
   });
 
