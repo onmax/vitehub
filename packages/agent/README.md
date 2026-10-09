@@ -907,7 +907,8 @@ if that webhook arrives after the pass finishes.
 Known worker setup failures receive one recovery attempt per Agent `version` and
 PR head. Bump an explicit version with each deployed Agent release. An Agent without
 a version uses the installed package build identity, which changes with package
-source and dependency updates even when preview builds reuse a manifest version. The wake and release marker
+source and dependency updates even when preview builds reuse a manifest version.
+Hosts that run package sources compute the same fingerprint at startup. The wake and release marker
 commit together, so restarting the same release cannot repeat the wake. Timed
 retries, check dependencies, and maintainer credential blockers keep their existing
 wake conditions. Health can reuse admission accounting for at most two minutes
@@ -928,6 +929,8 @@ they arrive before the source-push and synchronize webhooks. This association do
 not count as a successful push and expires with the claim. A wait after several
 repair pushes retains every verified push receipt, including when host admission
 closes during a provider retry.
+When a candidate becomes the PR head, earlier unpublished candidates stop accepting
+CI evidence. Later pending candidates and separately verified push receipts remain valid.
 
 A pass can resolve several addressed review threads without cancelling itself
 when its own resolution webhooks arrive. New comments and external thread reopens
