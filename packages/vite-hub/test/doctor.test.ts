@@ -143,6 +143,33 @@ describe("vitehub/destructure-storage-results", () => {
     }, "nuxt")).toEqual(["VHUB0003", "VHUB0003"])
   })
 
+  it.each([
+    'namespace Local { const kv = local; const blob = local }',
+    'namespace Local { var kv = local; var blob = local }',
+    'namespace Local.Nested { const kv = local; const blob = local }',
+    'declare module "local-storage" { const kv: unknown; const blob: unknown }',
+  ])("keeps TypeScript module bindings inside their bodies: %s", async (source) => {
+    expect(await codes(destructureStorageResults, {
+      "server/api/modules.ts": [
+        source,
+        'namespace Sibling { async function read() { const siblingKv = await kv.get("sibling"); const siblingBlob = await blob.get("sibling") } }',
+        'const a = await kv.get("x")',
+        'const b = await blob.get("x")',
+      ].join("\n"),
+    }, "nuxt")).toEqual(Array(4).fill("VHUB0003"))
+  })
+
+  it("resolves local helpers and stores within namespaces", async () => {
+    expect(await codes(destructureStorageResults, {
+      "server/api/modules.ts": [
+        'import { kv as cache } from "vite-hub/kv"',
+        'namespace Local { const kv = local; async function read() { const a = await kv.get("x") } }',
+        'namespace Stores { const store = cache.store("cache"); async function read() { const a = await store.get("x") } }',
+        'namespace Sibling { async function read() { const a = await store.get("x") } }',
+      ].join("\n"),
+    }, "nuxt")).toEqual(["VHUB0003"])
+  })
+
   it("resolves imported helpers and store handles by binding, not by name", async () => {
     expect(await codes(destructureStorageResults, {
       "server/api/imports.ts": [

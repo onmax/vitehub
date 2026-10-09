@@ -179,7 +179,7 @@ function storageScopes(root: unknown) {
     if (!v.is(astNodeSchema, pattern)) return
     switch (pattern.type) {
       case "Identifier":
-        if (typeof pattern.name === "string") scope.bindings.set(pattern.name, binding)
+        if (v.is(identifierSchema, pattern)) scope.bindings.set(pattern.name, binding)
         break
       case "RestElement": bind(pattern.argument, scope); break
       case "AssignmentPattern": bind(pattern.left, scope); break
@@ -200,8 +200,10 @@ function storageScopes(root: unknown) {
     if (!v.is(astNodeSchema, node)) return
     if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") bind(node.id, enclosing)
     const isFunction = ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
-    const createsScope = isFunction || ["BlockStatement", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "ClassDeclaration", "ClassExpression", "StaticBlock"].includes(node.type)
-    const scope = createsScope ? { parent: enclosing, functionScope: isFunction || node.type === "StaticBlock", bindings: new Map<string, StorageBinding>() } : enclosing
+    const isModule = node.type === "TSModuleDeclaration" || node.type === "TSModuleBlock"
+    const createsScope = isFunction || isModule || ["BlockStatement", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "ClassDeclaration", "ClassExpression", "StaticBlock"].includes(node.type)
+    // Namespace/module bodies also contain `var` declarations; they must not hoist out.
+    const scope = createsScope ? { parent: enclosing, functionScope: isFunction || isModule || node.type === "StaticBlock", bindings: new Map<string, StorageBinding>() } : enclosing
     scopes.set(node, scope)
     if (isFunction) {
       bind(node.id, scope)
