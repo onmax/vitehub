@@ -97,7 +97,9 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
   const scanner = createSourceScanner(file)
   const masked = scanner.maskSourceLiterals(source)
   const escapedExportName = exportName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  const declaration = new RegExp(`\\b(?:const|let|var)\\s+${escapedExportName}\\s*=\\s*$`)
+  // Match the exported initializer itself, including an optional type annotation
+  // and parenthesized call, while keeping unrelated defineCollection calls out.
+  const declaration = new RegExp(`(?:^|[;\\n])\\s*(?:export\\s+)?(?:const|let|var)\\s+${escapedExportName}(?:\\s*:\\s*[^=;]+)?\\s*=\\s*\\(?\\s*$`)
   const call = scanner.findIdentifierCalls(source, "defineCollection").find(candidate =>
     declaration.test(masked.slice(0, candidate.start)))
   if (!call) return false
