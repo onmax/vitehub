@@ -275,6 +275,7 @@ describe("framework package contract", () => {
       "./console/sections",
       "./console/server",
       "./database/drizzle",
+      "./doctor",
       "./nuxt",
       "./runtime/h3",
       "./source",

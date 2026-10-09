@@ -130,6 +130,7 @@
     "./content/client": "./dist/content/client.js",
     "./database": "./dist/database.js",
     "./database/drizzle": "./dist/database/drizzle.js",
+    "./doctor": "./dist/doctor.js",
     "./email": "./dist/email.js",
     "./email/markdown": "./dist/email/markdown.js",
     "./email/server": "./dist/email/server.js",
@@ -306,6 +307,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "catalog:tooling",
     "vite": "catalog:vite",
+    "vite-doctor": "catalog:",
     "vite-plus": "catalog:tooling",
     "vitest": "catalog:tooling",
     "vue": "catalog:ui",
@@ -320,6 +322,7 @@
     "posthog-node": "^5.51.6",
     "reka-ui": "^2.10.5",
     "vite": "catalog:vite-compat",
+    "vite-doctor": "*",
     "vitest": "catalog:tooling",
     "vue": "catalog:ui"
   },
@@ -346,6 +349,9 @@
       "optional": true
     },
     "vite": {
+      "optional": true
+    },
+    "vite-doctor": {
       "optional": true
     },
     "vitest": {
