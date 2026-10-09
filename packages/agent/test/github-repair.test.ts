@@ -1,12 +1,18 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import * as filesystem from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts";
 import { assertGitHubDependenciesCurrent } from "../src/server/github-install.ts";
 import { validateGitHubInstallInputs } from "../src/server/github-install-inputs.ts";
+
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, mkdir: vi.fn(actual.mkdir), open: vi.fn(actual.open) };
+});
 
 const exec = promisify(execFile);
 const roots: string[] = [];
@@ -32,6 +38,171 @@ it("commits selected repair files on the exact ancestry without running checkout
   expect(await git(root, "show", `${head}:file.txt`)).toBe("repair");
   expect(await git(root, "show", `${head}:unrelated.txt`)).toBe("keep");
   expect(await readFile(join(root, "unrelated.txt"), "utf8")).toBe("unrelated edit\n");
+});
+
+it.each(["link", "portal"])("commits after a successful refresh with ignored build outputs in a %s dependency", async protocol => {
+  const { root } = await fixture();
+  await mkdir(join(root, "packages/local/src"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ name: "repair", dependencies: { local: `${protocol}:packages/local` } }));
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await writeFile(join(root, "pnpm-workspace.yaml"), "packages: ['packages/*']\n");
+  await writeFile(join(root, ".gitignore"), "dist/\n");
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", version: "1.0.0", bin: "dist/cli.js" }));
+  await writeFile(join(root, "packages/local/src/index.js"), "export const value = 1;\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked workspace");
+  const expectedHead = await git(root, "rev-parse", "HEAD");
+  await mkdir(join(root, "packages/local/dist"));
+  await writeFile(join(root, "packages/local/dist/index.js"), "export const value = 1;\n");
+  await writeFile(join(root, "packages/local/dist/cli.js"), "#!/usr/bin/env node\nconsole.log('cli');\n");
+  // A successful host refresh records the installed working-tree inputs.
+  await writeFile(join(root, ".git/vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await writeFile(join(root, "file.txt"), "repair\n");
+  const head = await commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["file.txt"] }, { expectedHead, verifyDependencies: true });
+  expect(await git(root, "rev-parse", `${head}^`)).toBe(expectedHead);
+  expect(await git(root, "show", `${head}:file.txt`)).toBe("repair");
+  expect(await git(root, "ls-tree", "-r", "--name-only", "HEAD")).not.toContain("dist/index.js");
+});
+
+it.each([
+  { protocol: "link", bin: "cli.js" },
+  { protocol: "portal", bin: { local: "cli.js" } },
+])("invalidates installed command shims when a $protocol package's bin target changes", async ({ protocol, bin }) => {
+  const { root } = await fixture();
+  const local = join(root, "packages/local");
+  await mkdir(local, { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: `${protocol}:packages/local` } }));
+  await writeFile(join(local, "package.json"), JSON.stringify({ name: "local", bin }));
+  await writeFile(join(local, "source.js"), "export const value = 1;\n");
+  await writeFile(join(local, "cli.js"), "#!/usr/bin/env node\nconsole.log('cli');\n");
+  const record = join(root, ".git/vitehub-install.json");
+  const installed = await validateGitHubInstallInputs(root);
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: installed }));
+  await writeFile(join(local, "source.js"), "export const value = 2;\n");
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+  await writeFile(join(local, "cli.js"), "#!/bin/sh\nprintf cli\n");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow("Dependency inputs changed");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await chmod(join(local, "cli.js"), 0o755);
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow("Dependency inputs changed");
+});
+
+it("keeps tracked linked command deletions behind the installation fence", async () => {
+  const { root } = await fixture();
+  const local = join(root, "packages/local");
+  await mkdir(local, { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  await writeFile(join(local, "package.json"), JSON.stringify({ name: "local", bin: "cli.js" }));
+  await writeFile(join(local, "cli.js"), "#!/usr/bin/env node\nconsole.log('cli');\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked command");
+  const expectedHead = await git(root, "rev-parse", "HEAD");
+  await writeFile(join(root, ".git/vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await rm(join(local, "cli.js"));
+  await expect(commitGitHubPullRequestWorkspace(root, { message: "remove command", paths: ["packages/local/cli.js"] }, { expectedHead, verifyDependencies: true })).rejects.toThrow("Dependency inputs changed");
+  expect(await git(root, "rev-parse", "HEAD")).toBe(expectedHead);
+});
+
+it("refreshes reused generated command snapshots and detects a required dependency refresh", async () => {
+  const { root } = await fixture();
+  const command = "packages/local/dist/cli.js";
+  await mkdir(join(root, "packages/local/dist"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: "dist/cli.js" }));
+  await writeFile(join(root, ".gitignore"), "dist/\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked command");
+  await writeFile(join(root, command), "first generated command\n");
+  const record = join(root, ".git/vitehub-install.json");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  const inputs = await mkdtemp(join(tmpdir(), "vitehub-bin-snapshot-")); roots.push(inputs);
+  await git(root, "checkout-index", "--all", `--prefix=${inputs}/`);
+  await assertGitHubDependenciesCurrent(root, inputs);
+  await writeFile(join(root, command), "second generated command\n");
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow("Dependency inputs changed");
+  expect(await readFile(join(inputs, command), "utf8")).toBe("second generated command\n");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).resolves.toBeUndefined();
+  await rm(join(root, command));
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow("Dependency inputs changed");
+  await expect(readFile(join(inputs, command))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it("validates a newly indexed linked command from its protected snapshot instead of changed worktree bytes", async () => {
+  const { root } = await fixture();
+  const command = "packages/local/cli.js";
+  await mkdir(join(root, "packages/local"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: "cli.js" }));
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked command declaration");
+  await writeFile(join(root, command), "indexed command\n");
+  await git(root, "add", command);
+  await writeFile(join(root, command), "different live command\n");
+  const record = join(root, ".git/vitehub-install.json");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  const inputs = await mkdtemp(join(tmpdir(), "vitehub-bin-index-")); roots.push(inputs);
+  await git(root, "checkout-index", "--all", `--prefix=${inputs}/`);
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow("Dependency inputs changed");
+  expect(await readFile(join(inputs, command), "utf8")).toBe("indexed command\n");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(inputs) }));
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).resolves.toBeUndefined();
+  expect(await readFile(join(inputs, command), "utf8")).toBe("indexed command\n");
+});
+
+it.each(["parent", "open"])("rejects generated command %s replacement before copying into the protected snapshot", async race => {
+  const { root } = await fixture();
+  const command = "packages/local/dist/cli.js";
+  await mkdir(join(root, "packages/local/dist"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: "dist/cli.js" }));
+  await writeFile(join(root, ".gitignore"), "dist/\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked command");
+  await writeFile(join(root, command), "safe generated command\n");
+  await writeFile(join(root, ".git/vitehub-install.json"), JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  const inputs = await mkdtemp(join(tmpdir(), "vitehub-bin-snapshot-")); roots.push(inputs);
+  await git(root, "checkout-index", "--all", `--prefix=${inputs}/`);
+  const outside = await mkdtemp(join(tmpdir(), "vitehub-bin-outside-")); roots.push(outside);
+  await writeFile(join(outside, "cli.js"), "outside host content\n");
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  let replaced = false;
+  const replace = async () => {
+    replaced = true;
+    await filesystem.rename(join(root, "packages/local/dist"), join(root, "packages/local/original-dist"));
+    await symlink(outside, join(root, "packages/local/dist"));
+  };
+  const mkdirSpy = vi.spyOn(filesystem, "mkdir").mockImplementation(async (path, options) => {
+    if (race === "parent" && String(path) === join(inputs, "packages/local/dist")) await replace();
+    // SAFETY: The intercepted call uses the recursive mkdir overload.
+    return await actual.mkdir(path, options as { recursive: true });
+  });
+  const openSpy = vi.spyOn(filesystem, "open").mockImplementation(async (path, flags, mode) => {
+    if (race === "open" && String(path) === join(root, command)) await replace();
+    return await actual.open(path, flags, mode);
+  });
+  try {
+    await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow();
+    expect(replaced).toBe(true);
+    expect(await readFile(join(inputs, command), "utf8").catch(() => "")).not.toContain("outside host content");
+  } finally { mkdirSpy.mockRestore(); openSpy.mockRestore(); }
+});
+
+it("fingerprints missing linked commands and rejects symbolic or metadata command targets", async () => {
+  const { root } = await fixture();
+  const local = join(root, "packages/local");
+  await mkdir(local, { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  const manifest = join(local, "package.json");
+  await writeFile(manifest, JSON.stringify({ name: "local", bin: "cli.js" }));
+  const missing = await validateGitHubInstallInputs(root);
+  await writeFile(join(local, "cli.js"), "#!/usr/bin/env node\n");
+  expect(await validateGitHubInstallInputs(root)).not.toBe(missing);
+  await rm(join(local, "cli.js"));
+  await symlink("package.json", join(local, "cli.js"));
+  await expect(validateGitHubInstallInputs(root)).rejects.toThrow("regular files");
+  await writeFile(manifest, JSON.stringify({ name: "local", bin: "../../.git/config" }));
+  await expect(validateGitHubInstallInputs(root)).rejects.toThrow("Git metadata");
 });
 
 it.each([false, true])("stages an explicitly restored instruction file marked skip-worktree, preparedMerge=%s", async preparedMerge => {

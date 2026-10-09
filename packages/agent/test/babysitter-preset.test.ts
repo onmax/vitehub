@@ -58,7 +58,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { remoteBox?: boolean; actionsDenied?: boolean; baseBranchHead?: string; mentionAllowlist?: string[]; boxCheckout?: boolean; box?: boolean; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -82,6 +82,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
   const checkoutController = new AbortController();
   let abortOperation = false;
   let onAdmission: (() => void | Promise<void>) | undefined;
+  let onRepair: (() => void | Promise<void>) | undefined;
   let openPullRequests = true;
   // Check runs that the REST API reports in addition to the fixture's required "test" run.
   const extraCheckRuns: Record<string, unknown>[] = [];
@@ -220,7 +221,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
   const commit = vi.fn(async (directory: string, input: { message: string; paths: string[] }) => remoteBox
     ? await commitGitHubPullRequestWorkspace(directory, input, { expectedHead: head })
     : head);
-  const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: () => void }) => {
+  const push = vi.fn(async (_target?: string, _options?: { signal?: AbortSignal, beforePush?: (head?: string) => void | Promise<void>, afterPush?: (head: string) => void | Promise<void> }) => {
     pushed = true;
     if (remoteBox) {
       expect(remoteBox.closed).toBe(false);
@@ -306,7 +307,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
     ...(preset.providerRetryDelayMs === undefined ? {} : { providerRetryDelayMs: preset.providerRetryDelayMs }),
   });
   const passes: Array<{ tools: string[]; descriptions: Record<string, string | undefined>; schemas: Record<string, unknown>; prompt: string; session: string; instructions: string; runtimeMode: string | undefined; approvalPolicy: string | undefined; install?: string }> = [];
-  let operation: "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | "readBaseCheckEvidence" | "readBaseCheckLogs" | undefined;
+  let operation: "resolveReviewThread" | "commitRepair" | "pushRepair" | "requestAutoMerge" | "updatePullRequest" | "readBaseCheckEvidence" | "readBaseCheckLogs" | undefined;
   let operationArguments: Record<string, unknown> = {};
   createProviderRuntime.mockImplementation(async (options: { settings?: { launchArgs?: string }; environment?: NodeJS.ProcessEnv }) => {
     let threadId = `pass-${passes.length}`;
@@ -362,9 +363,12 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
             await git(remoteBox.path, "commit", "-am", "repair");
           }
           if (operation) {
-            const result = await client.callTool({ name: operation, arguments: operationArguments });
-            if (onAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
-            else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
+            await onRepair?.();
+            for (let count = 0; count < (preset.operationCount ?? 1); count++) {
+              const result = await client.callTool({ name: operation, arguments: preset.operationInputs?.[count] ?? operationArguments });
+              if (preset.expectedOperationErrorAt === count || onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
+              else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
+            }
           }
         } finally {
           await client.close();
@@ -419,6 +423,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
     events,
     commit,
     advanceBase: (sha: string) => { baseHead = sha },
+    advanceHead: (sha: string) => { head = sha },
     push,
     prepare,
     command,
@@ -430,12 +435,29 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
     failCheckout: (error: Error) => { checkoutFailure = error },
     abortOnOperation: () => { abortOperation = true },
     onAdmission: (callback: () => void | Promise<void>) => { onAdmission = callback },
+    onRepair: (callback: () => void | Promise<void>) => { onRepair = callback },
     closeOnGitHub: () => { openPullRequests = false },
     reportCheckRun: (run: Record<string, unknown>) => { extraCheckRuns.push(run) },
   };
 }
 
 describe("Babysitter preset runtime", () => {
+  it.each(["commitRepair", "pushRepair"] as const)("allows %s across an unrelated repository push", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    f.onRepair(async () => {
+      await f.runtime.inbox.ingest("other-branch-pushed", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40), repo: { ...f.pr().base.repo, pushed_at: "2026-10-08T20:00:00Z", size: 12345, open_issues_count: 20 } } },
+      });
+    });
+    try {
+      await f.reconcile();
+      if (operation === "commitRepair") expect(f.commit).toHaveBeenCalledOnce();
+      else expect(f.push).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it("releases the active owner slot when durable lease cleanup fails", async () => {
     const f = await fixture(false);
     vi.spyOn(f.runtime.inbox, "release").mockRejectedValueOnce(new Error("temporary state store failure"));
@@ -1398,7 +1420,8 @@ describe("Babysitter preset runtime", () => {
     try {
       await f.reconcile();
       expect(f.push).toHaveBeenCalledOnce();
-      expect(rejected).toBe(true);
+      expect(f.push).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(rejected).toBe(true));
     } finally { vi.restoreAllMocks(); await f.runtime.inbox.close(); }
   });
 
@@ -1441,6 +1464,456 @@ describe("Babysitter preset runtime", () => {
       expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
       expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBe(replacementToken);
     } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each([
+    ["commitRepair", "title"], ["commitRepair", "body"],
+    ["pushRepair", "title"], ["pushRepair", "body"],
+    ["commitRepair", "draft"], ["pushRepair", "draft"],
+  ] as const)("fences %s after same-head PR %s requirements change", async (operation, field) => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    let edited = false;
+    f.onAdmission(async () => {
+      if (edited) return;
+      edited = true;
+      await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" },
+        action: "edited",
+        pull_request: { ...f.pr(), [field]: field === "draft" ? true : "Updated validation requirements." },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(edited).toBe(true);
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each((["successful check", "base advance", "failing check turns green", "failing status turns green"] as const).flatMap(change =>
+    ([{ box: false, operation: "pushRepair" }, { box: true, operation: "pushRepair" }, { box: true, operation: "commitRepair" }] as const).map(configuration => ({ change, ...configuration })),
+  ))("keeps $operation available after a same-head $change with Box=$box", async ({ change, box, operation }) => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true, box, remoteBox: box });
+    f.choose(operation, operation === "commitRepair" ? { message: "Repair source", paths: ["source.ts"] } : {});
+    let changed = false;
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const result = await command(args, request);
+      if (!changed && change === "failing check turns green" && args.some(arg => arg.includes("/check-runs?"))) {
+        return { ...result, stdout: result.stdout + "\n" + JSON.stringify({ id: 2, name: "repair-test", head_sha: f.pr().head.sha, status: "completed", conclusion: "failure", app: { id: 1 } }) };
+      }
+      if (!changed && change === "failing status turns green" && args.some(arg => arg.includes("/statuses?"))) {
+        return { ...result, stdout: JSON.stringify({ context: "repair-test", sha: f.pr().head.sha, state: "failure" }) };
+      }
+      return result;
+    });
+    if (change === "failing check turns green" || change === "failing status turns green") {
+      await f.runtime.inbox.seed("acme/app", f.pr());
+      await f.runtime.inbox.ingest("initial-failure", change === "failing check turns green" ? "check_run" : "status", {
+        repository: { full_name: "acme/app" }, action: "completed",
+        ...(change === "failing check turns green" ? { check_run: { id: 2, name: "repair-test", head_sha: f.pr().head.sha, status: "completed", conclusion: "failure", app: { id: 1 }, pull_requests: [{ number: 12 }] } }
+          : { context: "repair-test", sha: f.pr().head.sha, state: "failure" }),
+      });
+    }
+    f.onRepair(async () => {
+      if (changed) return;
+      const before = await f.runtime.inbox.get("acme/app", 12);
+      if (!before?.lease) throw new Error("The provider must own an active claim before the evidence changes.");
+      expect(f.passes).toHaveLength(1);
+      changed = true;
+      if (change === "base advance") {
+        f.advanceBase("d".repeat(40));
+        await f.runtime.inbox.ingest("base-advanced", "pull_request", {
+          repository: { full_name: "acme/app" }, action: "edited", pull_request: f.pr(),
+        });
+      } else if (change === "failing status turns green") {
+        await f.runtime.inbox.ingest("status-succeeded", "status", {
+          repository: { full_name: "acme/app" }, context: "repair-test", sha: f.pr().head.sha, state: "success",
+        });
+      } else {
+        await f.runtime.inbox.ingest("check-succeeded", "check_run", {
+          repository: { full_name: "acme/app" }, action: "completed",
+          check_run: { id: 2, name: change === "failing check turns green" ? "repair-test" : "test", head_sha: f.pr().head.sha,
+          status: "completed", conclusion: "success", app: { id: 1 }, pull_requests: [{ number: 12 }] },
+        });
+      }
+      expect((await f.runtime.inbox.get("acme/app", 12))?.generation).toBeGreaterThan(before.generation);
+    });
+    try {
+      await f.reconcile();
+      expect(changed).toBe(true);
+      expect(operation === "commitRepair" ? f.commit : f.push).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["commitRepair", "pushRepair"] as const)("fences %s when an existing review thread is reopened", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => args.some(arg => arg.includes("reviewThreads"))
+      ? { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        nodes: [{ id: "PRRT_1", isResolved: true, comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } } }), stderr: "" } : await command(args, request));
+    let reopened = false;
+    f.onAdmission(async () => {
+      if (reopened) return;
+      reopened = true;
+      await f.runtime.inbox.ingest("thread-reopened", "pull_request_review_thread", {
+        repository: { full_name: "acme/app" }, action: "unresolved", pull_request: f.pr(),
+        thread: { node_id: "PRRT_1", comments: [] },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(reopened).toBe(true);
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("still fences merge authorization after same-head metadata changes", async () => {
+    const f = await fixture(true);
+    f.choose("requestAutoMerge");
+    let edited = false;
+    f.onAdmission(async () => {
+      if (edited) return;
+      edited = true;
+      await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), body: "Updated merge requirements." },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(edited).toBe(true);
+      expect(f.command.mock.calls.some(([args]) => args.join(" ").includes("enablePullRequestAutoMerge"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["commitRepair", "pushRepair"] as const)("fences %s when the source branch is renamed on the same head", async operation => {
+    const f = await fixture(true);
+    f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
+    f.onAdmission(() => {});
+    f.onRepair(async () => {
+      await f.runtime.inbox.ingest("source-renamed", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), head: { ...f.pr().head, ref: "renamed" } },
+      });
+    });
+    try {
+      await f.reconcile();
+      expect(f.commit).not.toHaveBeenCalled();
+      expect(f.push).not.toHaveBeenCalled();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("renews a slow repair push against a validated same-head base advance", async () => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    let changed = false;
+    f.onAdmission(async () => {
+      if (changed) return;
+      changed = true;
+      await f.runtime.inbox.ingest("metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40) } },
+      });
+    });
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    const originalPush = f.push.getMockImplementation()!;
+    f.push.mockImplementationOnce(async (...args) => {
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => expect(renew).toHaveBeenCalledOnce());
+      expect(await renew.mock.results[0]?.value).toBe(true);
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(renew.mock.calls[0]?.[0].generation).toBe(current.generation);
+      return await originalPush(...args);
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+    } finally {
+      timers.mockRestore();
+      renew.mockRestore();
+      await f.runtime.inbox.close();
+    }
+  });
+
+  it("keeps an in-flight renewal alive after a push while the head webhook is pending", async () => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const getOriginal = f.runtime.inbox.get.bind(f.runtime.inbox);
+    const get = vi.spyOn(f.runtime.inbox, "get");
+    let release!: () => void, entered!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    let completed = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      get.mockImplementationOnce(async (...args) => { entered(); await blocked; return await getOriginal(...args); });
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await started;
+      await options?.afterPush?.("b".repeat(40));
+      release();
+      await vi.waitFor(() => {
+        if (options?.signal?.aborted) throw options.signal.reason;
+        expect(renew).toHaveBeenCalledOnce();
+      });
+      expect(await renew.mock.results[0]?.value).toBe(true);
+      completed = true;
+      return "b".repeat(40);
+    });
+    try {
+      await f.reconcile();
+      expect(completed).toBe(true);
+    } finally { release?.(); timers.mockRestore(); get.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it.each([{ published: false, lateOwn: false, rollback: false }, { published: true, lateOwn: false, rollback: false }, { published: true, lateOwn: true, rollback: false }, { published: true, lateOwn: false, rollback: true }])("fences source pushes before synchronize, published=$published lateOwn=$lateOwn rollback=$rollback", async ({ published, lateOwn, rollback }) => {
+    const f = await fixture();
+    f.choose("pushRepair");
+    f.onAdmission(() => {});
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    let rejected = false;
+    const otherHead = rollback ? f.pr().head.sha : "c".repeat(40);
+    f.push.mockImplementationOnce(async (_target, options) => {
+      if (published) await options?.afterPush?.("b".repeat(40));
+      await f.runtime.inbox.ingest("other-source-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: otherHead,
+      });
+      expect((await f.runtime.inbox.get("acme/app", 12))?.sourcePushHead).toBe(otherHead);
+      if (lateOwn) await f.runtime.inbox.ingest("delayed-own-source-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: "b".repeat(40),
+      });
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => expect(options?.signal?.aborted).toBe(true));
+      rejected = true;
+      options?.signal?.throwIfAborted();
+      return "b".repeat(40);
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      await vi.waitFor(() => expect(rejected).toBe(true));
+      expect(renew).not.toHaveBeenCalled();
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(current.status).toBe("ready");
+      expect(current.wait).toBeUndefined();
+    } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it.each([ ["check", false], ["status", false], ["check", true], ["status", true] ] as const)("fences a failed %s for an owned push before synchronize, CI first=%s", async (evidence, ciFirst) => {
+    const f = await fixture(false, false, { operationCount: 2, expectedOperationErrorAt: 1 });
+    f.choose("pushRepair");
+    const head = "b".repeat(40);
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await options?.beforePush?.(head);
+      if (!ciFirst) await f.runtime.inbox.ingest("early-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      if (evidence === "check") await f.runtime.inbox.ingest("early-failure", "check_run", {
+        repository: { full_name: "acme/app" }, check_run: { id: 99, name: "new failure", head_sha: head, status: "completed", conclusion: "failure", pull_requests: [{ number: 12 }] },
+      });
+      else await f.runtime.inbox.ingest("early-failure", "status", {
+        repository: { full_name: "acme/app" }, sha: head, context: "new failure", state: "failure",
+      });
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(evidence === "check" ? current.checks["check_run:99"]?.conclusion : current.statuses["new failure"]?.state).toBe("failure");
+      if (ciFirst) await f.runtime.inbox.ingest("late-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      f.advanceHead(head);
+      await f.runtime.inbox.ingest("late-synchronize", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "synchronize", pull_request: f.pr(),
+      });
+      await expect(options?.afterPush?.(head)).rejects.toThrow("evidence changed");
+      return head;
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(head);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("parks all verified repair pushes when retry admission closes", async () => {
+    let accepting = true;
+    const retryAt = Date.now() + 300_000;
+    const admission = async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true,
+      reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}),
+      state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } });
+    const f = await fixture(false, false, { box: true, admission, operationCount: 2, providerRetryDelayMs: 1 });
+    f.choose("pushRepair");
+    let count = 0;
+    f.push.mockImplementation(async (_target, options) => {
+      const head = (++count === 1 ? "b" : "d").repeat(40);
+      f.advanceHead(head);
+      await options?.afterPush?.(head);
+      await f.runtime.inbox.ingest(`owned-push-${count}`, "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      return head;
+    });
+    const implementation = createProviderRuntime.getMockImplementation()!;
+    createProviderRuntime.mockImplementation(async (...args: unknown[]) => {
+      const runtime = await implementation(...args);
+      const sendTurn = runtime.sendTurn;
+      return { ...runtime, sendTurn: async (input: unknown) => {
+        await sendTurn(input); accepting = false; throw new Error("429 Too Many Requests");
+      } };
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledTimes(2);
+      const current = (await f.runtime.inbox.get("acme/app", 12))!;
+      expect(current.status).toBe("waiting");
+      expect(current.wait?.headSha).toBe("d".repeat(40));
+      expect(current.wait?.retryAt).toBe(retryAt);
+      expect(current.lastResult).toContain("host admission");
+      expect(createProviderRuntime).toHaveBeenCalledOnce();
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each([false, true])("keeps owned thread resolutions while fencing external reopens=%s", async reopen => {
+    const f = await fixture(false, false, { operationCount: 2, operationInputs: [{ id: "PRRT_1" }, { id: "PRRT_2" }],
+      ...(reopen ? { expectedOperationErrorAt: 1 } : {}) });
+    f.choose("resolveReviewThread");
+    const resolved = new Set<string>();
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const query = args.join(" ");
+      if (query.includes("reviewThreads")) return { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        nodes: ["PRRT_1", "PRRT_2"].map(id => ({ id, isResolved: resolved.has(id), comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } } }), stderr: "" };
+      if (query.includes("node(id:")) return { stdout: JSON.stringify({ data: { node: { pullRequest: { id: "PR_12" }, isResolved: false } } }), stderr: "" };
+      if (query.includes("resolveReviewThread(input:")) {
+        const id = args.find(arg => arg.startsWith("id="))!.slice(3);
+        resolved.add(id);
+        await f.runtime.inbox.ingest(`owned-resolve-${id}`, "pull_request_review_thread", {
+          repository: { full_name: "acme/app" }, action: "resolved", pull_request: f.pr(), thread: { node_id: id, comments: [] },
+        });
+        if (reopen && id === "PRRT_1") await f.runtime.inbox.ingest("external-reopen", "pull_request_review_thread", {
+          repository: { full_name: "acme/app" }, action: "unresolved", pull_request: f.pr(), thread: { node_id: id, comments: [] },
+        });
+        return { stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id } } } }), stderr: "" };
+      }
+      return await command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect([...resolved]).toEqual(reopen ? ["PRRT_1"] : ["PRRT_1", "PRRT_2"]);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("retains an accepted worker push before the local push command returns", async () => {
+    const f = await fixture();
+    f.choose("pushRepair");
+    const head = "b".repeat(40);
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    let completed = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await options?.beforePush?.(head);
+      f.advanceHead(head);
+      await f.runtime.inbox.ingest("early-own-source-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: head,
+      });
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => {
+        options?.signal?.throwIfAborted();
+        expect(renew).toHaveBeenCalledOnce();
+      });
+      expect(await renew.mock.results[0]?.value).toBe(true);
+      await options?.afterPush?.(head);
+      completed = true;
+      return head;
+    });
+    try {
+      await f.reconcile();
+      expect(completed).toBe(true);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(head);
+    } finally { timers.mockRestore(); renew.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it.each(["comment", "failed check"])("rechecks %s before publication after successive verified pushes", async feedback => {
+    const f = await fixture(false, false, { operationCount: 3, expectedOperationErrorAt: 2 });
+    f.choose("pushRepair");
+    const first = "b".repeat(40), second = "d".repeat(40);
+    f.push.mockImplementationOnce(async (_target, options) => {
+      f.advanceHead(first);
+      await options?.afterPush?.(first);
+      await f.runtime.inbox.ingest("first-head-synchronized", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "synchronize", pull_request: f.pr(),
+      });
+      return first;
+    });
+    f.push.mockImplementationOnce(async (_target, options) => {
+      f.advanceHead(second);
+      await options?.afterPush?.(second);
+      if (feedback === "comment") await f.runtime.inbox.ingest("new-requirement", "issue_comment", {
+        repository: { full_name: "acme/app" }, action: "created", issue: { number: 12, pull_request: {} },
+        comment: { id: 99, body: "Preserve the existing API contract.", user: { login: "reviewer" } },
+      });
+      else await f.runtime.inbox.ingest("new-failure", "check_run", {
+        repository: { full_name: "acme/app" }, check_run: { id: 99, name: "new requirement", head_sha: first, status: "completed", conclusion: "failure", pull_requests: [{ number: 12 }] },
+      });
+      return second;
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledTimes(2);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(second);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("revalidates an equivalent generation arriving between renewal read and CAS", async () => {
+    const f = await fixture(true, false, { allowOperationAfterAdmission: true });
+    f.choose("pushRepair");
+    const timers = vi.spyOn(globalThis, "setInterval");
+    const originalRenew = f.runtime.inbox.renew.bind(f.runtime.inbox);
+    const renew = vi.spyOn(f.runtime.inbox, "renew");
+    renew.mockImplementationOnce(async (...args) => {
+      await f.runtime.inbox.ingest("renewal-metadata-edited", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "edited",
+        pull_request: { ...f.pr(), base: { ...f.pr().base, sha: "d".repeat(40) } },
+      });
+      return await originalRenew(...args);
+    });
+    const originalPush = f.push.getMockImplementation()!;
+    let completed = false;
+    f.push.mockImplementationOnce(async (...args) => {
+      const renewal = timers.mock.calls.find(([, delay]) => delay === 30_000)?.[0];
+      if (!renewal) throw new Error("Missing push renewal timer");
+      renewal();
+      await vi.waitFor(() => expect(renew).toHaveBeenCalledTimes(2));
+      expect(await renew.mock.results[1]?.value).toBe(true);
+      args[1]?.signal?.throwIfAborted();
+      completed = true;
+      return await originalPush(...args);
+    });
+    try {
+      await f.reconcile();
+      expect(completed).toBe(true);
+    } finally {
+      timers.mockRestore();
+      renew.mockRestore();
+      await f.runtime.inbox.close();
+    }
   });
 
   it.each(["pushRepair", "requestAutoMerge"] as const)("fences %s when feedback advances the claimed generation during admission", async (operation) => {
@@ -1599,6 +2072,82 @@ describe("Babysitter preset runtime", () => {
       expect(f.commit).not.toHaveBeenCalled();
       expect(f.push).not.toHaveBeenCalled();
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each([false, true])("retains the publication chain while synchronize webhooks lag, first observed=%s", async observed => {
+    const f = await fixture(false, false, { operationCount: 2 });
+    f.choose("pushRepair");
+    const first = "b".repeat(40), second = "d".repeat(40);
+    const originalPush = f.push.getMockImplementation()!;
+    let completed = false;
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await originalPush(_target, options);
+      await options?.afterPush?.(first);
+      await f.runtime.inbox.ingest("first-repair-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: first,
+      });
+      if (observed) await f.runtime.inbox.ingest("first-repair-synchronize", "pull_request", {
+        repository: { full_name: "acme/app" }, action: "synchronize",
+        pull_request: { ...f.pr(), head: { ...f.pr().head, sha: first } },
+      });
+      return first;
+    });
+    f.push.mockImplementationOnce(async (_target, options) => {
+      await options?.afterPush?.(second);
+      await f.runtime.inbox.ingest("second-repair-push", "push", {
+        repository: { full_name: "acme/app" }, ref: `refs/heads/${f.pr().head.ref}`, after: second,
+      });
+      options?.signal?.throwIfAborted();
+      completed = true;
+      return second;
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledTimes(2);
+      expect(completed).toBe(true);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.headSha).toBe(second);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("records repair publication when the live base advances after the remote push", async () => {
+    const settings = { mergeableState: "dirty", baseBranchHead: "e".repeat(40) };
+    const f = await fixture(false, false, settings);
+    f.choose("pushRepair");
+    const originalPush = f.push.getMockImplementation()!;
+    f.push.mockImplementationOnce(async (...args) => {
+      await args[1]?.beforePush?.();
+      const head = await originalPush(...args);
+      settings.baseBranchHead = "f".repeat(40);
+      if (args[1]?.afterPush) await args[1].afterPush(head);
+      else await args[1]?.beforePush?.();
+      return head;
+    });
+    try {
+      await f.reconcile();
+      const stored = await f.runtime.inbox.get("acme/app", 12);
+      expect(f.push).toHaveBeenCalledOnce();
+      expect(stored?.status).toBe("waiting");
+      expect(stored?.wait?.headSha).toBe("b".repeat(40));
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("rejects a live base move at the push boundary before mutating the remote", async () => {
+    const settings = { mergeableState: "dirty", baseBranchHead: "e".repeat(40) };
+    const f = await fixture(false, false, settings);
+    f.choose("pushRepair");
+    const originalPush = f.push.getMockImplementation()!;
+    let remoteMutated = false;
+    f.push.mockImplementationOnce(async (...args) => {
+      settings.baseBranchHead = "f".repeat(40);
+      await args[1]?.beforePush?.();
+      remoteMutated = true;
+      return await originalPush(...args);
+    });
+    try {
+      await f.reconcile();
+      expect(f.push).toHaveBeenCalledOnce();
+      expect(remoteMutated).toBe(false);
     } finally { await f.runtime.inbox.close(); }
   });
 

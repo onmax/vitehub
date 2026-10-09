@@ -2,6 +2,8 @@ import { types } from "node:util"
 import { createWorkspaceTools } from "../ai.ts"
 import { workspaceError } from "../core/errors.ts"
 import { normalizeWorkspacePath } from "../core/path.ts"
+import { createWorkspaceHistory, createWorkspaceHistoryReader, forwardWorkspaceHistoryFiles } from "../core/history.ts"
+import { workspaceErrorDiagnostics } from "../error-diagnostics.ts"
 import { createWorkspaceWritePolicy } from "../core/rules.ts"
 import { appendWorkspaceFile, copyWorkspacePath } from "../fs-ops.ts"
 import { createBasicWorkspaceSession } from "../session/basic.ts"
@@ -42,6 +44,7 @@ import type {
   WorkspaceSearchHit,
   WorkspaceSearchQuery,
   WorkspaceStore,
+  WorkspaceHistoryCommitOptions,
   WorkspaceSession,
   WorkspaceSessionOptions,
   WorkspaceSessionWriteFileOptions,
@@ -408,7 +411,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
   const sourceRequestExecution = createWorkspaceSourceRequestExecution(resolvedDefinition, {
     selectedWorkspaceScope: options.selectedWorkspaceScope,
   }) ?? getWorkspaceSourceRequestExecution(workspace.fs)
-  if (!options.overlay && resolvedDefinition === definition && !sourceRequestExecution) return { definition, workspace }
+  if (!options.overlay && resolvedDefinition === definition && !sourceRequestExecution && (!options.selectedWorkspaceScope || options.selectedWorkspaceScope.all)) return { definition, workspace }
 
   const selectedWorkspaceScope = options.selectedWorkspaceScope
   const sourceViewDefinition = createScopedSourceViewDefinition(resolvedDefinition, selectedWorkspaceScope)
@@ -422,6 +425,13 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     backingMetadataTarget,
   )
   const sourceView = createWorkspaceSourceView(sourceViewDefinition, overlayStore, { reuseStartupSnapshots: true })
+  function requireCompleteHistory() {
+    if (selectedWorkspaceScope && !selectedWorkspaceScope.all) {
+      throw workspaceErrorDiagnostics.WORKSPACE_R0069({ message: "[vitehub] Retained folder history requires access to the complete Workspace. A selected path or Source scope cannot inspect or replace its full history." })
+    }
+    return workspace.history
+  }
+  const history = createWorkspaceHistoryReader(workspace.history, !selectedWorkspaceScope || selectedWorkspaceScope.all)
   const materializeSources = async (options = {}) => await sourceView.materializeSources(options)
   const canUseBase = (path: string) => !overlayStore.isTombstoned(normalizeWorkspacePath(path))
   let readWorkspace!: Workspace
@@ -547,6 +557,18 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       writeFile: sourceView.requireWriteGrant(async (path, content: WorkspaceContent, options?: WriteFileOptions) => await writes.writeFile(path, content, options)),
     }
     const baseRebase = sourceView.requireRebaseGrants(async options => await workspace.history.rebase(options))
+    const resolvedHistory = createWorkspaceHistory(resolvedDefinition, {
+      ...overlayStore,
+      history: {
+        ...createWorkspaceHistoryReader(workspace.history, true),
+        commit: async options => await workspace.history.commit(forwardWorkspaceHistoryFiles(options)),
+      },
+    }, sourceView)
+
+    async function commitHistory(options: WorkspaceHistoryCommitOptions) {
+      requireCompleteHistory()
+      return await resolvedHistory.commit(options)
+    }
 
     // A takeRemote path replaces local content, so Source-backed paths are rejected.
     async function rebase(options?: WorkspaceRebaseOptions) {
@@ -657,6 +679,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     }, sourceRequestExecution)
     writeWorkspace = attachWorkspaceSourceRequestExecution({
       name: resolvedDefinition.name,
+      history: { ...workspace.history, ...history, commit: commitHistory },
       diff: workspace.diff,
       exists: writeFs.exists,
       glob: writeFs.glob,
@@ -712,15 +735,21 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     writeTools.write = createWriteTools as WorkspaceWriteToolSet["write"]
     // Bind delegated methods to their original receiver, including custom class instances.
     const baseHistory = workspace.history
-    const history: WritableWorkspaceFacade["history"] = {
+    const writableHistory: WritableWorkspaceFacade["history"] = {
+      ...history,
+      commit: commitHistory,
       checkpoint: baseHistory.checkpoint.bind(baseHistory),
       rebase,
     }
     const writableWorkspace: WritableWorkspaceFacade<Name> = {
       ...workspace,
+      async capabilities() {
+        const capabilities = await workspace.capabilities()
+        return { ...capabilities, retainedHistory: capabilities.retainedHistory === true && (!selectedWorkspaceScope || selectedWorkspaceScope.all) }
+      },
       diff: writeWorkspace.diff,
       fs: writeFs,
-      history,
+      history: writableHistory,
       materializeSources,
       publish: writeWorkspace.publish,
       snapshot: writeWorkspace.snapshot,
@@ -778,6 +807,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
 
   const readonlyWorkspace: ReadonlyWorkspaceFacade<Name> & Partial<Pick<Workspace, "startSession">> = {
     fs,
+    history,
     tools,
   }
   forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, readonlyWorkspace)

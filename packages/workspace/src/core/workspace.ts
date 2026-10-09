@@ -9,6 +9,7 @@ import { createWorkspaceMetadataTarget, workspaceInternalMetadataCapability, wor
 import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 import { getCachedWorkspaceStore } from "./workspace-cache.ts"
+import { createWorkspaceHistory } from "./history.ts"
 import type {
   Workspace,
   WorkspaceDefinition,
@@ -34,8 +35,9 @@ export function createWorkspace(definition: WorkspaceDefinition, options: { reus
   const workspace: Workspace & { [workspaceMetadataTarget]: () => WorkspaceMetadataTarget } = {
     [workspaceMetadataTarget]: () => metadata,
     name: definition.name,
+    history: createWorkspaceHistory(definition, store, files),
     async capabilities() {
-      return { conditionalWrites: hasRuntimeType(store.writeFileConditional, "function") }
+      return { conditionalWrites: hasRuntimeType(store.writeFileConditional, "function"), retainedHistory: Boolean(store.history) }
     },
     async sync(options) {
       const { syncWorkspaceSources } = await import("../sources/sync.ts")

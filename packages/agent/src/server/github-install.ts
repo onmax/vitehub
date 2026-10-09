@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { access, chmod, lstat, mkdir, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { validateGitHubInstallInputs } from "./github-install-inputs.ts";
 import { createGitHubInstallSnapshot, publishGitHubInstallSnapshot } from "./github-install-snapshot.ts";
 import { randomUUID } from "node:crypto";
@@ -21,8 +22,44 @@ export interface GitHubInstallRunner {
   (input: { cwd: string; command: string[]; env: NodeJS.ProcessEnv; fingerprint: string }): Promise<Record<string, unknown> | void>;
 }
 
+let installationTail: Promise<void> = Promise.resolve();
+
 /** Install frozen dependencies before entering the provider's network sandbox. */
 export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal, run?: GitHubInstallRunner): Promise<void> {
+  signal?.throwIfAborted();
+  if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
+  signal?.throwIfAborted();
+  const previous = installationTail;
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  // An aborted waiter releases its own reservation, but later work still waits
+  // for every predecessor. Installers can each use multiple GiB of host memory.
+  installationTail = previous.then(() => held);
+  let abort!: () => void;
+  let queueTimeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      previous,
+      new Promise<never>((_resolve, reject) => {
+        queueTimeout = setTimeout(() => reject(new GitHubWorkspaceInstallError(new Error("Dependency installer capacity remained busy for two minutes; retry when capacity is available."))), 2 * 60_000);
+      }),
+      new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal?.reason ?? new DOMException("Installation cancelled.", "AbortError"));
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      }),
+    ]);
+    clearTimeout(queueTimeout);
+    signal?.throwIfAborted();
+    await installWorkspace(target, signal, run);
+  } finally {
+    clearTimeout(queueTimeout);
+    signal?.removeEventListener("abort", abort);
+    release();
+  }
+}
+
+async function installWorkspace(target: string, signal?: AbortSignal, run?: GitHubInstallRunner): Promise<void> {
   if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");
@@ -116,7 +153,57 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
 /** Require validation to use the same dependency inputs that the host installed. */
 export async function assertGitHubDependenciesCurrent(target: string, inputs = target): Promise<void> {
   if (!(await exists(join(inputs, "package.json"))) && !(await exists(join(inputs, "pnpm-workspace.yaml")))) return;
-  const fingerprint = await validateGitHubInstallInputs(inputs);
+  const fingerprint = await validateGitHubInstallInputs(inputs, inputs === target ? undefined : async paths => {
+    const checkout = await realpath(target);
+    for (const path of paths) {
+      const destination = join(inputs, path);
+      // The index owns tracked commands, including staged deletion. Generated
+      // untracked commands remain installation inputs without entering commits.
+      const indexed = await exec("git", ["--literal-pathspecs", "-C", target, "-c", "core.fsmonitor=false", "ls-files", "--cached", "--", path], {
+        env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      if (indexed.stdout.trim()) continue;
+      // A staged deletion has no index entry, but must still stay deleted in
+      // the protected commit snapshot instead of importing live worktree bytes.
+      const tracked = await exec("git", ["--literal-pathspecs", "-C", target, "-c", "core.fsmonitor=false", "ls-tree", "--name-only", "HEAD", "--", path], {
+        env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      if (tracked.stdout.trim()) continue;
+      const source = join(checkout, path);
+      const info = await lstat(source).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; });
+      if (!info) { await rm(destination, { force: true }); continue; }
+      if (!info.isFile()) throw new Error("Linked dependency bin targets must be regular files.");
+      const resolved = await realpath(source);
+      const part = relative(checkout, resolved);
+      if (part === ".." || part.startsWith(`..${sep}`) || isAbsolute(part)) throw new Error("Linked dependency bin targets must stay inside the checkout.");
+      // Bind the read to the validated file. A parent swap must never make
+      // pathname-based copying import a different host file into this snapshot.
+      const file = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const opened = await file.stat();
+        const assertSource = async () => {
+          const current = await lstat(source);
+          if (!opened.isFile() || opened.dev !== info.dev || opened.ino !== info.ino
+            || !current.isFile() || current.dev !== opened.dev || current.ino !== opened.ino
+            || await realpath(source) !== resolved) throw new Error("Linked dependency bin target changed during snapshot validation.");
+        };
+        await assertSource();
+        await mkdir(dirname(destination), { recursive: true });
+        await assertSource();
+        const contents = await file.readFile();
+        const settled = await file.stat();
+        await assertSource();
+        if (settled.size !== opened.size || settled.mtimeMs !== opened.mtimeMs || settled.ctimeMs !== opened.ctimeMs || settled.mode !== opened.mode) {
+          throw new Error("Linked dependency bin target changed during snapshot validation.");
+        }
+        // A reused input snapshot must reflect the current generated command.
+        // Remove its old entry before exclusive creation, without following it.
+        await rm(destination, { force: true });
+        await writeFile(destination, contents, { flag: "wx", mode: opened.mode & 0o777 });
+        await chmod(destination, opened.mode & 0o777);
+      } finally { await file.close(); }
+    }
+  });
   const record = v.parse(v.object({ status: v.string(), fingerprint: v.optional(v.string()) }), JSON.parse(await readFile(join(target, ".git", "vitehub-install.json"), "utf8")));
   if (record.status !== "installed" || record.fingerprint !== fingerprint) throw new Error("Dependency inputs changed or installation failed. Call refreshDependencies and rerun validation before committing.");
 }

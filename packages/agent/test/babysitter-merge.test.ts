@@ -17,6 +17,14 @@ function snapshot(): Snapshot {
 }
 
 describe("Babysitter merge evidence", () => {
+  it("compares base repository identity without transport counters or owner metadata", () => {
+    const s = snapshot(), original = mergeReviewEvidenceKey(s);
+    s.pr!.base!.repo = { ...s.pr!.base!.repo!, pushed_at: "2026-10-08T20:00:00Z", size: 12345, open_issues_count: 20, owner: { login: "acme", avatar_url: "https://example.test/new-avatar" } };
+    expect(mergeReviewEvidenceKey(s)).toBe(original);
+    s.pr!.base!.repo!.full_name = "another/app";
+    expect(mergeReviewEvidenceKey(s)).not.toBe(original);
+  });
+
   it("allows optional pending checks and statuses after authoritative required checks pass", () => {
     const s = snapshot();
     s.checks.optional = { id: 1, name: "optional", head_sha: head, status: "in_progress", app: { id: 1 } };

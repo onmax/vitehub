@@ -1,4 +1,5 @@
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core/db"
+import type { BatchItem, BatchResponse } from "drizzle-orm/batch"
 
 export type DrizzleCasing = "snake_case" | "camelCase"
 export type DatabaseDialect = "sqlite"
@@ -81,7 +82,10 @@ export interface DatabaseDefinition<TSchema extends Record<string, unknown> = Re
   schema: TSchema
 }
 
-export type RuntimeDrizzleDatabase<TSchema extends Record<string, unknown>> = BaseSQLiteDatabase<"async", unknown, TSchema>
+export type RuntimeDrizzleDatabase<TSchema extends Record<string, unknown>> = BaseSQLiteDatabase<"async", unknown, TSchema> & {
+  /** Execute an atomic batch on D1, D1 HTTP, or libSQL. */
+  batch<U extends BatchItem<"sqlite">, T extends Readonly<[U, ...U[]]>>(queries: T): Promise<BatchResponse<T>>
+}
 export type Database<TSchema extends Record<string, unknown> = Record<string, unknown>> = DatabaseDefinition<TSchema> & RuntimeDrizzleDatabase<TSchema>
 
 export interface DiscoveredDatabaseDefinition {
