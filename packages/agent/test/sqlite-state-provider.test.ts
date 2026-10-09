@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { pathToFileURL } from "node:url"
+
 import { createClient } from "@libsql/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -66,6 +68,35 @@ describe("SQLite Agent State Provider", () => {
   afterEach(async () => {
     vi.useRealTimers()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })))
+  })
+
+  it("coordinates independent file adapters across URL forms and reconnects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vitehub-state-writers-"))
+    tempDirs.push(dir)
+    const path = join(dir, "state data.db")
+    const first = createLibsqlAgentState({ url: `file:${pathToFileURL(path).pathname}?tls=0` })
+    const second = createLibsqlAgentState({ url: pathToFileURL(path).href })
+    try {
+      await first.connect()
+      await second.connect()
+      for (let round = 0; round < 2; round++) {
+        await Promise.all([first, second].map(async (state, index) => {
+          for (let n = 0; n < 3; n++) await state.set(`writer-${round}-${index}-${n}`, { n })
+        }))
+        await expect(first.get(`writer-${round}-1-2`)).resolves.toEqual({ n: 2 })
+        await expect(second.get(`writer-${round}-0-2`)).resolves.toEqual({ n: 2 })
+        await second.disconnect()
+        await second.connect()
+      }
+      await expect(first.extension("writer").transaction(async () => {
+        throw new Error("rollback probe")
+      })).rejects.toThrow("rollback probe")
+      await second.set("after-rollback", true)
+      await expect(first.get("after-rollback")).resolves.toBe(true)
+    } finally {
+      await first.disconnect()
+      await second.disconnect()
+    }
   })
 
   it("declares persistence only for known durable storage or explicit custom storage", () => {
