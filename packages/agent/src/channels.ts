@@ -1,3 +1,4 @@
+import { formatChannelCitationStream, formatChannelCitationText } from "./internal/channel-citations.ts"
 import { createCodeHostChannelSyncProvider } from "./internal/code-host-channel-sync.ts"
 import { codeHostIngest, codeHostWebhookInput, codeHostChannelMetadata, codeHostChannelPullRequest, codeHostActivityComment } from "./internal/code-host-events.ts"
 import { messageChannelReplyBody, setMessageChannelDeliveredReplyBody } from "./internal/message-channel-delivery-body.ts"
@@ -1207,7 +1208,9 @@ async function githubPullRequestMetadata<TRuntimeConfig extends AgentRuntimeConf
   try {
     const appOptions = app ? githubAppOptions(app) || {} : {}
     const token = services ? undefined : await githubPullRequestMetadataToken(app, context, command.installationId, command.repository).catch(() => undefined)
-    const provider = services ? await services.provider(context) : await codeHostProvider({ host: "github", baseUrl: appOptions.apiBaseUrl, token, fetch: codeHostChannelFetch(appOptions.fetch || fetch), userAgent: appOptions.userAgent })
+    const webhookUrl = new URL(command.pullRequestUrl)
+    const baseUrl = appOptions.apiBaseUrl ?? `${webhookUrl.origin}${webhookUrl.pathname.replace(/\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/?$/, "")}`
+    const provider = services ? await services.provider(context) : await codeHostProvider({ host: "github", baseUrl, token, fetch: codeHostChannelFetch(appOptions.fetch || fetch), userAgent: appOptions.userAgent })
     const { thread, comments, files } = services
       ? await codeHostChannelMetadata(provider, { host: services.kind, instance: provider.instance, repository: command.repository, number: command.issueNumber }, { maxComments, maxFiles })
       : await codeHostPullRequestMetadata(provider, githubCodeHostTarget(command), { maxComments, maxFiles, authenticated: Boolean(token) })
@@ -1842,6 +1845,16 @@ function githubActivityLinks(links: readonly { label: string, url: string }[]): 
   return links.map(link => `[${githubActivityText(link.label, 160)}](<${link.url.replace(/[<>\r\n|]/g, value => encodeURIComponent(value))}>)`).join(" · ")
 }
 
+function githubActivitySessionMarkdown(entry: GitHubActivityHistoryEntry): string {
+  const link = entry.links[0]
+  return link ? githubActivityLinks([{ ...link, label: "View session" }]) : "Session"
+}
+
+function githubActivityAnswer(entry: GitHubActivityHistoryEntry): string | undefined {
+  if (!entry.summary?.trim()) return
+  return githubActivityText(entry.summary, 2_000)
+}
+
 function renderGithubActivity(
   activity: AgentActivityUpdate,
   state: GitHubActivityCommentState,
@@ -1865,17 +1878,25 @@ function renderGithubActivity(
       return `| ${links || "Pending"} | ${entry.status ? labels[entry.status] : "Unknown"} | ${entry.startedAt ? githubActivityTime(entry.startedAt) : "Not started"} | ${githubActivityDuration(entry)} |`
     }),
   ].join("\n"))
-  if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
-  if (current?.summary && ["completed", "failed", "cancelled"].includes(activity.status)) {
-    sections.push(`Latest result\n\n${githubActivityText(current.summary, 2_000)}`)
+  let latestAnswer: string | undefined
+  for (const entry of [current, ...state.history]) {
+    if (!entry) continue
+    latestAnswer = githubActivityAnswer(entry)
+    if (latestAnswer !== undefined) break
   }
+  if (latestAnswer) {
+    sections.push(`Latest answer\n\n${latestAnswer}`)
+  }
+  if (activity.tasks.length) sections.push(activity.tasks.slice(0, githubActivityTaskLimit).map(githubActivityTask).join("\n"))
   if (activity.error) sections.push(`Agent stopped: ${githubActivityText(activity.error, 1_000)}`)
-  if (state.history.length) {
-    const history = state.history
-      .filter(entry => entry.links.length && entry.summary)
-      .map(entry => `<li>\n\n${githubActivityLinks(entry.links)}${entry.updatedAt ? ` · ${githubActivityTime(entry.updatedAt)}` : ""}${entry.status ? ` · ${entry.status}` : ""}${entry.summary ? `\n\n${githubActivityText(entry.summary, 2_000)}` : ""}\n\n</li>`)
-      .join("\n")
-    if (history) sections.push(`<details>\n<summary>Previous results</summary>\n\n<ul>\n${history}\n</ul>\n</details>`)
+  const answers = [current, ...state.history]
+    .filter((entry): entry is GitHubActivityHistoryEntry => !!entry)
+    .flatMap(entry => {
+      const answer = githubActivityAnswer(entry)
+      return answer ? [`${githubActivitySessionMarkdown(entry)}\n\n${answer}`] : []
+    })
+  if (answers.length) {
+    sections.push(`<details>\n<summary>Final answers</summary>\n\n${answers.join("\n\n")}\n\n</details>`)
   }
   const body = sections.join("\n\n")
   if (Buffer.byteLength(body) <= githubActivityBodyLimit) return body
@@ -2086,7 +2107,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
   // SAFETY: The async-iterable guard establishes the reply-stream contract.
   const stream = isAsyncIterable(context.effect.payload)
     // SAFETY: The async-iterable guard establishes the reply-stream contract.
-    ? context.effect.payload as AgentChannelDeliveryReplyStream
+    ? formatChannelCitationStream(context.effect.payload as AgentChannelDeliveryReplyStream)
     : undefined
   if (stream && !artifacts.length) {
     const chat = context.finish
@@ -2107,7 +2128,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
       ? await resolveEffectOption(context.channel.adapter as MaybeResolvable<Adapter, AgentChannelDeliveryEffectContext<TRuntimeConfig>>, context)
       : undefined
     if (adapter && context.run?.threadId) {
-      const threadId = adapter.channelIdFromThreadId(context.run.threadId)
+      const threadId = context.run.threadId
       if (adapter.stream && await adapter.stream(threadId, stream) !== null) return
       let body = ""
       for await (const chunk of stream) body += chunk
@@ -2116,8 +2137,10 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     return
   }
   let body = messageChannelReplyBody(context)
+  if (body !== undefined) body = formatChannelCitationText(body)
   // ViteHub posts the final text once. A finish hook reply with the same text is skipped.
-  const finalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const originalFinalText = context.effect.intent === chatFinalReplyIntent ? undefined : chatFinalReplyText(context.context)
+  const finalText = originalFinalText === undefined ? undefined : formatChannelCitationText(originalFinalText)
   const payload = context.effect.payload
   const textOnly = !artifacts.length && (!isRecord(payload) || (payload.attachments === undefined && payload.files === undefined))
   if (!stream && textOnly && finalText !== undefined && body?.trim() === finalText) {
@@ -2131,6 +2154,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
   if (stream) {
     for await (const chunk of stream) body = `${body || ""}${chunk}`
   }
+  if (body !== undefined) body = formatChannelCitationText(body)
   body = rewriteDeliveryArtifactMarkdown(replyBodyWithLinkArtifacts(body, artifacts), artifacts)
   setMessageChannelDeliveredReplyBody(context, body)
   if (!body && !attachments.length && !files.length) return
@@ -2154,7 +2178,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
       }, {
         continueOnError: context.effect.intent === chatFinalReplyIntent,
         onError: context.effect.intent === chatFinalReplyIntent ? () => clearChatFinalReplyText(context.context) : undefined,
-        shouldSkip: () => !stream && context.effect.intent !== chatFinalReplyIntent && textOnly && body?.trim() === chatFinalReplyText(context.context),
+        shouldSkip: () => !stream && context.effect.intent !== chatFinalReplyIntent && textOnly && body?.trim() === formatChannelCitationText(chatFinalReplyText(context.context) ?? ""),
       }) ?? false)
     }
     return
@@ -2165,7 +2189,7 @@ async function messageChannelReplyEffect<TRuntimeConfig extends AgentRuntimeConf
     : undefined
   if (adapter && context.run?.threadId) {
     try {
-      await adapter.postMessage(adapter.channelIdFromThreadId(context.run.threadId), message)
+      await adapter.postMessage(context.run.threadId, message)
     }
     catch (error) {
       if (context.effect.intent === chatFinalReplyIntent) clearChatFinalReplyText(context.context)
@@ -2707,10 +2731,11 @@ async function githubPullRequestMatchesFilter<TRuntimeConfig extends AgentRuntim
   const filter = options.filter
   if (!filter && !options.when) return true
   const value = githubPullRequestFilterContext(payload)
-  if (!matchesGitHubPullRequestFilter(value, { ...filter, base: undefined, head: undefined, draft: undefined, fork: undefined })) return false
+  const needsAuthor = services?.kind === "gitlab" && Boolean(filter?.author || options.when) && !value.author
+  if (!matchesGitHubPullRequestFilter(value, { ...filter, ...(needsAuthor ? { author: undefined } : {}), base: undefined, head: undefined, draft: undefined, fork: undefined })) return false
   // Comment webhooks only include a PR link. Fetch PR-only fields when needed.
   if ((services || !isRecord(payload.pull_request)) && payload.issue?.pull_request
-    && (filter?.base || filter?.head || filter?.draft || filter?.fork || options.when)) {
+    && (filter?.base || filter?.head || filter?.draft || filter?.fork || options.when || needsAuthor)) {
     const repository = value.repository
     const number = maybeNumber(payload.issue.number)
     if (repository && number) {
@@ -2721,6 +2746,7 @@ async function githubPullRequestMatchesFilter<TRuntimeConfig extends AgentRuntim
         const pullRequest = services ? await codeHostChannelPullRequest(provider, { host: services.kind, instance: provider.instance, repository, number }) : (await codeHostChannelRead(provider, "AGENT_R0351", async () => await codeHostPullRequest(provider, { host: "github", instance: provider.instance, repository, number }))).raw
         if (isRecord(pullRequest)) {
           const hydrated = githubPullRequestFilterContext({ ...payload, pull_request: pullRequest })
+          if (services?.kind === "gitlab" && !value.author) value.author = hydrated.author
           value.base = hydrated.base
           value.head = hydrated.head
           value.draft = hydrated.draft
@@ -2733,6 +2759,7 @@ async function githubPullRequestMatchesFilter<TRuntimeConfig extends AgentRuntim
       }
     }
   }
+  if (needsAuthor && filter?.author && !value.author) return false
   if (!matchesGitHubPullRequestFilter(value, filter)) return false
   return options.when ? await options.when(value) : true
 }
@@ -3027,6 +3054,8 @@ function validateChannelHistoryDefinition(kind: string, history: unknown, trigge
     throw invalid("requires a Collection from defineCollection().")
   }
   if (!hasRuntimeType(history.key, "function")) throw invalid("requires key(item).")
+  if (history.thread !== undefined && !hasRuntimeType(history.thread, "function")) throw invalid("thread(item) must be a function when provided.")
+  if (history.invocationItem !== undefined && !hasRuntimeType(history.invocationItem, "function")) throw invalid("invocationItem(invocation) must be a function when provided.")
   const names = isRecord(triggers) ? Object.keys(triggers) : []
   if (history.trigger === undefined) {
     if (names.length !== 1) throw invalid(`requires trigger when the Channel has ${names.length} triggers.`)
@@ -3267,6 +3296,7 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
       },
     }),
   })
+  if (channelOptions.webhooks === false) return channel
   return withAgentChannelSyncDefinition<TRuntimeConfig, typeof channel>(channel, {
     provider: kind,
     async resolve(context) {
@@ -3573,7 +3603,7 @@ export function slack<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeCo
 export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
 export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options?: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem>): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods>
 export function teams<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = Record<never, never>, THistoryItem = unknown>(options: AgentChannelOptions<TRuntimeConfig, AgentChannelChatRouteBody, unknown, TData, TMethods, THistoryItem> = {}): AgentChannelDefinitionOf<TRuntimeConfig, "teams", TData, TMethods> {
-  return defineMessageChannelInstructions(defineChannel("teams", options), "Write formulas for Microsoft Teams as readable plain text, using words, Unicode symbols, or inline code. Teams does not render LaTeX math delimiters or Mermaid diagrams. Explain variables in short bullets; use a numbered flow instead of diagram syntax.")
+  return defineMessageChannelInstructions(defineChannel("teams", options), "Write formulas for Microsoft Teams as readable plain text, using words, Unicode symbols, or inline code. Teams does not render LaTeX math delimiters or Mermaid diagrams. Explain variables in short bullets; use a numbered flow instead of diagram syntax. Cite sources with descriptive Markdown links to verified URLs. Never emit native citation markers or internal source IDs. If a source URL is unavailable, name the source without inventing a link.")
 }
 
 export function telegram<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig, TData = unknown, const TMethods extends AgentChannelMessageMethods<TRuntimeConfig, TData> = AgentChannelMessageMethods<TRuntimeConfig, TData>, THistoryItem = unknown>(options: TelegramChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem> & { message: AgentChannelMessageDefinition<TRuntimeConfig, TData, TMethods> }): AgentChannelDefinitionOf<TRuntimeConfig, "telegram", TData, TMethods>

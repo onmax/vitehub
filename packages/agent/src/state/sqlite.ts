@@ -70,6 +70,8 @@ export interface LibsqlAgentStateClient {
 export interface LibsqlAgentStateOptions extends Omit<SqliteAgentStateOptions, "driver"> {
   authToken?: string
   client?: LibsqlAgentStateClient
+  /** Owned file databases default to WAL. Use delete on volumes without shared-memory support. */
+  journalMode?: "wal" | "delete"
   url?: string
 }
 
@@ -132,13 +134,14 @@ function isSqliteBusy(error: unknown): boolean {
   return false
 }
 
-async function retrySqliteBusy<T>(operation: () => Promise<T>): Promise<T> {
+async function retrySqliteBusy<T>(operation: () => Promise<T>, timeoutMs?: number): Promise<T> {
+  const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs
   for (let attempt = 0; ; attempt++) {
     try {
       return await operation()
     } catch (error) {
-      if (!isSqliteBusy(error) || attempt >= 7) throw error
-      await new Promise((resolve) => setTimeout(resolve, Math.min(50, 2 ** attempt)))
+      if (!isSqliteBusy(error) || (deadline === undefined ? attempt >= 7 : Date.now() >= deadline)) throw error
+      await new Promise((resolve) => setTimeout(resolve, Math.min(deadline === undefined ? 50 : 250, 2 ** attempt)))
     }
   }
 }
@@ -366,7 +369,7 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
     return claimed.length > 0
   }
 
-  async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number }): Promise<boolean> {
+  async markWebhookDeliveryFailure(scope: string, deliveryId: string, leaseToken: string, failure: { error: string, attempts: number, invocationStarted?: false }): Promise<boolean> {
     const marked = await retrySqliteBusy(async () => {
       await this.cleanupExpiredStateIfDue()
       return await this.transaction(async tx => {
@@ -755,6 +758,17 @@ export class ViteHubSqliteAgentStateAdapter implements AgentWebhookQueueStateAda
   }
 
   private async migrate(): Promise<void> {
+    // A current database does not need a write transaction just to read its
+    // schema version. Keeping reconnects read-only avoids holding a libSQL
+    // statement open while a large on-disk database is being opened.
+    let currentVersion = 0
+    try {
+      const rows = await execute(this.driver, `SELECT COALESCE(MAX(version), 0) as version FROM ${this.tables.schemaVersion}`)
+      currentVersion = numberValue(rows[0]?.version)
+      if (currentVersion >= 5) return
+    } catch (error) {
+      if (!(error instanceof Error) || !/no such table/i.test(error.message)) throw error
+    }
     await this.transaction(async (tx) => {
       await execute(tx, `CREATE TABLE IF NOT EXISTS ${this.tables.schemaVersion} (version INTEGER PRIMARY KEY)`)
       const versionRows = await execute(tx, `SELECT COALESCE(MAX(version), 0) as version FROM ${this.tables.schemaVersion}`)
@@ -920,7 +934,23 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
     }
     const { createClient } = await import("@libsql/client")
     // SAFETY: The owning Agent runtime boundary establishes the asserted representation before this value is used.
-    return createClient({ authToken: options.authToken, url: options.url! }) as LibsqlAgentStateClient
+    const opened = createClient({ authToken: options.authToken, url: options.url! }) as LibsqlAgentStateClient
+    if (options.url?.startsWith("file:") && !options.url.includes(":memory:") && !/[?&]mode=memory(?:&|$)/.test(options.url)) {
+      try {
+        // A retained read snapshot must not block queue and lease commits.
+        // Configure only owned persistent files, leaving supplied clients and
+        // remote databases under their caller's connection policy.
+        // Give legacy readers a startup window to release the exclusive mode-change lock.
+        const requested = options.journalMode === "delete" ? "delete" : "wal"
+        const result = await retrySqliteBusy(async () => await opened.execute(`PRAGMA journal_mode = ${requested.toUpperCase()}`), 30_000)
+        const actual = rows(result)[0]?.journal_mode
+        if (actual !== requested) throw agentDiagnostics.AGENT_R0947({ requested, actual: String(actual) })
+      } catch (error) {
+        await opened.close?.()
+        throw error
+      }
+    }
+    return opened
   }
 
   return createSqliteAgentState({

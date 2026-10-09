@@ -343,7 +343,7 @@ export interface WorkspaceStore {
   rebase?(options?: WorkspaceRebaseOptions): Promise<void>
   diff(options?: DiffOptions): Promise<WorkspaceDiff>
   getMeta?(key: string): Promise<unknown>
-  setMeta?(key: string, value: unknown): Promise<void>
+  setMeta?(key: string, value: unknown, capability?: symbol): Promise<void>
 }
 
 export interface SourceContextWorkspaceFiles {
@@ -704,7 +704,7 @@ export interface Workspace {
   sync(options: WorkspaceSyncOptions): Promise<WorkspaceSourceSyncResult>
   materializeSources?(options?: WorkspaceMaterializeSourcesOptions): Promise<WorkspaceMaterializeSourcesResult>
   getMeta?(key: string): Promise<unknown>
-  setMeta?(key: string, value: unknown): Promise<void>
+  setMeta?(key: string, value: unknown, capability?: symbol): Promise<void>
   readFile<TOptions extends ReadFileOptions | undefined = undefined>(path: string, options?: TOptions): Promise<ReadFileResult<TOptions>>
   writeFile(path: string, content: WorkspaceContent, options?: WriteFileOptions): Promise<string>
   list(path?: string, options?: ListOptions): Promise<WorkspaceEntry[]>

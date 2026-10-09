@@ -19,6 +19,15 @@ test('GraphQL bootstrap normalizes state, author and head into a claimable snaps
   assert.equal(claim?.snapshot.pr?.head?.sha, 'a')
   assert.equal(claim?.snapshot.pr?.state, 'open')
 })
+test('summary marks dirty stacked children as blocked by their open parent', async t => {
+  const inbox = memory(t)
+  await inbox.seed(repository, pr({ number: 1, head: { sha: 'parent-sha', ref: 'parent', repo } }))
+  await inbox.seed(repository, pr({ number: 2, head: { sha: 'child-sha', ref: 'child' }, base: { sha: 'base', ref: 'parent' } }))
+  const child = (await inbox.summary()).find(item => item.number === 2)!
+  assert.equal(child.stackBlocked, true)
+  assert.deepEqual(child.stackParent, { number: 1, state: 'open' })
+  assert.ok(!(await inbox.claim(2)).some(claim => claim.snapshot.number === 2))
+})
 test('delivery dedupe and three comments coalesce into one claim', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr())
   for (let n = 1; n <= 3; n++) await post(inbox, String(n), 'issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: comment(n) })
@@ -318,4 +327,12 @@ test('persisted status values are validated without coercion by both snapshot re
     await assert.rejects(async () => inbox.get(repository, 7), /Invalid inbox snapshot/)
     await assert.rejects(async () => inbox.all(), /Invalid inbox snapshot/)
   }
+})
+
+test('fork branch names do not block unrelated stack children', async t => {
+  const inbox = memory(t)
+  await inbox.seed(repository, pr({ number: 1, head: { sha: 'parent', ref: 'feature', repo: { full_name: 'fork/vitehub' } } }))
+  await inbox.seed(repository, pr({ number: 2, head: { sha: 'child', ref: 'child' }, base: { ref: 'feature', repo } }))
+  assert.equal((await inbox.summary()).find(item => item.number === 2)!.stackBlocked, undefined)
+  assert.ok((await inbox.claim(2)).some(claim => claim.snapshot.number === 2))
 })

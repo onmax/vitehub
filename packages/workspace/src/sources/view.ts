@@ -76,6 +76,8 @@ export interface WorkspaceSourceView {
   writeFile(path: string, content: WorkspaceContent, options?: WriteFileOptions): Promise<string>
   /** Rejects Source-backed paths. Returns a write grant bound to the normalized path. */
   assertWritable(path: string): Promise<WorkspaceSourceWriteGrant>
+  /** Internal check for callers already holding the Store mutation queue. */
+  assertWritableCurrentPath(path: string): Promise<void>
   /**
    * Wraps a write so that it runs only with a grant from this view for its exact path.
    * The wrapped write receives the normalized path from the grant.
@@ -748,6 +750,8 @@ export function createWorkspaceSourceView(definition: WorkspaceDefinition, store
     async assertWritable(path) {
       return await grantWritablePath(path)
     },
+    // Internal callers already holding the mutation queue must not enter it again.
+    assertWritableCurrentPath,
     requireWriteGrant,
     requireRebaseGrants,
     async readFile(path, options) {

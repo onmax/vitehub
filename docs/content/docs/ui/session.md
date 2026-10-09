@@ -1,7 +1,7 @@
 ---
 title: Session
 description: Present an application-owned chat session with a title and the same AI SDK message contract.
-navigation.order: 16
+navigation.order: 25
 navigation.group: Chat
 icon: i-ph-chats-circle-light
 ---

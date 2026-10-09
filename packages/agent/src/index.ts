@@ -1707,6 +1707,7 @@ async function applyChannelDeliveryEffectIntents<
   for (const intent of intents) {
     const handlers = active ? channelDeliveryEffectHandlers(active.channel, intent) : []
     const metadata = {
+      ...(active?.channelId ? { "channel.effect.channel": active.channelId } : {}),
       "channel.effect.intent": intent.intent,
       "channel.effect.kind": intent.kind,
       "channel.effect.supported": handlers.length > 0,
@@ -4397,7 +4398,8 @@ async function createAgentInvocationContext<
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   const internalDefinition = definition as AgentDefinitionWithBaseResolve<TRuntimeConfig, CALL_OPTIONS> | undefined
   const capabilitiesResolver = internalDefinition?.[baseAgentCapabilitiesResolver]
-  const activeChannel = activeAgentChannel(definition?.channels, invocationContext, context.run)?.channel
+  const activeChannelContext = activeAgentChannel(definition?.channels, invocationContext, context.run)
+  const activeChannel = activeChannelContext?.channel
   const channelCapabilities = activeChannel?.capabilities || []
   const initialTelemetry = agentCapabilityTelemetry([
     ...(definition?.capabilities || []),
@@ -4703,11 +4705,24 @@ async function createAgentInvocationContext<
         }
         await validateCapabilityInput(false)
         if (intercept) {
+          const channelMessage = capabilities.input.data === undefined && !internalDefinition?.[baseAgentData] && activeChannelContext
+            ? await channelMessageData(
+              activeChannelContext.channel,
+              activeChannelContext.channelId,
+              invocationContext,
+              invocationContext.get("agent.trigger")?.source === "channel",
+            )
+            : undefined
           const value = await runObservedAgentHook(observedHooks, {
             name: "agent:intercept",
             owner: "agent",
             phase: "input",
-          }, () => intercept({ ...hookContext(), data: capabilities.input.data }))
+          }, () => intercept({
+            ...hookContext(),
+            data: capabilities.input.data === undefined && channelMessage !== undefined
+              ? channelMessage
+              : capabilities.input.data,
+          }))
           if (value !== undefined) intercepted = { value }
         }
       }

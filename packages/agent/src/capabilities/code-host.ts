@@ -13,6 +13,7 @@ import {
   codeHostProvider,
   githubAppCredentials,
   readGitHubAppPrivateKey,
+  withSignal,
 } from "../internal/code-host.ts"
 import { isRuntimeRecord } from "../internal/runtime-type.ts"
 import { defineInternalTool } from "./internal.ts"
@@ -180,32 +181,44 @@ const schemas = {
     ...repositoryField,
     check: v.object({ id, type: v.picklist(["check_run", "status", "job", "policy"]) }),
   }),
-  open_thread: v.object({
-    ...repositoryField,
-    kind: v.picklist(["issue", "pull_request", "discussion"]),
-    title: text,
-    body: v.optional(v.string()),
-    head: v.optional(text),
-    base: v.optional(text),
-    draft: v.optional(v.boolean()),
-  }),
+  open_thread: v.variant("kind", [
+    v.object({
+      ...repositoryField,
+      kind: v.literal("pull_request"),
+      title: text,
+      body: v.optional(v.string()),
+      head: text,
+      base: text,
+      draft: v.optional(v.boolean()),
+    }),
+    v.object({
+      ...repositoryField,
+      kind: v.picklist(["issue", "discussion"]),
+      title: text,
+      body: v.optional(v.string()),
+      head: v.optional(text),
+      base: v.optional(text),
+      draft: v.optional(v.boolean()),
+    }),
+  ]),
   close: v.object({ ...threadFields, reason: v.optional(v.picklist(["completed", "not_planned", "duplicate"])) }),
   merge: v.object({
     ...threadFields,
+    sha: v.pipe(v.string(), v.regex(/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/)),
     method: v.optional(v.picklist(["merge", "squash", "rebase", "fast_forward_only", "rebase_merge"])),
   }),
 }
 
 const codeHostWrite = defineGrant(
   "vitehub.agent.code-host-write",
-  (binding: { operation: CodeHostWriteOperation, repository: string }) => Object.freeze({ ...binding }),
+  (binding: { operation: CodeHostWriteOperation, repository: string, sha?: string }) => Object.freeze({ ...binding }),
 )
 const policyDecisionSchema = v.picklist(["allow", "deny", "require-approval", "retryable-failure"])
 const policySchema = v.union([
   policyDecisionSchema,
   v.custom<(context: AgentToolPolicyContext) => MaybePromise<AgentToolPolicyDecision>>(value => v.is(v.function(), value)),
 ])
-const optionsSchema = v.object({
+const optionsSchema = v.strictObject({
   host: v.optional(v.picklist(["github", "gitlab", "forgejo"]), "github"),
   baseUrl: v.optional(v.pipe(v.string(), v.url())),
   repositories: v.optional(v.pipe(v.array(text), v.minLength(1))),
@@ -232,13 +245,17 @@ async function connection(
   baseUrl: string | undefined,
   signal: AbortSignal | undefined,
 ) {
-  if (host === "github" && context.runtimeContext?.githubIdentity) {
+  if (
+    host === "github" &&
+    (baseUrl === undefined || new URL(baseUrl).href === "https://api.github.com/") &&
+    context.runtimeContext?.githubIdentity
+  ) {
     const access = await context.runtimeContext.githubIdentity.access({ repository, signal })
     if (access.token) return { host, baseUrl, token: access.token }
   }
   const specs = builtInCodeHostEnv[host]
   // Keep the capability context object: Server Env is cached by its identity for one Invocation.
-  const env = await readBuiltInEnv(host, specs, Object.keys(specs), context)
+  const env = await withSignal(readBuiltInEnv(host, specs, Object.keys(specs), context), signal)
   const resolvedBaseUrl = baseUrl ?? envString(env.baseUrl)
   if (host === "github") {
     const appId = envString(env.appId)
@@ -433,7 +450,7 @@ async function call(
     }
     case "merge": {
       const input = v.parse(schemas.merge, value)
-      await provider.threads.merge(thread(input.number), { method: input.method })
+      await provider.threads.merge(thread(input.number), { method: input.method, sha: input.sha })
       return { merged: true }
     }
   }
@@ -446,8 +463,9 @@ function write(
   max: number,
   signal?: AbortSignal,
 ) {
-  const { operation, repository } = codeHostWrite.consume(grant)
-  return call(provider, operation, repository, input, max, signal)
+  const { operation, repository, sha } = codeHostWrite.consume(grant)
+  const value = operation === "merge" ? { ...v.parse(schemas.merge, input), sha } : input
+  return call(provider, operation, repository, value, max, signal)
 }
 
 /** Read and write repository data through one Code Host API. Credentials come from Server Env. */
@@ -494,11 +512,15 @@ export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabili
       })
     }
   }
-  function authorizeWrite(operation: CodeHostOperation, repository: string, repositories: readonly string[]) {
+  function authorizeWrite(operation: CodeHostOperation, repository: string, repositories: readonly string[], input: unknown) {
     if (mode !== "write" || !enabled.includes(operation) || !isWriteOperation(operation))
       throw agentDiagnostics.AGENT_C0011()
     allowed(repository, repositories)
-    return codeHostWrite.issue({ operation, repository })
+    return codeHostWrite.issue({
+      operation,
+      repository,
+      ...(operation === "merge" ? { sha: v.parse(schemas.merge, input).sha } : {}),
+    })
   }
   return defineCapability({
     id: "code-host",
@@ -578,13 +600,25 @@ export function codeHost(options: CodeHostCapabilityOptions = {}): AgentCapabili
               throw agentDiagnostics.AGENT_R0943({
                 message: "[vitehub] Code Host requires repository when repositories does not select one repository.",
               })
-            const grant = isWrite ? authorizeWrite(operation, repository, allowedRepositories) : undefined
+            const grant = isWrite ? authorizeWrite(operation, repository, allowedRepositories, input.output) : undefined
             if (!isWrite) allowed(repository, allowedRepositories)
             const signal = execution?.abortSignal ?? context.abortSignal
             signal?.throwIfAborted()
             try {
               const config = await connection(context, host, repository, baseUrl, signal)
-              const provider = await codeHostProvider({ ...config, readOnly: mode === "read" })
+              // The pinned client has no signal option on most write verbs. Bind it at the transport.
+              const fetcher = globalThis.fetch
+              const provider = await codeHostProvider({
+                ...config,
+                readOnly: mode === "read",
+                fetch: (url, init) => {
+                  const signals = [signal, init?.signal, url instanceof Request ? url.signal : undefined]
+                    .filter((value): value is AbortSignal => value != null)
+                  const requestSignal = AbortSignal.any(signals)
+                  requestSignal.throwIfAborted()
+                  return fetcher(url, { ...init, signal: requestSignal })
+                },
+              })
               signal?.throwIfAborted()
               return normalized(
                 grant

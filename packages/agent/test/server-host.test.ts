@@ -1098,6 +1098,21 @@ describe("Agent Invocation host recovery", () => {
     await expect(Promise.resolve(store.get("new-running"))).resolves.toMatchObject({ status: "running" })
   })
 
+  it("scopes shared-store recovery to the owning process host", async () => {
+    const store = createMemoryAgentInvocationStore()
+    const createdAt = "2026-08-30T10:00:00.000Z"
+    store.create({ agentName: "babysitter-worker", createdAt, id: "worker", observations: [], status: "running", traceId: "worker", updatedAt: createdAt })
+    store.create({ agentName: "console-worker", createdAt, id: "other", observations: [], status: "running", traceId: "other", updatedAt: createdAt })
+
+    await expect(failInterruptedAgentInvocations(store, {
+      agentName: "babysitter-worker",
+      before: Date.parse("2026-08-30T11:00:00.000Z"),
+      recover: () => true,
+    })).resolves.toBe(1)
+    await expect(Promise.resolve(store.get("worker"))).resolves.toMatchObject({ status: "failed" })
+    await expect(Promise.resolve(store.get("other"))).resolves.toMatchObject({ status: "running" })
+  })
+
   it("recovers every page without taking work claimed by another host", async () => {
     const store = createMemoryAgentInvocationStore()
     const createdAt = "2026-08-30T10:00:00.000Z"

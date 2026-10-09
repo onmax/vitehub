@@ -38,7 +38,7 @@ function payload(kind: typeof kinds[number], body = "@review-bot inspect this") 
     object_kind: "note", event_type: "note",
     user: { id: 1, username: "maxi" }, project: { id: 10, path_with_namespace: repository.gitlab },
     object_attributes: { id: 99, note: body, noteable_type: "MergeRequest", created_at: "2026-10-01T12:00:00Z" },
-    merge_request: { iid: 42, title: "Fix app", description: "Please review", author: { username: "maxi" }, labels: ["review"] },
+    merge_request: { iid: 42, title: "Fix app", description: "Please review", author_id: 1, labels: [{ title: "review" }] },
   } : {
     action: "created", is_pull: true,
     sender: { id: 1, login: "maxi" },
@@ -297,15 +297,34 @@ describe("Code Host Channels through the webhook route", { timeout: 20_000 }, ()
     expect(fixture.calls).toHaveLength(1)
   })
 
-  it.each(kinds)("filters %s comments by author and labels from the webhook body", async kind => {
+  it.each(kinds)("filters %s comments by pull request author and labels", async kind => {
     transport(kind)
-    const value = kind === "gitlab" ? payload(kind) : { ...payload(kind), issue: { number: 42, title: "Fix app", user: { id: 1, login: "maxi" }, labels: [{ name: "review" }] } }
+    const value = kind === "gitlab" ? { ...payload(kind), user: { id: 3, username: "commenter" } } : { ...payload(kind), issue: { number: 42, title: "Fix app", user: { id: 1, login: "maxi" }, labels: [{ name: "review" }] } }
     const allowed = await harness(kind, { pullRequest: { filter: { author: { allow: ["maxi"] }, labels: { allow: ["review"] } }, reconcile: { mentions: ["@review-bot"] } } })
     expect((await allowed.send(await request(kind, value, "allowed"))).status).toBe(200)
     expect(allowed.run).toHaveBeenCalledOnce()
     const denied = await harness(kind, { pullRequest: { filter: { author: { deny: ["maxi"] } }, reconcile: { mentions: ["@review-bot"] } } })
     expect((await denied.send(await request(kind, value, "denied"))).status).toBe(200)
     expect(denied.run).not.toHaveBeenCalled()
+  })
+
+  it.each(["note", "merge_request"])("filters GitLab %s deliveries using the MR author and native label titles", async event => {
+    transport("gitlab")
+    const value = event === "note" ? { ...payload("gitlab"), user: { id: 3, username: "commenter" } } : {
+      object_kind: "merge_request", user: { id: 3, username: "commenter" },
+      project: { id: 10, path_with_namespace: repository.gitlab },
+      object_attributes: { iid: 42, id: 420, title: "Fix app", action: "open", author_id: 1, labels: [{ title: "review" }] },
+    }
+    for (const [filter, accepted] of [
+      [{ author: { allow: ["maxi"] }, labels: { allow: ["review"] } }, true],
+      [{ author: { deny: ["maxi"] } }, false],
+      [{ author: { allow: ["commenter"] } }, false],
+      [{ labels: { deny: ["review"] } }, false],
+    ] as const) {
+      const channel = await harness("gitlab", { pullRequest: { filter, reconcile: { events: ["opened"], mentions: ["@review-bot"] } } })
+      expect((await channel.send(await request("gitlab", value, "filter", "secret", event === "note" ? "Note Hook" : "Merge Request Hook"))).status).toBe(200)
+      expect(channel.run).toHaveBeenCalledTimes(accepted ? 1 : 0)
+    }
   })
 
   it("lists the newest GitLab notes first for the activity lookup", async () => {

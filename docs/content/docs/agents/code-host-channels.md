@@ -86,6 +86,8 @@ Tokens and webhook secrets are never shown. The plan lists `webhookSecret` as un
 
 Without `sync.repositories`, the Channel appears in the plan with no change and an unverifiable entry that names the option. You can still set up webhooks by hand. See [Channel Env and sync](/docs/agents/channels#channel-env) and [CLI channel synchronization](/docs/development/cli#synchronize-channel-webhooks) for deployment checks and origin confirmation.
 
+Sync manages JSON payloads for Forgejo hooks and accounts for its grouped event subscriptions. Auto-disabled GitLab hooks must be re-enabled with a successful test request in GitLab before sync can proceed. Distinct deployed webhook URLs can manage hooks on the same repositories.
+
 ## Configure webhooks
 
 Create the project or repository webhook for the generated Agent Channel route. Set the secret to the same value as `webhookSecret` or its Server Env field.
