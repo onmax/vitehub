@@ -372,16 +372,15 @@ export function defineCollection<
     request.signal?.throwIfAborted()
     const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
     if (provider && request.cursor !== undefined && (!request.cursor || typeof request.cursor !== "string")) throw new CollectionCursorError()
-    const result = await (load as (options: any) => Promise<any>)({
-      cursor: provider ? request.cursor : await cursorCodec!.decode(request.cursor),
-      limit: provider ? limit : limit + 1,
-      query: request.query,
-      signal: request.signal,
-    })
-    request.signal?.throwIfAborted()
     let pageItems: readonly TSourceItem[]
     let nextCursor: string | null
     if (provider) {
+      const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({
+        cursor: request.cursor,
+        limit,
+        query: request.query,
+        signal: request.signal,
+      })
       if (!result || Array.isArray(result) || !Array.isArray(result.items) || !(result.nextCursor === null || (typeof result.nextCursor === "string" && result.nextCursor.length > 0))) {
         throw new TypeError("[vitehub] Provider Collection load() must return { items, nextCursor: string | null }.")
       }
@@ -390,10 +389,17 @@ export function defineCollection<
       nextCursor = result.nextCursor
     }
     else {
+      const result = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({
+        cursor: await cursorCodec!.decode(request.cursor) as TCursorOutput | undefined,
+        limit: limit + 1,
+        query: request.query,
+        signal: request.signal,
+      })
       if (!Array.isArray(result)) throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
       pageItems = result.slice(0, limit)
       nextCursor = result.length > limit && pageItems.length ? cursorCodec!.encode(definition.cursor(pageItems[pageItems.length - 1]!)) : null
     }
+    request.signal?.throwIfAborted()
     const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : [...pageItems]
     request.signal?.throwIfAborted()
     return { items: transformedItems as TItem[], nextCursor }
