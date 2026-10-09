@@ -131,6 +131,24 @@ function askIf(instructions: string, options: { threshold?: number } = {}): AskI
   return { instructions, threshold, type: "if" }
 }
 
+function each<T, Q extends AskQuestion>(
+  items: readonly T[],
+  options: { key: (item: T) => string, question: (item: T) => Q },
+): Record<string, Q> {
+  const questions: Record<string, Q> = Object.create(null)
+  for (const item of items) {
+    const key = options.key(item)
+    if (typeof key !== "string" || key.trim() === "") {
+      throw new TypeError("ask.each keys must be non-empty strings")
+    }
+    if (Object.hasOwn(questions, key)) {
+      throw new TypeError(`ask.each produced duplicate key ${JSON.stringify(key)}`)
+    }
+    questions[key] = options.question(item)
+  }
+  return questions
+}
+
 /**
  * Builds TypeSafe Jev questions for `defineAgent({ driver: { ask } })`.
  * Each builder returns a plain question object. The Driver sends questions in deterministic sequential batches when needed; shared state and each question must serialize below 30,000 bytes.
@@ -138,6 +156,7 @@ function askIf(instructions: string, options: { threshold?: number } = {}): AskI
 export const ask: {
   chance: typeof chance
   choice: typeof choice
+  each: typeof each
   if: typeof askIf
   score: typeof score
   switch: typeof askSwitch
@@ -146,6 +165,8 @@ export const ask: {
   chance,
   /** Selects one option. Answers `{ choice, confidence, probabilities }`. */
   choice,
+  /** Builds a keyed question map from a list. */
+  each,
   /** A yes or no question. Answers `true` when the probability of yes is above `threshold` (0 to 1, default `0.5`). */
   if: askIf,
   /** Rates the state against 2 to 10 ordered levels. Answers `{ score, ratio, confidence, legend, probabilities }`. */
