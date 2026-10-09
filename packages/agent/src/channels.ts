@@ -1671,6 +1671,7 @@ interface GitHubActivityTarget {
 }
 
 interface GitHubActivityHistoryEntry {
+  agentName?: string
   startedAt?: string
   updatedAt?: string
   summary?: string
@@ -1791,7 +1792,7 @@ function decodeGithubActivityState(body: unknown): GitHubActivityCommentState {
             : []))
           const status = maybeString(item.status)
           // SAFETY: The membership check limits status to AgentActivityStatus values.
-          return [{ links, runId: maybeString(item.runId)!, startedAt: githubActivityDate(item.startedAt), updatedAt: githubActivityDate(item.updatedAt), summary: maybeString(item.summary)?.slice(0, 2_000), ...(status && ["cancelled", "completed", "failed", "queued", "running", "waiting"].includes(status) ? { status: status as AgentActivityStatus } : {}) }]
+          return [{ links, agentName: maybeString(item.agentName), runId: maybeString(item.runId)!, startedAt: githubActivityDate(item.startedAt), updatedAt: githubActivityDate(item.updatedAt), summary: maybeString(item.summary)?.slice(0, 2_000), ...(status && ["cancelled", "completed", "failed", "queued", "running", "waiting"].includes(status) ? { status: status as AgentActivityStatus } : {}) }]
         })
       : []
     const current = entries(value.current ? [value.current] : [])[0]
@@ -1838,8 +1839,9 @@ function githubActivityTime(value: string): string {
   return `<relative-time datetime="${value}">${value}</relative-time>`
 }
 
-function githubActivityDuration(entry: GitHubActivityHistoryEntry): string {
-  if (entry.status === "running" || entry.status === "waiting") return "In progress"
+function githubActivityDuration(entry: GitHubActivityHistoryEntry, active: boolean): string {
+  if (active && entry.status === "running") return "In progress"
+  if (active && entry.status === "waiting") return "Paused"
   if (!entry.startedAt || !entry.updatedAt) return "—"
   const seconds = Math.max(0, Math.round((Date.parse(entry.updatedAt) - Date.parse(entry.startedAt)) / 1_000))
   if (seconds < 60) return `${seconds}s`
@@ -1876,15 +1878,30 @@ function githubActivityAnswer(entry: GitHubActivityHistoryEntry): string | undef
   return githubActivityText(entry.summary, 2_000)
 }
 
+/** Saved PR projections and invocation events can describe the same linked session. */
+function githubActivitySessions(state: GitHubActivityCommentState): GitHubActivityCommentState {
+  const sessions: GitHubActivityHistoryEntry[] = []
+  for (const entry of [state.current, ...state.history]) {
+    if (!entry) continue
+    const sessionUrl = entry.links.find(link => /^(?:current |view )?session$/i.test(link.label))?.url
+    if (sessionUrl && sessions.some(previous => previous.links.some(link => /^(?:current |view )?session$/i.test(link.label) && link.url === sessionUrl)
+      && entry.agentName !== undefined && previous.agentName === entry.agentName)) continue
+    sessions.push(entry)
+  }
+  // Preserve superseded run IDs so late lifecycle updates cannot revive old rows.
+  return { ...state, current: sessions[0], history: sessions.slice(1) }
+}
+
 function renderGithubActivity(
   activity: AgentActivityUpdate,
   state: GitHubActivityCommentState,
 ): string {
+  state = githubActivitySessions(state)
   const sections = [encodeGithubActivityState(state)]
   const current = state.current
   const sessions = [current, ...state.history].filter((entry): entry is GitHubActivityHistoryEntry => !!entry && (entry.links.length > 0 || entry.status !== "queued"))
   const labels: Record<AgentActivityStatus, string> = {
-    queued: "Starting", running: "Running", waiting: "Waiting for input",
+    queued: "Starting", running: "Running", waiting: "Waiting",
     completed: "Completed", failed: "Failed", cancelled: "Cancelled",
   }
   if (activity.status === "queued" && !current?.links.length) {
@@ -1896,7 +1913,7 @@ function renderGithubActivity(
     "| --- | --- | --- | --- |",
     ...sessions.map(entry => {
       const links = githubActivityLinks(entry.links.map((link, index) => ({ ...link, label: index === 0 ? "View session" : link.label })))
-      return `| ${links || "Pending"} | ${entry.status ? labels[entry.status] : "Unknown"} | ${entry.startedAt ? githubActivityTime(entry.startedAt) : "Not started"} | ${githubActivityDuration(entry)} |`
+      return `| ${links || "Pending"} | ${entry !== current && entry.status === "running" ? "Last seen running" : entry.status ? labels[entry.status] : "Unknown"} | ${entry.startedAt ? githubActivityTime(entry.startedAt) : "Not started"} | ${githubActivityDuration(entry, entry === current)} |`
     }),
   ].join("\n"))
   let latestAnswer: string | undefined
@@ -2010,6 +2027,7 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
           const sameRun = previous.current?.runId === runId ? previous.current : undefined
           const current: GitHubActivityHistoryEntry = {
             links: githubActivityLinksState(context.activity.links),
+            agentName: context.activity.agentName,
             runId,
             status: context.activity.status,
             startedAt: githubActivityDate(context.activity.startedAt) ?? sameRun?.startedAt

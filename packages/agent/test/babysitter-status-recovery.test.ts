@@ -468,6 +468,65 @@ for (const legacy of [false, true]) test(`saved waiting activity publishes after
   assert.match(comments[0]!.body, /Cannot commit because \.git is read-only/)
 })
 
+test('saved PR results show one row per invocation and stop historical durations', async t => {
+  const { inbox, claim } = await fixture(t)
+  claim.startedAt = Date.now()
+  claim.runId = 'failed-install'
+  const links = [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/failed-install' }]
+  claim.activity = { target: { repository, issue: 239 }, links }
+  const comments: Array<{ id: number; body: string; user: { login: string } }> = []
+  const channel = github({ activity: true, app: {
+    apiBaseUrl: 'https://session-rows.example.test', token: 'test-token', identity: { login: 'worker[bot]' },
+    fetch: async (_input, init) => {
+      if ((init?.method ?? 'GET') === 'GET') return Response.json(comments)
+      const body = JSON.parse(String(init?.body)).body
+      if (init?.method === 'POST') comments.push({ id: 10, body, user: { login: 'worker[bot]' } })
+      else comments[0]!.body = body
+      return Response.json(comments[0])
+    },
+  } })
+  const agent = { name: 'babysitter-worker', channels: { github: channel } }
+  const publish = (activity: Parameters<typeof publishAgentActivity>[1]['activity']) =>
+    publishAgentActivity(agent, { channelId: 'github', target: { repository, issue: 239 }, activity })
+  const startedAt = new Date(claim.startedAt!).toISOString()
+  await publish({ runId: claim.runId, links, status: 'failed', startedAt,
+    updatedAt: new Date(claim.startedAt! + 2_000).toISOString(), tasks: [], summary: 'Installation failed.' })
+  await inbox.finish(claim, blocked('Installation failed.'))
+  await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: pending => publish(pending.activity) }).flush()
+  const rows = () => comments[0]!.body.split('\n').filter(line => line.startsWith('| [View session]'))
+  assert.equal(rows().length, 1, 'worker failure and saved waiting result are one session')
+  assert.match(rows()[0]!, /\| Waiting \|/)
+  assert.doesNotMatch(rows()[0]!, /In progress/)
+  await publish({ runId: 'next-invocation', status: 'running', startedAt, updatedAt: startedAt, tasks: [],
+    links: [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/next-invocation' }] })
+  assert.equal(rows().length, 2)
+  assert.match(rows()[0]!, /In progress/)
+  assert.doesNotMatch(rows()[1]!, /In progress/)
+  await publish({ runId: 'third-invocation', status: 'running', startedAt, updatedAt: startedAt, tasks: [],
+    links: [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/third-invocation' }] })
+  assert.doesNotMatch(rows()[1]!, /Running|In progress/, 'superseded running rows must not imply active work')
+  await publishAgentActivity({ ...agent, name: 'another-worker' }, {
+    channelId: 'github', target: { repository, issue: 239 }, activity: {
+      runId: 'third-invocation', status: 'running', startedAt, updatedAt: startedAt, tasks: [],
+      links: [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/third-invocation' }],
+    },
+  })
+  assert.equal(rows().length, 4, 'different Agents retain separate rows even with the same session link')
+  const marker = /<!-- vitehub-agent-activity:(\S+) -->/.exec(comments[0]!.body)!
+  const legacy = JSON.parse(Buffer.from(marker[1]!, 'base64url').toString())
+  legacy.history.push({ ...legacy.current, agentName: undefined, runId: 'legacy-session', summary: 'Another Agent legacy answer.' })
+  legacy.previousRunIds.push('legacy-session')
+  comments[0]!.body = comments[0]!.body.replace(marker[0], `<!-- vitehub-agent-activity:${Buffer.from(JSON.stringify(legacy)).toString('base64url')} -->`)
+  await publishAgentActivity({ ...agent, name: 'another-worker' }, {
+    channelId: 'github', target: { repository, issue: 239 }, activity: {
+      runId: 'third-invocation', status: 'completed', startedAt, updatedAt: startedAt, tasks: [],
+      links: [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/third-invocation' }],
+    },
+  })
+  assert.equal(rows().length, 5, 'ambiguous legacy Agent identity cannot erase a session')
+  assert.match(comments[0]!.body, /Another Agent legacy answer\./)
+})
+
 test('a late timed-out writer cannot overwrite a newer result from another host', async t => {
   const { inbox, claim, open } = await fixture(t)
   await inbox.finish(claim, blocked('Old result'))
