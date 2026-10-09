@@ -472,7 +472,8 @@ test('saved PR results show one row per invocation and stop historical durations
   const { inbox, claim } = await fixture(t)
   claim.startedAt = Date.now()
   claim.runId = 'failed-install'
-  claim.activity = { links: [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/failed-install' }] }
+  const links = [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/failed-install' }]
+  claim.activity = { target: { repository, issue: 239 }, links }
   const comments: Array<{ id: number; body: string; user: { login: string } }> = []
   const channel = github({ activity: true, app: {
     apiBaseUrl: 'https://session-rows.example.test', token: 'test-token', identity: { login: 'worker[bot]' },
@@ -488,7 +489,7 @@ test('saved PR results show one row per invocation and stop historical durations
   const publish = (activity: Parameters<typeof publishAgentActivity>[1]['activity']) =>
     publishAgentActivity(agent, { channelId: 'github', target: { repository, issue: 239 }, activity })
   const startedAt = new Date(claim.startedAt!).toISOString()
-  await publish({ runId: claim.runId, links: claim.activity.links, status: 'failed', startedAt,
+  await publish({ runId: claim.runId, links, status: 'failed', startedAt,
     updatedAt: new Date(claim.startedAt! + 2_000).toISOString(), tasks: [], summary: 'Installation failed.' })
   await inbox.finish(claim, blocked('Installation failed.'))
   await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: pending => publish(pending.activity) }).flush()
