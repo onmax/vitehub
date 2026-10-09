@@ -1441,7 +1441,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           if (modelWorkParked) return;
           if (error instanceof GitHubWorkspaceInstallError) {
             outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, { text: error.message, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason: error.message } });
+            await pullRequestInbox.finish(inboxClaim, { text: error.message, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason: error.message, ...(error.retryable ? { retryAt: Date.now() + 300_000 } : {}) } });
             schedulerError("babysitter.install.failed", error, owner);
             return;
           }

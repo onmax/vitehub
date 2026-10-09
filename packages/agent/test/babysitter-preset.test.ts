@@ -1255,6 +1255,25 @@ describe("Babysitter preset runtime", () => {
     }
   });
 
+  it("retries transient host installation failures without new PR evidence", async () => {
+    const f = await fixture(false, false, { gitWorkspace: true });
+    await writeFile(join(f.checkout, "package.json"), "{}");
+    const install = vi.spyOn(githubInstalls, "installGitHubPullRequestWorkspace")
+      .mockRejectedValueOnce(new githubInstalls.GitHubWorkspaceInstallError(new Error("Registry temporarily unavailable.")))
+      .mockResolvedValueOnce();
+    try {
+      await f.reconcile("babysitter.install.failed");
+      const waiting = await f.runtime.inbox.get("acme/app", 12);
+      expect(waiting?.status).toBe("waiting");
+      expect(waiting?.wait?.retryAt).toEqual(expect.any(Number));
+      expect(f.passes).toHaveLength(0);
+      const now = vi.spyOn(Date, "now").mockReturnValue(waiting!.wait!.retryAt! + 1);
+      try { await f.reconcile("babysitter.install.retry"); }
+      finally { now.mockRestore(); }
+      expect(f.passes).toHaveLength(1);
+    } finally { install.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
   it("parks a malformed lockfile without retrying unchanged installation inputs", async () => {
     const f = await fixture(false, false, { gitWorkspace: true });
     await writeFile(join(f.checkout, "package.json"), "{}");

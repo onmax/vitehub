@@ -18,6 +18,16 @@ async function fixture() {
   vi.stubEnv("GITHUB_APP_PRIVATE_KEY", "host-secret");
   return root;
 }
+it("classifies malformed installation inputs separately from host failures", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n---\nimporters: {}\n");
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toMatchObject({ retryable: false });
+  await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+  await expect(installGitHubPullRequestWorkspace(root, undefined, async () => {
+    throw new Error("Registry temporarily unavailable.");
+  })).rejects.toMatchObject({ retryable: true });
+});
+
 it("installs on the host with a frozen lockfile and no host secrets or lifecycle scripts", async () => {
   const root = await fixture();
   await installGitHubPullRequestWorkspace(root);
