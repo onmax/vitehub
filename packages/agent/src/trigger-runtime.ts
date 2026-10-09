@@ -113,6 +113,30 @@ export function agentChannelOptions<TRuntimeConfig extends AgentRuntimeConfig>(
   return (agent.channels || workspaceOptions?.channels || {}) as AgentChannels<TRuntimeConfig>
 }
 
+function channelHistoryAnnotations<TRuntimeConfig extends AgentRuntimeConfig>(
+  agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
+  trigger: Pick<ResolvedAgentTriggerDefinition, "channelId" | "name">,
+  input: unknown,
+): AgentRunMetadata["annotations"] | undefined {
+  if (!trigger.channelId) return
+  const history = agentChannelOptions(agent)[trigger.channelId]?.history
+  if (!history || (history.trigger !== undefined && history.trigger !== trigger.name)) return
+  const annotations: NonNullable<AgentRunMetadata["annotations"]> = {}
+  try {
+    const key = history.key(input)
+    if (hasRuntimeType(key, "string") && key.trim()) annotations["vitehub.channel.key"] = key
+  }
+  catch {}
+  if (history.thread) {
+    try {
+      const thread = history.thread(input)
+      if (hasRuntimeType(thread, "string") && thread.trim()) annotations["vitehub.channel.thread"] = thread
+    }
+    catch {}
+  }
+  return Object.keys(annotations).length ? annotations : undefined
+}
+
 const channelTriggerStates = new WeakMap<Request, { binding: AgentChannelStateBinding, channelId: string }>()
 
 /** Gives the triggers of one Channel its State Adapter for the lifetime of a webhook request. */
@@ -584,7 +608,16 @@ export async function resolveAgentTriggerInvocation<
       validatedInput = await parseStandardSchema(trigger.input, input, `Agent trigger "${trigger.id}" input`)
     }
   }
-  return resolveAgentTriggerInvocationResult(await trigger.invoke(validatedInput), trigger)
+  const invoked = await trigger.invoke(validatedInput)
+  if (invoked instanceof Response) return resolveAgentTriggerInvocationResult(invoked, trigger)
+  const annotations = channelHistoryAnnotations(agent, trigger, validatedInput)
+  const run = annotations
+    ? { ...(invoked.run || context.run || { runId: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}` }), annotations: { ...(invoked.run || context.run)?.annotations, ...annotations } }
+    : invoked.run
+  return resolveAgentTriggerInvocationResult({
+    ...invoked,
+    ...(run ? { run } : {}),
+  }, trigger)
 }
 
 export function resolveAgentTriggerInvocationResult<

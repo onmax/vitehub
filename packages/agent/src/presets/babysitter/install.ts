@@ -164,20 +164,20 @@ export function createBabysitterInstaller(install: BabysitterInstall, env: Recor
     }
   }
 
-  return async function installDependencies(cwd: string, signal: AbortSignal, nodeOptions?: string, repositoryIdentity = repository ?? cwd): Promise<BabysitterInstallRecord | undefined> {
+  return async function installDependencies(cwd: string, signal: AbortSignal, nodeOptions?: string, repositoryIdentity = repository ?? cwd, prepared?: { command: string[]; env: NodeJS.ProcessEnv; fingerprint: string }): Promise<BabysitterInstallRecord | undefined> {
     if (install === false) return undefined;
     const custom = isRuntimeRecord(install) && install.command ? [install.command, ...install.args ?? []] : undefined;
-    const command = custom ?? await detectInstallCommand(cwd);
+    const command = custom ?? prepared?.command ?? await detectInstallCommand(cwd);
     if (!command?.[0]) return undefined;
     const program = command[0];
     const startedAt = Date.now();
-    const environment = Object.fromEntries([
+    const environment = prepared && !custom ? { ...prepared.env, CI: "1", ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}) } : Object.fromEntries([
       ...Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined && environmentNames.test(entry[0])),
       ...nodeOptions ? [["NODE_OPTIONS", nodeOptions]] : [],
       ["CI", "1"],
       ...custom ? [] : [["npm_config_ignore_scripts", "true"], ["YARN_ENABLE_SCRIPTS", "false"]],
     ]);
-    const key = cache && program === "pnpm" ? await pnpmInstallKey(cwd, repositoryIdentity).catch(() => undefined) : undefined;
+    const key = cache && (program === "pnpm" || program === "corepack" && command[1]?.startsWith("pnpm@")) ? await pnpmInstallKey(cwd, prepared ? `${repositoryIdentity}:${prepared.fingerprint}` : repositoryIdentity).catch(() => undefined) : undefined;
     let finishFlight: (() => void) | undefined;
     const releaseFlight = () => {
       if (!finishFlight || !key) return;
@@ -210,7 +210,7 @@ export function createBabysitterInstaller(install: BabysitterInstall, env: Recor
         try {
           if (await restore(key, cwd, signal)) {
             cacheState = "hit";
-            args = args.map(value => value === "--prefer-offline" ? "--offline" : value);
+            args = args.includes("--prefer-offline") ? args.map(value => value === "--prefer-offline" ? "--offline" : value) : [...args, "--offline"];
           } else cacheState = "miss";
         } catch (error) {
           if (isAbortError(error) || signal.aborted) throw error;

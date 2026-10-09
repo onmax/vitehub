@@ -55,11 +55,13 @@ export interface BabysitterOptions {
    */
   deferWhilePending: boolean;
   /**
-   * Install dependencies on the host before the provider starts. `true` detects pnpm, npm, Yarn or
-   * Bun from the lockfile and installs it frozen. A command overrides the detection. A detected pnpm
+   * Install dependencies on the host before the provider starts. `true` detects pnpm, npm or
+   * Yarn from the lockfile and installs it frozen. A command overrides the detection. A detected pnpm
    * install reuses the trees of earlier passes. Defaults to `true`.
    */
   install: BabysitterInstall;
+  /** GitHub logins the worker may notify through its explicit mention capability. Defaults to none. */
+  mentionAllowlist: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
   /** @deprecated Use `merge: "auto"`. */
@@ -220,6 +222,7 @@ type BabysitterDefinition = AgentDefinition<
   noProgressBudget: number | false;
   deferWhilePending: boolean;
   install: BabysitterInstall;
+  mentionAllowlist: string[];
 };
 
 export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
@@ -242,10 +245,12 @@ export const babysitter: BabysitterAgent = defineAgent({
     deferWhilePending: true,
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented install union.
     install: true as BabysitterInstall,
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login allowlist.
+    mentionAllowlist: [] as string[],
     concurrency: 1,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, noFindingsReviews, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install, autoMerge, concurrency }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -275,13 +280,13 @@ export const babysitter: BabysitterAgent = defineAgent({
       channels: { github: babysitterIntake },
       driver: {
         kind: driver,
-        permissions: "allow-edits",
+        permissions: "allow-edits-unattended",
         instructions: {
           template: babysitterInstructions,
         },
         output: { schema: babysitterPassResultSchema },
       },
     });
-    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install }), babysitterHost);
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, mentionAllowlist, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install }), babysitterHost);
   },
 });

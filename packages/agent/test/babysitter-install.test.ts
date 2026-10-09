@@ -79,6 +79,25 @@ describe.runIf(process.platform === "linux")("Babysitter dependency install cach
     expect((await pnpm.calls()).filter(call => call.startsWith(third))).toHaveLength(2);
   });
 
+  it("caches validated Corepack commands without importing ambient host credentials", async () => {
+    const pnpm = await fakePnpm();
+    await writeFile(join(pnpm.bin, "corepack"), `#!/bin/sh\n[ -z "$GH_TOKEN" ] || exit 9\nshift\nexec "${join(pnpm.bin, "pnpm")}" "$@"\n`, { mode: 0o755 });
+    const install = createBabysitterInstaller({ cache: { directory: await directory("prepared-cache") } }, pnpm.env);
+    const prepared = {
+      command: ["corepack", "pnpm@10.34.6", "install", "--frozen-lockfile", "--ignore-scripts", "--ignore-pnpmfile"],
+      env: { PATH: pnpm.env.PATH, HOME: await directory("install-home") },
+      fingerprint: "validated-inputs",
+    };
+    const first = await workspace();
+    expect(await install(first, signal(), undefined, "test/repo", prepared)).toMatchObject({ ok: true, cache: "miss" });
+    await writeFile(join(first, "node_modules/pkg/index.js"), "modified after install");
+    const second = await workspace();
+    expect(await install(second, signal(), undefined, "test/repo", prepared)).toMatchObject({ ok: true, cache: "hit" });
+    expect(await readFile(join(second, "node_modules/pkg/index.js"), "utf8")).toBe("installed\n");
+    expect((await pnpm.calls()).at(-1)).toContain("--offline");
+    expect(await install(await workspace(), signal(), undefined, "test/repo", { ...prepared, fingerprint: "changed-local-source" })).toMatchObject({ ok: true, cache: "miss" });
+  });
+
   it("separates repositories and workspace manifests", async () => {
     const cwd = await workspace();
     const before = await pnpmInstallKey(cwd, "one/repo");

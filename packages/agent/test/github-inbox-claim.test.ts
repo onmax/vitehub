@@ -142,7 +142,7 @@ test('stack parents are claimed before older independent work', async () => {
   let now = 1_000
   const inbox = new PullRequestInbox({ path: ':memory:', repositories: ['acme/app'], clock: () => now++ })
   try {
-    const pr = (number: number, head: string, base: string) => ({ number, state: 'open', head: { sha: `${head}-sha`, ref: head }, base: { ref: base }, updated_at: '2026-10-01T00:00:00Z' })
+    const pr = (number: number, head: string, base: string) => ({ number, state: 'open', head: { sha: `${head}-sha`, ref: head, repo: { full_name: 'acme/app' } }, base: { ref: base, repo: { full_name: 'acme/app' } }, updated_at: '2026-10-01T00:00:00Z' })
     await inbox.seed('acme/app', pr(3, 'independent', 'main'))
     await inbox.seed('acme/app', pr(1, 'parent', 'main'))
     await inbox.seed('acme/app', pr(2, 'child', 'parent'))
@@ -168,5 +168,38 @@ test('startup releases every held lease and keeps recorded waits', async () => {
     assert.equal(await inbox.releaseLeases(), 0)
     // The released PR is claimable at once instead of after its two-hour lease.
     assert.equal((await inbox.claim(1))[0]?.snapshot.number, first!.snapshot.number)
+  } finally { await inbox.close() }
+})
+
+test('a verified repair head rejects rollback even if the provider also rolls back', async () => {
+ const inbox = await fixture()
+ try {
+  const claim = (await inbox.claim(1))[0]!, current = structuredClone(claim.snapshot)
+  current.pr!.head!.sha = 'repair'
+  const check = createClaimStopCheck(claim, async () => current, async () => current.pr!.head!.sha)
+  assert.equal(await check(), undefined)
+  current.pr!.head!.sha = claim.snapshot.pr!.head!.sha
+  assert.equal(await check(), 'Pull request head changed.')
+ } finally { await inbox.close() }
+})
+
+
+test('each successive worker repair head is verified while unrelated heads still cancel', async () => {
+  const inbox = await fixture()
+  try {
+    const claim = (await inbox.claim(1))[0]!, current = structuredClone(claim.snapshot)
+    let providerHead = 'repair-first', reads = 0
+    const check = createClaimStopCheck(claim, async () => current, async () => { reads++; return providerHead })
+    current.pr!.head!.sha = providerHead
+    assert.equal(await check(), undefined)
+    assert.equal(reads, 1)
+    providerHead = 'repair-second'; current.pr!.head!.sha = providerHead
+    assert.equal(await check(), undefined)
+    assert.equal(reads, 2)
+    assert.equal(await check(), undefined)
+    assert.equal(reads, 2, 'an already proven head survives cleanup without repeated Git reads')
+    current.pr!.head!.sha = 'external'
+    assert.equal(await check(), 'Pull request head changed.')
+    assert.equal(reads, 3)
   } finally { await inbox.close() }
 })

@@ -128,6 +128,7 @@ const hostedAgentRoot = join(import.meta.dirname, "../../../fixtures/tutorials/a
 function agentProviderOutputAliases(extra: Array<{ find: string; replacement: string }> = []) {
   return [
     ...extra,
+    { find: "@vite-hub/agent/server/registry", replacement: resolve(import.meta.dirname, "../src/server/registry.ts") },
     { find: "@vite-hub/agent/server/internal", replacement: resolve(import.meta.dirname, "../src/server/internal.ts") },
     { find: "@vite-hub/agent/server/workspace", replacement: resolve(import.meta.dirname, "../src/server/workspace.ts") },
     { find: "@vite-hub/agent/state/sqlite", replacement: resolve(import.meta.dirname, "../src/state/sqlite.ts") },
@@ -457,6 +458,7 @@ describe("agent Vite plugin", () => {
           handlers: [
             { handler: generatedRoute, route: "/api/_vitehub/agents/:agent/chat" },
             { handler: generatedRoute, route: "/api/_vitehub/agents/:agent/webhooks/:webhook" },
+            { handler: join(generatedRoot, "agent", "declared-webhook-route.ts"), middleware: true, route: "/**" },
           ],
           plugins: [generatedQueue],
         },
@@ -1148,6 +1150,8 @@ describe("agent Vite plugin", () => {
     process.env.VITEHUB_HOSTING = "netlify"
     const root = await mkdtemp(join(tmpdir(), "vitehub-agent-netlify-workspace-sources-"))
     const agentRoot = join(root, "server", "agents", "support")
+    // Bound this consumer independently of Git metadata above the temporary root.
+    await mkdir(join(root, ".git"))
     try {
       await mkdir(join(agentRoot, "workspace"), { recursive: true })
       await Promise.all([
@@ -1432,6 +1436,7 @@ describe("agent Vite plugin", () => {
         route: "/api/_vitehub/agents/:agent/chat",
       },
       webhook,
+      { handler: join(hostedAgentRoot, ".vitehub/agent/declared-webhook-route.ts"), middleware: true, route: "/**" },
     ])
   })
 
@@ -1738,6 +1743,29 @@ describe("agent Vite plugin", () => {
     const handlers = [{ route: "/_vitehub/**", handler: "/console/page.get.js" }, { route: "/**", handler: "/app/fallback.ts" }]
     const result = await resolveAgentViteConfig(hubAgent({}), { [VITEHUB_NITRO_CONFIG_CONTEXT]: true, root: hostedAgentRoot, nitro: { handlers } }, { command: "serve", mode: "development" })
     expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([...handlers, expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
+  })
+
+  it("does not install the development invocation Nitro route during CLI discovery", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const result = await resolveAgentViteConfig(hubAgent(), {
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+      root: hostedAgentRoot,
+      vitehubCliDiscovery: true,
+      nitro: { handlers: [{ route: "/_vitehub/**", handler: "/app/console.ts" }] },
+    }, { command: "serve", mode: "development" })
+    expect(result).toMatchObject({ nitro: { handlers: expect.arrayContaining([expect.objectContaining({ route: "/_vitehub/**" })]) } })
+    expect(result).not.toMatchObject({ nitro: { handlers: expect.arrayContaining([expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
+  })
+
+  it("does not install the development invocation Nitro route in a Vite middleware stage", async () => {
+    const { hubAgent } = await import("../src/vite.ts")
+    const result = await resolveAgentViteConfig(hubAgent(), {
+      [VITEHUB_NITRO_CONFIG_CONTEXT]: true,
+      root: hostedAgentRoot,
+      server: { middlewareMode: true },
+      nitro: { handlers: [{ route: "/_vitehub/**", handler: "/app/console.ts" }] },
+    }, { command: "serve", mode: "production" })
+    expect(result).not.toMatchObject({ nitro: { handlers: expect.arrayContaining([expect.objectContaining({ route: "/_vitehub/agent/invocations/dev" })]) } })
   })
 
   it.each([
@@ -3075,7 +3103,7 @@ export default defineAgent({
       }])
 
       expect(denoServer).toContain(
-        'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute } from "@vite-hub/agent/server/internal"',
+        'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute, resolvePublicUrl } from "@vite-hub/agent/server/internal"',
       )
       expect(denoServer).not.toContain('import { setWorkspaceRuntimeRegistry } from "@vite-hub/workspace/runtime"')
       expect(denoServer).toContain('await import("../schedule/deno-cron.mjs").catch')
@@ -9617,7 +9645,8 @@ describe("server helpers", () => {
         streamController.enqueue(new TextEncoder().encode("handled"))
         streamController.close()
       }
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 5_000 })
+      // Exhaustion includes two exponential retry delays plus queue and SQLite work.
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 15_000 })
       if (kind === "recovery") {
         await expect(complete.mock.results[0]?.value).rejects.toThrow("completion outage")
         expect(failed).toHaveBeenCalledOnce()
@@ -9655,7 +9684,7 @@ describe("server helpers", () => {
       await rm(stateDir, { force: true, recursive: true })
       consoleError.mockRestore()
     }
-  }, 10_000)
+  }, 20_000)
 
   it("recovers handled webhook rehydration failure without adding Invocation evidence", async () => {
     const { github } = await import("../src/channels.ts")

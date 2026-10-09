@@ -27,7 +27,7 @@ describe("docs header", () => {
     );
 
     expect(header).not.toContain("toggle: isSupportMatrix");
-    expect(header).toContain('<div v-if="isDocsRoute" class="-mx-4 -my-2">');
+    expect(header).toContain('<div v-if="isDocsRoute" class="vh-docs-menu -mx-4 -my-2">');
     expect(header).toContain('v-for="link in docsMobileLinks"');
     expect(header).toContain('mobileLinks.filter((link) => !link.to.startsWith("/docs"))');
   });

@@ -390,6 +390,7 @@ async function removeStaleMaterializedSourceFiles(
 ) {
   const sourceStore = sourceMaterializationGrants.store(grant, store)
   const previousPaths = new Set(Object.keys(previousSnapshot?.items || {}))
+  const scopedPreviousPaths = [...previousPaths].filter(path => materializationPathMatches(path, scope))
   const nextDirectories = new Set([...nextPaths].flatMap(path => parentDirectoryPaths(path)))
   // Owned directories survive failed cleanup after their last file was removed.
   const staleDirectories = new Set((previousSnapshot?.ownedDirectories || []).filter(path =>
@@ -413,11 +414,11 @@ async function removeStaleMaterializedSourceFiles(
   const hasStartupIndex = source.materialize === "startup" && store.getMeta && store.setMeta
     && previousSnapshot?.mountPath !== undefined
   const entries = hasStartupIndex
-    ? await Promise.all([...previousPaths].map(async path => await store.stat(path)))
+    ? await Promise.all(scopedPreviousPaths.map(async path => await store.stat(path)))
     : source.mountPath
       ? await store.list(source.mountPath, { recursive: true })
       : previousPaths.size || (store.getMeta && store.setMeta && (!previousSnapshot || previousSnapshot.items))
-        ? await Promise.all([...previousPaths].map(async path => await store.stat(path)))
+        ? await Promise.all(scopedPreviousPaths.map(async path => await store.stat(path)))
         : await store.list("", { recursive: true })
   for (const path of previousPaths) {
     if (source.mountPath && !sourceMountContainsPath(source, path)) {

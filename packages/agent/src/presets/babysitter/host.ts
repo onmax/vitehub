@@ -10,7 +10,6 @@ import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts"
 import { registerAgentProcessHostIntake, type AgentProcessHostContext, type AgentProcessHostInstance } from "../../agent-process-host.ts";
 import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
-import { getAgentLayerOptions } from "../../agent-layers.ts";
 import { createBabysitterRuntime } from "./server.ts";
 import { createBabysitterAdmission, readBabysitterAdmissionLimits } from "./admission.ts";
 
@@ -21,7 +20,18 @@ export function envString(value: unknown): string | undefined {
   return hasRuntimeType(plain, "string") && plain.trim() ? plain.trim() : undefined;
 }
 
-/** Remove the persistent checkout pool created by older Babysitter releases. */
+/** Accept PEM secrets from systemd and dotenv files that encode newlines as `\\n`. */
+function normalizePrivateKey(value: string | undefined): string | undefined {
+  return value?.replace(/\\n/g, "\n");
+}
+
+/**
+ * Remove the persistent checkout pool created by older Babysitter releases.
+ *
+ * Current GitHub hosts use a disposable checkout for each pass. The old pool
+ * retained merged and closed PR workspaces, including installed dependencies,
+ * under the owning process host data directory; remove that pool as one unit.
+ */
 export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise<number> {
   const root = join(dataDir, "checkouts");
   const info = await lstat(root, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
@@ -63,7 +73,7 @@ export async function readGitHubAppEnvironment(context: Pick<AgentCallbackContex
   const env = await channelEnv("github", context as AgentCallbackContext);
   const appId = Number(envString(env.appId));
   const keyPath = envString(env.appPrivateKeyPath);
-  const privateKey = envString(env.appPrivateKey) ?? (keyPath ? (await readFile(keyPath, "utf8")).trim() : undefined);
+  const privateKey = normalizePrivateKey(envString(env.appPrivateKey) ?? (keyPath ? (await readFile(keyPath, "utf8")).trim() : undefined));
   const installation = envString(env.appInstallationId);
   if (!Number.isSafeInteger(appId) || appId <= 0 || !privateKey) {
     throw new Error("[vitehub] The Babysitter needs a GitHub App: set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY (or GITHUB_APP_PRIVATE_KEY_PATH).");
@@ -104,7 +114,7 @@ export async function sweepBabysitterWorkspaces(root = tmpdir(), startedAt = per
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
 export async function createBabysitterProcessHost(context: AgentProcessHostContext): Promise<AgentProcessHostInstance> {
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
-  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; capacity?: import("../babysitter.ts").BabysitterOptions["capacity"] } };
+  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; driver?: string; capacity?: import("../babysitter.ts").BabysitterOptions["capacity"] } };
   const repositories = babysitterRepositories(agent.options.filter);
   await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
@@ -112,11 +122,6 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   const identity = await credentials.identity();
   const github = createGitHubHost({ credentials: credentials.credentials, identity });
   let runtime: ReturnType<typeof createBabysitterRuntime> | undefined;
-  const driver = getAgentLayerOptions(agent)?.driver;
-  const admission = createBabysitterAdmission({
-    invocationsFile: join(context.dataDir, "invocations.sqlite"),
-    limits: readBabysitterAdmissionLimits(process.env, isRuntimeRecord(driver) && driver.kind === "claude-code" ? "claude" : "codex"),
-  });
   const host = await createProcessAgentHost({
     name: context.agentName,
     dataDir: context.dataDir,
@@ -135,6 +140,10 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     },
     intervalMs: 10_000,
     run: async (reason, run, accepting) => await runtime?.reconcile(reason, run, accepting),
+  });
+  const admission = createBabysitterAdmission({
+    invocations: host.invocations,
+    limits: readBabysitterAdmissionLimits(process.env, agent.options.driver),
   });
   // Workers share the assigned journal and keep provider sessions in the host directory.
   const worker = defineAgent({
@@ -189,31 +198,27 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
       const health = await host.health();
       const queue = await inbox.summary();
       const guard = await admission();
-      const { state, limits } = guard;
-      return {
-        ...health,
-        status: guard.accepting ? health.status : "degraded",
-        diagnostics: [...health.diagnostics, {
-          label: "Shared resources",
-          status: guard.accepting && !state.errors ? "ok" : "warning",
-          value: guard.accepting ? "Within budget" : "Admission paused",
-          detail: guard.detail ?? state.errors?.join("; ") ?? `${state.hourlyInputTokens ?? "?"} of ${limits.hourlyInputTokens} hourly input tokens`,
-        }],
-        admission: { accepting: guard.accepting, hostOnly: guard.hostOnly, reason: guard.reason, retryAt: guard.retryAt, detail: guard.detail, lastSkip: await inbox.meta("admission-skipped") },
-        budget: {
-          hourly: { inputTokens: state.hourlyInputTokens, limit: limits.hourlyInputTokens, resetsAt: state.windows.hourEnd },
-          daily: { inputTokens: state.dailyInputTokens, limit: limits.dailyInputTokens, resetsAt: state.windows.dayEnd },
-          tmp: { dir: state.tmpDir, freeBytes: state.freeTmpBytes, minFreeBytes: limits.minFreeTmpBytes },
-          proxy: { provider: limits.proxyProvider, maxWeeklyPercent: limits.proxyMaxWeeklyPercent, ...state.proxy },
-          errors: state.errors,
-        },
-        repositories,
-        queue: {
-          working: queue.filter(item => item.status === "working").length,
-          ready: queue.filter(item => item.status === "ready" && item.dirty).length,
-          waiting: queue.filter(item => item.status === "waiting").length,
-        },
-      };
+      const lastSkip = await inbox.meta("admission-skipped");
+      return { ...health, release: agent.version, concurrency: agent.options.concurrency, repositories, queue: {
+        working: queue.filter(item => item.status === "working").length,
+        ready: queue.filter(item => item.status === "ready" && item.dirty && !item.stackBlocked).length,
+        stackBlocked: queue.filter(item => item.stackBlocked).length,
+        waiting: queue.filter(item => item.status === "waiting").length,
+      }, admission: {
+        accepting: guard.accepting,
+        hostOnly: guard.hostOnly,
+        reason: guard.reason,
+        retryAt: guard.retryAt,
+        detail: guard.detail,
+        lastSkip,
+      }, budget: {
+        accounting: guard.accounting,
+        hourly: { inputTokens: guard.state.hourlyInputTokens, limit: guard.limits.hourlyInputTokens, resetsAt: guard.state.windows.hourEnd },
+        daily: { inputTokens: guard.state.dailyInputTokens, limit: guard.limits.dailyInputTokens, resetsAt: guard.state.windows.dayEnd },
+        tmp: { dir: guard.state.tmpDir, freeBytes: guard.state.freeTmpBytes, minFreeBytes: guard.limits.minFreeTmpBytes },
+        proxy: { provider: guard.limits.proxyProvider, maxWeeklyPercent: guard.limits.proxyMaxWeeklyPercent, ...guard.state.proxy },
+        errors: guard.state.errors,
+      } };
     },
   };
 }
