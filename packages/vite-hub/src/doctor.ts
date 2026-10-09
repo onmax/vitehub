@@ -182,12 +182,17 @@ function instantiatesNamespace(node: unknown): boolean {
   switch (node.type) {
     case "TSInterfaceDeclaration":
     case "TSTypeAliasDeclaration":
+    case "TSImportEqualsDeclaration":
       return false
     case "TSModuleDeclaration":
       return Boolean(namespaceIdentifier(node.id)) && instantiatesNamespace(node.body)
     case "TSModuleBlock":
       return Array.isArray(node.body) && node.body.some(instantiatesNamespace)
     case "ExportNamedDeclaration":
+      // Only exported import aliases instantiate a namespace.
+      if (v.is(astNodeSchema, node.declaration) && node.declaration.type === "TSImportEqualsDeclaration") {
+        return node.exportKind !== "type" && node.declaration.importKind !== "type"
+      }
       return node.exportKind !== "type" && (node.declaration
         ? instantiatesNamespace(node.declaration)
         : Array.isArray(node.specifiers) && node.specifiers.some(specifier => v.is(astNodeSchema, specifier) && specifier.exportKind !== "type"))

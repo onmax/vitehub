@@ -183,6 +183,14 @@ describe("vitehub/destructure-storage-results", () => {
     }, "nuxt")).toEqual(["VHUB0003"])
   })
 
+  it.each(["kv", "blob"])("distinguishes erased and exported namespace aliases for %s", async (name) => {
+    for (const exported of [false, true]) {
+      expect(await codes(destructureStorageResults, {
+        "server/api/aliases.ts": `namespace Types { export const x = 1 }; namespace ${name} { ${exported ? "export " : ""}import X = Types }; const result = await ${name}.get("x")`,
+      }, "nuxt")).toEqual(exported ? [] : ["VHUB0003"])
+    }
+  })
+
   it.each(["kv", "blob"])("retains runtime bindings for nested and merged %s namespaces", async (name) => {
     for (const body of ["export namespace Values { export const x = 1 }", "export namespace Values.Deep { export const x = 1 }"]) {
       expect(await codes(destructureStorageResults, {
