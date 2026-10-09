@@ -1,4 +1,6 @@
 import { parse } from "yaml";
+import * as snapshots from "../src/server/github-install-snapshot.ts";
+import * as inputs from "../src/server/github-install-inputs.ts";
 import { chmod, symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,6 +28,26 @@ it("classifies malformed installation inputs separately from host failures", asy
   await expect(installGitHubPullRequestWorkspace(root, undefined, async () => {
     throw new Error("Registry temporarily unavailable.");
   })).rejects.toMatchObject({ retryable: true });
+});
+
+it.each(["validation", "publication", "cleanup"])("retries host %s failures after the package-manager command succeeds", async phase => {
+  const root = await fixture();
+  const failure = Object.assign(new Error("Temporary host failure."), phase === "validation" ? { errno: -5, code: "EIO" } : { code: 1 });
+  const createSnapshot = snapshots.createGitHubInstallSnapshot;
+  const validateInputs = inputs.validateGitHubInstallInputs;
+  const mock = phase === "validation"
+    ? vi.spyOn(inputs, "validateGitHubInstallInputs").mockImplementationOnce(validateInputs).mockRejectedValueOnce(failure)
+    : phase === "publication"
+      ? vi.spyOn(snapshots, "publishGitHubInstallSnapshot").mockRejectedValueOnce(failure)
+      : vi.spyOn(snapshots, "createGitHubInstallSnapshot").mockImplementationOnce(async target => {
+        const snapshot = await createSnapshot(target);
+        return { ...snapshot, async close() { await snapshot.close(); throw failure; } };
+      });
+  try {
+    await expect(installGitHubPullRequestWorkspace(root, undefined, async ({ cwd }) => {
+      await mkdir(join(cwd, "node_modules"));
+    })).rejects.toMatchObject({ retryable: true });
+  } finally { mock.mockRestore(); }
 });
 
 it("installs on the host with a frozen lockfile and no host secrets or lifecycle scripts", async () => {

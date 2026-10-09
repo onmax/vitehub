@@ -140,8 +140,9 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
       throw error;
     }
     retryable = false;
-    const current = await validateGitHubInstallInputs(target).catch(() => undefined);
+    const current = await validateGitHubInstallInputs(target);
     if (current !== fingerprint) throw new Error("Dependency inputs changed during installation. Call refreshDependencies again before validation.");
+    retryable = true;
     await publishGitHubInstallSnapshot(snapshot, signal);
     await writeFile(record, JSON.stringify({ ...runMetadata, status: "installed", fingerprint, command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: runMetadata?.scripts ?? false }));
   } catch (error) {
@@ -149,11 +150,16 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
     await writeFile(record, JSON.stringify({ status: "failed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), reason })).catch(() => undefined);
     if (signal?.aborted) throw error;
     // Filesystem errors remain recoverable even when they occur during input validation.
-    const hostError = error instanceof Error && "errno" in error && typeof error.errno === "number";
+    const hostError = v.safeParse(v.object({ errno: v.pipe(v.number(), v.integer(), v.maxValue(-1)) }), error).success;
     throw new GitHubWorkspaceInstallError(error, retryable || hostError);
   } finally {
-    if (yarnConfig) await rm(yarnConfig, { force: true });
-    await snapshot?.close();
+    try {
+      try { if (yarnConfig) await rm(yarnConfig, { force: true }); }
+      finally { await snapshot?.close(); }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw new GitHubWorkspaceInstallError(error);
+    }
   }
 }
 
