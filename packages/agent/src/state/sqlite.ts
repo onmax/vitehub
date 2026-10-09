@@ -920,7 +920,7 @@ function libsqlExecute(client: Pick<LibsqlAgentStateClient, "execute">): SqliteA
 }
 
 // Local libSQL clients can leave native statements busy when independent writers
-// contend. Coordinate Agent State transactions across adapters for the same file.
+// contend. Coordinate Agent State transactions across adapters for the same database.
 const libsqlWriteTails = new Map<string | LibsqlAgentStateClient, Promise<void>>()
 
 async function serializeLibsqlWrite<T>(key: string | LibsqlAgentStateClient | undefined, run: () => Promise<T>): Promise<T> {
@@ -946,6 +946,16 @@ function libsqlFilePath(url: string | undefined): string | undefined {
     : decodeURIComponent(url.slice(5).split(/[?#]/, 1)[0]!)
   if (path === ":memory:" || /[?&]mode=memory(?:&|$)/.test(url)) return
   return resolve(path)
+}
+
+function libsqlSharedMemoryKey(url: string | undefined): string | undefined {
+  if (!url || !/^file:/i.test(url)) return
+  const [path, query] = url.slice(5).split("?", 2)
+  // libSQL accepts percent-encoded paths and query parameters. SQLite uses
+  // the last cache parameter when it occurs more than once.
+  if (decodeURIComponent(path!) === ":memory:" && new URLSearchParams(query).getAll("cache").at(-1) === "shared") {
+    return "file::memory:?cache=shared"
+  }
 }
 
 export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHubSqliteAgentStateAdapter {
@@ -990,7 +1000,7 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
       : options.durable === true,
     driver: {
       async connect() {
-        writeKey = options.client
+        writeKey = options.client ?? libsqlSharedMemoryKey(options.url)
         const path = options.client ? undefined : libsqlFilePath(options.url)
         if (path) {
           await mkdir(dirname(path), { recursive: true })

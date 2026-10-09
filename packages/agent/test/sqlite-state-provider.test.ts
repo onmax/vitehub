@@ -99,7 +99,49 @@ describe("SQLite Agent State Provider", () => {
     }
   })
 
-  it.each([":memory:", "file::memory:", "FILE::memory:"])("queues reads behind a %s transaction without blocking independent clients", async url => {
+  it.each(["file::memory:?cache=shared", "FILE:%3Amemory%3A?%63ache=shared", "file::memory:?cache=private&cache=shared"])("coordinates shared memory adapters using %s", async url => {
+    const first = createLibsqlAgentState({ url: "file::memory:?cache=shared" })
+    const second = createLibsqlAgentState({ url })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let enter!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    try {
+      await first.connect()
+      await second.connect()
+      await first.set("message", "before")
+      await expect(second.get("message")).resolves.toBe("before")
+      const write = first.extension("probe").transaction(async tx => {
+        await tx.execute("UPDATE vitehub_agent_state_cache SET value = ? WHERE key = ?", [JSON.stringify("after"), "message"])
+        enter()
+        await gate
+      })
+      await entered
+      let readFinished = false
+      const read = second.get("message").then(value => {
+        readFinished = true
+        return { value }
+      }, error => {
+        readFinished = true
+        return { code: error.code }
+      })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const finishedDuringTransaction = readFinished
+      release()
+      await write
+      expect(finishedDuringTransaction).toBe(false)
+      await expect(read).resolves.toEqual({ value: "after" })
+      await second.disconnect()
+      await second.connect()
+      await expect(second.get("message")).resolves.toBe("after")
+    } finally {
+      release()
+      await first.disconnect()
+      await second.disconnect()
+    }
+  })
+
+  it.each([":memory:", "file::memory:", "FILE::memory:", "file::memory:?cache=private", "file::memory:?cache=shared&cache=private"])("queues reads behind a %s transaction without blocking independent clients", async url => {
     const state = createLibsqlAgentState({ url })
     const independent = createLibsqlAgentState({ url })
     await state.connect()
