@@ -253,6 +253,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     name?: string
     value?: unknown
     expression?: AstNode | null
+    argument?: AstNode | null
     arguments?: AstNode[]
     properties?: AstNode[]
     key?: AstNode
@@ -312,8 +313,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       return result
     }
     if (value.type === "BinaryExpression" && value.operator === "+") {
-      const left = staticString(value.left, seen)
-      const right = staticString(value.right, seen)
+      const left = staticString(value.left, new Set(seen))
+      const right = staticString(value.right, new Set(seen))
       return left !== undefined && right !== undefined ? left + right : undefined
     }
     return undefined
@@ -329,7 +330,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     let route: RouteState = { present: false }
     for (const property of object.properties ?? []) {
       if (property.type === "SpreadElement") {
-        const spreadRoute = staticObjectRoute(property.expression, seen)
+        const spreadRoute = staticObjectRoute(property.argument, new Set(seen))
         if (spreadRoute?.present) route = spreadRoute
         continue
       }
@@ -349,7 +350,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   let route: RouteState = { present: false }
   for (const property of options.properties ?? []) {
     if (property.type === "SpreadElement") {
-      const spreadRoute = staticObjectRoute(property.expression)
+      const spreadRoute = staticObjectRoute(property.argument)
       if (spreadRoute?.present) route = spreadRoute
       continue
     }
