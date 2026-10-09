@@ -51,7 +51,8 @@ export interface Collection<
   readonly route?: false
   page(options: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>>
   parseQuery(input: TQueryInput | CollectionRequestQuery): Promise<TQuery>
-  get(key: string, options?: CollectionReadOptions): Promise<TItem | null>
+  /** Read an item when the Collection was configured with a get adapter. */
+  get?: (key: string, options?: CollectionReadOptions) => Promise<TItem | null>
   query(input?: TQueryInput): CollectionQueryBuilder<TItem>
   all(options?: CollectionReadOptions & { query?: TQueryInput; limit?: number }): Promise<TItem[]>
   /** The query schema, when the Collection has one. Tools read it to describe accepted query keys. */
@@ -257,6 +258,33 @@ export function defineCollection<
 >(
   load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
   options: ProviderCollectionOptions<TSourceItem> & {
+    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
+    querySchema: TQuerySchema
+    transform: TTransform
+  },
+): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
+}
+export function defineCollection<
+  TSourceItem,
+  TQuerySchema extends StandardSchemaV1<unknown, object>,
+>(
+  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
+  options: ProviderCollectionOptions<TSourceItem> & {
+    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
+    querySchema: TQuerySchema
+    transform?: undefined
+  },
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
+}
+export function defineCollection<
+  TSourceItem,
+  TQuerySchema extends StandardSchemaV1<unknown, object>,
+  TTransform extends CollectionTransform<TSourceItem>,
+>(
+  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
+  options: ProviderCollectionOptions<TSourceItem> & {
     querySchema: TQuerySchema
     transform: TTransform
   },
@@ -271,6 +299,29 @@ export function defineCollection<
     transform?: undefined
   },
 ): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
+export function defineCollection<
+  TSourceItem,
+  TTransform extends CollectionTransform<TSourceItem>,
+>(
+  load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
+  options: ProviderCollectionOptions<TSourceItem> & {
+    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
+    querySchema?: undefined
+    transform: TTransform
+  },
+): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
+}
+export function defineCollection<TSourceItem>(
+  load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
+  options: ProviderCollectionOptions<TSourceItem> & {
+    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
+    querySchema?: undefined
+    transform?: undefined
+  },
+): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
+}
 export function defineCollection<
   TSourceItem,
   TTransform extends CollectionTransform<TSourceItem>,
