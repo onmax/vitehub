@@ -149,6 +149,40 @@ describe("process Agent capacity", () => {
     await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 1 });
   });
 
+  it.each([
+    "service/controller/memory.current",
+    "service/controller/memory.events",
+    "service/controller/memory.high",
+    "service/controller/memory.max",
+    "service/memory.current",
+    "service/memory.events",
+    "service/memory.high",
+    "service/memory.max",
+    "memory.current",
+    "memory.events",
+  ])("reports missing required cgroup file %s instead of admitting workers", async file => {
+    delegatedHierarchy();
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      if (String(path) === `/sys/fs/cgroup/${file}`) throw Object.assign(new Error("missing required file"), { code: "ENOENT" });
+      return original(path, options);
+    });
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("missing required file");
+  });
+
+  it("requires limits at a namespaced mount of a non-root cgroup", async () => {
+    delegatedHierarchy();
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      if (String(path) === "/proc/self/mountinfo") return "29 23 0:26 /service/controller /sys/fs/cgroup rw - cgroup2 cgroup rw\n";
+      if (String(path) === "/sys/fs/cgroup/memory.high") throw Object.assign(new Error("missing namespaced limit"), { code: "ENOENT" });
+      return original(path, options);
+    });
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("missing namespaced limit");
+  });
+
   it("reports an unreadable known ancestor instead of discarding cgroup limits", async () => {
     delegatedHierarchy();
     const original = vi.mocked(readFile).getMockImplementation();

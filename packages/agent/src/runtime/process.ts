@@ -179,28 +179,28 @@ async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessRes
   if (relative === undefined) return
   const mountinfo = await readOptionalCgroupFile("/proc/self/mountinfo", signal)
   if (mountinfo === undefined) return
-  const roots: string[] = []
+  const roots: { path: string, hierarchyRoot: boolean }[] = []
   // Resolve each visible ancestor through the mount mapping. Never read above a namespaced mount.
   for (let member = relative; ; member = posix.dirname(member)) {
     const root = resolveLinuxCgroupV2Path(mountinfo, member)
     if (root === undefined) break
-    roots.push(root)
+    roots.push({ path: root, hierarchyRoot: member === "/" })
     if (member === "/") break
   }
-  const groups = await Promise.all(roots.map(async root => {
+  const groups = await Promise.all(roots.map(async ({ path: root, hierarchyRoot }) => {
     const [current, high, max, events, cpuPressure, memoryPressure] = await Promise.all([
-      readCgroupMemoryFile(`${root}/memory.current`, signal),
-      readCgroupMemoryFile(`${root}/memory.high`, signal),
-      readCgroupMemoryFile(`${root}/memory.max`, signal),
-      readCgroupMemoryFile(`${root}/memory.events`, signal),
+      readFile(`${root}/memory.current`, { encoding: "utf8", signal }),
+      readCgroupMemoryLimit(`${root}/memory.high`, signal, hierarchyRoot),
+      readCgroupMemoryLimit(`${root}/memory.max`, signal, hierarchyRoot),
+      readFile(`${root}/memory.events`, { encoding: "utf8", signal }),
       readOptionalCgroupFile(`${root}/cpu.pressure`, signal),
       readOptionalCgroupFile(`${root}/memory.pressure`, signal),
     ])
     return {
       cpuPressure: parsePressure(cpuPressure ?? ""),
-      memoryCurrent: Number(current?.trim() ?? 0),
+      memoryCurrent: Number(current.trim()),
       memoryHigh: high === undefined ? Infinity : parseLimit(high),
-      memoryHighEvents: parseEvent(events ?? "", "high"),
+      memoryHighEvents: parseEvent(events, "high"),
       memoryMax: max === undefined ? Infinity : parseLimit(max),
       memoryPressure: parsePressure(memoryPressure ?? ""),
     }
@@ -218,10 +218,10 @@ async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessRes
 }
 
 // The hierarchy root may omit memory limit files. Permission and collection errors remain failures.
-async function readCgroupMemoryFile(path: string, signal: AbortSignal): Promise<string | undefined> {
+async function readCgroupMemoryLimit(path: string, signal: AbortSignal, hierarchyRoot: boolean): Promise<string | undefined> {
   try { return await readFile(path, { encoding: "utf8", signal }) }
   catch (error) {
-    if (!signal.aborted && isRuntimeRecord(error) && error.code === "ENOENT") return
+    if (hierarchyRoot && !signal.aborted && isRuntimeRecord(error) && error.code === "ENOENT") return
     throw error
   }
 }
