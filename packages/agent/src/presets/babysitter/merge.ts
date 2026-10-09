@@ -120,7 +120,7 @@ export function mergeReviewEvidenceKey(snapshot: Snapshot, policy: FeedbackPolic
 }
 
 /**
- * Identities of the feedback items that need an assessment. An assessment or a repair push covers
+ * Identities of the feedback items that need an assessment. An explicit assessment covers
  * the items it saw on the same merge target. A new base repository, ref or commit needs reassessment,
  * while a later head on the same target only needs a pass for feedback that arrived since.
  */
