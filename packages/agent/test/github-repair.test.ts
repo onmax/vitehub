@@ -103,6 +103,31 @@ it("keeps tracked linked command deletions behind the installation fence", async
   expect(await git(root, "rev-parse", "HEAD")).toBe(expectedHead);
 });
 
+it("refreshes reused generated command snapshots and detects a required dependency refresh", async () => {
+  const { root } = await fixture();
+  const command = "packages/local/dist/cli.js";
+  await mkdir(join(root, "packages/local/dist"), { recursive: true });
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { local: "link:packages/local" } }));
+  await writeFile(join(root, "packages/local/package.json"), JSON.stringify({ name: "local", bin: "dist/cli.js" }));
+  await writeFile(join(root, ".gitignore"), "dist/\n");
+  await git(root, "add", ".");
+  await git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "linked command");
+  await writeFile(join(root, command), "first generated command\n");
+  const record = join(root, ".git/vitehub-install.json");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  const inputs = await mkdtemp(join(tmpdir(), "vitehub-bin-snapshot-")); roots.push(inputs);
+  await git(root, "checkout-index", "--all", `--prefix=${inputs}/`);
+  await assertGitHubDependenciesCurrent(root, inputs);
+  await writeFile(join(root, command), "second generated command\n");
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow("Dependency inputs changed");
+  expect(await readFile(join(inputs, command), "utf8")).toBe("second generated command\n");
+  await writeFile(record, JSON.stringify({ status: "installed", fingerprint: await validateGitHubInstallInputs(root) }));
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).resolves.toBeUndefined();
+  await rm(join(root, command));
+  await expect(assertGitHubDependenciesCurrent(root, inputs)).rejects.toThrow("Dependency inputs changed");
+  await expect(readFile(join(inputs, command))).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it.each(["parent", "open"])("rejects generated command %s replacement before copying into the protected snapshot", async race => {
   const { root } = await fixture();
   const command = "packages/local/dist/cli.js";

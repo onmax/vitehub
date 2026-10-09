@@ -148,7 +148,6 @@ export async function assertGitHubDependenciesCurrent(target: string, inputs = t
     const checkout = await realpath(target);
     for (const path of paths) {
       const destination = join(inputs, path);
-      if (await lstat(destination).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; })) continue;
       // The index owns tracked commands, including staged deletion. Generated
       // untracked commands remain installation inputs without entering commits.
       const tracked = await exec("git", ["--literal-pathspecs", "-C", target, "-c", "core.fsmonitor=false", "ls-tree", "--name-only", "HEAD", "--", path], {
@@ -157,7 +156,7 @@ export async function assertGitHubDependenciesCurrent(target: string, inputs = t
       if (tracked.stdout.trim()) continue;
       const source = join(checkout, path);
       const info = await lstat(source).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return undefined; });
-      if (!info) continue;
+      if (!info) { await rm(destination, { force: true }); continue; }
       if (!info.isFile()) throw new Error("Linked dependency bin targets must be regular files.");
       const resolved = await realpath(source);
       const part = relative(checkout, resolved);
@@ -182,6 +181,9 @@ export async function assertGitHubDependenciesCurrent(target: string, inputs = t
         if (settled.size !== opened.size || settled.mtimeMs !== opened.mtimeMs || settled.ctimeMs !== opened.ctimeMs || settled.mode !== opened.mode) {
           throw new Error("Linked dependency bin target changed during snapshot validation.");
         }
+        // A reused input snapshot must reflect the current generated command.
+        // Remove its old entry before exclusive creation, without following it.
+        await rm(destination, { force: true });
         await writeFile(destination, contents, { flag: "wx", mode: opened.mode & 0o777 });
         await chmod(destination, opened.mode & 0o777);
       } finally { await file.close(); }
