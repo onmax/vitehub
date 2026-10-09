@@ -352,7 +352,24 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform: TTransform
   },
-): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object>
+): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
+}
+export function defineCollection<
+  TSourceItem,
+  TCursorSchema extends StandardSchemaV1,
+  TQuerySchema extends StandardSchemaV1<unknown, object>,
+>(
+  load: CollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorOutput<TCursorSchema>>,
+  options: CollectionDefinition<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>> & {
+    get: NonNullable<CollectionOptions<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>>["get"]>
+    cursorSchema: TCursorSchema
+    querySchema: TQuerySchema
+    transform?: undefined
+  },
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
+}
 export function defineCollection<
   TSourceItem,
   TCursorSchema extends StandardSchemaV1,
@@ -376,7 +393,23 @@ export function defineCollection<
     querySchema?: undefined
     transform: TTransform
   },
-): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery>
+): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
+}
+export function defineCollection<
+  TSourceItem,
+  TCursorSchema extends StandardSchemaV1,
+>(
+  load: CollectionLoader<TSourceItem, CollectionRequestQuery, CursorOutput<TCursorSchema>>,
+  options: CollectionDefinition<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>> & {
+    get: NonNullable<CollectionOptions<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>>["get"]>
+    cursorSchema: TCursorSchema
+    querySchema?: undefined
+    transform?: undefined
+  },
+): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery> & {
+  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
+}
 export function defineCollection<TSourceItem, TCursorSchema extends StandardSchemaV1>(
   load: CollectionLoader<TSourceItem, CollectionRequestQuery, CursorOutput<TCursorSchema>>,
   options: CollectionDefinition<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>> & {
