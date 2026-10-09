@@ -346,7 +346,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     if (signal.aborted) return "blocked";
     const policy = await requiredChecks.read(repository, base);
     const evaluation = evaluateGitHubRequiredChecks(policy, snapshotCheckEvidence(snapshot));
-    const assessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
+    const savedAssessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
+    // Version 1 also acknowledged feedback after a push without an explicit review.
+    const assessment = isRuntimeRecord(savedAssessment) && savedAssessment.version === 2 ? savedAssessment : undefined;
     const reviewedEvidenceKey = isRuntimeRecord(assessment) && assessment.head === snapshot.pr?.head?.sha && hasRuntimeType(assessment.evidenceKey, "string") ? assessment.evidenceKey : undefined;
     const assessedFeedback = new Set(isRuntimeRecord(assessment) && Array.isArray(assessment.feedback) ? assessment.feedback.filter(item => hasRuntimeType(item, "string")) : []);
     let decision = directMergeReadiness(snapshot, evaluation.state, { ...waitPolicy, assessedFeedback, reviewedEvidenceKey });
@@ -416,9 +418,29 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
 
   const postPushGraceMs = options.postPushGraceMs ?? 3 * 60_000;
 
-  async function parkOnPushedHead(claim: Claim, text: string, head: string, verifiedPushHeads: readonly string[]) {
+  async function parkOnPushedHead(claim: Claim, text: string, head: string, verifiedPushHeads: readonly string[], wait?: BabysitterPassResult["wait"]) {
+    const current = await pullRequestInbox.get(claim.snapshot.repository, claim.snapshot.number);
+    // Include this worker's verified resolutions, but leave concurrent, unseen feedback unacknowledged.
+    const observed = { ...claim.snapshot, threads: claim.snapshot.threads.map(thread => {
+      const latest = current?.threads.find(value => String(value.node_id ?? value.id) === String(thread.node_id ?? thread.id));
+      return latest?.resolutionSource === "worker" && latest.isResolved === true
+        ? { ...thread, isResolved: true, resolutionSource: latest.resolutionSource, resolutionObservedAt: latest.resolutionObservedAt } : thread;
+    }) };
+    let waiting = createCheckWait(observed, waitPolicy);
+    if (wait?.kind === "external") {
+      await pullRequestInbox.setMeta(`review-assessment:${observed.repository}#${observed.number}`, null);
+      // Wake setup is best effort; an unavailable dependency must never remove the blocker.
+      const allowedWake = wait.wake && options.repositories.includes(wait.wake.repository.toLowerCase()) ? wait.wake : undefined;
+      waiting = { ...waiting, kind: "external", reason: wait.reason, ...(allowedWake ? { wake: allowedWake } : {}) };
+      try {
+        waiting = await externalWait(observed, wait.wake, wait.reason);
+      } catch (error) {
+        schedulerEvent("babysitter.external_wait.setup_failed", { repository: observed.repository, pull_request: observed.number,
+          reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
     return await pullRequestInbox.finish(claim, { text, progress: { kind: "verified", evidence: `push:${head}` }, verifiedPushHeads,
-      wait: { ...createCheckWait(claim.snapshot, waitPolicy), headSha: head } });
+      wait: { ...waiting, headSha: head } });
   }
 
   /** Retries a provider rate limit three times, then blocks admission for an hour. */
@@ -450,15 +472,16 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
 
   /**
-   * Remembers the feedback that a pass assessed or answered with a repair push. A later head needs
-   * an assessment only for feedback that arrived since.
+   * Remembers feedback only after an explicit assessment of the unchanged head.
+   * A repair push alone cannot prove that maintainer prerequisites are fulfilled.
    */
   async function recordAssessment(snapshot: Snapshot, current: { head?: string; evidenceKey?: string } = {}) {
     const key = `review-assessment:${snapshot.repository}#${snapshot.number}`;
     const previous = await pullRequestInbox.meta(key);
-    const record = isRuntimeRecord(previous) ? previous : {};
+    const record = isRuntimeRecord(previous) && previous.version === 2 ? previous : {};
     const known = Array.isArray(record.feedback) ? record.feedback.filter(item => hasRuntimeType(item, "string")) : [];
     await pullRequestInbox.setMeta(key, {
+      version: 2,
       head: current.head ?? record.head,
       evidenceKey: current.evidenceKey ?? record.evidenceKey,
       // Keep the newest identities; a long-lived PR cannot grow this record without bound.
@@ -867,6 +890,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             // the evidence key and invalidate this checkpoint.
             const assessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
             if (isRuntimeRecord(assessment)
+              && assessment.version === 2
               && assessment.head === inboxClaim.snapshot.pr?.head?.sha
               && assessment.evidenceKey === mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy)
               && inboxClaim.snapshot.threads.every(thread => thread.isResolved === true)
@@ -1406,15 +1430,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
           if (assessed) await recordAssessment(inboxClaim.snapshot, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
-          // A repair push answers every finding the pass saw; the instructions require a fix or an explicit rejection first.
-          else if (pushedHead && disposition === "park") await recordAssessment(inboxClaim.snapshot);
           let recorded = false;
           const terminal = current?.status === "terminal";
           if (terminal) {
             recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });
           } else if (pushedHead) {
             outcome = "waiting";
-            recorded = await parkOnPushedHead(inboxClaim, resultText, pushedHead, [...verifiedPushHeads]);
+            recorded = await parkOnPushedHead(inboxClaim, resultText, pushedHead, [...verifiedPushHeads], passResult?.wait);
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && passResult?.wait?.kind === "external") {
             outcome = "waiting";
             await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, null);
@@ -1453,7 +1475,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           if (pushedHead && (await pullRequestInbox.get(repository, number))?.status !== "terminal") {
             // The repair reached GitHub. Its checks and reviews resume the PR.
             outcome = "waiting";
-            await parkOnPushedHead(inboxClaim, error instanceof Error ? error.message : String(error), pushedHead, [...verifiedPushHeads]);
+            await parkOnPushedHead(inboxClaim, error instanceof Error ? error.message : String(error), pushedHead, [...verifiedPushHeads], passResult?.wait);
             const expected = isAbortError(error) || (error instanceof Error && error.name === "TimeoutError") || github.isRateLimitError(error);
             if (!expected) schedulerError("babysitter.owner.failed", error, owner);
           } else if (isAbortError(error)) {
