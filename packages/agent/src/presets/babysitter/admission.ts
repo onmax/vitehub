@@ -165,7 +165,10 @@ function normalizeAdmissionPause(value: unknown): BabysitterAdmissionPause | und
     || value.retryAt !== undefined && !(hasRuntimeType(value.retryAt, "number") && Number.isFinite(value.retryAt) && value.retryAt >= 0)) {
     throw new TypeError("Invalid admission.check result. Expected undefined or { reason, detail, retryAt }.");
   }
-  return { reason: value.reason, ...(value.detail === undefined ? {} : { detail: value.detail }), ...(value.retryAt === undefined ? {} : { retryAt: value.retryAt }) };
+  const pause: BabysitterAdmissionPause = { reason: value.reason };
+  if (value.detail !== undefined) pause.detail = value.detail;
+  if (value.retryAt !== undefined) pause.retryAt = value.retryAt;
+  return pause;
 }
 
 /** Dispatch shares fresh accounting; health may reuse a bounded, timestamped result. */
