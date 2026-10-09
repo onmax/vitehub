@@ -62,6 +62,7 @@ export interface CollectionReadOptions {
   signal?: AbortSignal
 }
 
+
 export interface CollectionQueryBuilder<TItem> {
   select<TKey extends Extract<keyof TItem, string>>(...keys: TKey[]): CollectionQueryBuilder<Pick<TItem, TKey>>
   page(options?: CollectionReadOptions & { cursor?: string; limit?: number }): Promise<CollectionPage<TItem>>

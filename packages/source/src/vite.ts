@@ -262,6 +262,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     local?: AstNode
     exported?: AstNode
     elements?: Array<AstNode | null>
+    expressions?: AstNode[]
+    quasis?: Array<{ value?: { raw?: string, cooked?: string } }>
     operator?: string
     left?: AstNode
     right?: AstNode
@@ -293,8 +295,22 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const staticString = (node: AstNode | null | undefined, seen = new Set<string>()): string | undefined => {
     const value = unwrap(node, seen)
     if (!value) return undefined
-    if (value.type === "Literal" && typeof value.value === "string") return value.value
-    if (value.type === "TemplateLiteral" && (value.elements?.length ?? 0) === 0) return ""
+    if (value.type === "Literal" && String(value.value) === value.value) return value.value
+    if (value.type === "TemplateLiteral") {
+      const quasis = value.quasis ?? []
+      const expressions = value.expressions ?? []
+      if (quasis.length !== expressions.length + 1) return undefined
+      let result = ""
+      for (let index = 0; index < quasis.length; index++) {
+        result += quasis[index]?.value?.cooked ?? quasis[index]?.value?.raw ?? ""
+        if (index < expressions.length) {
+          const expression = staticString(expressions[index], seen)
+          if (expression === undefined) return undefined
+          result += expression
+        }
+      }
+      return result
+    }
     if (value.type === "BinaryExpression" && value.operator === "+") {
       const left = staticString(value.left, seen)
       const right = staticString(value.right, seen)
@@ -302,20 +318,26 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     }
     return undefined
   }
-  const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<string>()): boolean | undefined => {
+  type RouteState = { present: boolean, value?: boolean }
+  const routeValue = (value: AstNode | undefined): RouteState => {
+    if (value?.type === "Literal" && (value.value === true || value.value === false)) return { present: true, value: value.value }
+    return { present: true }
+  }
+  const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<string>()): RouteState | undefined => {
     const object = unwrap(node, seen)
     if (object?.type !== "ObjectExpression") return undefined
-    let route: boolean | undefined
+    let route: RouteState = { present: false }
     for (const property of object.properties ?? []) {
       if (property.type === "SpreadElement") {
         const spreadRoute = staticObjectRoute(property.expression, seen)
-        if (spreadRoute !== undefined) route = spreadRoute
+        if (spreadRoute?.present) route = spreadRoute
         continue
       }
       const keyName = property.computed ? staticString(property.key) : property.key?.name ?? property.key?.value
       if (keyName !== "route") continue
+      // SAFETY: ESTree property values are expression nodes; this narrow view only reads their common shape.
       const value = unwrap(property.value as AstNode | null | undefined)
-      route = value?.type === "Literal" && typeof value.value === "boolean" ? value.value : undefined
+      route = routeValue(value)
     }
     return route
   }
@@ -324,22 +346,22 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const args = definition.arguments ?? []
   const options = unwrap(args.length > 1 ? args[1] : args[0])
   if (options?.type !== "ObjectExpression") return true
-  let route: boolean | undefined
+  let route: RouteState = { present: false }
   for (const property of options.properties ?? []) {
     if (property.type === "SpreadElement") {
       const spreadRoute = staticObjectRoute(property.expression)
-      if (spreadRoute !== undefined) route = spreadRoute
+      if (spreadRoute?.present) route = spreadRoute
       continue
     }
     const key = property.key
     const keyName = property.computed ? staticString(key) : key?.name ?? key?.value
     if (keyName === "route") {
+      // SAFETY: ESTree property values are expression nodes; this narrow view only reads their common shape.
       const value = unwrap(property.value as AstNode | null | undefined)
-      if (value?.type === "Literal" && typeof value.value === "boolean") route = value.value
-      else route = undefined
+      route = routeValue(value)
     }
   }
-  return route !== false
+  return route.value !== false
 }
 
 async function discoverCollections(options: SourceGenerationOptions): Promise<DiscoveredCollection[]> {
