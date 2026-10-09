@@ -189,7 +189,7 @@ export type ProviderCollectionLoader<TSourceItem, TQuery extends object> = (
 
 type CollectionDefinition<TSourceItem, TQuery extends object, TCursorInput extends CollectionCursorValue> = Omit<
   CollectionOptions<TSourceItem, TQuery, TCursorInput>,
-  "cursorSchema" | "querySchema" | "transform"
+  "cursorSchema" | "querySchema" | "transform" | "pagination"
 >
 
 type CursorInput<TSchema extends StandardSchemaV1> = [StandardSchemaV1.InferInput<TSchema>] extends [
@@ -256,7 +256,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform: TTransform
   },
-): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object>
+): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
 export function defineCollection<
   TSourceItem,
   TQuerySchema extends StandardSchemaV1<unknown, object>,
@@ -266,7 +266,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform?: undefined
   },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object>
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
 export function defineCollection<
   TSourceItem,
   TTransform extends CollectionTransform<TSourceItem>,
@@ -297,7 +297,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform: TTransform
   },
-): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
+): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object>
 export function defineCollection<
   TSourceItem,
   TCursorSchema extends StandardSchemaV1,
@@ -309,7 +309,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform?: undefined
   },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object>
 export function defineCollection<
   TSourceItem,
   TCursorSchema extends StandardSchemaV1,
@@ -381,6 +381,7 @@ export function defineCollection<
         query: request.query,
         signal: request.signal,
       })
+      request.signal?.throwIfAborted()
       if (!result || Array.isArray(result) || !Array.isArray(result.items) || !(result.nextCursor === null || (typeof result.nextCursor === "string" && result.nextCursor.length > 0))) {
         throw new TypeError("[vitehub] Provider Collection load() must return { items, nextCursor: string | null }.")
       }
@@ -395,6 +396,7 @@ export function defineCollection<
         query: request.query,
         signal: request.signal,
       })
+      request.signal?.throwIfAborted()
       if (!Array.isArray(result)) throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
       pageItems = result.slice(0, limit)
       nextCursor = result.length > limit && pageItems.length ? cursorCodec!.encode(definition.cursor(pageItems[pageItems.length - 1]!)) : null

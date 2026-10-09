@@ -246,11 +246,13 @@ type SourceQueryInput<TSource extends AnyCollectionSource> =
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
     authorize?: AccessAuthorizeOption
+    route?: false
     source: TSource
     transform: TTransform
   }): Collection<Awaited<ReturnType<TTransform>>, SourceQuery<TSource>, SourceQueryInput<TSource>>
   <TSource extends AnyCollectionSource>(options: {
     authorize?: AccessAuthorizeOption
+    route?: false
     source: TSource
     transform?: undefined
   }): Collection<SourceItem<TSource>, SourceQuery<TSource>, SourceQueryInput<TSource>>
@@ -266,9 +268,10 @@ const defineCollectionImplementation = (
   // SAFETY: This adapter forwards one of the public defineCollection overload argument sets.
   const callCore = core as (...args: unknown[]) => unknown
   if (input instanceof Function) return callCore(input, options)
-  const { authorize, source, transform } = input
+  const { authorize, route, source, transform } = input
   return callCore(source.load, {
     authorize,
+    route,
     cursor: source.cursor,
     cursorSchema: source.cursorSchema,
     defaultLimit: source.defaultLimit,

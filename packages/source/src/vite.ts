@@ -246,33 +246,40 @@ async function collectCollectionFiles(directory: string): Promise<string[]> {
 function collectionRouteEnabled(file: string, source: string, exportName: string): boolean {
   const parsed = parseJavaScript(file, source)
   if (parsed.errors.length) throw new TypeError(`[vitehub] Cannot parse Collection ${file}: ${parsed.errors[0]!.message}`)
-  const declarations = new Map<string, any>()
+  type AstNode = { type?: string; [key: string]: unknown }
+  const declarations = new Map<string, AstNode>()
   for (const statement of parsed.program.body) {
     const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement
     if (declaration?.type === "VariableDeclaration") for (const item of declaration.declarations) {
-      if (item.id.type === "Identifier") declarations.set(item.id.name, item.init)
+      if (item.id.type === "Identifier") declarations.set(item.id.name, item.init as AstNode)
+    }
+    if (statement.type === "ExportNamedDeclaration") for (const specifier of statement.specifiers) {
+      if (specifier.type === "ExportSpecifier" && specifier.exported.type === "Identifier" && specifier.local.type === "Identifier") {
+        declarations.set(specifier.exported.name, declarations.get(specifier.local.name)!)
+      }
     }
   }
-  const unwrap = (node: any, seen = new Set<string>()): any => {
-    if (node?.type === "Identifier" && declarations.has(node.name)) {
+  const unwrap = (node: AstNode | null | undefined, seen = new Set<string>()): AstNode | undefined => {
+    if (node?.type === "Identifier" && typeof node.name === "string" && declarations.has(node.name)) {
       if (seen.has(node.name)) throw new TypeError(`[vitehub] Circular Collection options in ${file}.`)
       seen.add(node.name)
       return unwrap(declarations.get(node.name), seen)
     }
-    if (["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node?.type)) return unwrap(node.expression, seen)
+    if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression as AstNode, seen)
     return node
   }
   const definition = unwrap(declarations.get(exportName))
   if (definition?.type !== "CallExpression") return true
   const options = unwrap(definition.arguments.length > 1 ? definition.arguments[1] : definition.arguments[0])
-  if (options?.type !== "ObjectExpression") throw new TypeError(`[vitehub] Collection ${exportName} in ${file} must declare its options locally so route visibility can be inspected.`)
+  if (options?.type !== "ObjectExpression") return true
   let route: boolean | undefined
   for (const property of options.properties) {
-    if (property.type === "SpreadElement") throw new TypeError(`[vitehub] Collection ${exportName} in ${file} has indirect options. Declare route: false in a local options object and avoid unresolved spreads.`)
-    if (!property.computed && (property.key.name ?? property.key.value) === "route") {
+    if (property.type === "SpreadElement") continue
+    const key = property.key as AstNode
+    if ((key.name ?? key.value) === "route") {
       const value = unwrap(property.value)
-      if (value?.type !== "Literal" || value.value !== false) throw new TypeError(`[vitehub] Collection route in ${file} must be the literal false or omitted.`)
-      route = false
+      if (value?.type === "Literal" && value.value === false) route = false
+      else route = undefined
     }
   }
   return route !== false
@@ -345,10 +352,11 @@ async function writeCollectionArtifacts(
     return []
   }
 
+  const routedCollections = collections.filter(collection => collection.routeEnabled)
   await writeFileIfChanged(output, [
     "declare global {",
     "  interface ViteHubCollectionMap {",
-    ...collections.map(({ exportName, file, name }) =>
+    ...routedCollections.map(({ exportName, file, name }) =>
       `    ${JSON.stringify(name)}: typeof import(${JSON.stringify(toTypeModuleSpecifier(file))})[${JSON.stringify(exportName)}]`),
     "  }",
     "}",
@@ -358,7 +366,6 @@ async function writeCollectionArtifacts(
   ].join("\n"))
   await writeFileIfChanged(packageOutput, '/// <reference path="./collections.d.ts" />\n')
 
-  const routedCollections = collections.filter(collection => collection.routeEnabled)
   const expectedRoutes = new Set(routedCollections.map(({ name }) => resolve(routesDirectory, `${name}.mjs`)))
   const existingRoutes = await collectCollectionFiles(routesDirectory)
   await Promise.all(existingRoutes.filter(file => !expectedRoutes.has(file)).map(file => rm(file, { force: true })))
