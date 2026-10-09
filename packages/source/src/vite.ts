@@ -246,12 +246,21 @@ async function collectCollectionFiles(directory: string): Promise<string[]> {
 function collectionRouteEnabled(file: string, source: string, exportName: string): boolean {
   const parsed = parseJavaScript(file, source)
   if (parsed.errors.length) throw new TypeError(`[vitehub] Cannot parse Collection ${file}: ${parsed.errors[0]!.message}`)
-  type AstNode = { type?: string; [key: string]: unknown }
+  type AstNode = {
+    type?: string
+    name?: string
+    value?: unknown
+    expression?: AstNode | null
+    arguments?: AstNode[]
+    properties?: AstNode[]
+    key?: AstNode
+    computed?: boolean
+  }
   const declarations = new Map<string, AstNode>()
   for (const statement of parsed.program.body) {
     const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement
     if (declaration?.type === "VariableDeclaration") for (const item of declaration.declarations) {
-      if (item.id.type === "Identifier") declarations.set(item.id.name, item.init as AstNode)
+      if (item.id.type === "Identifier") declarations.set(item.id.name, item.init as unknown as AstNode)
     }
   }
   for (const statement of parsed.program.body) {
@@ -268,20 +277,26 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       seen.add(node.name)
       return unwrap(declarations.get(node.name), seen)
     }
-    if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression as AstNode, seen)
-    return node
+    if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression, seen)
+    return node ?? undefined
   }
   const definition = unwrap(declarations.get(exportName))
   if (definition?.type !== "CallExpression") return true
-  const options = unwrap(definition.arguments.length > 1 ? definition.arguments[1] : definition.arguments[0])
+  const args = definition.arguments ?? []
+  const options = unwrap(args.length > 1 ? args[1] : args[0])
   if (options?.type !== "ObjectExpression") return true
   let route: boolean | undefined
-  for (const property of options.properties) {
-    if (property.type === "SpreadElement") continue
-    const key = property.key as AstNode
-    const keyName = key.name ?? key.value
+  for (const property of options.properties ?? []) {
+    if (property.type === "SpreadElement") {
+      route = undefined
+      continue
+    }
+    const key = property.key
+    const keyName = property.computed
+      ? key?.type === "Literal" && typeof key.value === "string" ? key.value : undefined
+      : key?.name ?? key?.value
     if (keyName === "route") {
-      const value = unwrap(property.value)
+      const value = unwrap(property.value as AstNode | null | undefined)
       if (value?.type === "Literal" && value.value === false) route = false
       else route = undefined
     }

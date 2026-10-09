@@ -147,7 +147,11 @@ export type CollectionClientItem<TCollection extends AnyCollection> = JSONSerial
 >
 
 export type CollectionQuery<TCollection extends AnyCollection> =
-  TCollection extends Collection<any, infer TQuery, any> ? CollectionQueryInput<TQuery> : never
+  TCollection extends { readonly [collectionQueryInput]?: infer TQueryInput }
+    ? CollectionQueryInput<NonNullable<TQueryInput>> extends infer T
+      ? T extends object ? { [TKey in keyof T]: T[TKey] } : T
+      : never
+    : never
 
 export type CollectionLoader<TSourceItem, TQuery extends object, TCursor extends CollectionCursorValue> = (
   options: CollectionLoadOptions<TQuery, TCursor>,
@@ -352,8 +356,11 @@ export function defineCollection<
   if (defaultLimit > maxLimit) {
     throw sourceErrorDiagnostics.SOURCE_R0008({ message: "[vitehub] Collection defaultLimit cannot exceed maxLimit." })
   }
-  const provider = definition.pagination === "provider"
-  const cursorCodec = provider ? undefined : createCollectionCursorCodec(definition.cursorSchema)
+  const provider = "pagination" in definition && definition.pagination === "provider"
+  const cursorDefinition = definition as CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> & {
+    cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
+  }
+  const cursorCodec = provider ? undefined : createCollectionCursorCodec(cursorDefinition.cursorSchema)
   const authorize = definition.authorize
   if (authorize !== undefined && authorize !== true && !(authorize instanceof Function)) {
     throw sourceErrorDiagnostics.SOURCE_R0024({ message: "[vitehub] Collection authorize must be true or a function." })
@@ -398,7 +405,7 @@ export function defineCollection<
       request.signal?.throwIfAborted()
       if (!Array.isArray(result)) throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
       pageItems = result.slice(0, limit)
-      nextCursor = result.length > limit && pageItems.length ? cursorCodec!.encode(definition.cursor(pageItems[pageItems.length - 1]!)) : null
+      nextCursor = result.length > limit && pageItems.length ? cursorCodec!.encode(cursorDefinition.cursor(pageItems[pageItems.length - 1]!)) : null
     }
     request.signal?.throwIfAborted()
     const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : [...pageItems]
