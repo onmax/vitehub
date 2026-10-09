@@ -4,6 +4,7 @@ import {
   docsCategoryOrder,
   docsRootSectionId,
   getDocsCatalog,
+  getDocsRailCatalog,
   getDocsSectionForPath,
   getDocsSectionSubpages,
   getDocsSidebarGroups,
@@ -67,7 +68,7 @@ describe("docs product navigation", () => {
       // template lanes without changing the order of the shared template pages.
       expect(templateTitles, sectionId).toEqual(template.filter(title => templateTitles.includes(title)));
       const laneLabels = getDocsSidebarGroups(section!).map(group => group.label).filter((label): label is string => label !== null);
-      const laneOrder = ["Tutorial", "Concepts", "Guides", "Reference", "Deploy", "Operate"];
+      const laneOrder = ["Learn", "Build", "Deploy and operate"];
       const knownLaneIndexes = laneLabels
         .map(label => laneOrder.indexOf(label))
         .filter(index => index !== -1);
@@ -111,7 +112,7 @@ describe("docs product navigation", () => {
     expect(getDocsSidebarGroups(ui!).find(group => group.label === "Console")?.pages.map(page => page.title))
       .toEqual(["Chat App", "Invocation Dashboard", "Code Review"]);
     expect(getDocsSidebarGroups(ui!).find(group => group.label === "Start")?.pages.map(page => page.title))
-      .toEqual(["Overview", "Tutorial", "Installation"]);
+      .toEqual(["Overview", "Tutorial", "Installation", "Why Vue?"]);
   });
 
   it("publishes tutorials for public packages without product sections", () => {
@@ -126,22 +127,22 @@ describe("docs product navigation", () => {
       const groups = getDocsSidebarGroups(section!);
 
       expect(groups.length, sectionId).toBeGreaterThan(0);
-      expect(groups.every(group => group.label && group.pages.length > 0), sectionId).toBe(true);
+      expect(groups.every(group => group.pages.length > 0 && (!group.label || group.pages.length > 1)), sectionId).toBe(true);
     }
 
     const kv = docsManifest.sections.find(candidate => candidate.id === "kv");
-    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null, "Tutorial", "Guides", "Reference", "Deploy"]);
+    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null, null, "Build", null]);
   });
 
-  it("gives execution primitives a Concepts lane before configuration guides", () => {
+  it("groups execution tutorials and concepts together before API and configuration pages", () => {
     for (const sectionId of ["sandbox", "queue", "workflows"]) {
       const section = docsManifest.sections.find(candidate => candidate.id === sectionId);
       const groups = getDocsSidebarGroups(section!);
 
-      expect(groups.map(group => group.label), sectionId).toContain("Concepts");
-      expect(groups.find(group => group.label === "Concepts")?.pages.map(page => page.title), sectionId)
-        .toEqual(["Concepts"]);
-      expect(groups.find(group => group.label === "Guides")?.pages.map(page => page.title), sectionId)
+      expect(groups.map(group => group.label), sectionId).toContain("Learn");
+      expect(groups.find(group => group.label === "Learn")?.pages.map(page => page.title), sectionId)
+        .toEqual(["Tutorial", "Concepts"]);
+      expect(groups.find(group => group.label === "Build")?.pages.map(page => page.title), sectionId)
         .toContain("Configure");
     }
   });
@@ -176,9 +177,15 @@ describe("docs product navigation", () => {
     expect(getDocsSectionSubpages(kv!).some(page => page.id === "index")).toBe(false);
   });
 
-  it("keeps commas in frontmatter titles", () => {
-    expect(getDocsPageByPath("/docs/getting-started/concepts/runtime-policy-approvals-and-traces")?.title)
-      .toBe("Runtime policy, approvals, and traces");
+  it("puts setup in Get started and keeps platform topics off the rail", () => {
+    const start = docsManifest.sections.find(section => section.id === docsRootSectionId);
+    expect(start?.title).toBe("Get started");
+    expect(start?.pages.map(page => page.path)).toContain("/docs/getting-started/migrate-from-nuxthub");
+    expect(start?.pages.some(page => page.path.includes("runtime-policy") || page.path.includes("workspace-and-sources"))).toBe(false);
+    expect(getDocsRailCatalog(docsManifest.sections).flatMap(group => group.sections).map(section => section.id))
+      .not.toContain("frameworks-hosts");
+    expect(getDocsPageByPath("/docs/workspace/concepts")?.title).toBe("Workspaces and Sources");
+    expect(getDocsPageByPath("/docs/agents/runtime-policy")?.sourceTitle).toBe("Runtime policy, approvals, and traces");
   });
 
   it("redirects each removed page, its trailing-slash form, and its raw Markdown copy to a published page", () => {

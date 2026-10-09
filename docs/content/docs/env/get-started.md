@@ -1,35 +1,28 @@
 ---
 
 title: Read your first environment value
-description: Install Env, register the Vite integration, and read the first Public Env value.
+description: Declare a safe application name and read it from the generated Public Env module.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Env declares public values at build time and server values at runtime. This
-tutorial exposes one safe application name through the generated Public Env
-module.
+Declare an application name once and read it from the generated Public Env module. The verification script will print `Acme`. This first example uses a safe value that can appear in browser code.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. Public
-values are included in browser output. Keep credentials in `env.server` and
-read them only from server code.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. Public Env values are part of the build output. Put credentials in `env.server` and read them only in server code.
 
-::tutorial-step{title="Install"}
-## Install
+::tutorial-step{title="Install and configure"}
+## Install and configure
+
+Install Env, then add its plugin and declaration to your existing Vite config. Keep any other plugins your app uses.
 
 ```bash [commands/install]
 pnpm add @vite-hub/env @vite-hub/runtime
 pnpm add -D vite
 ```
 
-::
-
-::tutorial-step{title="Configure"}
-## Configure
+`mode: 'build'` resolves this public value during the build. The default supplies `Acme`, so you need no environment variable for this run.
 
 ```ts [vite.config.ts]
 import { env, hubEnv } from '@vite-hub/env/vite'
@@ -49,6 +42,8 @@ export default defineConfig({
 
 ::tutorial-step{title="Read the value"}
 ## Read the value
+
+The generated alias gives the app a typed `appName` value. Import it through Vite; Node alone cannot resolve `#vitehub/env/public`.
 
 ```ts [src/app.ts]
 import { usePublicEnv } from '#vitehub/env/public'

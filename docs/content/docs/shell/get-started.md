@@ -1,26 +1,21 @@
 ---
 
 title: Run your first Shell command
-description: Install Shell, mount a Workspace read-only, and inspect one command result.
+description: Search a read-only Workspace with Just Bash and inspect the command output.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Shell runs selected commands through an explicit Execution Provider. This
-tutorial writes one fixture to a memory Workspace, mounts that Workspace
-read-only, and searches it with Just Bash. The route returns a structured Shell
-Observation that you can inspect.
+Search a Markdown file with `rg` and return the matching line from a server route. The route creates a file in a memory Workspace, then gives Shell read-only access to that file tree. You will check both the command's exit code and its output.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
-Just Bash provider is a controlled runtime for local development; use Sandbox
-when you need provider-managed isolation.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. The Just Bash provider runs the commands you allow against the supplied filesystem. Use [Sandbox](/docs/sandbox) when you need provider-managed isolation for external programs.
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
+
+Install Shell and Workspace. Only Workspace needs a discovery plugin in this example; the route creates Shell directly.
 
 ```bash [commands/install]
 pnpm add @vite-hub/shell @vite-hub/workspace nitro h3
@@ -57,7 +52,7 @@ export default defineWorkspace({
 ::tutorial-step{title="Run one command"}
 ## Run one command
 
-Create a route that writes the fixture, then gives Shell a read-only adapter:
+`rg auth .` searches for `auth` in the mounted tree. The command policy permits one call, caps its output, and applies a timeout. The filesystem adapter denies writes even though the route created the fixture with write access.
 
 ```ts [server/api/search-docs.get.ts]
 import { defineEventHandler } from 'h3'
@@ -88,13 +83,12 @@ export default defineEventHandler(async () => {
 })
 ```
 
-The provider permits four commands, has no network access, and cannot write to
-the mounted filesystem even though the route owns a writable Workspace.
+Only `pwd`, `ls`, `cat`, and `rg` are available to this provider, and it has no network access.
 
 ::
 
-::tutorial-step{title="Verify the result"}
-## Verify the result
+::tutorial-step{title="Run and check the result"}
+## Run and check the result
 
 Start Vite and call the route:
 

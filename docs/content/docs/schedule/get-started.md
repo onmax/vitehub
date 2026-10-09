@@ -7,14 +7,14 @@ navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-A Static Schedule is part of your build. The host triggers it at the declared cron time. Start with this path when the schedule is known at deploy time. Runtime Schedules belong in the [Server API](/docs/schedule/server-api) when users need to create or change records while the app runs.
+Run one occurrence of a daily report and check that it finishes with `succeeded`. You will declare its UTC cron expression, then trigger a fixed occurrence from a script. This lets you test the handler without waiting until tomorrow.
+
+You need Node.js 24.15 or newer and pnpm. Start in an empty directory. The script uses an in-memory run store and needs no Vite server or provider account. It runs once; [host configuration](/docs/schedule/hosts) supplies the recurring trigger in a deployed app.
 
 ::tutorial-step{title="Install"}
 ## Install
 
-Use Node.js 24.15 or newer. This first run uses the direct execution API with an in-memory run store. It needs no Vite server or hosted scheduler.
-
-Start in an empty directory:
+Initialize an ESM package so Node can load the TypeScript modules below:
 
 ```bash [commands/install]
 pnpm init
@@ -27,7 +27,7 @@ pnpm add @vite-hub/schedule
 ::tutorial-step{title="Declare the schedule"}
 ## Declare the schedule
 
-Create `server/schedules/daily-report.ts`:
+`0 8 * * *` means every day at 08:00 UTC. `manual: true` allows a manual occurrence. The handler logs the occurrence time rather than the current wall-clock time.
 
 ```ts [server/schedules/daily-report.ts]
 import { defineSchedule } from '@vite-hub/schedule'
@@ -41,7 +41,7 @@ export default defineSchedule({
 })
 ```
 
-Static Schedule cron expressions use UTC. `scheduledAt` is the occurrence time chosen by the host. Replace the log with the report work after the manual run succeeds.
+Create the `server/schedules` directory and save this as `daily-report.ts`. After the manual run works, replace the log with your report code.
 
 ::
 
@@ -49,6 +49,8 @@ Static Schedule cron expressions use UTC. `scheduledAt` is the occurrence time c
 ## Execute one occurrence
 
 Create a script that imports the Definition and executes a fixed occurrence:
+
+The fixed timestamp makes the result repeatable. Importing and executing this Definition does not create a recurring timer.
 
 ```ts [run.ts]
 import { executeStaticSchedule } from '@vite-hub/schedule/runtime'
@@ -77,7 +79,7 @@ Daily report scheduled for 2026-08-27T08:00:00.000Z
 succeeded
 ```
 
-This proves handler execution and in-memory run bookkeeping. It does not install a recurring wake or produce deployment output. Production runs need a provider wake or a long-lived process runtime. The `vitehub schedule run` development command requires a Nitro Vite host; plain Vite cannot serve that runtime endpoint.
+The handler ran for the exact timestamp you supplied. To run it every day, add the Schedule integration to your app and configure a hosted scheduler or a long-lived Node process. [Hosts](/docs/schedule/hosts) explains those options.
 
 ::
 

@@ -7,7 +7,7 @@ const isDocsRoute = computed(() => route.path.startsWith("/docs"));
 const navLinks = [
   { label: "Docs", to: "/docs" },
   { label: "Examples", to: "/examples" },
-  { label: "Blog", to: "/blog" },
+  { label: "Guides", to: "/guides" },
 ];
 
 const mobileLinks = [

@@ -1,16 +1,19 @@
 ---
 title: Installation
 description: Add ViteHub UI to a Nuxt or Vue application.
-layout: tutorial
 navigation.title: Installation
 navigation.order: 3
 navigation.group: Start
 icon: i-lucide-package
 ---
 
-`@vite-hub/ui` requires Node.js 24.15 or newer. The package is pre-1.0, so pin its version and review changes before you upgrade.
+Add `@vite-hub/ui` to an existing Nuxt or Vue application and render a short
+Markdown message to check that it works. Choose the setup for your framework,
+then follow "Verify the setup" below. You need Node.js 24.15 or newer.
 
-## Peer dependencies
+The package is pre-1.0. Pin its version and review changes before you upgrade.
+
+## Dependencies
 
 | Package                                   | Required for                                              |
 | ----------------------------------------- | --------------------------------------------------------- |
@@ -23,9 +26,7 @@ icon: i-lucide-package
 
 `@nuxt/ui` and `vite` are optional peers, so an application that only uses the headless entry point does not install them.
 
-::tutorial-step{title="Install for Nuxt"}
-
-## Nuxt
+## Install in Nuxt
 
 Install the package and its peers:
 
@@ -33,7 +34,7 @@ Install the package and its peers:
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue @iconify-json/lucide @iconify-json/ph
 ```
 
-Register the module:
+Add the module to `nuxt.config.ts`:
 
 ```ts [nuxt/nuxt.config.ts]
 export default defineNuxtConfig({
@@ -45,11 +46,7 @@ The module installs Nuxt UI, loads `@vite-hub/ui/styles.css`, and auto-imports e
 
 For explicit imports, each public component also has a kebab-case entry such as `@vite-hub/ui/agent-chat`. These entries export the same component objects as `@vite-hub/ui` and keep the development import graph focused.
 
-::
-
-::tutorial-step{title="Install for Vue with Vite"}
-
-## Vue with Vite
+## Install in Vue with Vite
 
 Install the package, its peers, and the Vite tooling:
 
@@ -98,8 +95,6 @@ import { AgentChat } from "@vite-hub/ui";
 </script>
 ```
 
-::
-
 The examples in these pages use Nuxt auto-imports. In Vue with Vite, add the import for each component.
 
 ### Vite plugin options
@@ -109,11 +104,11 @@ The examples in these pages use Nuxt auto-imports. In Vue with Vite, add the imp
 | `nuxtUI` | `Record<string, unknown>`       | Options for the Nuxt UI Vite plugin.                     |
 | `comark` | `false \| { prose?: boolean }`  | Options for the Comark plugin. Set `false` to remove it. |
 
-::tutorial-step{title="Verify the setup"}
-
 ## Verify the setup
 
-Render one component:
+In Nuxt, replace the contents of `app.vue` with this example. In Vue with
+Vite, put the template in `App.vue` and import `AgentMarkdown` from
+`@vite-hub/ui` in its script:
 
 ```vue [nuxt/app.vue]
 <template>
@@ -121,11 +116,13 @@ Render one component:
 </template>
 ```
 
-The page shows **ViteHub UI is ready.** in bold. This proves that the component and the Markdown renderer load. It does not configure a model or a chat endpoint.
+Start your application and open it in the browser. You should see
+**ViteHub UI is ready.** in bold. If the component is missing, check the Nuxt
+module or the Vue import. If it appears without styles, check the CSS imports.
 
-::
-
-::tutorial-step{title="Keep the Console defaults"}
+You can now follow the [UI tutorial](/docs/ui/get-started) to display a chat
+message, or choose a [Console block](/docs/ui/blocks/chat-app). Connecting a
+model or chat endpoint is a separate step in your application.
 
 ## Defaults
 
@@ -162,10 +159,6 @@ app.use(
 
 Read the resolved defaults in your own components with `useViteHubUI()`.
 
-::
-
-::tutorial-step{title="Tune the theme"}
-
 ## Theme
 
 The stylesheet maps its CSS variables to Nuxt UI tokens. Override them on any element to change one view:
@@ -179,8 +172,6 @@ The stylesheet maps its CSS variables to Nuxt UI tokens. Override them on any el
 ```
 
 The variables are `--vh-ui-radius`, `--vh-ui-border`, `--vh-ui-text`, `--vh-ui-muted`, `--vh-ui-dimmed`, `--vh-ui-bg`, `--vh-ui-bg-muted`, `--vh-ui-bg-elevated`, `--vh-ui-error`, `--vh-ui-info`, `--vh-ui-success`, and `--vh-ui-warning`.
-
-::
 
 ## Server rendering
 

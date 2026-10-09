@@ -1,24 +1,20 @@
 ---
 title: Create your first Auth session
-description: Install Auth, create a user, and verify a Better Auth session.
+description: Create an email-and-password user and verify their session with a saved cookie.
 navigation.title: Tutorial
 layout: tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Auth mounts Better Auth under one generated route and keeps session access in
-server code. This tutorial enables email and password sign-up with the default
-runtime store, then verifies the session with two requests.
+Create a user with an email and password, then read their session using the cookie returned by sign-up. ViteHub discovers your Auth Definition; Better Auth handles the sign-up and session endpoints.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
-in-memory default proves the route only. Add a Better Auth database adapter
-before relying on sessions across restarts or replicas.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. This example uses an in-memory store, so restarting the server removes its users and sessions. Add a [database adapter](/docs/auth/configure#storage-placement-metadata) before using this setup in production.
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
+
+Install Auth and Better Auth, then register discovery in your existing Vite config. Keep the app's other plugins.
 
 ```bash [commands/install]
 pnpm add @vite-hub/auth @vite-hub/runtime better-auth h3
@@ -42,6 +38,8 @@ export default defineConfig({
 ## Define Auth
 
 Create `server/auth.ts`:
+
+`emailAndPassword.enabled` turns on the endpoints used below. You do not need to write sign-up or session routes yourself.
 
 ```ts [server/auth.ts]
 import { defineAuth } from '@vite-hub/auth'
@@ -67,6 +65,8 @@ pnpm vite dev
 ```
 
 Keep the server running. In another terminal, run:
+
+`-c cookies.txt` saves the response cookie in a local file. The password below is example data; use a different password for a real account.
 
 ```bash [commands/sign-up]
 curl -i -c cookies.txt -X POST http://localhost:5173/api/auth/sign-up/email \

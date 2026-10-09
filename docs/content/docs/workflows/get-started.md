@@ -1,36 +1,26 @@
 ---
 
 title: Start your first Workflow
-description: Install Workflows, split a run into durable steps, and inspect the first result.
+description: Start a two-step onboarding Workflow and inspect its run id.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Workflows run named work outside the request and return a run id that the app
-can inspect later. This tutorial builds a small onboarding run with two ordered
-steps. The code rail mirrors the project tree, so you can see the workflow
-entrypoint, its step files, and the route that starts it together.
+Build a two-step onboarding Workflow and start it from an API route. One step creates a sample user; the next returns a sample welcome result. Neither step calls a database or sends an email yet. You will get a run id that identifies this execution.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. Local
-development runs inline. Choose Cloudflare, Vercel, or OpenWorkflow before
-deploying work that must survive a process restart.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. Local execution runs inline and needs no provider account. Select a [durable provider](/docs/workflows/hosts) before relying on a run surviving a server restart.
 
-::tutorial-step{title="Install"}
-## Install
+::tutorial-step{title="Install and configure"}
+## Install and configure
+
+Install Workflow and Nitro. Add the plugins below to your existing Vite config and keep its other plugins.
 
 ```bash [commands/install]
 pnpm add @vite-hub/runtime @vite-hub/workflow nitro h3
 pnpm add -D vite
 ```
-
-::
-
-::tutorial-step{title="Configure"}
-## Configure
 
 ```ts [vite.config.ts]
 import { hubWorkflow } from '@vite-hub/workflow/vite'
@@ -78,16 +68,14 @@ export default async function sendWelcome(user: { id: string, email: string }) {
 }
 ```
 
-Keep side effects idempotent. A provider can replay a step after a transient
-failure, but it does not need to repeat earlier completed steps.
+Make each side effect safe to repeat. For example, create or update a user by email instead of inserting another user on every retry. A durable provider can replay a failed step while keeping earlier completed steps. The local inline provider used here does not retain that step history.
 
 ::
 
 ::tutorial-step{title="Start the Workflow from a route"}
 ## Start the Workflow from a route
 
-The route only starts the run. It receives an acknowledgement with a run id;
-the two step functions execute in the Workflow provider.
+The route submits the email as a payload. Use the returned run id to inspect this execution rather than starting another run to check it.
 
 ```ts [server/api/onboard.post.ts]
 import { defineEventHandler, readBody } from 'h3'

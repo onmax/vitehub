@@ -1,31 +1,28 @@
 ---
 
 title: Guard your first request
-description: Install Rate Limit, reject a repeated request, and inspect the local decision.
+description: Allow two requests per minute and check that the third returns HTTP 429.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Rate Limit stops a request before the handler performs work. This tutorial uses
-the Node memory driver, so you can see the first two requests pass and the third
-request return `429` without a provider account.
+Allow two requests in one minute, then reject the third with HTTP `429`. Add the guard before the work in your route so requests over the limit cannot reach that work.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
-memory driver is for development and one process; choose a hosted preset before
-you deploy multiple instances.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. The Node preset counts requests in this process's memory. Counts reset on restart and are not shared with other app instances. See [Hosts](/docs/rate-limit/hosts) for shared enforcement.
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
+Install ViteHub and Nitro. Add the plugins below to your existing Vite config and keep its other plugins.
+
 ```bash [commands/install]
 pnpm add vite-hub nitro h3
+pnpm add -D vite
 ```
 
-Register the integration. The `node` preset uses process-local memory, also during local Vite development. The `cloudflare` preset uses Cloudflare Rate Limiting. The `vercel`, `netlify`, and `deno` presets reject `rateLimit`.
+Enable Rate Limit on the `node` preset for this local check. Supported deployment presets and provider configuration are in [Hosts](/docs/rate-limit/hosts).
 
 ```ts [vite.config.ts]
 import { vitehub } from 'vite-hub'
@@ -43,6 +40,8 @@ export default defineConfig({
 ## Protect one route
 
 Require the Rate Limit directly in ordinary server code. The guard does not need a dedicated directory, file suffix, or module-scope declaration.
+
+The name `image-upload` identifies this policy. `limit: 2` permits two requests per client in a one-minute window. Put the guard before any upload or other side effect.
 
 ```ts [server/api/image-upload.post.ts]
 import { defineEventHandler } from 'h3'
@@ -69,6 +68,8 @@ pnpm vite dev
 ```
 
 Keep the server running. In another terminal, run:
+
+Run these requests within one minute. `-i` includes the HTTP status and headers so you can see the third request change to `429`.
 
 ```bash [commands/request]
 curl -i -X POST http://localhost:5173/api/image-upload

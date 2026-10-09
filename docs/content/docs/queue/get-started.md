@@ -1,22 +1,18 @@
 ---
 title: Process a welcome job with Queue
-description: Enqueue a job from a route, then let a provider deliver it after the request ends.
+description: Submit a welcome job to Cloudflare Queues and verify its delivery.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Queue moves work out of the request. Your route gets a provider acceptance result, and a later delivery invokes the handler. A job can run more than once, so make side effects safe to retry.
+Submit a welcome job from an API route and watch the Queue consumer log its delivery. The route returns as soon as the provider accepts the job. It does not wait for the handler's result.
 
-::note
-Queue has hosted providers only. This tutorial uses Cloudflare Queues. Use Vercel Queues by changing the provider and installing `@vercel/queue`.
-::
+You need Node.js 24.15 or newer, pnpm, a Cloudflare account, and credentials that can create a Queue and deploy a Worker. Start in an empty directory. Queue has hosted providers only, so this tutorial includes a deployment and can incur provider charges. If you only need to run a local handler, use a [Workflow](/docs/workflows/get-started).
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
-
-Use Node.js 24 or newer. Start in an empty directory:
 
 ```bash [commands/install]
 pnpm init
@@ -45,7 +41,7 @@ With the `vite-hub` distribution, use `vitehub({ preset: 'cloudflare', queue: tr
 ::tutorial-step{title="Define the job"}
 ## Define the job
 
-Create `server/queues/welcome-email.ts`:
+This handler only logs the job so you can verify delivery without sending mail. A real handler can run more than once after retries; use an idempotency check before a non-repeatable side effect.
 
 ```ts [server/queues/welcome-email.ts]
 import { defineQueue } from '@vite-hub/queue'
@@ -61,6 +57,8 @@ The file name becomes the Queue Definition name. The handler runs in the provide
 
 ::tutorial-step{title="Enqueue from a route"}
 ## Enqueue from a route
+
+`runQueue()` selects `welcome-email` by its Definition name and submits the email as a payload. The handler runs separately from this route.
 
 ```ts [server/api/welcome.post.ts]
 import { defineEventHandler, readBody } from 'h3'
@@ -97,6 +95,8 @@ pnpm vitehub inspect provider-output
 You should see `welcome-email` and the generated Cloudflare producer and consumer output. Nitro writes the Worker configuration to `.output/server/wrangler.json`. This build proves discovery and output. Queue has no local provider.
 
 Provision the queue and deploy the generated Worker with Cloudflare credentials:
+
+The next commands create provider resources and deploy the Worker. Use an account intended for this tutorial, and review the generated output before running them.
 
 ```bash [commands/deploy]
 export CLOUDFLARE_ACCOUNT_ID=...

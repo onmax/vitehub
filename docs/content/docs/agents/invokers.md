@@ -2,8 +2,8 @@
 title: Auth Users and Agent Invokers
 navigation.title: Auth Users and Agent Invokers
 description: Understand how application identity becomes trusted invocation identity.
-navigation.order: 114
-navigation.group: Concepts
+navigation.order: 22.5
+navigation.group: Core
 icon: i-lucide-user-check
 ---
 

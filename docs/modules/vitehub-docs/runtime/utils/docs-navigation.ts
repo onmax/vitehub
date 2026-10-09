@@ -21,16 +21,27 @@ export type DocsCatalogGroup = {
 
 const primitiveCategories = new Set(["Data", "Compute", "Access", "Delivery", "Files"]);
 
-/** Stable task order for Server Primitive sidebar lanes. */
+/** Related tasks share a group, so each heading contains useful choices. */
 const primitiveSidebarGroupOrder: Array<string | null> = [
   null,
-  "Tutorial",
-  "Concepts",
-  "Guides",
-  "Reference",
-  "Deploy",
-  "Operate",
+  "Learn",
+  "Build",
+  "Deploy and operate",
 ];
+
+const primitiveLaneGroups: Record<string, string> = {
+  Tutorial: "Learn",
+  Concepts: "Learn",
+  Guides: "Build",
+  Reference: "Build",
+  Deploy: "Deploy and operate",
+  Operate: "Deploy and operate",
+};
+
+/** Platform topics are reached from Get started and the catalog, instead of adding rail entries. */
+export function getDocsRailCatalog(sections: DocsSection[]) {
+  return getDocsCatalog(sections).filter(group => group.category !== "Platform");
+}
 
 /** The section whose pages fill the Start row of the catalog. */
 export const docsRootSectionId = "getting-started";
@@ -80,7 +91,7 @@ export type DocsSidebarGroup = {
 };
 
 /** The user task lane for a page in a Server Primitive section. Explicit frontmatter wins. */
-function primitivePageGroup(section: DocsSection, page: DocsPage) {
+function primitivePageLane(section: DocsSection, page: DocsPage) {
   if (page.group?.trim()) return page.group.trim();
   if (!primitiveCategories.has(section.category || "")) return null;
   if (page.kind?.trim()) return page.kind.trim();
@@ -103,13 +114,16 @@ export function getDocsSidebarGroups(section: DocsSection): DocsSidebarGroup[] {
 
   for (const page of section.pages) {
     if (page.navigation === false) continue;
-    const label = primitivePageGroup(section, page);
+    const lane = primitivePageLane(section, page);
+    const label = primitiveCategories.has(section.category || "") && lane
+      ? primitiveLaneGroups[lane] || lane
+      : lane;
     groups.set(label, [...(groups.get(label) || []), page]);
   }
 
   const entries = [...groups].map(([label, pages], index) => ({ label, pages, index }));
   if (!primitiveCategories.has(section.category || "")) {
-    return entries.map(({ label, pages }) => ({ label, pages }));
+    return entries.map(({ label, pages }) => ({ label: pages.length > 1 ? label : null, pages }));
   }
 
   return entries
@@ -120,7 +134,7 @@ export function getDocsSidebarGroups(section: DocsSection): DocsSidebarGroup[] {
       const normalizedRight = rightOrder === -1 ? primitiveSidebarGroupOrder.length : rightOrder;
       return normalizedLeft - normalizedRight || left.index - right.index;
     })
-    .map(({ label, pages }) => ({ label, pages }));
+    .map(({ label, pages }) => ({ label: pages.length > 1 ? label : null, pages }));
 }
 
 /** Sections listed under Related in a section's sidebar, in the order `.navigation.yml` declares them. */

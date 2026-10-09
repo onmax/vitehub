@@ -3,7 +3,7 @@ import { PrimitiveRail, PrimitiveRailGroup, PrimitiveRailItem } from "@vite-hub/
 import { NuxtLink } from "#components";
 import { docsManifest } from "~~/modules/vitehub-docs/runtime/utils/docs";
 import {
-  getDocsCatalog,
+  getDocsRailCatalog,
   getDocsSectionForPath,
   getUncategorizedDocsSections,
 } from "~~/modules/vitehub-docs/runtime/utils/docs-navigation";
@@ -12,7 +12,7 @@ const route = useRoute();
 const currentSection = computed(() => getDocsSectionForPath(docsManifest.sections, route.path));
 // One rail group for each catalog category. Sections without a category stay reachable in a last group.
 const groups = [
-  ...getDocsCatalog(docsManifest.sections).map((group) => group.sections),
+  ...getDocsRailCatalog(docsManifest.sections).map((group) => group.sections),
   getUncategorizedDocsSections(docsManifest.sections),
 ].filter((sections) => sections.length > 0);
 </script>
@@ -32,7 +32,7 @@ const groups = [
         <PrimitiveRailItem
           :as="NuxtLink"
           :to="section.path"
-          :current="section.id === currentSection?.id"
+          :current="section.id === currentSection?.id || (section.id === 'getting-started' && currentSection?.category === 'Platform')"
           :icon="railSectionIcon(section)"
           :label="section.title"
         />

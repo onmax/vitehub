@@ -285,7 +285,7 @@ function withArtifactLock<T>(outputDir: string, callback: () => T) {
 function writeRawMarkdownArtifacts(docsRoot: string, outputDir: string, capabilityReferences?: CapabilityReferences) {
   const rawOutputDir = resolve(outputDir, "raw");
   const expectedPaths = new Set<string>();
-  for (const [directory, prefix] of [["docs", "docs"], ["blog", "blog"], ["trust", ""]] as const) {
+  for (const [directory, prefix] of [["docs", "docs"], ["trust", ""]] as const) {
     const contentRoot = resolve(docsRoot, "content", directory);
     for (const absolutePath of listFiles(contentRoot, ".md")) {
       const destination = resolve(rawOutputDir, rawPagePath(contentRoot, absolutePath, prefix));

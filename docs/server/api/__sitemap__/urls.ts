@@ -8,16 +8,15 @@ interface ContentPage {
   sitemap?: boolean;
 }
 
-// Replaces the Docus source: ViteHub lists docs, blog, and trust pages plus its own app pages.
+// Replaces the Docus source: ViteHub lists docs and trust pages plus its own app pages.
 export default defineEventHandler(async (event) => {
-  const [docs, blog, trust] = await Promise.all([
+  const [docs, trust] = await Promise.all([
     queryCollection(event, "docs").all(),
-    queryCollection(event, "blog").all(),
     queryCollection(event, "trust").all(),
   ]);
-  const entries: SitemapEntry[] = [{ path: "/" }, { path: "/blog" }, { path: "/examples" }];
+  const entries: SitemapEntry[] = [{ path: "/" }, { path: "/guides" }, { path: "/examples" }];
 
-  for (const page of [...docs, ...blog, ...trust] as ContentPage[]) {
+  for (const page of [...docs, ...trust] as ContentPage[]) {
     if (page.sitemap === false) continue;
     entries.push({ path: page.path, lastmod: page.modifiedAt });
   }

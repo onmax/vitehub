@@ -10,6 +10,15 @@ A Channel describes where an Agent Invocation came from and how replies return t
 
 Use [Agent Actors](/docs/agents/actors) for trusted identity and [Input Commands](/docs/agents/capabilities/input-commands) for explicit command handling.
 
+## Supported channels
+
+ViteHub includes these Channel helpers. Each one connects an incoming message or event to an Agent Invocation. Configure provider credentials and permissions before using it.
+
+::supported-channels
+::
+
+Use `defineChannel()` when your application needs another transport. For outbound delivery without starting an Invocation, use [Channels](/docs/channels).
+
 ## Add a Channel
 
 Import Channel helpers from `@vite-hub/agent/channels`.

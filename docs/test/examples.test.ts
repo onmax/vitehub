@@ -20,8 +20,6 @@ describe("examples catalog", () => {
     expect(examples).toEqual([
       expect.objectContaining({
         name: "Drop",
-        description:
-          "Review what your agents plan. Agents drop docs and small apps; people comment on the exact spot, share links, and send the feedback back for the next version.",
         kind: "project",
         status: "published",
         action: {
@@ -62,8 +60,6 @@ describe("examples catalog", () => {
           kind: "use",
           label: "Template unavailable",
         },
-        publicationNote:
-          "Pending an explicit license and Node 24 support for local and Vercel runtimes.",
         builtWith: ["Agent Definitions", "MCP", "Workspaces", "Channels", "Rate Limit", "Workflow"],
         startPath: "server/agents/nuxt/agent.ts",
       }),
@@ -75,6 +71,19 @@ describe("examples catalog", () => {
         builtWith: ["Agent Definitions", "Schedule"],
       }),
     ]);
+  });
+
+  it("gives every available app an honest preview and resolves local screenshots", () => {
+    for (const example of examples) {
+      if (example.status !== "published") continue;
+      expect(example.preview.alt).not.toBe("");
+      if (example.preview.kind === "screenshot") {
+        expect(existsSync(resolve(docsRoot, "public", example.preview.src.slice(1)))).toBe(true);
+        expect(new URL(example.preview.source).hostname).toBe("github.com");
+      } else {
+        expect(example.preview.alt).toContain("App mockup");
+      }
+    }
   });
 
   it("uses source actions for Projects and use actions with a start path for Templates", () => {

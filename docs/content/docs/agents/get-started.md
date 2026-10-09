@@ -1,6 +1,6 @@
 ---
 title: Define your first Agent
-description: Install ViteHub, define an offline Agent, call it from a route, and inspect the result.
+description: Build an offline greeting Agent and call it from a server route.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
@@ -8,17 +8,14 @@ navigation.group: Start
 icon: i-lucide-rocket
 ---
 
-An Agent Definition describes one server-side operation. Start with a local
-function Driver so you can verify discovery and invocation before adding a
-model, a Channel, or Capabilities.
+Build a greeting endpoint that returns `Hello, Ada!` without calling a model. You will define an Agent in one file, send it a prompt from a server route, and handle its result. The same route can call a model-backed Agent later.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. This
-example runs offline and needs no provider key.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. This example uses Nitro to serve the API route and needs no account or API key. If you need an app first, follow [First Agent](/docs/getting-started/first-agent).
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
+
+Install the server packages. If your app already has a Vite config, add these plugins to it and keep its existing plugins.
 
 ```bash [commands/install]
 pnpm add vite-hub nitro h3
@@ -44,6 +41,8 @@ export default defineConfig({
 
 Create `server/agents/greeting.ts`. The file name becomes the Agent name.
 
+The Driver is the function that does the work. Here it receives the prompt, chooses a name, and returns a text result. It makes no model call.
+
 ```ts [server/agents/greeting.ts]
 import { defineAgent } from 'vite-hub/agent'
 
@@ -64,7 +63,7 @@ application needs generation or tools.
 ::tutorial-step{title="Call and verify the Agent"}
 ## Call and verify the Agent
 
-Expose the Agent from an H3 route:
+`runAgent()` returns an error/result tuple. Check the error before returning the result so a failed invocation cannot look like a successful greeting.
 
 ```ts [server/api/greeting.post.ts]
 import { defineEventHandler, readBody } from 'h3'

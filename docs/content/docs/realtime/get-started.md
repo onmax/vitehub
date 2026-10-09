@@ -1,19 +1,19 @@
 ---
 
 title: Create your first collaborative room
-description: Install Realtime, enable it with Workspace, define a room, and connect a TipTap editor.
+description: Connect two TipTap editors to the same document and verify synchronization.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
+Open the same document in two browser tabs and edit it from either tab. Realtime synchronizes the editors through a shared room. A Workspace supplies the file path and receives the document when your app saves a checkpoint.
+
+You need Node.js 24.15 or newer, pnpm, and a Vite application that uses Vue and TypeScript. Run the commands from its root. This example uses in-memory room and Workspace stores. Restarting the server loses their state. The room is public during this local check; enable Auth before admitting private documents.
+
 ::tutorial-step{title="Configure Realtime"}
 ## Configure Realtime
-
-Start with an existing Vite + Vue + TypeScript application and Node.js 24.15 or newer.
-Run the commands from the application root. This tutorial uses Nitro to host
-the generated Realtime routes alongside the Vue app.
 
 ```bash [commands/install]
 pnpm add vite-hub @tiptap/vue-3 h3
@@ -45,6 +45,8 @@ export default defineConfig({
 
 Create a Realtime Definition under `server/realtime`. Its name comes from the
 relative file path, so this file defines `docs`.
+
+`document.workspace` names the Workspace used for checkpoints. The room name and file path together identify the shared document.
 
 ```ts [server/realtime/docs.ts]
 import { defineRealtime } from 'vite-hub/realtime'
@@ -80,8 +82,7 @@ request must have a valid ViteHub Auth session. Connections are public when
 ::tutorial-step{title="Connect a TipTap editor"}
 ## Connect a TipTap editor
 
-Call `useRealtimeTiptap()` with the Realtime Definition name and a safe
-Workspace path. Its editor state is exposed as Vue refs.
+Both tabs must use the same Definition and path. The composable supplies TipTap's collaboration extensions and connection state.
 
 ```ts [src/composables/useDocumentEditor.ts]
 import { useEditor } from '@tiptap/vue-3'
@@ -98,9 +99,7 @@ export function useDocumentEditor() {
 }
 ```
 
-Render the editor in the Vite scaffold's root component. Destructure the status
-refs so Vue unwraps them in the template. `useEditor()` disposes the editor when
-the component unmounts.
+Replace the scaffold's root view with this component. Destructure the status refs so Vue unwraps them in the template. The status line makes connection problems visible before you test typing. `useEditor()` disposes the editor when the component unmounts.
 
 ```vue [src/App.vue]
 <script setup lang="ts">
@@ -122,15 +121,7 @@ const { status, synced } = realtime
 </template>
 ```
 
-The composable connects to ViteHub's generated
-`/api/_vitehub/realtime/**` WebSocket route. With `auth: true`, the server
-verifies the ViteHub Auth session and binds that user to presence updates. In a
-public Definition, presence identity is client-asserted, even if the client has a
-session. It must not be used as an authorization or verified-identity boundary.
-
-`realtime.workspace.change` reports file changes published by other Workspace
-clients. Call `realtime.workspace.notify(change)` after an application changes
-a Workspace path outside the collaborative editor.
+The composable connects to the generated WebSocket route. This room is public, so any client that can reach it can join. A presence label is not verified identity. Configure [Auth](/docs/auth) and set `auth: true` before using the room for private documents.
 ::
 
 ::tutorial-step{title="Verify synchronization"}
