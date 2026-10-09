@@ -11,6 +11,7 @@ import {
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { findExportNames } from "mlly"
 
+import { parseSync as parseJavaScript } from "vite"
 import type { Plugin } from "vite"
 import { encodeCollectionRouteSegment } from "./internal/collection-route.ts"
 import { sourceErrorDiagnostics } from "./error-diagnostics.ts"
@@ -59,6 +60,7 @@ interface DiscoveredCollection {
   exportName: string
   file: string
   name: string
+  routeEnabled: boolean
 }
 
 interface NitroGeneratedConfig {
@@ -240,6 +242,42 @@ async function collectCollectionFiles(directory: string): Promise<string[]> {
   return files
 }
 
+/** Inspect route metadata without importing Collection modules or evaluating loaders. */
+function collectionRouteEnabled(file: string, source: string, exportName: string): boolean {
+  const parsed = parseJavaScript(file, source)
+  if (parsed.errors.length) throw new TypeError(`[vitehub] Cannot parse Collection ${file}: ${parsed.errors[0]!.message}`)
+  const declarations = new Map<string, any>()
+  for (const statement of parsed.program.body) {
+    const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement
+    if (declaration?.type === "VariableDeclaration") for (const item of declaration.declarations) {
+      if (item.id.type === "Identifier") declarations.set(item.id.name, item.init)
+    }
+  }
+  const unwrap = (node: any, seen = new Set<string>()): any => {
+    if (node?.type === "Identifier" && declarations.has(node.name)) {
+      if (seen.has(node.name)) throw new TypeError(`[vitehub] Circular Collection options in ${file}.`)
+      seen.add(node.name)
+      return unwrap(declarations.get(node.name), seen)
+    }
+    if (["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node?.type)) return unwrap(node.expression, seen)
+    return node
+  }
+  const definition = unwrap(declarations.get(exportName))
+  if (definition?.type !== "CallExpression") return true
+  const options = unwrap(definition.arguments.length > 1 ? definition.arguments[1] : definition.arguments[0])
+  if (options?.type !== "ObjectExpression") throw new TypeError(`[vitehub] Collection ${exportName} in ${file} must declare its options locally so route visibility can be inspected.`)
+  let route: boolean | undefined
+  for (const property of options.properties) {
+    if (property.type === "SpreadElement") throw new TypeError(`[vitehub] Collection ${exportName} in ${file} has indirect options. Declare route: false in a local options object and avoid unresolved spreads.`)
+    if (!property.computed && (property.key.name ?? property.key.value) === "route") {
+      const value = unwrap(property.value)
+      if (value?.type !== "Literal" || value.value !== false) throw new TypeError(`[vitehub] Collection route in ${file} must be the literal false or omitted.`)
+      route = false
+    }
+  }
+  return route !== false
+}
+
 async function discoverCollections(options: SourceGenerationOptions): Promise<DiscoveredCollection[]> {
   const serverDirs = options.serverDirs === undefined
     ? [resolve(options.projectRoot, "server")]
@@ -253,10 +291,11 @@ async function discoverCollections(options: SourceGenerationOptions): Promise<Di
         throw sourceErrorDiagnostics.SOURCE_B0003({ message: `[vitehub] Collection file ${JSON.stringify(relative(options.projectRoot, file))} must use a valid JavaScript identifier as its filename.` })
       }
       const name = relative(directory, file).slice(0, -extension.length).replaceAll("\\", "/")
-      if (!findExportNames(await readFile(file, "utf8")).includes(exportName)) {
+      const source = await readFile(file, "utf8")
+      if (!findExportNames(source).includes(exportName)) {
         throw sourceErrorDiagnostics.SOURCE_B0004({ message: `[vitehub] Collection file ${JSON.stringify(relative(options.projectRoot, file))} must export a Collection named ${JSON.stringify(exportName)} to match its filename.` })
       }
-      return { exportName, file, name }
+      return { exportName, file, name, routeEnabled: collectionRouteEnabled(file, source, exportName) }
     }))
   }))).flat().sort((left, right) => left.name.localeCompare(right.name))
 
@@ -319,10 +358,11 @@ async function writeCollectionArtifacts(
   ].join("\n"))
   await writeFileIfChanged(packageOutput, '/// <reference path="./collections.d.ts" />\n')
 
-  const expectedRoutes = new Set(collections.map(({ name }) => resolve(routesDirectory, `${name}.mjs`)))
+  const routedCollections = collections.filter(collection => collection.routeEnabled)
+  const expectedRoutes = new Set(routedCollections.map(({ name }) => resolve(routesDirectory, `${name}.mjs`)))
   const existingRoutes = await collectCollectionFiles(routesDirectory)
   await Promise.all(existingRoutes.filter(file => !expectedRoutes.has(file)).map(file => rm(file, { force: true })))
-  return await Promise.all(collections.map(async ({ exportName, file, name }) => {
+  return await Promise.all(routedCollections.map(async ({ exportName, file, name }) => {
     const handler = resolve(routesDirectory, `${name}.mjs`)
     await writeFileIfChanged(handler, [
       `import { defineCollectionHandler } from ${JSON.stringify(`${options.importBase ?? "@vite-hub/source"}/server`)}`,
