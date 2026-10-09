@@ -3,7 +3,7 @@ import { docsManifest } from "~~/modules/vitehub-docs/runtime/utils/docs";
 
 const search = ref("");
 const selectedCategory = ref("All guides");
-const categories = ["All guides", "Get started", "Data", "Compute", "Access", "Delivery", "Files", "Agents"];
+const categories = ["All guides", "Get started", "Data", "Compute", "Access", "Delivery", "Files", "Agents", "Platform"];
 
 const tutorials = docsManifest.sections.flatMap(section => section.pages
   .filter(page => page.layout === "tutorial")

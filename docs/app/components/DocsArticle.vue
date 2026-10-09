@@ -38,6 +38,12 @@ const mobileTocUi = {
 <template>
   <article class="vh-docs-article">
     <UPage :ui="pageUi">
+      <UPageHeader :title="page.title" :description="page.description" :ui="headerUi">
+        <template #links>
+          <DocsPageHeaderLinks />
+        </template>
+      </UPageHeader>
+
       <UContentToc
         v-if="tocLinks.length"
         class="vh-mobile-outline"
@@ -46,12 +52,6 @@ const mobileTocUi = {
         :links="tocLinks"
         :ui="mobileTocUi"
       />
-
-      <UPageHeader :title="page.title" :description="page.description" :ui="headerUi">
-        <template #links>
-          <DocsPageHeaderLinks />
-        </template>
-      </UPageHeader>
 
       <UPageBody
         prose
