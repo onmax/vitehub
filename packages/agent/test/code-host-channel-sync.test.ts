@@ -24,7 +24,7 @@ const subscriptions = {
   forgejo: {
     comment: ["issue_comment", "pull_request_comment"],
     review: ["pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment"],
-    review_comment: ["pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment"], state_change: ["issues", "issue_assign", "issue_label", "issue_milestone", "pull_request", "pull_request_assign", "pull_request_label", "pull_request_milestone", "pull_request_sync"],
+    review_comment: ["pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment"], state_change: ["issues", "issue_assign", "issue_label", "issue_milestone", "issue_comment", "pull_request", "pull_request_assign", "pull_request_label", "pull_request_milestone", "pull_request_sync", "pull_request_comment", "pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment", "pull_request_review_request"],
   },
 }
 
@@ -35,8 +35,8 @@ function translated(host: typeof hosts[number], events: EventKind[] = []) {
 function expandForgejo(events: readonly string[]) {
   return [...new Set(events.flatMap(event => {
     if (event === "pull_request_review") return subscriptions.forgejo.review
-    if (event === "issues") return ["issues", "issue_assign", "issue_label", "issue_milestone"]
-    if (event === "pull_request") return ["pull_request", "pull_request_assign", "pull_request_label", "pull_request_milestone", "pull_request_sync"]
+    if (event === "issues") return ["issues", "issue_assign", "issue_label", "issue_milestone", "issue_comment"]
+    if (event === "pull_request") return ["pull_request", "pull_request_assign", "pull_request_label", "pull_request_milestone", "pull_request_sync", "pull_request_comment", "pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment", "pull_request_review_request"]
     return [event]
   }))].sort()
 }

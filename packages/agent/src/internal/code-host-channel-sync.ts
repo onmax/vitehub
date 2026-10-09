@@ -58,12 +58,12 @@ function channelEvents(options: CodeHostChannelSyncOptions): ChannelEvent[] {
 
 // Forgejo accepts grouped subscriptions and returns the expanded delivery names.
 function canonicalForgejoEvents(values: readonly string[]): string[] {
-  const groups: Record<string, string[]> = {
-    issues: ["issues", "issue_assign", "issue_label", "issue_milestone"],
-    pull_request: ["pull_request", "pull_request_assign", "pull_request_label", "pull_request_milestone", "pull_request_sync"],
-    pull_request_review: ["pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment"],
-  }
-  return sorted(values.flatMap(value => groups[value] ?? [value]))
+  const groups = new Map([
+    ["issues", ["issues", "issue_assign", "issue_label", "issue_milestone", "issue_comment"]],
+    ["pull_request", ["pull_request", "pull_request_assign", "pull_request_label", "pull_request_milestone", "pull_request_sync", "pull_request_comment", "pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment", "pull_request_review_request"]],
+    ["pull_request_review", ["pull_request_review_approved", "pull_request_review_rejected", "pull_request_review_comment"]],
+  ])
+  return sorted(values.flatMap(value => groups.get(value) ?? [value]))
 }
 
 function sorted(values: readonly string[]): string[] { return [...new Set(values)].sort() }
