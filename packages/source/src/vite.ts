@@ -105,7 +105,33 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
   const declaration = new RegExp(`(?:^|[;\\n])\\s*export\\s+(?:const|let|var)\\s+${escapedExportName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
   const calls = scanner.findIdentifierCalls(source, "defineCollection")
   let call
-  const findDeclarationCall = (initializerStart: number) => calls.find(candidate => candidate.start >= initializerStart)
+  const findDeclarationCall = (initializerStart: number) => {
+    // Scan only this initializer. Matched groups retain nested calls and
+    // semicolons inside IIFEs, while top-level separators end the binding.
+    let end = initializerStart
+    let previous = ""
+    for (; end < masked.length; end++) {
+      const char = masked[end]!
+      if (char === ";" || char === ",") break
+      if (char === "\n" && previous) {
+        const next = masked.slice(end).trimStart()
+        // A newline can continue an expression after an operator or before
+        // a member access/call/operator; otherwise automatic semicolon
+        // insertion ends the initializer before the next statement.
+        if (!/[=?:+\-*/%&|^!<>.]/.test(previous)
+          && !/^(?:[.([?+\-*/%&|^<>=]|as\b|satisfies\b)/.test(next)) break
+      }
+      const close = char === "(" ? ")" : char === "[" ? "]" : char === "{" ? "}" : undefined
+      if (close) {
+        const matched = scanner.findMatching(source, end, char, close)
+        if (matched === undefined) return undefined
+        end = matched
+        previous = close
+      }
+      else if (!/\s/.test(char)) previous = char
+    }
+    return calls.find(candidate => candidate.start >= initializerStart && candidate.closeParen < end)
+  }
   for (const match of masked.matchAll(declaration)) {
     const initializerStart = (match.index ?? 0) + match[0].length
     call = findDeclarationCall(initializerStart)

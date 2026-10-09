@@ -322,28 +322,23 @@ export function defineCollection<
     throw sourceErrorDiagnostics.SOURCE_R0024({ message: "[vitehub] Collection authorize must be true or a function." })
   }
 
-  return {
+  const collection: Collection<TItem, TQuery, object> = {
     ...(authorize ? { authorize } : {}),
-    ...(definition.route === false ? { route: false as const } : {}),
-    ...(definition.get ? { get: async (key: string, options?: { signal?: AbortSignal }): Promise<TItem | null | undefined> => {
-      const item = await definition.get!(key, options ?? {})
-      if (item === null || item === undefined) return item as TItem | null | undefined
-      // SAFETY: Without a transform the public overload fixes TItem to TSourceItem.
-      return definition.transform
-        ? await definition.transform(item as TSourceItem) as TItem
-        // SAFETY: Without a transform the public overload fixes TItem to TSourceItem.
-        : item as unknown as TItem
-    } } : {}),
+    route: definition.route,
     async page(request) {
       const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
       if (!cursorDefinition || !cursorCodec) {
+        // SAFETY: The provider overload pairs a provider definition with a provider loader.
         const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({ cursor: request.cursor, limit, query: request.query, signal: request.signal })
-        if (!result || !Array.isArray(result.items) || (result.nextCursor !== null && typeof result.nextCursor !== "string")) {
+        if (!result || !Array.isArray(result.items) || (result.nextCursor !== null && !isProviderCursor(result.nextCursor))) {
           throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Provider Collection load() must return items and nextCursor." })
         }
         const transformedItems = definition.transform ? await Promise.all(result.items.map(definition.transform)) : result.items
-        return { items: transformedItems as TItem[], nextCursor: result.nextCursor }
+        // SAFETY: Without transform the overload fixes TItem to TSourceItem; otherwise each item was transformed.
+        const items = transformedItems as TItem[]
+        return { items, nextCursor: result.nextCursor }
       }
+      // SAFETY: A cursor definition is paired with a cursor loader by the public overloads.
       const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: await cursorCodec.decode(request.cursor), limit: limit + 1, query: request.query, signal: request.signal })
       if (!Array.isArray(sourceItems)) {
         throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
@@ -369,4 +364,19 @@ export function defineCollection<
     },
     ...(definition.querySchema ? { querySchema: definition.querySchema } : {}),
   }
+  const get = definition.get
+  if (get) {
+    const lookup = async (key: string, options?: { signal?: AbortSignal }) => {
+      const item = await get(key, options ?? {})
+      if (item === null || item === undefined) return item
+      return definition.transform ? await definition.transform(item) : item
+    }
+    // SAFETY: The overload without transform fixes TItem to TSourceItem; otherwise lookup applies the typed transform.
+    Object.assign(collection, { get: lookup as NonNullable<Collection<TItem>["get"]> })
+  }
+  return collection
+}
+
+function isProviderCursor(value: unknown): value is string {
+  return value === String(value)
 }
