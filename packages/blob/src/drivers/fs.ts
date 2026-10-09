@@ -1,6 +1,6 @@
 import type { BigIntStats } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 import { object, optional, parse, record, safeParse, string } from "valibot"
 
@@ -411,19 +411,32 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await Promise.all((Array.isArray(pathnames) ? pathnames : [pathnames]).map(async pathname => {
         const path = resolveBlobPath(root, pathname)
         await assertNoSymlinkPath(root, path)
-        const payload = await open(path, "r").catch((error) => {
+        const generation = await stat(path, { bigint: true }).catch((error) => {
           if (isNotFound(error)) return undefined
           throw error
         })
+        if (!generation) {
+          await removeMetadata(root, pathname)
+          return
+        }
+        if (!generation.isFile()) {
+          const error = new Error(`Blob pathname is not a file: ${pathname}`) as NodeJS.ErrnoException
+          error.code = "EISDIR"
+          throw error
+        }
+        // Move the payload out of the public namespace before cleaning its
+        // generation metadata. This preserves the inode for cleanup while
+        // avoiding Windows delete-on-close handles that keep the pathname
+        // unavailable to a concurrent publisher.
+        const staging = resolve(root, ".vitehub", "blob-deletes", randomUUID())
+        await assertNoSymlinkPath(root, staging)
+        await mkdir(dirname(staging), { recursive: true })
         try {
-          // Keep the observed inode allocated through cleanup. A writer starting
-          // after unlink must not reuse its generation sidecar identity.
-          const generation = await payload?.stat({ bigint: true })
-          await rm(path, { force: true })
+          await rename(path, staging)
           await removeMetadata(root, pathname, generation)
         }
         finally {
-          await payload?.close()
+          await rm(staging, { force: true })
         }
       }))
     },
