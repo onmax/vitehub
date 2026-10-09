@@ -33,6 +33,18 @@ describe("instruction composition", () => {
     })).rejects.toThrow("available only through the authored")
   })
 
+  it("keeps generic custom instruction examples inside code literal", async () => {
+    const document = [
+      "```md",
+      "{{ data.context.customInstructions }}",
+      ':insert{:markdown="data.context.customInstructions"}',
+      "```",
+      "Use `data.context.customInstructions` as a literal example.",
+      "<code>data.context.customInstructions</code>",
+    ].join("\n")
+    await expect(composeInstructionDocument(document)).resolves.toContain("data.context.customInstructions")
+  })
+
   it("keeps raw HTML code slot examples literal and preserves their spelling", async () => {
     const document = "<code>{{{  context.customInstructions  }}}</code>"
     await expect(composeInstructionDocument(document, { context: { customInstructions: "Injected" } }))

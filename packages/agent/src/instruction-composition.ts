@@ -56,7 +56,7 @@ export async function composeInstructionDocument(content: string, options: Compo
   if (customInstructions !== undefined && typeof customInstructions !== "string") {
     throw new TypeError("[vitehub] context.customInstructions must be a string.")
   }
-  if (/data\.context\.customInstructions\b/.test(content)) {
+  if (hasExecutableCustomInstructionReference(content)) {
     throw new TypeError("[vitehub] context.customInstructions is available only through the authored {{{ context.customInstructions }}} slot.")
   }
   if (customInstructions && customCount === customInCode.size) {
@@ -96,6 +96,13 @@ function rawHtmlCodeSlotIndexes(content: string, pattern: RegExp): Set<number> {
     }
   }
   return found
+}
+
+function hasExecutableCustomInstructionReference(content: string): boolean {
+  let masked = content.replace(/<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)\s*>/gi, block => " ".repeat(block.length))
+  masked = masked.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*$/gm, block => " ".repeat(block.length))
+  masked = masked.replace(/(`+)[\s\S]*?\1/g, match => " ".repeat(match.length))
+  return /data\.context\.customInstructions\b/.test(masked)
 }
 
 export function createInstructionCoverage(): InstructionCoverage {
