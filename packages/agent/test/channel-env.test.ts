@@ -1281,3 +1281,16 @@ describe("Code Host Server Env discovery", () => {
     expect(uses.map(use => use.stringOptions?.get("host"))).toEqual(["gitlab", "forgejo"])
   })
 })
+
+it.each(["gitlab", "forgejo"] as const)("discovers and reads the shared %s Channel Env", async kind => {
+  expect(uses(`import { ${kind} } from "vite-hub/agent/channels"; ${kind}({ token: "explicit" })`)).toEqual([{ kind, keys: ["token"] }])
+  expect(builtInChannelEnv[kind]).toEqual({
+    baseUrl: { names: [`${kind.toUpperCase()}_BASE_URL`] },
+    token: { names: [`${kind.toUpperCase()}_TOKEN`], secret: true },
+    webhookSecret: { names: [`${kind.toUpperCase()}_WEBHOOK_SECRET`], secret: true },
+  })
+  const context = { capabilities: {}, memo: vi.fn(), runtime: "unknown" as const, waitUntil: vi.fn(),
+    cloudflare: { env: { [`${kind.toUpperCase()}_TOKEN`]: "host-token", [`${kind.toUpperCase()}_BASE_URL`]: "https://host.test" } } }
+  expect(await channelEnvValue(kind, "token", context)).toBe("host-token")
+  expect(await channelEnvValue(kind, "baseUrl", context)).toBe("https://host.test")
+})

@@ -763,7 +763,7 @@ function requestHeaders(request: Request): Record<string, string> {
 }
 
 function webhookDeliverySourceId(request: Request, provider: string, payload: unknown): string {
-  const header = request.headers.get("x-github-delivery") || request.headers.get("x-vitehub-delivery-id") || request.headers.get("idempotency-key")
+  const header = request.headers.get("x-github-delivery") || request.headers.get("x-gitlab-event-uuid") || request.headers.get("x-forgejo-delivery") || request.headers.get("x-gitea-delivery") || request.headers.get("x-vitehub-delivery-id") || request.headers.get("idempotency-key")
   if (header) return header
   const source = agentChannelDeliverySourceId(provider, payload)
   if (source) return source
