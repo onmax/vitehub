@@ -150,6 +150,12 @@ export async function assertGitHubDependenciesCurrent(target: string, inputs = t
       const destination = join(inputs, path);
       // The index owns tracked commands, including staged deletion. Generated
       // untracked commands remain installation inputs without entering commits.
+      const indexed = await exec("git", ["--literal-pathspecs", "-C", target, "-c", "core.fsmonitor=false", "ls-files", "--cached", "--", path], {
+        env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      });
+      if (indexed.stdout.trim()) continue;
+      // A staged deletion has no index entry, but must still stay deleted in
+      // the protected commit snapshot instead of importing live worktree bytes.
       const tracked = await exec("git", ["--literal-pathspecs", "-C", target, "-c", "core.fsmonitor=false", "ls-tree", "--name-only", "HEAD", "--", path], {
         env: { PATH: process.env.PATH, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
       });
