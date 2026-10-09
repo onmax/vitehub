@@ -939,9 +939,9 @@ async function serializeLibsqlWrite<T>(key: string | LibsqlAgentStateClient | un
 }
 
 function libsqlFilePath(url: string | undefined): string | undefined {
-  if (!url?.startsWith("file:")) return
+  if (!url || !/^file:/i.test(url)) return
   // libSQL accepts relative file: paths, which the standard URL parser does not.
-  const path = url.startsWith("file://")
+  const path = /^file:\/\//i.test(url)
     ? fileURLToPath(url)
     : decodeURIComponent(url.slice(5).split(/[?#]/, 1)[0]!)
   if (path === ":memory:" || /[?&]mode=memory(?:&|$)/.test(url)) return
@@ -997,6 +997,7 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
           writeKey = await realpath(path).catch(async () => join(await realpath(dirname(path)), basename(path)))
         }
         client ||= await serializeLibsqlWrite(writeKey, openClient)
+        if (options.url === ":memory:" || /^file:/i.test(options.url || "")) writeKey ??= client
       },
       async disconnect() {
         const closing = client

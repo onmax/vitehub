@@ -75,7 +75,7 @@ describe("SQLite Agent State Provider", () => {
     tempDirs.push(dir)
     const path = join(dir, "state data.db")
     const first = createLibsqlAgentState({ url: `file:${pathToFileURL(path).pathname}?tls=0` })
-    const second = createLibsqlAgentState({ url: pathToFileURL(path).href })
+    const second = createLibsqlAgentState({ url: pathToFileURL(path).href.replace(/^file:/, "FILE:") })
     try {
       await first.connect()
       await second.connect()
@@ -96,6 +96,46 @@ describe("SQLite Agent State Provider", () => {
     } finally {
       await first.disconnect()
       await second.disconnect()
+    }
+  })
+
+  it.each([":memory:", "file::memory:", "FILE::memory:"])("queues reads behind a %s transaction without blocking independent clients", async url => {
+    const state = createLibsqlAgentState({ url })
+    const independent = createLibsqlAgentState({ url })
+    await state.connect()
+    await independent.connect()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let enter!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    try {
+      await state.set("message", "before")
+      const write = state.extension("probe").transaction(async tx => {
+        await tx.execute("UPDATE vitehub_agent_state_cache SET value = ? WHERE key = ?", [JSON.stringify("after"), "message"])
+        enter()
+        await gate
+      })
+      await entered
+      let readFinished = false
+      const read = state.get("message").then(value => {
+        readFinished = true
+        return { value }
+      }, error => {
+        readFinished = true
+        return { code: error.code }
+      })
+      await independent.set("message", "independent")
+      await expect(independent.get("message")).resolves.toBe("independent")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const finishedDuringTransaction = readFinished
+      release()
+      await write
+      expect(finishedDuringTransaction).toBe(false)
+      await expect(read).resolves.toEqual({ value: "after" })
+    } finally {
+      release()
+      await state.disconnect()
+      await independent.disconnect()
     }
   })
 
