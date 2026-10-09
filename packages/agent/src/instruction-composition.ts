@@ -36,16 +36,28 @@ interface InstructionTemplateTags {
 const contextConditionPathPattern = /^context(?:\.[A-Za-z_$][\w$-]*)+$/
 
 export async function composeInstructionDocument(content: string, options: ComposeInstructionDocumentOptions = {}): Promise<string> {
-  const state = { context: options.context || {}, workspace: options.workspace || {} }
+  const context = options.context || {}
+  const { customInstructions, ...renderContext } = context
+  const state = { context: renderContext, workspace: options.workspace || {} }
   const customPattern = /\{\{\{\s*context\.customInstructions\s*\}\}\}/g
   const customPrefix = `VITEHUBCUSTOMINSTRUCTIONS${crypto.randomUUID().replaceAll("-", "")}`
+  const customMatches = [...content.matchAll(customPattern)]
   let customCount = 0
-  const customMasked = content.replace(customPattern, () => `${customPrefix}${customCount++}END`)
+  let customMasked = content.replace(customPattern, () => `${customPrefix}${customCount++}END`)
+  const rawHtmlPrefix = `vitehub-raw-custom-code-${crypto.randomUUID().replaceAll("-", "")}-`
+  const rawHtmlBlocks: string[] = []
+  customMasked = customMasked.replace(/<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)\s*>/gi, block => {
+    rawHtmlBlocks.push(block)
+    return `${rawHtmlPrefix}${rawHtmlBlocks.length - 1}END`
+  })
   const { tree: customTree } = await parseInstructionTemplate(customMasked)
   const customInCode = instructionTokensInCode(customTree.nodes, customPrefix)
-  const customInstructions = state.context.customInstructions
+  for (const index of rawHtmlCodeSlotIndexes(content, customPattern)) customInCode.add(index)
   if (customInstructions !== undefined && typeof customInstructions !== "string") {
     throw new TypeError("[vitehub] context.customInstructions must be a string.")
+  }
+  if (/data\.context\.customInstructions\b/.test(content)) {
+    throw new TypeError("[vitehub] context.customInstructions is available only through the authored {{{ context.customInstructions }}} slot.")
   }
   if (customInstructions && customCount === customInCode.size) {
     throw new TypeError("[vitehub] context.customInstructions requires a {{{ context.customInstructions }}} slot outside code in the Agent instructions.")
@@ -59,13 +71,31 @@ export async function composeInstructionDocument(content: string, options: Compo
       validateFragmentPath: path => path.startsWith("context.") || path.startsWith("workspace."),
       validateConditionPath: path => contextConditionPathPattern.test(path),
     })
-    const stripped = await stripMarkedInstructionCoverage(rendered, coverageMarker, options.coverage)
+    let stripped = await stripMarkedInstructionCoverage(rendered, coverageMarker, options.coverage)
+    stripped = stripped.replace(new RegExp(`${rawHtmlPrefix}(\\d+)END`, "g"), (_match, index: string) => rawHtmlBlocks[Number(index)]!)
+    for (const blockMatch of content.matchAll(/<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)\s*>/gi)) {
+      const block = blockMatch[0]
+      if (stripped.includes(block)) continue
+      stripped = stripped.replace(/<(code|pre)([^>]*)>[\s\S]*?<\/\1>/i, block)
+    }
     return stripped.replace(new RegExp(`${customPrefix}(\\d+)END`, "g"), (_match, index: string) =>
-      customInCode.has(Number(index)) ? "{{{ context.customInstructions }}}" : customInstructions || "")
+      customInCode.has(Number(index)) ? customMatches[Number(index)]![0] : customInstructions || "")
   }
   catch (error) {
     rethrowInstructionCompositionError(error)
   }
+}
+
+function rawHtmlCodeSlotIndexes(content: string, pattern: RegExp): Set<number> {
+  const found = new Set<number>()
+  const codeBlock = /<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)\s*>/gi
+  let match: RegExpExecArray | null
+  while ((match = codeBlock.exec(content))) {
+    for (const slot of content.slice(match.index, match.index + match[0].length).matchAll(pattern)) {
+      found.add([...content.slice(0, match.index + slot.index).matchAll(pattern)].length - 1)
+    }
+  }
+  return found
 }
 
 export function createInstructionCoverage(): InstructionCoverage {

@@ -24,6 +24,22 @@ describe("instruction composition", () => {
       .rejects.toThrow("context.customInstructions must be a string")
   })
 
+  it("does not allow generic bindings to bypass the custom instruction slot", async () => {
+    await expect(composeInstructionDocument("{{ data.context.customInstructions }}", {
+      context: { customInstructions: "Injected" },
+    })).rejects.toThrow("available only through the authored")
+    await expect(composeInstructionDocument(':insert{:markdown="data.context.customInstructions"}', {
+      context: { customInstructions: "Injected" },
+    })).rejects.toThrow("available only through the authored")
+  })
+
+  it("keeps raw HTML code slot examples literal and preserves their spelling", async () => {
+    const document = "<code>{{{  context.customInstructions  }}}</code>"
+    await expect(composeInstructionDocument(document, { context: { customInstructions: "Injected" } }))
+      .rejects.toThrow("requires a {{{ context.customInstructions }}} slot")
+    await expect(composeInstructionDocument(document)).resolves.toBe(document)
+  })
+
   it("renders the Babysitter wait contract without unsupported tool or JSON examples", async () => {
     const rendered = await composeInstructionDocument(babysitterInstructions.replace("{{{ instructions }}}", "Agent instructions."))
     expect(rendered).toContain('set wait.kind to "checks" and wait.headSha to the current HEAD SHA')
