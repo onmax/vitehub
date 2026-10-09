@@ -66,6 +66,43 @@ test('new event during claim is preserved when old pass finishes', async t => {
   assert.equal(await inbox.hydrate(claim, { comments: {} }), false)
   await inbox.finish(claim, { text: 'done' }); assert.equal((await inbox.claim(1)).length, 1)
 })
+test('a verified resolution retains concurrent feedback without renewing the old claim', async t => {
+  const inbox = memory(t); await inbox.seed(repository, pr()); const [claim] = await inbox.claim(1); assert.ok(claim)
+  assert.ok(await inbox.hydrate(claim, { threads: [{ id: 'thread', isResolved: false, comments: [] }], threadsHydrated: true }))
+  const observed = structuredClone(claim.snapshot)
+  await post(inbox, 'new-feedback', 'issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: comment() })
+  assert.equal(await inbox.recordThreadResolution(claim, 'thread', observed), true)
+  assert.equal(await inbox.isClaimCurrent(claim), false)
+  assert.equal(await inbox.finish(claim, { text: 'Old feedback reviewed', wait: { reason: 'checks', evidenceKey: 'old-feedback' } }), false)
+  const [next] = await inbox.claim(1); assert.ok(next)
+  assert.equal(next.snapshot.threads[0]?.isResolved, true)
+  assert.equal(next.snapshot.comments['1']?.body, 'Please repair this')
+})
+for (const change of ['head', 'closure', 'release', 'reopen', 'source push']) test(`a verified resolution cannot override ${change} received during the mutation`, async t => {
+  const inbox = memory(t); await inbox.seed(repository, pr()); const [claim] = await inbox.claim(1); assert.ok(claim)
+  assert.ok(await inbox.hydrate(claim, { threads: [{ id: 'thread', isResolved: false, comments: [] }], threadsHydrated: true }))
+  const observed = structuredClone(claim.snapshot)
+  if (change === 'head') await post(inbox, 'head-changed', 'pull_request', { action: 'synchronize', pull_request: pr({ head: { sha: 'b', ref: 'fix' }, updated_at: '2026-09-13T11:00:00Z' }) })
+  else if (change === 'closure') await post(inbox, 'closed', 'pull_request', { action: 'closed', pull_request: pr({ state: 'closed', updated_at: '2026-09-13T11:00:00Z' }) })
+  else if (change === 'release') await inbox.release(claim)
+  else if (change === 'source push') await post(inbox, 'source-changed', 'push', { ref: 'refs/heads/fix', after: 'b'.repeat(40) })
+  else {
+    await post(inbox, 'resolved', 'pull_request_review_thread', { action: 'resolved', pull_request: pr(), thread: { node_id: 'thread', comments: [] } })
+    await post(inbox, 'reopened', 'pull_request_review_thread', { action: 'unresolved', pull_request: pr(), thread: { node_id: 'thread', comments: [] } })
+  }
+  assert.equal(await inbox.recordThreadResolution(claim, 'thread', observed), false)
+  assert.notEqual((await inbox.get(repository, 7))?.threads[0]?.isResolved, true)
+})
+test('a verified resolution cannot use an expired lease', async t => {
+  let now = Date.now()
+  const inbox = new PullRequestInbox({ path: ':memory:', repositories: [repository], clock: () => now })
+  t.onTestFinished(() => inbox.close())
+  await inbox.seed(repository, pr()); const [claim] = await inbox.claim(1); assert.ok(claim)
+  assert.ok(await inbox.hydrate(claim, { threads: [{ id: 'thread', isResolved: false, comments: [] }], threadsHydrated: true }))
+  now = claim.snapshot.leaseUntil + 1
+  assert.equal(await inbox.recordThreadResolution(claim, 'thread', claim.snapshot), false)
+  assert.equal((await inbox.get(repository, 7))?.threads[0]?.isResolved, false)
+})
 test('close then reopen during active claim is not lost by stale terminal result', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr()); const [claim] = await inbox.claim(1); assert.ok(claim)
   await post(inbox, 'close', 'pull_request', { action: 'closed', pull_request: pr({ state: 'closed', updated_at: '2026-09-13T11:00:00Z' }) })

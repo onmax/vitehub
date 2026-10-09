@@ -1012,6 +1012,28 @@ export class PullRequestInbox {
       await this.put(tx, s); return true
     })
   }
+  /** Retain a worker's verified thread resolution even when its webhook is missing. */
+  async recordThreadResolution(claim: Claim, id: string, observed: Snapshot): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
+      if (!s || s.lease !== claim.token || s.leaseUntil <= this.clock() || s.status === 'terminal' || s.pr?.state !== 'open'
+        || s.pr.head?.sha !== observed.pr?.head?.sha || s.sourcePushOverflow || s.sourcePushHead !== observed.sourcePushHead
+        || digest(s.sourcePushHeads ?? []) !== digest(observed.sourcePushHeads ?? [])
+        || (s.threadReopens?.[id] ?? 0) !== (observed.threadReopens?.[id] ?? 0)) return false
+      const index = s.threads.findIndex(thread => String(thread.node_id ?? thread.id) === id)
+      if (index < 0) return false
+      const thread = s.threads[index]
+      if (!thread) return false
+      if (thread.isResolved === true) return true
+      const unchanged = s.generation === claim.generation && (s.revision ?? 0) === (claim.snapshot.revision ?? 0)
+      s.threads[index] = { ...thread, isResolved: true, resolutionSource: 'worker', resolutionObservedAt: new Date(this.clock()).toISOString() }
+      s.revision = (s.revision ?? 0) + 1
+      await this.put(tx, s)
+      // Own writes keep an unchanged claim usable. Concurrent evidence stays unacknowledged.
+      if (unchanged) Object.assign(claim.snapshot, { threads: structuredClone(s.threads), revision: s.revision })
+      return true
+    })
+  }
   /** Retain CI for an exact candidate before its source-push webhook arrives. This is not a publication receipt. */
   async registerProspectivePush(claim: Claim, head: string): Promise<boolean> {
     if (!/^[a-f\d]{40}$/i.test(head)) throw new TypeError('Expected an exact publication commit SHA.')
