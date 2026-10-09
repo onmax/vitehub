@@ -1,3 +1,4 @@
+import { parse } from "yaml";
 import { chmod, symlink, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,6 +90,33 @@ it.each(["node-modules", "pnpm", "pnp"])("preserves the Yarn %s linker without l
   expect(config).toContain(`nodeLinker: ${linker}\n`);
   expect(config).toContain("enableScripts: false\nignorePath: true\n");
   expect(config).not.toMatch(/yarnPath|plugins|untrusted/);
+});
+
+it.each([
+  { pnpEnableEsmLoader: true, pnpEnableInlining: false, pnpMode: "loose", pnpFallbackMode: "all" },
+  { nmHoistingLimits: "workspaces", nmSelfReferences: false, nmMode: "hardlinks-local" },
+])("preserves and fingerprints Yarn layout settings %j", async layout => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), "");
+  await writeFile(join(root, ".yarnrc.yml"), JSON.stringify(layout));
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\ncat "$YARN_RC_FILENAME" > "$HOME/../yarn-config.txt"\n', { mode: 0o755 });
+  await installGitHubPullRequestWorkspace(root);
+  expect(parse(await readFile(join(root, ".git", "yarn-config.txt"), "utf8"))).toMatchObject(layout);
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+  await writeFile(join(root, ".yarnrc.yml"), "{}");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow(/refreshDependencies/);
+});
+
+it.each([{ pnpEnableEsmLoader: "true" }, { nmHoistingLimits: "invalid" }, { nmMode: "../../outside" }])("rejects invalid Yarn layout settings %j before execution", async layout => {
+  const root = await fixture();
+  await rm(join(root, "pnpm-lock.yaml"));
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "yarn@4.9.2" }));
+  await writeFile(join(root, "yarn.lock"), "");
+  await writeFile(join(root, ".yarnrc.yml"), JSON.stringify(layout));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toBeInstanceOf(GitHubWorkspaceInstallError);
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
 });
 
 it("invalidates installed dependencies when the Yarn linker changes", async () => {

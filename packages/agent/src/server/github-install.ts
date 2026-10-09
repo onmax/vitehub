@@ -65,10 +65,19 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
         env.YARN_RC_FILENAME = `.vitehub-install-${randomUUID()}.yml`;
         yarnConfig = join(source, env.YARN_RC_FILENAME);
         const projectConfig = join(source, ".yarnrc.yml");
-        const config = v.parse(v.object({ nodeLinker: v.optional(v.picklist(["pnp", "pnpm", "node-modules"])) }),
+        const config = v.parse(v.object({
+          nodeLinker: v.optional(v.picklist(["pnp", "pnpm", "node-modules"])),
+          pnpEnableEsmLoader: v.optional(v.boolean()),
+          pnpEnableInlining: v.optional(v.boolean()),
+          pnpMode: v.optional(v.picklist(["strict", "loose"])),
+          pnpFallbackMode: v.optional(v.picklist(["none", "dependencies-only", "all"])),
+          nmHoistingLimits: v.optional(v.picklist(["none", "workspaces", "dependencies"])),
+          nmSelfReferences: v.optional(v.boolean()),
+          nmMode: v.optional(v.picklist(["classic", "hardlinks-local"])),
+        }),
           await exists(projectConfig) ? parse(await readFile(projectConfig, "utf8")) ?? {} : {});
-        const linker = config.nodeLinker ? `nodeLinker: ${config.nodeLinker}\n` : "";
-        await writeFile(yarnConfig, `enableScripts: false\nignorePath: true\n${linker}`, { flag: "wx" });
+        const layout = Object.entries(config).map(([key, value]) => `${key}: ${value}\n`).join("");
+        await writeFile(yarnConfig, `enableScripts: false\nignorePath: true\n${layout}`, { flag: "wx" });
         args.push("--immutable", "--mode=skip-build");
       }
     }
