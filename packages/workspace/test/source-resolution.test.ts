@@ -30,7 +30,7 @@ import { createWorkspace } from "../src/core/workspace.ts"
 import { github as githubPublisher } from "../src/publish.ts"
 import { getWorkspaceSourceRequestDescriptor, isWorkspaceSourceRequestOnly, normalizeWorkspaceSources } from "../src/sources/config.ts"
 import { workspaceStoreTarget } from "../src/storage/target.ts"
-import { workspaceMetadataTarget, resolveWorkspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../src/storage/metadata-target.ts"
+import { forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget } from "../src/storage/metadata-target.ts"
 import { setWorkspaceRawWriteTarget } from "../src/storage/raw-write-target.ts"
 
 const invocation = {
@@ -115,15 +115,14 @@ function facade(workspace: ReturnType<typeof createWorkspace>): ReadonlyWorkspac
   }
 }
 
-function writableFacade(workspace: ReturnType<typeof createWorkspace>): WritableWorkspaceFacade & WorkspaceMetadataTargetCarrier {
+function writableFacade(workspace: ReturnType<typeof createWorkspace>): WritableWorkspaceFacade {
   // SAFETY: This test fixture intentionally supplies only the Workspace tools exercised by these cases.
   const tools = {
     inspect: () => ({}),
     none: () => ({}),
     write: () => ({}),
   } as never
-  const facade: WritableWorkspaceFacade & WorkspaceMetadataTargetCarrier = {
-    [workspaceMetadataTarget]: () => resolveWorkspaceMetadataTarget(workspace),
+  const facade: WritableWorkspaceFacade = {
     capabilities: async () => await workspace.capabilities?.() ?? { conditionalWrites: false },
     diff: async options => await workspace.diff(options),
     fs: {
@@ -171,6 +170,7 @@ function writableFacade(workspace: ReturnType<typeof createWorkspace>): Writable
     sync: async options => await workspace.sync(options),
     tools,
   }
+  forwardWorkspaceMetadataTarget(workspace, facade)
   setWorkspaceRawWriteTarget(facade, facade.fs)
   return facade
 }
@@ -1343,6 +1343,31 @@ describe("Workspace Source Resolution", () => {
     await expect(writable.fs.readFile("pull-request/body.md")).resolves.toBe("# Pull request\n")
     await expect(base.readFile("artifacts/draft.md")).resolves.toBe("draft")
     await expect(base.exists("pull-request")).resolves.toBe(false)
+  })
+
+  it("accepts unregistered custom writable facades while guarding Source paths", async () => {
+    const base = createWorkspace({ name: "support", store: { provider: "memory" } })
+    const registered = writableFacade(base)
+    const facade: WritableWorkspaceFacade = { ...registered, fs: { ...registered.fs } }
+    expect(await resolveWorkspaceMetadataTarget(facade)).toBeUndefined()
+    const write = vi.spyOn(facade.fs, "writeFile")
+    const { workspace } = await createWorkspaceSourceResolutionFacade(facade, {
+      name: "support",
+      sources: { docs: custom({
+        mount: "docs", materialize: "lazy",
+        async getKeys() { return ["guide.md"] },
+        async getItem(key) { return { key, path: key, content: "guide" } },
+      }) },
+    }, { invocation, overlay: true })
+    // SAFETY: Source resolution preserves the writable facade supplied above.
+    const writable = workspace as WritableWorkspaceFacade
+    await writable.fs.writeFile("notes/draft.md", "draft")
+    expect(write.mock.calls[0]?.slice(0, 2)).toEqual(["notes/draft.md", "draft"])
+    await expect(base.readFile("notes/draft.md")).resolves.toBe("draft")
+    await expect(writable.fs.writeFile("docs/guide.md", "forged")).rejects.toThrow("read-only")
+    await expect(writable.fs.mkdir("docs/new")).rejects.toThrow("read-only")
+    await expect(writable.fs.rm("docs/guide.md")).rejects.toThrow("read-only")
+    expect(write).toHaveBeenCalledTimes(1)
   })
 
   it("preserves a custom history checkpoint receiver", async () => {

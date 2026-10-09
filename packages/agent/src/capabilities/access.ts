@@ -45,6 +45,7 @@ type WorkspaceAccessRuntime = Pick<
   | "createWorkspaceSourceResolutionFacade"
   | "createWorkspaceHistoryReader"
   | "createWorkspaceTools"
+  | "forwardWorkspaceMetadataView"
   | "getWorkspaceSourceRequestExecution"
   | "hasWorkspaceSourceResolvers"
   | "isWorkspaceSourceRequestOnly"
@@ -473,6 +474,9 @@ function createModelSafeWorkspaceFacade<Name extends WorkspaceName>(
         }
       : {}),
   }) as ReadonlyWorkspaceFacade<Name> & Partial<WorkspaceSessionStarter>
+  // The proxies do not carry Workspace metadata, so forward a read-only view.
+  workspaceRuntime.forwardWorkspaceMetadataView(workspace.fs, fs)
+  workspaceRuntime.forwardWorkspaceMetadataView(workspace, facade)
   return facade
 }
 
@@ -986,29 +990,8 @@ function createScopedWorkspaceFacade<Name extends WorkspaceName>(
     history: workspaceRuntime.createWorkspaceHistoryReader(workspace.history, scope.all),
     tools,
   }
-  const metadataTarget = Symbol.for("vitehub.workspace.metadataTarget")
-  const resolveMetadata = Reflect.get(workspace, metadataTarget)
-  if (hasRuntimeType(resolveMetadata, "function")) {
-    Reflect.set(facade, metadataTarget, async () => {
-      // SAFETY: workspaceMetadataTarget is ViteHub-owned and returns the narrow metadata contract below.
-      const metadata = await Reflect.apply(resolveMetadata, workspace, []) as { workspaceName?: string, getMeta?: (key: string) => Promise<unknown>, list?: (path: string, options?: ListOptions) => Promise<WorkspaceEntry[]> } | undefined
-      if (!metadata) return
-      const list = metadata.list?.bind(metadata)
-      const scopedMetadata = {
-        workspaceName: metadata.workspaceName,
-        getMeta: metadata.getMeta?.bind(metadata),
-        list: list
-          ? async (path: string, options?: ListOptions) => filterEntries(scope, await list(path, options))
-          : undefined,
-      }
-      const storeTarget = Symbol.for("vitehub.workspace.storeTarget")
-      const resolveStoreTarget = Reflect.get(metadata, storeTarget)
-      if (hasRuntimeType(resolveStoreTarget, "function")) {
-        Reflect.set(scopedMetadata, storeTarget, resolveStoreTarget.bind(metadata))
-      }
-      return scopedMetadata
-    })
-  }
+  // Only a read-only metadata view crosses into the Agent package. It has no Store writes.
+  workspaceRuntime.forwardWorkspaceMetadataView(workspace, facade, entries => filterEntries(scope, entries))
   if (facadeStarter) {
     facade.startSession = async (options?: WorkspaceSessionOptions) => {
       return await facadeStarter.startSession({

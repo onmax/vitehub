@@ -88,8 +88,12 @@ Set these variables on the host, or declare them in `env.server.github`:
 | `GITHUB_APP_ID` | The App ID. |
 | `GITHUB_APP_PRIVATE_KEY` or `GITHUB_APP_PRIVATE_KEY_PATH` | The App private key. |
 | `GITHUB_WEBHOOK_SECRET` | The webhook secret. Deliveries without a valid signature are rejected. |
-| `GITHUB_APP_INSTALLATION_ID` | Optional. Without it, each repository uses its own installation. |
+| `GITHUB_APP_INSTALLATION_ID` | Optional fixed installation. Requires `GITHUB_APP_OWNER`; it applies only to that owner. |
+| `GITHUB_APP_OWNER` | Repository owner for the fixed installation, such as `vite-hub`. Server Env field `env.server.github.appOwner`. |
+| `GITHUB_APP_INSTALLATIONS` | Optional JSON object mapping repository owners to installation IDs. Server Env field `env.server.github.appInstallations`. |
 | `VITEHUB_AGENT_STATE_URL` | Agent State, for example `file:/var/lib/babysitter/state.sqlite`. Production builds require it. |
+
+Declare the fixed ID as `env.server.github.appInstallationId` together with `appOwner`. Without an owner, the fixed ID is ignored. Owners without a configured installation use GitHub App discovery, which requires access to the App API.
 
 The Babysitter commits as the App's bot. Workers call `commitRepair` with a message and explicit file paths because the provider sandbox protects Git metadata. GitHub tokens stay on the host; the worker reaches GitHub only through tools that are bound to its pull request. Host dependency installation uses the frozen lockfile before the provider starts. Installation failures wait durably and retry after five minutes.
 

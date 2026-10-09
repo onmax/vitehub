@@ -1,5 +1,6 @@
+import * as buildRevisions from "../src/internal/build-revision.ts";
 import { createCheckWait } from "../src/presets/babysitter/wait.ts";
-import { babysitterBudgetWindows, readBabysitterAdmissionLimits } from "../src/presets/babysitter/admission.ts";
+import { babysitterBudgetWindows, readBabysitterAdmissionLimits, type BabysitterAdmissionResult } from "../src/presets/babysitter/admission.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -58,7 +59,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -237,6 +238,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
     channel: (options) => {
       const channel = githubChannel({ ...options, app: github });
       expect(githubChannelIdentity({ github: channel })).toBe(github);
+      if (preset.activityBarrier) channel.activity = { update: async () => { await preset.activityBarrier; } };
       return channel;
     },
     environment: async () => {
@@ -296,10 +298,10 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
     agent: discovered ? await getAgentFromRegistry("babysitter", { babysitter: async () => ({ default: agent }) }) : agent,
     ...(discovered ? { agentName: preset.agentName ?? "babysitter" } : {}),
     github,
-    inboxPath: join(root, "inbox.sqlite"),
+    inboxPath: preset.inboxPath ?? join(root, "inbox.sqlite"),
     repositories: ["acme/app"],
     concurrency: 1,
-    activityAuthors: ["vitehub-agent"],
+    activityAuthors: preset.activityBarrier ? ["repair-bot"] : ["vitehub-agent"],
     admission: preset.admission,
     error: errors,
     event: events,
@@ -442,6 +444,56 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
 }
 
 describe("Babysitter preset runtime", () => {
+  it("retries a direct-source worker blocker only when its source revision changes", async () => {
+    vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", undefined);
+    const revision = vi.spyOn(buildRevisions, "agentBuildRevision").mockReturnValue("source-first");
+    const result = { disposition: "park", wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
+    const first = await fixture(false, false, { result });
+    const inboxPath = join(first.checkout, "..", "inbox.sqlite");
+    const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal",
+      limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test" });
+    try {
+      await first.reconcile();
+      await first.runtime.inbox.close();
+      const unchanged = await fixture(false, false, { inboxPath, admission });
+      try { await unchanged.reconcile(); expect((await unchanged.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting"); }
+      finally { await unchanged.runtime.inbox.close(); }
+      revision.mockReturnValue("source-second");
+      const upgraded = await fixture(false, false, { inboxPath, admission });
+      try {
+        await upgraded.reconcile();
+        expect((await upgraded.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+        expect(upgraded.passes).toHaveLength(0);
+      } finally { await upgraded.runtime.inbox.close(); }
+    } finally { await first.runtime.inbox.close(); revision.mockRestore(); vi.unstubAllGlobals(); }
+  });
+
+  it("retries an unversioned Agent worker blocker once per package build", async () => {
+    const result = { disposition: "park", wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
+    vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", "build-first");
+    const first = await fixture(false, false, { result });
+    const inboxPath = join(first.checkout, "..", "inbox.sqlite");
+    try {
+      await first.reconcile();
+      expect((await first.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect(first.passes).toHaveLength(1);
+    } finally { await first.runtime.inbox.close(); }
+    const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test", detail: "Observe recovery with model admission paused" });
+    const unchanged = await fixture(false, false, { inboxPath, admission });
+    try {
+      await unchanged.reconcile();
+      expect((await unchanged.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      expect(unchanged.passes).toHaveLength(0);
+    } finally { await unchanged.runtime.inbox.close(); }
+    vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", "build-second");
+    const upgraded = await fixture(false, false, { inboxPath, admission });
+    try {
+      await upgraded.reconcile();
+      expect((await upgraded.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+      expect(upgraded.passes).toHaveLength(0);
+    } finally { await upgraded.runtime.inbox.close(); vi.unstubAllGlobals(); }
+  });
+
   it.each(["commitRepair", "pushRepair"] as const)("allows %s across an unrelated repository push", async operation => {
     const f = await fixture(true);
     f.choose(operation, operation === "commitRepair" ? { message: "repair value", paths: ["source.ts"] } : {});
@@ -693,6 +745,21 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       expect(f.passes).toHaveLength(2);
     } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("retains a worker blocker instead of replacing it with an idle CI permission wait", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const reason = "Host commitRepair repeatedly rejects dependency state despite successful refreshDependencies and repeated focused validation.";
+    const f = await fixture(false, false, { actionsDenied: true, result: { disposition: "park", text: reason, wait: { kind: "external", reason } } });
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.reason).toBe(reason);
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.reason).toBe(reason);
+    } finally { await f.runtime.inbox.close(); vi.useRealTimers(); }
   });
 
   it.each(["commitRepair", "pushRepair"] as const)("rejects %s after the prepared conflict base changes", async operation => {
@@ -2268,4 +2335,34 @@ describe("Babysitter preset runtime", () => {
     expect(f.command.mock.calls.some(([args]) => args.includes("merge"))).toBe(false);
     await f.runtime.inbox.close();
   });
+  it("keeps queue reconciliation available while a saved status is being published", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    const f = await fixture(false, false, { activityBarrier: barrier });
+    await f.reconcile();
+    expect(await f.runtime.inbox.pendingStatusDeliveries()).toHaveLength(1);
+    const tracked: Promise<unknown>[] = [];
+    const second = f.runtime.reconcile("test", { track: work => { tracked.push(work); return work; } });
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([second, new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(() => reject(new Error("Status publication blocked reconciliation.")), 1_000);
+      })]);
+      expect(tracked.length).toBeGreaterThan(0);
+      let settled = false;
+      const publication = Promise.all(tracked).then(() => { settled = true; });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(settled).toBe(false);
+      release();
+      await publication;
+    } finally {
+      clearTimeout(deadline);
+      release();
+      await second;
+      await Promise.all(tracked);
+      await vi.waitFor(async () => expect(await f.runtime.inbox.metaEntries("status-outbox:v1:")).toHaveLength(0));
+      await f.runtime.inbox.close();
+    }
+  });
+
 });

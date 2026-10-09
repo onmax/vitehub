@@ -6,6 +6,8 @@ import * as v from 'valibot'
 import { isRuntimeNumber, isRuntimeString } from '../../internal/runtime-value.ts'
 import { isRuntimeRecord } from '../../internal/runtime-type.ts'
 import { createNodeSqliteInboxStorage, type PullRequestInboxExecutor, type PullRequestInboxRow, type PullRequestInboxStorage } from './storage.ts'
+import type { AgentRunActivity } from '../../types.ts'
+import { isStatusDeliveryCurrent, statusProjectionText, statusAcknowledgementSchema, statusDeliverySchema, statusOutboxPrefix, statusSentPrefix, statusWriterPrefix, statusTargetKey, workerBlockerPrefix, type StatusDelivery } from './status-delivery.ts'
 
 import type { GitHubPullRequestFilter, GitHubPullRequestFilterContext } from '../../channels.ts'
 import { matchesGitHubPullRequestFilter } from '../../internal/github-pull-request-filter.ts'
@@ -38,9 +40,11 @@ export interface GitHubInboxSummary {
   dirty: boolean; attempts: number; nextAt: number; lastResult?: string; progressBudget?: ProgressBudget
   stackBlocked?: boolean; stackParent?: { number: number; state: string }
 }
-export type Claim = { token: string; generation: number; snapshot: Snapshot }
+export type Claim = { token: string; generation: number; snapshot: Snapshot; runId?: string; startedAt?: number; activity?: AgentRunActivity }
 export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string; enqueued?: boolean }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+const statusContentKey = (snapshot: Snapshot, head = snapshot.wait?.headSha ?? snapshot.pr?.head?.sha) =>
+  digest([head, snapshot.generation, snapshot.status, snapshot.lastResult])
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
 /** Normalize REST and discovery records once, before they enter the inbox. */
 export const normalizePullRequest: typeof parsePullRequest = parsePullRequest
@@ -248,6 +252,17 @@ export class PullRequestInbox {
     s.feedbackRefresh = true
   }
   private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
+    let reopened = false
+    let resumed = false
+    let wasWorking = false
+    let readySuperseded = false
+    if (this.activityAuthors.size && (s.status === 'ready' || s.status === 'terminal')) {
+      const [previous] = await tx.execute(`SELECT status, generation FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, s.repository, s.number])
+      reopened = s.status === 'ready' && previous?.status === 'terminal'
+      resumed = s.status === 'ready' && previous?.status === 'waiting'
+      wasWorking = previous?.status === 'working'
+      readySuperseded = s.status === 'ready' && (wasWorking || previous?.status === 'ready' && s.generation > Number(previous.generation))
+    }
     if (!s.lease) delete s.prospectivePush
     this.compactTerminal(s)
     const head = s.pr?.head?.sha
@@ -257,6 +272,14 @@ export class PullRequestInbox {
       s.dirtyAt, s.nextAt, s.lease, s.leaseUntil, s.wait ? 1 : 0, s.progressBudget?.exhausted && s.progressBudget.head === head ? 1 : 0,
       s.pr?.state === undefined ? null : String(s.pr.state).toLowerCase(), head ?? null, s.pr?.head?.ref ?? null, s.pr?.base?.ref ?? null,
     ])
+    if (this.activityAuthors.size && (s.status === 'terminal' || reopened || resumed || readySuperseded)) {
+      const target = statusTargetKey(s)
+      const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, `${statusOutboxPrefix}${target}`))
+      const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
+      if (reopened || resumed || wasWorking || readySuperseded && (pending.success || sent.success) || (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed')) {
+        await this.enqueueStatusProjectionIn(tx, s)
+      }
+    }
   }
   private empty(repository: string, number: number): Snapshot {
     return { repository, number, pr: null, generation: 0, handled: 0, dirtyAt: this.clock(), nextAt: 0,
@@ -289,6 +312,290 @@ export class PullRequestInbox {
     await this.transaction(async tx => { await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key]) })
   }
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
+  private async enqueueStatusResult(tx: PullRequestInboxExecutor, snapshot: Snapshot, claim?: Claim, resultHead?: string): Promise<void> {
+    if (!this.activityAuthors.size || !snapshot.lastResult?.trim()) return
+    const head = resultHead ?? snapshot.pr?.head?.sha
+    if (!head || claim && !resultHead && claim.snapshot.pr?.head?.sha !== head) return
+    const key = statusTargetKey(snapshot)
+    const contentKey = statusContentKey(snapshot, head)
+    const statusRunId = `saved:${key}:${contentKey}`
+    const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${key}`))
+    const pending = await this.metaIn(tx, `${statusOutboxPrefix}${key}`)
+    if (sent.success && sent.output.contentKey === contentKey
+      && (sent.output.runId === statusRunId || sent.output.runId.startsWith(`${statusRunId}:`))
+      || isRuntimeRecord(pending) && pending.contentKey === contentKey) return
+    const now = this.clock()
+    const delivery: StatusDelivery = {
+      version: randomUUID(), contentKey, repository: snapshot.repository, number: snapshot.number,
+      head, generation: snapshot.generation, text: snapshot.lastResult, attempts: 0, nextAt: now,
+      activity: {
+        runId: statusRunId,
+        status: snapshot.status === 'waiting' ? 'waiting' : snapshot.status === 'ready' ? 'failed' : 'completed',
+        updatedAt: new Date(now).toISOString(), links: [...claim?.activity?.links ?? []], tasks: [], summary: snapshot.lastResult,
+      },
+    }
+    const previous = v.safeParse(statusDeliverySchema, pending)
+    if (previous.success && previous.output.lease && (previous.output.leaseUntil ?? 0) > now) {
+      delivery.lease = previous.output.lease
+      delivery.leaseUntil = previous.output.leaseUntil
+    }
+    if (head !== snapshot.pr?.head?.sha) delivery.precedingHead = snapshot.pr?.head?.sha
+    if (claim?.startedAt !== undefined) delivery.activity.startedAt = new Date(claim.startedAt).toISOString()
+    await this.setMetaIn(tx, `${statusOutboxPrefix}${key}`, delivery)
+  }
+  private async statusWritersIn(tx: PullRequestInboxExecutor, target: string): Promise<Array<{ lease: string; expiresAt: number }>> {
+    const parsed = v.safeParse(v.array(v.union([v.string(), v.object({ lease: v.string(), expiresAt: v.number() })])), await this.metaIn(tx, `${statusWriterPrefix}${target}`))
+    const now = this.clock()
+    if (!parsed.success) return []
+    const writers = parsed.output.map(value => v.is(v.string(), value) ? { lease: value, expiresAt: now + 900_000 } : value)
+      .filter(value => Number.isFinite(value.expiresAt) && value.expiresAt > now)
+    // A crashed process cannot settle its marker. Bound correction replay,
+    // and persist a legacy marker's first deadline instead of extending it on reads.
+    if (writers.length !== parsed.output.length || parsed.output.some(value => v.is(v.string(), value))) {
+      if (writers.length) await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, writers)
+      else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusWriterPrefix}${target}`])
+    }
+    return writers
+  }
+  private async settleStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<Array<{ lease: string; expiresAt: number }>> {
+    const target = statusTargetKey(observed)
+    const remaining = (await this.statusWritersIn(tx, target)).filter(writer => writer.lease !== observed.lease)
+    if (remaining.length) await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, remaining)
+    else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusWriterPrefix}${target}`])
+    return remaining
+  }
+  private async enqueueStatusProjectionIn(tx: PullRequestInboxExecutor, current: Snapshot): Promise<void> {
+    const target = statusTargetKey(current)
+    const key = `${statusOutboxPrefix}${target}`
+    const surviving = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+    const now = this.clock()
+    const version = randomUUID()
+    const text = statusProjectionText(current)
+    const head = current.pr?.head?.sha
+    if (!head) return
+    const contentKey = digest(['projection', head, current.generation, text])
+    const delivery: StatusDelivery = {
+      version, contentKey, repository: current.repository, number: current.number,
+      head, generation: current.generation, projection: true,
+      workerLease: current.status === 'working' ? current.lease ?? undefined : undefined,
+      text, attempts: 0, nextAt: now,
+      activity: { runId: `saved:${target}:${contentKey}:${version}`,
+        status: current.status === 'terminal' ? 'completed' : current.status === 'working' && current.lease ? 'running' : 'queued',
+        updatedAt: new Date(now).toISOString(), links: [], tasks: [], summary: text },
+    }
+    if (surviving.success && surviving.output.lease && (surviving.output.leaseUntil ?? 0) > now) {
+      delivery.lease = surviving.output.lease
+      delivery.leaseUntil = surviving.output.leaseUntil
+    }
+    await this.setMetaIn(tx, key, delivery)
+  }
+  /** A bounded batch of due deliveries. Invalid metadata never reaches the publisher. */
+  async pendingStatusDeliveries(limit = 5): Promise<StatusDelivery[]> {
+    if (!Number.isInteger(limit) || limit < 1) throw new Error('Status delivery limit must be a positive integer')
+    const now = this.clock()
+    return (await this.metaEntries(statusOutboxPrefix)).flatMap(([, value]) => {
+      const parsed = v.safeParse(statusDeliverySchema, value)
+      return parsed.success && parsed.output.nextAt <= now && (parsed.output.leaseUntil ?? 0) <= now && this.repositories.includes(parsed.output.repository) ? [parsed.output] : []
+    }).sort((a, b) => a.nextAt - b.nextAt).slice(0, limit)
+  }
+  /** Claim due, eligible deliveries atomically across hosts. Deferred heads yield the batch. */
+  async claimStatusDeliveries(limit = 5, leaseMs = 300_000): Promise<StatusDelivery[]> {
+    if (!Number.isInteger(limit) || limit < 1 || !Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('Status delivery limits must be positive')
+    return await this.transaction(async tx => {
+      const now = this.clock()
+      const rows = await tx.execute(`SELECT value FROM ${this.tables.meta} WHERE scope=? AND substr(key, 1, ?)=?`, [this.scope, statusOutboxPrefix.length, statusOutboxPrefix])
+      const candidates = rows.flatMap(row => {
+        const parsed = v.safeParse(statusDeliverySchema, JSON.parse(stringValue(row.value)))
+        return parsed.success && parsed.output.nextAt <= now && (parsed.output.leaseUntil ?? 0) <= now && this.repositories.includes(parsed.output.repository) ? [parsed.output] : []
+      }).sort((a, b) => a.nextAt - b.nextAt || a.repository.localeCompare(b.repository) || a.number - b.number)
+      const claimed: StatusDelivery[] = []
+      for (const pending of candidates) {
+        const snapshot = await this.getIn(tx, pending.repository, pending.number)
+        if (pending.projection && snapshot?.lease && snapshot.status !== 'terminal' && pending.workerLease !== snapshot.lease) {
+          await this.enqueueStatusProjectionIn(tx, snapshot)
+          continue
+        }
+        if (snapshot?.generation === pending.generation && pending.precedingHead && snapshot.pr?.head?.sha === pending.precedingHead && snapshot.wait?.headSha === pending.head && snapshot.pr.state === 'open') continue
+        // Upgrade saved entries from releases that reused the invocation run ID.
+        const statusRunId = `saved:${statusTargetKey(pending)}:${pending.contentKey}`
+        const runId = pending.activity.runId.startsWith(`${statusRunId}:`) ? pending.activity.runId : statusRunId
+        const delivery = { ...pending, activity: { ...pending.activity, runId }, lease: randomUUID(), leaseUntil: now + leaseMs }
+        // Expiry releases delivery ownership. A bounded writer horizon keeps
+        // corrections durable without a crashed publisher forcing endless writes.
+        const target = statusTargetKey(pending)
+        const writers = await this.statusWritersIn(tx, target)
+        if (pending.lease && !writers.some(writer => writer.lease === pending.lease)
+          && (pending.leaseUntil ?? 0) + 900_000 > now) {
+          writers.push({ lease: pending.lease, expiresAt: pending.leaseUntil! + 900_000 })
+        }
+        writers.push({ lease: delivery.lease, expiresAt: delivery.leaseUntil + 900_000 })
+        await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, writers)
+        await this.setMetaIn(tx, `${statusOutboxPrefix}${target}`, delivery)
+        claimed.push(delivery)
+        if (claimed.length === limit) break
+      }
+      return claimed
+    })
+  }
+  /** Keep the external writer's lease, including when its saved result is superseded. */
+  async renewStatusDelivery(observed: StatusDelivery, leaseMs = 300_000): Promise<boolean> {
+    if (!Number.isFinite(leaseMs) || leaseMs <= 0) throw new Error('Status delivery lease must be positive')
+    return await this.transaction(async tx => {
+      const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
+      const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
+      const leaseUntil = this.clock() + leaseMs
+      await this.setMetaIn(tx, key, { ...parsed.output, leaseUntil })
+      const target = statusTargetKey(observed)
+      const writers = (await this.statusWritersIn(tx, target)).filter(writer => writer.lease !== observed.lease)
+      writers.push({ lease: observed.lease, expiresAt: leaseUntil + 900_000 })
+      await this.setMetaIn(tx, `${statusWriterPrefix}${target}`, writers)
+      return true
+    })
+  }
+  /** Version and lease comparisons preserve newer results and fence replaced consumers. */
+  async finishStatusDelivery(observed: StatusDelivery, outcome: 'delivered' | 'discarded'): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const writers = await this.settleStatusWriterIn(tx, observed)
+      const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
+      const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
+      const { lease: _lease, leaseUntil: _leaseUntil, ...released } = parsed.output
+      if (parsed.output.version !== observed.version) {
+        await this.setMetaIn(tx, key, released)
+        return false
+      }
+      if (outcome === 'delivered') {
+        if (!isStatusDeliveryCurrent(observed, await this.getIn(tx, observed.repository, observed.number))) {
+          await this.setMetaIn(tx, key, released)
+          await this.reconcileStatusWriterIn(tx, observed)
+          return false
+        }
+        await this.setMetaIn(tx, `${statusSentPrefix}${statusTargetKey(observed)}`, { contentKey: observed.contentKey, runId: observed.activity.runId, status: observed.activity.status, head: observed.head, deliveredAt: this.clock() })
+      }
+      if (writers.length) {
+        if (outcome === 'discarded') await this.reconcileStatusWriterIn(tx, observed)
+        else {
+          // An older accepted request can still land after this acknowledgement.
+          // Replay with a fresh activity identity through each writer's correction window.
+          const version = randomUUID()
+          await this.setMetaIn(tx, key, { ...released, version, nextAt: this.clock() + 60_000,
+            activity: { ...released.activity, runId: `saved:${statusTargetKey(observed)}:${released.contentKey}:${version}` } })
+        }
+      } else await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
+      return true
+    })
+  }
+  async retryStatusDelivery(observed: StatusDelivery, failure: unknown): Promise<boolean> {
+    return await this.transaction(async tx => {
+      await this.settleStatusWriterIn(tx, observed)
+      const key = `${statusOutboxPrefix}${statusTargetKey(observed)}`
+      const parsed = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+      if (!observed.lease || !parsed.success || parsed.output.lease !== observed.lease) return false
+      const { lease: _lease, leaseUntil: _leaseUntil, ...released } = parsed.output
+      if (parsed.output.version !== observed.version) {
+        await this.setMetaIn(tx, key, released)
+        return false
+      }
+      if (!isStatusDeliveryCurrent(observed, await this.getIn(tx, observed.repository, observed.number))) {
+        await this.setMetaIn(tx, key, released)
+        await this.reconcileStatusWriterIn(tx, observed)
+        return false
+      }
+      const attempts = parsed.output.attempts + 1
+      await this.setMetaIn(tx, key, { ...released, attempts, nextAt: this.clock() + Math.min(900_000, 60_000 * 2 ** Math.min(attempts - 1, 4)), lastError: String(failure).slice(0, 1000) })
+      return true
+    })
+  }
+  /** Repair the external projection after a replaced writer finally settles. */
+  async reconcileSettledStatusWriter(observed: StatusDelivery): Promise<boolean> {
+    if (!observed.lease) return false
+    return await this.transaction(async tx => {
+      await this.settleStatusWriterIn(tx, observed)
+      return await this.reconcileStatusWriterIn(tx, observed)
+    })
+  }
+  private async reconcileStatusWriterIn(tx: PullRequestInboxExecutor, observed: StatusDelivery): Promise<boolean> {
+    const target = statusTargetKey(observed)
+    const key = `${statusOutboxPrefix}${target}`
+    const current = await this.getIn(tx, observed.repository, observed.number)
+    if (!current?.pr?.head?.sha) return false
+    const surviving = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+    const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
+    const contentKey = statusContentKey(current)
+    const survivingCurrent = surviving.success && isStatusDeliveryCurrent(surviving.output, current)
+    const resultCurrent = !current.lease && current.lastResult?.trim()
+      && (current.status !== 'terminal' && current.generation === current.handled || survivingCurrent && !surviving.output.projection
+        || current.status === 'terminal' && isStatusDeliveryCurrent(observed, current)
+        || current.status === 'ready' && sent.success && sent.output.contentKey === contentKey)
+    if (!resultCurrent) {
+      // The old HTTP write may have replaced a newer comment. Persist an
+      // honest queue/closure projection without relabelling the saved result.
+      await this.enqueueStatusProjectionIn(tx, current)
+      return true
+    }
+    if (survivingCurrent) {
+      // Its side effect may already have happened while its response is still
+      // pending. Preserve ownership, but fence that acknowledgement and replay.
+      const version = randomUUID()
+      await this.setMetaIn(tx, key, { ...surviving.output, version, nextAt: this.clock(), activity: {
+        ...surviving.output.activity, runId: `saved:${target}:${surviving.output.contentKey}:${version}`,
+      } })
+      return true
+    }
+    await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, `${statusSentPrefix}${target}`])
+    await this.enqueueStatusResult(tx, current, undefined, current.wait?.headSha)
+    const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, key))
+    if (!pending.success) return false
+    // The activity channel remembers prior runs. A correction must have a fresh
+    // identity so an already-published run is not rejected as a stale replay.
+    await this.setMetaIn(tx, key, { ...pending.output, activity: {
+      ...pending.output.activity, runId: `${pending.output.activity.runId}:${pending.output.version}`,
+    } })
+    return true
+  }
+  /** Upgrade historical waiting results without synthetic webhooks or model passes. */
+  async backfillStatusDeliveries(): Promise<void> {
+    for (const observed of await this.waitsToEvaluate(true, true)) {
+      await this.transaction(async tx => {
+        const current = await this.getIn(tx, observed.repository, observed.number)
+        if (!current || current.lease || current.status !== 'waiting' || current.generation !== current.handled || current.generation !== observed.generation
+          || (current.revision ?? 0) !== (observed.revision ?? 0)) return
+        await this.enqueueStatusResult(tx, current, undefined, current.wait?.headSha)
+      })
+    }
+  }
+  async recordWorkerBlocker(observed: Snapshot, revision: string): Promise<void> {
+    await this.transaction(async tx => {
+      const current = await this.getIn(tx, observed.repository, observed.number)
+      if (!current || current.pr?.head?.sha !== observed.pr?.head?.sha) return
+      await this.setMetaIn(tx, `${workerBlockerPrefix}${statusTargetKey(observed)}`, { revision, head: observed.pr?.head?.sha })
+    })
+  }
+  /** Wake and persist its release marker atomically, so restart cannot repeat the wake. */
+  async wakeForWorkerRelease(observed: Snapshot, revision: string, evidenceKey: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const s = await this.getIn(tx, observed.repository, observed.number)
+      if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
+        || (s.revision ?? 0) !== (observed.revision ?? 0) || s.pr?.head?.sha !== observed.pr?.head?.sha) return false
+      const key = `${workerBlockerPrefix}${statusTargetKey(s)}`
+      const marker = await this.metaIn(tx, key)
+      if (isRuntimeRecord(marker) && marker.revision === revision && marker.head === s.pr?.head?.sha) return false
+      parseWait({ ...s.wait, evidenceKey })
+      if (s.wait.evidenceKey === evidenceKey) return false
+      s.recoveryHead = s.pr?.head?.sha; s.refresh = true
+      delete s.wait
+      this.dirty(s, 'wait:worker-release-changed')
+      await this.put(tx, s)
+      await this.setMetaIn(tx, key, { revision, head: s.pr?.head?.sha })
+      // The corrected host can repair unchanged CI even when Actions reruns
+      // are forbidden. Its old model fallback must not suppress that retry.
+      await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`,
+        [this.scope, `ci-permission-fallback:v1:${s.repository}:${s.pr?.head?.sha ?? ''}`])
+      if (this.activityAuthors.size) await this.enqueueStatusProjectionIn(tx, s)
+      return true
+    })
+  }
   private directMergeKey(repository: string, number: number): string { return `direct-merge:${repository}:${number}` }
   /** Atomically records that a claim has started an irreversible merge request. */
   async beginDirectMerge(claim: Claim, head: string, asynchronous = false): Promise<boolean> {
@@ -446,7 +753,10 @@ export class PullRequestInbox {
     if (pr.state === 'closed') s.status = 'terminal'
     else if (s.status === 'terminal') {
       delete s.wait
-      s.status = s.lease ? 'working' : 'ready'
+      // A reopened PR starts new work. A claim from its closed lifetime
+      // cannot retain publication authority or defer the new status.
+      s.lease = null; s.leaseUntil = 0
+      s.status = 'ready'
     }
     return true
   }
@@ -777,7 +1087,13 @@ export class PullRequestInbox {
         this.recordProgress(s, claim, result.progress)
         s.status = 'waiting'; s.handled = Math.max(s.handled, claim.generation); s.reasons = s.generation > claim.generation ? s.reasons : []
         s.revision = (s.revision ?? 0) + 1
-        await this.put(tx, s); return true
+        await this.put(tx, s)
+        const ownSynchronize = s.generation === claim.generation + 1
+          && pinnedHead !== claim.snapshot.pr?.head?.sha && s.pr?.head?.sha === pinnedHead
+          && s.reasons.includes('pull_request:synchronize')
+          && s.reasons.every(reason => reason === 'pull_request:synchronize' || claim.snapshot.reasons.includes(reason))
+        if (s.generation === claim.generation || ownSynchronize) await this.enqueueStatusResult(tx, s, claim, pinnedHead)
+        return true
       }
       if (result.wait) {
         if (result.retry || result.terminal) throw new Error('A wait cannot also retry or terminate work')
@@ -807,7 +1123,9 @@ export class PullRequestInbox {
       if (s.status !== 'terminal' && s.progressBudget?.exhausted && s.progressBudget.head === head) {
         s.status = 'waiting'; s.nextAt = 0; s.reasons = ['no-progress-budget-exhausted']
       }
-      await this.put(tx, s); return true
+      await this.put(tx, s)
+      if (s.generation === claim.generation) await this.enqueueStatusResult(tx, s, claim)
+      return true
     })
   }
   private recordProgress(s: Snapshot, claim: Claim, progress: ProgressOutcome | undefined): void {
@@ -841,6 +1159,7 @@ export class PullRequestInbox {
         || (s.revision ?? 0) !== (observed.revision ?? 0)) return false
       s.handled = s.generation; s.reasons = []
       await this.put(tx, s)
+      await this.enqueueStatusResult(tx, s, undefined, s.wait.headSha)
       return true
     })
   }

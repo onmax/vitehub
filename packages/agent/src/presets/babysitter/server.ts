@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { access, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { fileURLToPath } from "node:url";
+import { agentBuildRevision } from "../../internal/build-revision.ts";
 import { GitHubDependencyConflictError } from "../../server/github-install-inputs.ts";
 import * as v from "valibot";
 import { join } from "node:path";
@@ -12,7 +14,7 @@ import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
 import type { ProcessReconcilerRunContext } from "@vite-hub/runtime/node";
-import { createMessage, defineAgent, runAgent } from "../../index.ts";
+import { createMessage, defineAgent, runAgent, publishAgentActivity } from "../../index.ts";
 import { resolveAgentCapabilityDefinitions } from "../../capability-runtime.ts";
 import type { AgentCapabilitiesResolver, AgentInput, AgentProviderCredentialContext, AgentProviderLaunchContext, ClaudeCodeDriverOptions, CodexDriverOptions } from "../../index.ts";
 import {
@@ -54,6 +56,9 @@ import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admi
 import { boundedMergeReady } from "./merge-ready.ts";
 import { createBabysitterInstaller } from "./install.ts";
 import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
+import { createBabysitterStatusRecovery, isWorkerBlocker } from "./status-recovery.ts";
+
+declare const __VITEHUB_AGENT_BUILD_REVISION__: string;
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -137,6 +142,18 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     options.event?.(name, properties);
   const schedulerError = (name: string, error: unknown, properties: Record<string, unknown> = {}) =>
     options.error?.(name, error, properties);
+  const statusChannel = verifiedHostIdentity ? github.channel({ activity: true, pullRequest: { workspace: false } }) : undefined;
+  const statusRecovery = createBabysitterStatusRecovery({
+    inbox: pullRequestInbox,
+    // Built packages carry this fingerprint; direct source hosts compute the same inputs.
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Guard a compile-time global that is absent when running package sources.
+    revision: baseAgent.version ?? (typeof __VITEHUB_AGENT_BUILD_REVISION__ === "undefined" ? agentBuildRevision(fileURLToPath(new URL("../../../", import.meta.url))) : __VITEHUB_AGENT_BUILD_REVISION__),
+    publish: statusChannel ? (pending, abortSignal) => publishAgentActivity({ name: `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`, channels: { github: statusChannel } }, {
+      channelId: "github", target: { repository: pending.repository, issue: pending.number }, activity: pending.activity, abortSignal,
+    }) : undefined,
+    event: schedulerEvent,
+    error: schedulerError,
+  });
   const active = new Set<string>();
   async function readRest(path: string, projection = ".[]", signal?: AbortSignal) {
     const repository = path.split("/").slice(1, 3).join("/");
@@ -526,6 +543,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return await checksDependencyEvidence(wake, (path, projection) => readRest(path, projection));
   }
   async function externalWait(observed: Snapshot, wake: PullRequestWake | undefined, reason: string) {
+    if (!wake) await statusRecovery.recordWorkerBlocker(observed, reason);
     if (!wake) return { ...createCheckWait(observed, waitPolicy), kind: "external" as const, reason };
     if (!options.repositories.includes(wake.repository.toLowerCase())) throw new Error("External wake repository is outside the configured repositories.");
     const evidence = await dependencyEvidence(wake);
@@ -535,7 +553,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
 
   async function recoverFailedCiWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(false, true)) {
-      if (snapshot.generation > snapshot.handled || !hasFailedActions(snapshot)) continue;
+      if (snapshot.generation > snapshot.handled || isWorkerBlocker(snapshot) || !hasFailedActions(snapshot)) continue;
       const head = snapshot.pr?.head?.sha;
       if (!head) continue;
       const recoveryKey = `ci-recovery-next:${snapshot.repository}#${snapshot.number}:${head}`;
@@ -632,6 +650,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     };
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
+    await statusRecovery.recover();
+    void track(statusRecovery.flush().catch(failure => schedulerError("babysitter.status.flush.failed", failure)));
     let modelAdmission = true;
     let modelRetryAt: number | undefined;
     if (options.admission) {
@@ -755,6 +775,8 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         const runId = `${schedule.runId}:${repository}:pr-${number}:generation-${inboxClaim.generation}`;
         const owner = { pullRequest: number, repository, runId };
         const startedAt = Date.now();
+        inboxClaim.runId = runId;
+        inboxClaim.startedAt = startedAt;
         let outcome = "completed";
         let disposition: BabysitterPassResult["disposition"] | undefined;
         let resultText = "";
@@ -1346,6 +1368,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // provider session to this pass so a new checkout never
               // resumes a Codex process whose temporary cwd was deleted.
               githubRun.threadId = `${githubRun.threadId}:${runId}`;
+              inboxClaim.activity = githubRun.activity;
               const result = await runWithProviderRetry(async () => {
                 // Run metadata and retry backoff can outlive a sibling admission
                 // block. Check each Box dispatch immediately before runAgent.

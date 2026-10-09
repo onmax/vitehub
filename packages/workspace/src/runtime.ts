@@ -37,6 +37,7 @@ export {
 } from "./sources/config.ts"
 export type { WorkspaceSourceMetadata } from "./sources/config.ts"
 export { markLiveWorkspaceSource } from "./sources/live.ts"
+export { forwardWorkspaceMetadataView } from "./storage/metadata-target.ts"
 export {
   attachWorkspaceSourceRequestExecution,
   getWorkspaceSourceRequestExecution,

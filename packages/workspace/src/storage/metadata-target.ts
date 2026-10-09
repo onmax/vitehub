@@ -1,9 +1,11 @@
-export const workspaceMetadataTarget: unique symbol = Symbol.for("vitehub.workspace.metadataTarget")
+import { hasRuntimeType } from "@vite-hub/runtime/internal/runtime-type"
 /** Internal capability used only by Source Sync through wrapped writable facades. */
 export const workspaceInternalMetadataCapability: unique symbol = Symbol("vitehub.workspace.internalMetadata")
 
 import { forwardWorkspaceStoreTarget } from "./target.ts"
-import type { ListOptions, MkdirOptions, RmOptions, WorkspaceEntry, WorkspaceFile } from "../core/types.ts"
+import type { ListOptions, MkdirOptions, RmOptions, Workspace, WorkspaceEntry, WorkspaceFile } from "../core/types.ts"
+
+import type { ReadonlyWorkspaceFacade, ReadonlyWorkspaceFs, WritableWorkspaceFacade, WritableWorkspaceFs } from "../core/use.ts"
 
 export interface WorkspaceMetadataTarget {
   workspaceName?: string
@@ -15,13 +17,22 @@ export interface WorkspaceMetadataTarget {
   list?(path: string, options?: ListOptions): Promise<WorkspaceEntry[]>
 }
 
+/** An object that can carry a metadata target: a Workspace, a Workspace facade, or the `fs` of a facade. */
+export type WorkspaceMetadataCarrier = Workspace | ReadonlyWorkspaceFacade | WritableWorkspaceFacade | ReadonlyWorkspaceFs | WritableWorkspaceFs
+
+type WorkspaceMetadataTargetResolver = () => Promise<WorkspaceMetadataTarget | undefined> | WorkspaceMetadataTarget | undefined
+
+// A metadata target can write to the raw Store and skip every write grant.
+// Keep the resolvers in this module. Do not export them from a package entry.
+// Lookups accept any object, because callers pass unknown values. Only carriers are registered.
+const metadataTargetResolvers = new WeakMap<WeakKey, WorkspaceMetadataTargetResolver>()
+
 type WorkspaceMetadataStore = WorkspaceMetadataTarget & {
   setMeta?(key: string, value: unknown, capability?: typeof workspaceInternalMetadataCapability): Promise<void>
 }
 
 const metadataTargetsByStore = new WeakMap<WorkspaceMetadataTarget, Map<string, WorkspaceMetadataTarget>>()
 const metadataSetters = new WeakMap<WorkspaceMetadataTarget, (key: string, value: unknown, capability?: typeof workspaceInternalMetadataCapability) => Promise<void>>()
-const publicMetadataTargets = new WeakMap<WorkspaceMetadataTarget, WorkspaceMetadataTarget>()
 const facadeMetadataTargets = new WeakMap<object, () => Promise<WorkspaceMetadataTarget | undefined>>()
 const privateMetadataTargets = new WeakMap<WorkspaceMetadataTarget, WorkspaceMetadataTarget>()
 
@@ -46,7 +57,6 @@ export function createWorkspaceMetadataTarget(store: WorkspaceMetadataStore, wor
     getMeta: target.getMeta,
     list: target.list,
   }
-  publicMetadataTargets.set(target, publicTarget)
   privateMetadataTargets.set(publicTarget, target)
   forwardWorkspaceStoreTarget(store, target)
   forwardWorkspaceStoreTarget(store, publicTarget)
@@ -63,33 +73,52 @@ export async function setWorkspaceMetadata(target: WorkspaceMetadataTarget, key:
   return true
 }
 
-export type WorkspaceMetadataTargetCarrier = {
-  [workspaceMetadataTarget]?: () => Promise<WorkspaceMetadataTarget | undefined> | WorkspaceMetadataTarget | undefined
+export function attachWorkspaceMetadataTarget(carrier: WorkspaceMetadataCarrier, resolve: WorkspaceMetadataTargetResolver): void {
+  metadataTargetResolvers.set(carrier, resolve)
+  if ("fs" in carrier) facadeMetadataTargets.set(carrier.fs, async () => await resolve())
 }
 
-export function forwardWorkspaceMetadataTarget(source: unknown, target: unknown): void {
-  // SAFETY: Forwarding probes only this module's optional metadata resolver symbol.
-  const resolveTarget = (source as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]
-  if (!resolveTarget) return
-  const resolve = async () => publicMetadataTarget(await resolveTarget.call(source))
-  // SAFETY: The target is a facade object; this writes only our metadata resolver symbol.
-  const targetCarrier = target as WorkspaceMetadataTargetCarrier
-  targetCarrier[workspaceMetadataTarget] = resolve
-  // SAFETY: Facades may have a filesystem object used only as a WeakMap identity.
-  const fs = (target as { fs?: object }).fs
-  if (fs) facadeMetadataTargets.set(fs, resolve)
-}
-
-function publicMetadataTarget(target: WorkspaceMetadataTarget | undefined) {
-  return target ? publicMetadataTargets.get(target) ?? target : undefined
+export function forwardWorkspaceMetadataTarget(source: unknown, target: WorkspaceMetadataCarrier): void {
+  const resolve = metadataTargetResolver(source)
+  if (resolve) attachWorkspaceMetadataTarget(target, resolve)
 }
 
 export async function resolveWorkspaceMetadataTarget(source: unknown): Promise<WorkspaceMetadataTarget | undefined> {
-  // SAFETY: Only the optional resolver symbol and filesystem identity are probed on the supplied facade.
-  const carrier = source as WorkspaceMetadataTargetCarrier & { fs?: object }
-  const target = await carrier[workspaceMetadataTarget]?.()
-    ?? (carrier.fs ? await facadeMetadataTargets.get(carrier.fs)?.() : undefined)
-  return publicMetadataTarget(target)
+  return await metadataTargetResolver(source)?.()
+}
+
+/**
+ * Attaches a read-only metadata view of `source` to `target`.
+ * The view has the Workspace name, `getMeta`, `list`, and the Store target. It never has Store writes.
+ * `filterEntries` limits the listed entries, for example to an access scope.
+ * Internal: `@vite-hub/agent` uses this for its Workspace facades.
+ */
+export function forwardWorkspaceMetadataView(source: unknown, target: WorkspaceMetadataCarrier, filterEntries?: (entries: WorkspaceEntry[]) => WorkspaceEntry[]): void {
+  const resolve = metadataTargetResolver(source)
+  if (!resolve) return
+  metadataTargetResolvers.set(target, async () => {
+    const metadata = await resolve()
+    if (!metadata) return
+    const list = metadata.list?.bind(metadata)
+    const view: WorkspaceMetadataTarget = {
+      workspaceName: metadata.workspaceName,
+      getMeta: metadata.getMeta?.bind(metadata),
+      list: list
+        ? async (path, options) => {
+            const entries = await list(path, options)
+            return filterEntries ? filterEntries(entries) : entries
+          }
+        : undefined,
+    }
+    forwardWorkspaceStoreTarget(metadata, view)
+    return view
+  })
+}
+
+function metadataTargetResolver(source: unknown) {
+  if (source === null || !(hasRuntimeType(source, "object") || hasRuntimeType(source, "function"))) return undefined
+  return metadataTargetResolvers.get(source)
+    ?? ("fs" in source && source.fs !== null && hasRuntimeType(source.fs, "object") ? facadeMetadataTargets.get(source.fs) : undefined)
 }
 
 export function resolveWorkspaceMetadataMutationTarget(target: WorkspaceMetadataTarget): WorkspaceMetadataTarget {
