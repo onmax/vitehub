@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 import { posix } from "node:path"
 
 import { resolveLinuxCgroupV2Path } from "@vite-hub/runtime/node"
@@ -179,19 +179,19 @@ async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessRes
   if (relative === undefined) return
   const mountinfo = await readOptionalCgroupFile("/proc/self/mountinfo", signal)
   if (mountinfo === undefined) return
-  const roots: { path: string, hierarchyRoot: boolean }[] = []
+  const roots: { path: string, rootCandidate: boolean }[] = []
   // Resolve each visible ancestor through the mount mapping. Never read above a namespaced mount.
   for (let member = relative; ; member = posix.dirname(member)) {
     const root = resolveLinuxCgroupV2Path(mountinfo, member)
     if (root === undefined) break
-    roots.push({ path: root, hierarchyRoot: member === "/" })
+    roots.push({ path: root, rootCandidate: member === "/" })
     if (member === "/") break
   }
-  const groups = await Promise.all(roots.map(async ({ path: root, hierarchyRoot }) => {
+  const groups = await Promise.all(roots.map(async ({ path: root, rootCandidate }) => {
     const [current, high, max, events, cpuPressure, memoryPressure] = await Promise.all([
       readFile(`${root}/memory.current`, { encoding: "utf8", signal }),
-      readCgroupMemoryLimit(`${root}/memory.high`, signal, hierarchyRoot),
-      readCgroupMemoryLimit(`${root}/memory.max`, signal, hierarchyRoot),
+      readCgroupMemoryLimit(`${root}/memory.high`, signal, rootCandidate),
+      readCgroupMemoryLimit(`${root}/memory.max`, signal, rootCandidate),
       readFile(`${root}/memory.events`, { encoding: "utf8", signal }),
       readOptionalCgroupFile(`${root}/cpu.pressure`, signal),
       readOptionalCgroupFile(`${root}/memory.pressure`, signal),
@@ -217,11 +217,15 @@ async function readCgroupResources(signal: AbortSignal): Promise<Omit<ProcessRes
   }
 }
 
-// The hierarchy root may omit memory limit files. Permission and collection errors remain failures.
-async function readCgroupMemoryLimit(path: string, signal: AbortSignal, hierarchyRoot: boolean): Promise<string | undefined> {
+// Only the actual hierarchy root may omit memory limit files. A cgroup namespace
+// can also expose a delegated cgroup as `/`; kernfs inode 1 identifies the real root.
+async function readCgroupMemoryLimit(path: string, signal: AbortSignal, rootCandidate: boolean): Promise<string | undefined> {
   try { return await readFile(path, { encoding: "utf8", signal }) }
   catch (error) {
-    if (hierarchyRoot && !signal.aborted && isRuntimeRecord(error) && error.code === "ENOENT") return
+    if (rootCandidate && !signal.aborted && isRuntimeRecord(error) && error.code === "ENOENT") {
+      const directory = await stat(posix.dirname(path))
+      if (!signal.aborted && directory.ino === 1) return
+    }
     throw error
   }
 }

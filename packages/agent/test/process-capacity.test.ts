@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readFile, stat } from "node:fs/promises"
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -23,6 +23,7 @@ const resources = vi.hoisted(() => ({
 }))
 
 vi.mock("node:fs/promises", () => ({
+  stat: vi.fn(async () => ({ ino: 1 })),
   readFile: vi.fn(async (path: string | URL, _options: { encoding: "utf8", signal: AbortSignal }) => {
     const value = String(path)
     if (value === "/proc/meminfo") return `MemAvailable: ${resources.hostAvailableMemory / 1024} kB\n`;
@@ -66,6 +67,7 @@ const defaultReadFile = vi.mocked(readFile).getMockImplementation();
 beforeEach(() => {
   if (!defaultReadFile) throw new Error("Expected default resource reader");
   vi.mocked(readFile).mockImplementation(defaultReadFile);
+  vi.mocked(stat).mockResolvedValue({ ino: 1 } as Awaited<ReturnType<typeof stat>>);
   vi.clearAllMocks()
   Object.assign(resources, {
     hostAvailableMemory: 16 * GiB,
@@ -181,6 +183,29 @@ describe("process Agent capacity", () => {
       return original(path, options);
     });
     await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("missing namespaced limit");
+  });
+
+  it.each(["memory.high", "memory.max"])("requires %s at a remounted cgroup namespace root", async file => {
+    vi.mocked(stat).mockResolvedValue({ ino: 1234 } as Awaited<ReturnType<typeof stat>>);
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      if (String(path) === "/proc/self/cgroup") return "0::/\n";
+      if (String(path) === `/sys/fs/cgroup/${file}`) throw Object.assign(new Error("missing namespace root limit"), { code: "ENOENT" });
+      return original(path, options);
+    });
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("missing namespace root limit");
+  });
+
+  it("fails sampling when the hierarchy root cannot be verified", async () => {
+    vi.mocked(stat).mockRejectedValue(Object.assign(new Error("stat denied"), { code: "EACCES" }));
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      if (String(path) === "/sys/fs/cgroup/memory.high") throw Object.assign(new Error("absent root limit"), { code: "ENOENT" });
+      return original(path, options);
+    });
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("stat denied");
   });
 
   it("reports an unreadable known ancestor instead of discarding cgroup limits", async () => {
