@@ -159,6 +159,29 @@ describe("vitehub/destructure-storage-results", () => {
     }, "nuxt")).toEqual(Array(4).fill("VHUB0003"))
   })
 
+  it.each(["kv", "blob"])("binds runtime namespace %s only in its enclosing scope", async (name) => {
+    expect(await codes(destructureStorageResults, {
+      "server/api/namespaces.ts": [
+        `namespace Local { namespace ${name} { export const x = 1 }; async function read() { const result = await ${name}.get("x") } }`,
+        `namespace Sibling { async function read() { const siblingResult = await ${name}.get("sibling") } }`,
+        `const outerResult = await ${name}.get("outer")`,
+      ].join("\n"),
+    }, "nuxt")).toEqual(["VHUB0003", "VHUB0003"])
+    expect(await codes(destructureStorageResults, {
+      "server/api/namespaces.ts": `namespace ${name} { export const x = 1 }; const result = await ${name}.get("x")`,
+    }, "nuxt")).toEqual([])
+  })
+
+  it.each([
+    'declare namespace kv { const x: number }',
+    'declare module "kv" { const x: number }',
+    'declare namespace Local { namespace kv { const x: number }; const result: typeof kv };',
+  ])("does not bind ambient modules as runtime helpers: %s", async (source) => {
+    expect(await codes(destructureStorageResults, {
+      "server/api/ambient.ts": `${source}\nconst result = await kv.get("x")`,
+    }, "nuxt")).toEqual(["VHUB0003"])
+  })
+
   it("resolves local helpers and stores within namespaces", async () => {
     expect(await codes(destructureStorageResults, {
       "server/api/modules.ts": [

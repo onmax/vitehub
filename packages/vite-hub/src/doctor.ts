@@ -196,9 +196,11 @@ function storageScopes(root: unknown) {
     }
   }
 
-  function walk(node: unknown, enclosing: StorageScope, parent?: v.InferOutput<typeof astNodeSchema>) {
+  function walk(node: unknown, enclosing: StorageScope, parent?: v.InferOutput<typeof astNodeSchema>, ambient = false) {
     if (!v.is(astNodeSchema, node)) return
+    ambient ||= node.declare === true || (node.type === "TSModuleDeclaration" && !v.is(identifierSchema, node.id))
     if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") bind(node.id, enclosing)
+    if (node.type === "TSModuleDeclaration" && !ambient) bind(node.id, enclosing)
     const isFunction = ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
     const isModule = node.type === "TSModuleDeclaration" || node.type === "TSModuleBlock"
     const createsScope = isFunction || isModule || ["BlockStatement", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "ClassDeclaration", "ClassExpression", "StaticBlock"].includes(node.type)
@@ -222,8 +224,8 @@ function storageScopes(root: unknown) {
     }
     for (const [key, value] of Object.entries(node)) {
       if (key === "parent") continue
-      if (Array.isArray(value)) for (const child of value) walk(child, scope, node)
-      else walk(value, scope, node)
+      if (Array.isArray(value)) for (const child of value) walk(child, scope, node, ambient)
+      else walk(value, scope, node, ambient)
     }
   }
   walk(root, rootScope)
