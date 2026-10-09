@@ -162,6 +162,7 @@ export async function validateGitHubInstallInputs(target: string, prepareLinkedB
       const local = value.match(/(?:^|@)(file|link|portal):(.+)/i);
       if (local) await selectLocalPackage(local[2]!, base, local[1]!.toLowerCase() === "file");
       else if ((dependency || ["resolved", "tarball", "directory", "workspaces"].includes(field)) && /^(?:\.{1,2}[/\\]|[/\\]|~(?:[^/\\]*[/\\]|$)|[a-z]:[/\\])/i.test(value)) await selectLocalPackage(value, base);
+
       else if (field === "directory") await selectLocalPackage(value, base);
       return;
     }
