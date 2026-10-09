@@ -22,6 +22,10 @@ describe("instruction composition", () => {
     await expect(composeInstructionDocument(document)).resolves.toContain("{{{ context.customInstructions }}}")
     await expect(composeInstructionDocument("{{{ context.customInstructions }}}", { context: { customInstructions: 42 } }))
       .rejects.toThrow("context.customInstructions must be a string")
+    const indented = "    {{{ context.customInstructions }}}"
+    await expect(composeInstructionDocument(indented, { context: { customInstructions: "Injected" } }))
+      .rejects.toThrow("requires a {{{ context.customInstructions }}} slot")
+    await expect(composeInstructionDocument(indented)).resolves.toBe("```\n{{{ context.customInstructions }}}\n```")
   })
 
   it("does not allow generic bindings to bypass the custom instruction slot", async () => {
@@ -41,6 +45,8 @@ describe("instruction composition", () => {
       "```",
       "Use `data.context.customInstructions` as a literal example.",
       "<code>data.context.customInstructions</code>",
+      "    {{ data.context.customInstructions }}",
+      "    :insert{:markdown=\"data.context.customInstructions\"}",
     ].join("\n")
     await expect(composeInstructionDocument(document)).resolves.toContain("data.context.customInstructions")
   })

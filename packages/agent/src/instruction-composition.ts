@@ -44,6 +44,12 @@ export async function composeInstructionDocument(content: string, options: Compo
   const customMatches = [...content.matchAll(customPattern)]
   let customCount = 0
   let customMasked = content.replace(customPattern, () => `${customPrefix}${customCount++}END`)
+  const indentedCustomPrefix = `vitehub-indented-custom-${crypto.randomUUID().replaceAll("-", "")}-`
+  const indentedCustomLiterals: string[] = []
+  customMasked = customMasked.replace(/^(?:(?: {4}|\t)[^\n]*(?:\n|$))+/gm, block => block.replace(/\{\{[\s\S]*?data\.context\.customInstructions[\s\S]*?\}\}|:insert\{[^\n]*data\.context\.customInstructions[^\n]*\}/g, match => {
+    indentedCustomLiterals.push(match)
+    return `${indentedCustomPrefix}${indentedCustomLiterals.length - 1}END`
+  }))
   const rawHtmlPrefix = `vitehub-raw-custom-code-${crypto.randomUUID().replaceAll("-", "")}-`
   const rawHtmlBlocks: string[] = []
   customMasked = customMasked.replace(/<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)\s*>/gi, block => {
@@ -78,6 +84,7 @@ export async function composeInstructionDocument(content: string, options: Compo
       if (stripped.includes(block)) continue
       stripped = stripped.replace(/<(code|pre)([^>]*)>[\s\S]*?<\/\1>/i, block)
     }
+    stripped = stripped.replace(new RegExp(`${indentedCustomPrefix}(\\d+)END`, "g"), (_match, index: string) => indentedCustomLiterals[Number(index)]!)
     return stripped.replace(new RegExp(`${customPrefix}(\\d+)END`, "g"), (_match, index: string) =>
       customInCode.has(Number(index)) ? customMatches[Number(index)]![0] : customInstructions || "")
   }
@@ -102,6 +109,7 @@ function hasExecutableCustomInstructionReference(content: string): boolean {
   let masked = content.replace(/<(?:code|pre)\b[^>]*>[\s\S]*?<\/(?:code|pre)\s*>/gi, block => " ".repeat(block.length))
   masked = masked.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*$/gm, block => " ".repeat(block.length))
   masked = masked.replace(/(`+)[\s\S]*?\1/g, match => " ".repeat(match.length))
+  masked = masked.replace(/^(?:(?: {4}|\t)[^\n]*(?:\n|$))+/gm, block => " ".repeat(block.length))
   return /data\.context\.customInstructions\b/.test(masked)
 }
 
