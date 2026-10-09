@@ -261,7 +261,7 @@ interface DefineSourceCollection {
 const defineCollectionImplementation = (
   input:
     | Parameters<typeof defineCoreCollection>[0]
-    | { authorize?: AccessAuthorizeOption; source: AnyCollectionSource; transform?: (item: any) => unknown },
+    | { authorize?: AccessAuthorizeOption; route?: false; source: AnyCollectionSource; transform?: (item: any) => unknown },
   options?: Parameters<typeof defineCoreCollection>[1],
 ) => {
   const core: unknown = defineCoreCollection

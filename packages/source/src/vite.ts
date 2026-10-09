@@ -244,7 +244,9 @@ async function collectCollectionFiles(directory: string): Promise<string[]> {
 
 /** Inspect route metadata without importing Collection modules or evaluating loaders. */
 function collectionRouteEnabled(file: string, source: string, exportName: string): boolean {
-  const parsed = parseJavaScript(file, source)
+  // Collection files may use TypeScript syntax regardless of their extension
+  // (for example a `.mjs` file supplied by a generated-types fixture).
+  const parsed = parseJavaScript(file, source, { lang: "ts" })
   if (parsed.errors.length) throw new TypeError(`[vitehub] Cannot parse Collection ${file}: ${parsed.errors[0]!.message}`)
   type AstNode = {
     type?: string
@@ -255,6 +257,14 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     properties?: AstNode[]
     key?: AstNode
     computed?: boolean
+    declarations?: AstNode[]
+    id?: AstNode
+    local?: AstNode
+    exported?: AstNode
+    elements?: Array<AstNode | null>
+    operator?: string
+    left?: AstNode
+    right?: AstNode
   }
   const declarations = new Map<string, AstNode>()
   for (const statement of parsed.program.body) {
@@ -280,6 +290,35 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression, seen)
     return node ?? undefined
   }
+  const staticString = (node: AstNode | null | undefined, seen = new Set<string>()): string | undefined => {
+    const value = unwrap(node, seen)
+    if (!value) return undefined
+    if (value.type === "Literal" && typeof value.value === "string") return value.value
+    if (value.type === "TemplateLiteral" && (value.elements?.length ?? 0) === 0) return ""
+    if (value.type === "BinaryExpression" && value.operator === "+") {
+      const left = staticString(value.left, seen)
+      const right = staticString(value.right, seen)
+      return left !== undefined && right !== undefined ? left + right : undefined
+    }
+    return undefined
+  }
+  const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<string>()): boolean | undefined => {
+    const object = unwrap(node, seen)
+    if (object?.type !== "ObjectExpression") return undefined
+    let route: boolean | undefined
+    for (const property of object.properties ?? []) {
+      if (property.type === "SpreadElement") {
+        const spreadRoute = staticObjectRoute(property.expression, seen)
+        if (spreadRoute !== undefined) route = spreadRoute
+        continue
+      }
+      const keyName = property.computed ? staticString(property.key) : property.key?.name ?? property.key?.value
+      if (keyName !== "route") continue
+      const value = unwrap(property.value as AstNode | null | undefined)
+      route = value?.type === "Literal" && typeof value.value === "boolean" ? value.value : undefined
+    }
+    return route
+  }
   const definition = unwrap(declarations.get(exportName))
   if (definition?.type !== "CallExpression") return true
   const args = definition.arguments ?? []
@@ -288,16 +327,15 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   let route: boolean | undefined
   for (const property of options.properties ?? []) {
     if (property.type === "SpreadElement") {
-      route = undefined
+      const spreadRoute = staticObjectRoute(property.expression)
+      if (spreadRoute !== undefined) route = spreadRoute
       continue
     }
     const key = property.key
-    const keyName = property.computed
-      ? key?.type === "Literal" && typeof key.value === "string" ? key.value : undefined
-      : key?.name ?? key?.value
+    const keyName = property.computed ? staticString(key) : key?.name ?? key?.value
     if (keyName === "route") {
       const value = unwrap(property.value as AstNode | null | undefined)
-      if (value?.type === "Literal" && value.value === false) route = false
+      if (value?.type === "Literal" && typeof value.value === "boolean") route = value.value
       else route = undefined
     }
   }
