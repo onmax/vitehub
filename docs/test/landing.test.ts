@@ -66,11 +66,11 @@ describe("landing page", () => {
 
   it("links NuxtHub users to a migration guide with real import paths", async () => {
     const guide = await readFile(
-      new URL("../content/docs/frameworks-hosts/migrate-from-nuxthub.md", import.meta.url),
+      new URL("../content/docs/getting-started/migrate-from-nuxthub.md", import.meta.url),
       "utf8",
     );
 
-    expect(nuxtHubMigration.to).toBe("/docs/frameworks-hosts/migrate-from-nuxthub");
+    expect(nuxtHubMigration.to).toBe("/docs/getting-started/migrate-from-nuxthub");
     for (const entry of nuxtHubMigration.imports) {
       expect(guide).toContain(entry.from);
       expect(guide).toContain(entry.to);

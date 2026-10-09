@@ -27,10 +27,8 @@ const pageSchema = z.object({
     to: z.string(),
     target: z.string().optional(),
   })).optional(),
-});
-
-const blogSchema = pageSchema.extend({
-  layout: z.enum(["article", "tutorial"]).optional(),
+  modifiedAt: z.string().optional(),
+  sitemap: z.boolean().optional(),
 });
 
 // Nuxt Content reads collections at config parse time, before the module setup runs.
@@ -46,15 +44,6 @@ export default defineContentConfig({
         prefix: "/docs",
       },
       schema: pageSchema,
-    }),
-    blog: defineCollection({
-      type: "page",
-      source: {
-        cwd: resolve(import.meta.dirname, "content/blog"),
-        include: "**/*.md",
-        prefix: "/blog",
-      },
-      schema: blogSchema,
     }),
     trust: defineCollection({
       type: "page",

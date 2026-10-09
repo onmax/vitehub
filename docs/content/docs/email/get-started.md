@@ -1,36 +1,33 @@
 ---
 
 title: Send your first Email
-description: Install Email, configure Resend, and send a first message from server code.
+description: Send a welcome email with Resend and check the delivery result.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Email sends a real message through a configured provider. This tutorial uses
-Resend and ends with a request you can inspect in the development outbox.
+Send a welcome email with Resend and check its delivery. You will configure the provider, supply its API key to the server, and call a route that sends the message. The development outbox also records it for inspection.
 
-::note
-You need Node.js 24.15 or later, Vite 8 or later, `pnpm`, a POSIX-compatible
-shell, a Resend API key, a verified sender address, and a recipient address you
-can check. The final request sends a real message.
-::
+You need Node.js 24.15 or newer, Vite 8 or newer, pnpm, a Vite application, and a POSIX-compatible shell. You also need a Resend API key, a verified sender, and an inbox you can check. Run the commands from the app root. The final request sends a real email.
 
 ::tutorial-step{title="Install the email dependencies"}
 ## Install the email dependencies
+
+Install ViteHub and Nitro. The distribution includes the Resend driver; you do not need a separate driver package.
 
 ```bash [commands/install]
 pnpm add vite-hub nitro h3
 pnpm add -D vite
 ```
 
-`vite-hub` includes the Email runtime plus built-in Resend and Cloudflare Email drivers.
-
 ::
 
 ::tutorial-step{title="Configure Resend"}
 ## Configure Resend
+
+Add Email to your existing ViteHub configuration. `env.source('RESEND_API_KEY')` names the server environment variable that supplies the credential.
 
 ```ts [vite.config.ts]
 import { vitehub } from 'vite-hub'
@@ -51,7 +48,7 @@ export default defineConfig({
 })
 ```
 
-The stable driver name selects a ViteHub-owned provider implementation. The Env declaration is serialized, but its source value is resolved in the server runtime for every send, so the API key stays out of build output and request-scoped Cloudflare secrets stay current. Literal options and non-secret Env defaults are serialized into the build; never use literal options for credentials, and ViteHub rejects defaults on declarations marked secret.
+The server reads the API key when it sends a message. Keep the key in the environment rather than placing its value in this config. Literal options are part of the build output.
 
 ::
 
@@ -59,6 +56,8 @@ The stable driver name selects a ViteHub-owned provider implementation. The Env 
 ## Provide the Resend secret
 
 Set `RESEND_API_KEY` in the server process:
+
+Replace `re_...` with your API key in the terminal where you will start Vite. An export in another terminal does not set the server's environment.
 
 ```bash [commands/secret]
 export RESEND_API_KEY='re_...'
@@ -72,6 +71,8 @@ Use your deployment platform's secret store in production. Do not use a `VITE_` 
 ## Send from server code
 
 Replace both addresses with values accepted by Resend. The request performs a real delivery. In `vite dev`, the [development outbox](/docs/email/hosts#development-outbox) also records the message.
+
+Replace the sender with a Resend-verified address and the recipient with an inbox you control. Each request to this route sends another message.
 
 ```ts [server/api/welcome.post.ts]
 import { defineEventHandler } from 'h3'
@@ -89,8 +90,8 @@ export default defineEventHandler(async () => {
 
 ::
 
-::tutorial-step{title="Verify the result"}
-## Verify the result
+::tutorial-step{title="Run and check the result"}
+## Run and check the result
 
 Nitro serves the `server/api` route. Start the server and send the request:
 

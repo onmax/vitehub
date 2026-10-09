@@ -6,66 +6,13 @@ navigation.order: 1.5
 icon: i-lucide-server-cog
 ---
 
-## Server primitives for Vite apps and any host
+Server Primitives are APIs for storage, background work, auth, and other
+server features. Call them from your routes, handlers, or jobs. Each package
+has its own configuration and server API.
 
-ViteHub adds storage, queues, schedules, email, and other server APIs to Vite apps. Call them from routes, handlers, jobs, or workers. You don't need an Agent Definition.
-
-Start with [Your first server primitive](/docs/getting-started/first-server-primitive) for a runnable example. Use the path cards below to keep the learning step separate from concepts, guides, and reference pages.
-
-::u-page-grid{class="not-prose mt-8"}
-  :::u-page-card
-  ---
-  title: Tutorial
-  description: Add KV to an app, register the Vite integration, and call the runtime helper from server code.
-  icon: i-lucide-rocket
-  to: /docs/getting-started/first-server-primitive
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Concepts
-  description: Learn how Definitions, generated output, and host selection fit together.
-  icon: i-lucide-map
-  to: /docs/getting-started/concepts
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Guides
-  description: Call a primitive from server code, then connect selected access to an Agent.
-  icon: i-lucide-code-2
-  to: /docs/agents/capabilities
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Reference
-  description: Find stable runtime imports, file conventions, and API contracts.
-  icon: i-lucide-book-marked
-  to: /docs/reference
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Deploy
-  description: Choose a host and inspect the provider output that ViteHub generates.
-  icon: i-lucide-cloud-cog
-  to: /docs/frameworks-hosts
-  ---
-  :::
-  :::u-page-card
-  ---
-  title: Operate
-  description: Read limits, errors, and recovery guidance before production traffic.
-  icon: i-lucide-activity
-  to: /docs/reference/provider-output
-  ---
-  :::
-::
-
-:::note
-Server code calls runtime helpers directly. Agents receive only the abilities added through Capabilities. Read [Runtime helpers and stable imports](/docs/getting-started/concepts/runtime-helpers-and-stable-imports) and [Capabilities API](/docs/agents/capabilities) when you need those contracts.
-:::
+Follow [your first Server Primitive](/docs/getting-started/first-server-primitive)
+to save and read a value locally. Then choose the feature your app needs.
+You can add Agents later if your product needs them.
 
 ## Pick the right primitive
 
@@ -91,7 +38,7 @@ Server code calls runtime helpers directly. Agents receive only the abilities ad
 | Isolated provider-managed execution | [Sandbox](/docs/sandbox) |
 | Controlled Unix-like command sessions | [Shell](/docs/shell) |
 
-## Guide: use primitives from server code
+## Call a feature from a route
 
 Most primitives expose the same application import on every host. ViteHub connects that import to the selected provider during the build.
 
@@ -107,48 +54,33 @@ export default defineEventHandler(async (event) => {
 
 The route doesn't need to know whether KV uses local files, Cloudflare, Vercel, or another driver.
 
-## Concepts: Definitions and generated output
+## Add a Definition when the feature needs one
 
-Some primitives work directly after configuration. Env, KV, Blob, Source, and Shell can often be called from server code without a discovered Definition.
+A Queue needs a handler Definition. A Database needs a schema Definition.
+The tutorial for each feature shows the file to create. ViteHub discovers
+these files during development and build.
 
-Other primitives need a Definition so ViteHub can discover runtime behavior or named work. Email composes one declaratively configured provider, while Auth uses a singleton Definition bound at runtime. Database schemas, Workspace Definitions, Queue Definitions, Workflow Definitions, Static Schedule Definitions, Sandbox Definitions, and Agent Definitions can also generate Runtime Registries or host-specific Provider Output. Rate Limit uses source-local handles with explicit stable IDs instead of location-derived Definitions.
+Read [Definition discovery](/docs/development/definition-discovery) for names
+and [File conventions](/docs/reference/file-conventions) for locations.
+Check [Configuration](/docs/reference/config-options) when you need options
+beyond the tutorial.
 
-| Need | Read |
-| --- | --- |
-| Understand portable Definitions and location-derived discovery | [Definitions and discovery](/docs/getting-started/concepts/definitions-and-discovery) |
-| Check where Definition files belong | [File conventions](/docs/reference/file-conventions) |
-| Inspect generated host artifacts | [Provider output](/docs/reference/provider-output) |
-| Configure package integrations and host settings | [Config options](/docs/reference/config-options) |
-| Use ViteHub's framework and host boundary | [Frameworks and hosts](/docs/frameworks-hosts) |
-| Emit Cloudflare bindings, routes, queues, workflows, crons, and workers | [Cloudflare](/docs/frameworks-hosts/cloudflare) |
-| Emit Vercel output for functions, queues, workflows, and runtime bindings | [Vercel](/docs/frameworks-hosts/vercel) |
-| Emit Deno Agent server output and Deno cron wake output | [Deno](/docs/frameworks-hosts/deno) |
-| Run the generated server output yourself | [Node/self-hosted](/docs/frameworks-hosts/node-self-hosted) |
+## Give an Agent a selected operation
 
-## Guide: connect primitives to Agents
+Your server can call each feature directly. An Agent needs a Capability
+that exposes the selected operation. For example, the
+[KV capability](/docs/kv/agent-capability) can give an Agent access to stored
+values, and the [Workspace capability](/docs/workspace/agent-capability) can
+give it access to files.
 
-Capabilities expose controlled agent-facing access to primitives. A storage Capability can expose scoped read/edit tools, a Schedule Capability can manage allowed Runtime Schedules, and `workspaceShell()` can expose file inspection through Workspace and Shell boundaries.
+Add a Capability only when the Agent needs it. Set its scope, write mode,
+and approval policy for the task. Read
+[Capabilities](/docs/agents/capabilities) to choose an operation and check
+which constraints it supports.
 
-Don't expose a server API to a model just because the app uses it. Add the relevant [Official Capability](/docs/agents/capabilities/official) only when the Agent needs that ability. Configure its scope, write mode, and approvals for that task.
+## Choose a host
 
-| Need | Read |
-| --- | --- |
-| Build the Agent that will receive the ability | [Agents](/docs/agents) |
-| Understand the agent-facing contribution model | [Capabilities overview](/docs/agents/capabilities) |
-| Pick from built-in Capability factories | [Official capabilities](/docs/agents/capabilities/official) |
-| Expose KV with scoped storage tools | [KV capability](/docs/kv/agent-capability) |
-| Expose Blob storage with scoped file tools | [Blob capability](/docs/blob/agent-capability) |
-| Expose relational data intentionally | [Database capability](/docs/database/agent-capability) |
-| Let an Agent send authorized plain-text email | [Email capability](/docs/email/agent-capability) |
-| Let an Agent send its result through a Channel | [Channels capability](/docs/channels/agent-capability) |
-| Consume a trusted budget before an Agent Invocation | [Rate Limit capability](/docs/rate-limit/agent-capability) |
-| Give an Agent headless browser evidence through an allowlisted command | [Browser capability](/docs/browser/agent-capability) |
-| Let an Agent manage allowed Runtime Schedules | [Schedule capability](/docs/schedule/agent-capability) |
-| Expose Workspace-backed inspection or mutation | [Workspace shell](/docs/workspace/agent-capability) |
-| Run isolated execution from an Agent boundary | [Sandbox capability](/docs/sandbox/agent-capability) |
-
-## Next steps
-
-- [Build the first primitive](/docs/getting-started/first-server-primitive)
-- [Build the first Agent](/docs/getting-started/first-agent)
-- [Read the Concepts overview](/docs/getting-started/concepts)
+Your host determines the resources and limits behind an API. Open
+[Build and deploy](/docs/getting-started/build-and-deploy) to select a preset,
+then check the feature's Hosts page. Verify the generated bindings and
+resource identities before you connect production data.

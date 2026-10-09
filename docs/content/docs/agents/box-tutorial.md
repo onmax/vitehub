@@ -8,18 +8,14 @@ navigation.group: Advanced execution
 icon: i-lucide-rocket
 ---
 
-A Box gives one process a private Home, declared environment, and explicit boot
-checks. Start with a trusted-host Box to verify the lifecycle before choosing a
-remote runtime or putting a coding provider inside it.
+Open a Box on your own Node host, write a text file, and run Node to read it. The response will contain `Box is ready`. A Box prepares an execution session with a private Home, declared environment, and boot checks.
 
-::note
-You need Node.js 24 or newer, `pnpm`, and an existing server application. A
-trusted-host Box shares the host's filesystem and process authority. Use a
-Sandbox when untrusted code needs provider-managed isolation.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite server application. Run the commands from its root. A trusted-host Box shares the host's filesystem and process authority. Use [Sandbox](/docs/sandbox) when untrusted code needs provider-managed isolation.
 
 ::tutorial-step{title="Install the Box package"}
 ## Install the Box package
+
+Install Box and Nitro in your Vite app. Add Nitro to its existing Vite config so it serves the route below.
 
 ```bash [commands/install]
 pnpm add @vite-hub/box nitro h3
@@ -44,6 +40,8 @@ export default defineConfig({
 
 Create a route that opens a trusted-host Box, writes one file, and runs Node.js
 against it:
+
+`requires: ['node']` checks that Node is available before the session opens. The route writes through the session's file API, executes Node, then returns its output. Keep the `finally` block so a failed command also closes the session.
 
 ```ts [server/api/box-check.get.ts]
 import { defineEventHandler } from "h3";
@@ -83,8 +81,8 @@ export default defineEventHandler(async () => {
 state when the command fails as well as when it succeeds.
 ::
 
-::tutorial-step{title="Verify the result"}
-## Verify the result
+::tutorial-step{title="Run and check the result"}
+## Run and check the result
 
 Start the server and call the route:
 

@@ -2,7 +2,6 @@
 import { PrimitiveIcon } from "@vite-hub/ui/primitive-rail";
 import {
   docsManifest,
-  getDocsPageByPath,
   normalizeDocsPath,
 } from "~~/modules/vitehub-docs/runtime/utils/docs";
 import {
@@ -15,15 +14,8 @@ import {
 const route = useRoute();
 const currentPath = computed(() => normalizeDocsPath(route.path));
 const section = computed(() => getDocsSectionForPath(docsManifest.sections, route.path));
-const pageGroups = computed(() => {
-  if (!section.value) return [];
-  const groups = getDocsSidebarGroups(section.value);
-  const perspective = getDocsPageByPath("/docs/getting-started/built-for-vue");
-  if (section.value.id !== "ui" || !perspective) return groups;
-  return groups.map((group) =>
-    group.label === "Start" ? { ...group, pages: [...group.pages, perspective] } : group,
-  );
-});
+const pageGroups = computed(() => section.value ? getDocsSidebarGroups(section.value) : []);
+const platformSections = docsManifest.sections.filter(candidate => candidate.category === "Platform");
 const related = computed(() =>
   section.value ? getDocsRelatedSections(docsManifest.sections, section.value) : [],
 );
@@ -37,7 +29,7 @@ function isActive(path: string) {
 
 <template>
   <nav v-if="section" class="vh-docs-sidebar-nav" :aria-label="`${section.title} pages`">
-    <template v-for="pageGroup in pageGroups" :key="pageGroup.label || 'pages'">
+    <template v-for="(pageGroup, groupIndex) in pageGroups" :key="groupIndex">
       <section v-if="pageGroup.label" class="vh-docs-sidebar-page-group">
         <h2 class="vh-docs-sidebar-page-group-heading">{{ pageGroup.label }}</h2>
         <NuxtLink
@@ -67,7 +59,7 @@ function isActive(path: string) {
     </template>
 
     <section v-if="related.length" class="vh-docs-sidebar-related" aria-label="Related products">
-      <h2 class="vh-docs-sidebar-heading">Related</h2>
+      <h2 v-if="related.length > 1" class="vh-docs-sidebar-heading">Related</h2>
       <NuxtLink
         v-for="relatedSection in related"
         :key="relatedSection.id"
@@ -79,17 +71,23 @@ function isActive(path: string) {
       </NuxtLink>
     </section>
 
-    <section class="vh-docs-sidebar-related" aria-label="Learn ViteHub">
-      <h2 class="vh-docs-sidebar-heading">Learn</h2>
-      <NuxtLink v-if="section.id !== 'getting-started'" to="/docs/getting-started" class="vh-docs-sidebar-link">
-        <UIcon name="i-lucide-book-open" class="size-4 shrink-0" />
-        <span class="min-w-0 truncate">Getting started</span>
-      </NuxtLink>
-      <NuxtLink to="/docs/getting-started/concepts" class="vh-docs-sidebar-link">
-        <UIcon name="i-lucide-lightbulb" class="size-4 shrink-0" />
-        <span class="min-w-0 truncate">Concepts</span>
+    <section v-if="section.id === 'getting-started' || section.category === 'Platform'" class="vh-docs-sidebar-related" aria-label="Build and deploy">
+      <h2 class="vh-docs-sidebar-heading">Build and deploy</h2>
+      <NuxtLink
+        v-for="platformSection in platformSections"
+        :key="platformSection.id"
+        :to="platformSection.path"
+        class="vh-docs-sidebar-link"
+      >
+        <UIcon :name="sidebarSectionIcon(platformSection)" class="size-4 shrink-0" />
+        <span class="min-w-0 truncate">{{ platformSection.title }}</span>
       </NuxtLink>
     </section>
+
+    <NuxtLink v-if="section.id !== 'getting-started'" to="/docs/getting-started" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
+      <UIcon name="i-lucide-book-open" class="size-4 shrink-0" />
+      <span class="min-w-0 truncate">Get started</span>
+    </NuxtLink>
 
     <NuxtLink to="/docs" class="vh-docs-sidebar-link vh-docs-sidebar-catalog-link">
       <UIcon name="i-ph-squares-four-light" class="size-4 shrink-0" />
@@ -99,7 +97,7 @@ function isActive(path: string) {
 
   <nav v-else class="vh-docs-sidebar-nav" aria-label="All products">
     <section v-for="group in catalog" :key="group.category" class="vh-docs-sidebar-category">
-      <h2 class="vh-docs-sidebar-heading">{{ group.category }}</h2>
+      <h2 class="vh-docs-sidebar-heading">{{ group.category === "Start" ? "Get started" : group.category }}</h2>
       <NuxtLink
         v-for="catalogSection in group.sections"
         :key="catalogSection.id"

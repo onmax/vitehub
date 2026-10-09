@@ -23,7 +23,7 @@ function labels(source: string) {
 }
 
 describe("multi-file tutorial examples", () => {
-  it("shows ordered Workflow steps as a nested project tree", async () => {
+  it("shows the entrypoint and ordered Workflow steps together", async () => {
     const source = await readFile(resolve(docsRoot, "content/docs/workflows/get-started.md"), "utf8")
     const files = labels(source)
 
@@ -65,7 +65,7 @@ describe("multi-file tutorial examples", () => {
     }
   })
 
-  it("keeps code-tree labels unique within each tutorial", async () => {
+  it("keeps code labels unique within each tutorial", async () => {
     const tutorials = await markdownFiles(resolve(docsRoot, "content/docs"))
 
     for (const path of tutorials) {

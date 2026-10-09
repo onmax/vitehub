@@ -5,9 +5,9 @@
   --vh-rail-width: 3.5rem;
   --vh-panel-width: 15rem;
   --vh-sidebar-width: calc(var(--vh-rail-width) + var(--vh-panel-width));
-  --vh-toc-width: 15rem;
+  --vh-toc-width: 12rem;
   /* The reading measure of prose. Code, tables, and examples are wider. */
-  --vh-content-width: 50rem;
+  --vh-content-width: 46rem;
   --vh-ink: #09090b;
   --vh-paper: #fafafa;
 }

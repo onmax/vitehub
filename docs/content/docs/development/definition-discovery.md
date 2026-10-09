@@ -2,8 +2,8 @@
 title: Definition discovery
 navigation.title: Definition discovery
 description: Understand how a ViteHub file becomes a named runtime entry.
-navigation.order: 110
-navigation.group: Concepts
+navigation.order: 33.1
+navigation.group: Build state
 icon: i-lucide-file-code-2
 ---
 
@@ -41,4 +41,4 @@ The Definition stays in application code. Generated files show what the integrat
 
 If a Definition is missing or has the wrong name, check its location, the package integration, and the generated metadata.
 
-Read [Agent Definitions](/docs/agents/agent-definitions) for Agent-specific files and [Vite Integrations and Provider Output](/docs/getting-started/concepts/vite-integrations-and-provider-output) for the build side.
+Read [Agent Definitions](/docs/agents/agent-definitions) for Agent-specific files and [Vite Integrations and Provider Output](/docs/development/integrations-and-output) for the build side.

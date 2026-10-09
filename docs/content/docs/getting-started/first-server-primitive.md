@@ -7,19 +7,19 @@ navigation.order: 3
 icon: i-lucide-server-cog
 ---
 
-Use this quickstart to see a Server Primitive work end to end. You add a local
-KV store to a small H3 server. One request writes a value, reads it back, and
-returns the result.
+Build a route that saves a theme setting and reads it back. KV stores a value
+under a key, so your server can retrieve the setting on a later request.
+This tutorial uses local files and needs no provider account or credentials.
 
-::note
-You need Node.js 24.15 or newer and `pnpm`. The first result runs locally without
-an account or credential.
-::
+You need Node.js 24.15 or newer and `pnpm`. You will create a small H3 server,
+configure ViteHub, and check the result with `curl`.
 
 ::tutorial-step{title="Create the project"}
 ## Create the project
 
-Create an empty ESM project and install ViteHub with Vite and H3.
+Create a folder and install the dependencies. Vite builds the server, and H3
+handles HTTP requests. Set `type=module` so Node.js can use the generated
+server's `import` syntax.
 
 ```bash [commands/setup]
 mkdir vitehub-kv-start
@@ -72,7 +72,12 @@ export default defineConfig({
 ::tutorial-step{title="Write and read one value"}
 ## Write and read one value
 
-Create one H3 route and use `kv` to write and read the setting.
+Create `src/server.ts`. The `/settings` route takes a JSON body, stores it
+under the key `settings`, then reads the same key. H3 returns that stored
+value as JSON.
+
+KV calls return an `[error, value]` pair. Check the error before using the
+value. The write has no value to return, so it only checks `writeError`.
 
 ```ts [src/server.ts]
 import { createServer } from "node:http"
@@ -120,7 +125,8 @@ curl -X POST http://localhost:5173/settings \
   -d '{"theme":"system"}'
 ```
 
-The response proves that the route wrote and read through ViteHub:
+You should receive the setting you sent. This confirms that both the write
+and the read reached the configured KV store:
 
 ```json [output/response.json]
 {"settings":{"theme":"system"}}
@@ -131,8 +137,12 @@ To move to a hosted store, change the preset or the KV driver in
 
 ::
 
-## Next steps
+## Continue with KV
 
-- Follow the longer [KV Tutorial](/docs/kv/get-started) for a complete walkthrough.
-- Read [KV](/docs/kv) for named stores and hosted drivers.
-- Read [Runtime Helpers and stable imports](/docs/getting-started/concepts/runtime-helpers-and-stable-imports) to see how provider changes stay out of server code.
+The local store keeps files under `.vitehub/data/kv`. Keep that directory
+when you restart the server to retain the data. Do not commit it to your
+repository.
+
+Read [KV configuration](/docs/kv/configure) to choose a hosted store or add a
+named store. The [KV server API](/docs/kv/server-api) documents the return
+values and errors for each method.

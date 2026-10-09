@@ -1,6 +1,6 @@
 ---
 title: Build your first UI view
-description: "Install ViteHub UI, render a message, and connect the view to your own chat state."
+description: Render a local question and reply with AgentChat in a Nuxt application.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
@@ -8,19 +8,14 @@ navigation.group: Start
 icon: i-lucide-rocket
 ---
 
-ViteHub UI renders the state that your application owns. This tutorial starts
-with one local message, so you can verify the package before adding a model or
-an Agent route.
+Render a short chat with one question and one reply. You will install the Nuxt module and pass an AI SDK message array to `AgentChat`. This first page uses local messages so you can check the UI before connecting an Agent.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and a Nuxt application. For a Vue
-application that uses Vite, follow [Installation](/docs/ui/installation) first.
-::
+You need Node.js 24.15 or newer, pnpm, and a Nuxt application. Run the commands from its root. For Vue with Vite, follow [Installation](/docs/ui/installation) first. The UI package renders your app's state; your app still owns fetching, routes, and message storage.
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-Install the UI package and its Nuxt peers:
+Install the UI package and its Nuxt peers. Add the module to your existing Nuxt config, keeping the modules your app already uses.
 
 ```bash [commands/install]
 pnpm add @vite-hub/ui @nuxt/ui ai tailwindcss vue @iconify-json/lucide @iconify-json/ph
@@ -42,6 +37,8 @@ components. You do not need a Vue plugin registration in Nuxt.
 ## Render one message
 
 Create `app.vue` with one user message and one assistant reply:
+
+Each message has an id, a role, and text parts. The roles tell `AgentChat` which message is the user's question and which is the reply. No request is sent by this example.
 
 ```vue [app.vue]
 <script setup lang="ts">
@@ -75,8 +72,8 @@ const messages: UIMessage[] = [
 container. The component does not fetch data or choose an Agent route.
 ::
 
-::tutorial-step{title="Verify the result"}
-## Verify the result
+::tutorial-step{title="Run and check the result"}
+## Run and check the result
 
 Start Nuxt and open the page:
 
@@ -84,12 +81,9 @@ Start Nuxt and open the page:
 pnpm nuxt dev
 ```
 
-The page shows the question and the assistant reply. The message viewport has
-an accessible name and a scroll control when its content moves away from the
-live edge.
+Open the local URL printed by Nuxt. The page should show the release question followed by the reply. Change either text in `messages` and save the file to check that the view updates. Add more messages to check scrolling inside the fixed-height chat.
 
-Replace the fixture with the reactive values from `useChat()` when you are
-ready to send messages:
+You now have a working message view. To send messages, your app also needs a chat endpoint. Once that endpoint is ready, install the Vue AI SDK integration:
 
 ```bash [commands/install-ai-sdk]
 pnpm add @ai-sdk/vue
@@ -103,8 +97,7 @@ export function useAppChat() {
 }
 ```
 
-Call `useAppChat()` in the component's `<script setup>` and pass its returned
-values to [`AgentChat`](/docs/ui/chat). Place
+Configure `useChat()` for your endpoint, call `useAppChat()` in the component's `<script setup>`, and pass its returned values to [`AgentChat`](/docs/ui/chat). Place
 [`AgentChatPrompt`](/docs/ui/chat-prompt) in its `composer` slot. The [Chat
 App block](/docs/ui/blocks/chat-app) shows session switching and attachments.
 ::

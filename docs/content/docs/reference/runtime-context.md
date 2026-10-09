@@ -2,8 +2,8 @@
 title: Runtime Context
 navigation.title: Runtime Context
 description: Understand the host resources passed into a server operation or Agent request.
-navigation.order: 120
-navigation.group: Concepts
+navigation.order: 55.1
+navigation.group: Runtime and output
 icon: i-lucide-waypoints
 ---
 

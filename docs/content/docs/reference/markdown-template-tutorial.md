@@ -8,14 +8,9 @@ navigation.group: Tutorial
 icon: i-lucide-rocket
 ---
 
-`@vite-hub/markdown-template` renders Markdown from explicit data. Start with a
-string template and one result, then move the template into a file when the
-application owns a stable prompt or document.
+Generate a short release note from a Markdown template and a data object. You will insert the version and status as text, then include a trusted Markdown list. The result is a Markdown string that you can print or pass to an Agent.
 
-::note
-You need Node.js 24 or newer and `pnpm`. The renderer performs no filesystem or
-network I/O, so this first example runs without a Vite server.
-::
+You need Node.js 24.15 or newer and pnpm. Run this example in an existing ESM project, or run `pnpm init` and `pnpm pkg set type=module` in an empty directory first. The renderer needs no Vite server, account, or network access.
 
 ::tutorial-step{title="Install the package"}
 ## Install the package
@@ -32,7 +27,7 @@ that your application has already validated.
 ::tutorial-step{title="Render a document"}
 ## Render a document
 
-Call `renderMarkdownTemplate()` from server code:
+Create this file and its parent directory. Double braces insert scalar values as escaped text. `:insert` preserves the Markdown list, so only pass a fragment that your application trusts.
 
 ```ts [server/render-release.ts]
 import { renderMarkdownTemplate } from "@vite-hub/markdown-template";
@@ -61,8 +56,8 @@ The template escapes scalar values while preserving the list supplied through
 the trusted `notes` fragment.
 ::
 
-::tutorial-step{title="Verify the result"}
-## Verify the result
+::tutorial-step{title="Run and check the result"}
+## Run and check the result
 
 Run the module with Node 24:
 

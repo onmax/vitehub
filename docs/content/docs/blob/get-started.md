@@ -1,23 +1,20 @@
 ---
 title: Store your first Blob object
-description: Install Blob, write one object, and verify its stored metadata.
+description: Write a local text file to Blob and inspect its stored metadata.
 navigation.title: Tutorial
 layout: tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Blob stores uploads and generated files as binary objects. This tutorial uses
-the local `fs` driver, writes one text object, and returns the stored metadata.
+Save `hello.txt` in a local object store and check that the response reports its path, content type, and size. Use Blob for file bodies such as uploads and generated documents. Use [KV](/docs/kv) when you only need a small JSON value.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app. The
-local store writes to `.vitehub/data/blob`; use R2, Vercel Blob, or another
-provider for production.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. The local store writes to `.vitehub/data/blob` and needs no provider account. Choose a [hosted store](/docs/blob/hosts) when files must remain available across app instances.
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
+
+Install Blob and the CLI. Nitro serves the route used in the next step. Keep existing plugins when you add the configuration.
 
 ```bash [commands/install]
 pnpm add @vite-hub/blob nitro h3
@@ -45,7 +42,7 @@ export default defineConfig({
 ::tutorial-step{title="Write one object"}
 ## Write one object
 
-Create a route that stores one object and returns the result:
+Every request writes the same text to `hello.txt`. `contentType` tells a reader how to interpret the stored bytes. The route returns metadata rather than the file body.
 
 ```ts [server/api/files.post.ts]
 import { defineEventHandler } from 'h3'
@@ -65,8 +62,8 @@ content type, size, and upload timestamp.
 
 ::
 
-::tutorial-step{title="Verify the result"}
-## Verify the result
+::tutorial-step{title="Run and check the result"}
+## Run and check the result
 
 Start Vite and send one request:
 
@@ -80,7 +77,7 @@ Keep the server running. In another terminal, run:
 curl -X POST http://localhost:5173/api/files
 ```
 
-The response contains metadata for `hello.txt`:
+The example text is 18 bytes. The actual `httpEtag` depends on the stored object; the ellipsis below stands for that value.
 
 ```json [output/response.json]
 {

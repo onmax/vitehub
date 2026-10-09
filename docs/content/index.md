@@ -13,5 +13,5 @@ ViteHub is the server layer for Vite apps. The Agent is one of its primitives, n
 - [Create agents](/docs/agents)
 - [Attach capabilities](/docs/agents/capabilities)
 - [Use server primitives](/docs/getting-started/server-primitives)
-- [Migrate from NuxtHub](/docs/frameworks-hosts/migrate-from-nuxthub)
+- [Migrate from NuxtHub](/docs/getting-started/migrate-from-nuxthub)
 - [Browse docs](/docs)

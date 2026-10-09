@@ -142,6 +142,8 @@ export default defineAppConfig({
     // SAFETY: Nuxt UI's prose variants accept these custom slot classes.
     prose: {
       codeIcon: {
+        js: "i-vscode-icons-file-type-js-official",
+        mjs: "i-vscode-icons-file-type-js-official",
         txt: "i-vscode-icons-file-type-text",
       },
       a: {

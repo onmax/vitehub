@@ -1,26 +1,21 @@
 ---
 
 title: Send through your first Channel
-description: Install Channels, send a local delivery, and then connect a provider.
+description: Send a local build notification and inspect the connector receipt.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Channels gives server code one named destination for outbound messages. This
-tutorial uses a local `log` connector, so the first delivery needs no provider
-account. Replace it with Telegram, Slack, or your own connector after the
-contract works.
+Send a build notification through a Channel named `alerts`. Your first connector writes to the server terminal and returns a receipt. This lets you check the delivery code before connecting a messaging service.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, and an existing Vite server app.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application. Run the commands from its root. Nitro serves the API route. No message leaves your machine and no provider key is needed.
 
 ::tutorial-step{title="Install and enable discovery"}
 ## Install and enable discovery
 
-Install the ViteHub distribution and the Channels integration:
+Install ViteHub and Nitro. Add the plugins below to your existing Vite config, keeping its other plugins.
 
 ```bash [commands/install]
 pnpm add vite-hub nitro h3 vite
@@ -70,7 +65,7 @@ The file name becomes the Channel name. For a Vite suffix definition, use `src/a
 ::tutorial-step{title="Send and verify one delivery"}
 ## Send and verify one delivery
 
-Create a route that sends through the discovered Channel:
+`useChannel('alerts')` selects the Definition; `connector: 'log'` selects its send function. That function receives the label and text. Check the tuple's error before returning its receipt.
 
 ```ts [server/api/build-finished.post.ts]
 import { defineEventHandler } from 'h3'
@@ -99,6 +94,8 @@ curl -X POST http://localhost:5173/api/build-finished
 ```
 
 The response includes a generated delivery id and the connector id:
+
+The terminal running Vite also prints `[release] Build finished.`. This confirms that the connector ran, while the HTTP response confirms that the caller received its receipt.
 
 ```json [output/response.json]
 {

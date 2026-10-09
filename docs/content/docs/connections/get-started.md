@@ -1,34 +1,28 @@
 ---
 
 title: Connect your first provider account
-description: Install Connections, define a Google account, connect it, and call the provider.
+description: Connect a Google account with OAuth and read its Gmail labels.
 layout: tutorial
 navigation.title: Tutorial
 navigation.order: 2
 icon: i-lucide-rocket
 ---
 
-Connections stores an OAuth grant in your application database and checks an
-access rule before every provider call. This tutorial uses Gmail labels because
-the first successful call has a small, inspectable response.
+Connect a Google account, then list its Gmail labels from a server route. Connections stores the OAuth grant in your app database and adds the credential to provider requests. Your route receives the label data without reading a token.
 
-::note
-You need Node.js 24.15 or newer, `pnpm`, a Google OAuth client, and an existing
-Vite server app. The app must have a Database integration and a stable
-`VITEHUB_CONNECTIONS_KEY` secret.
-::
+You need Node.js 24.15 or newer, pnpm, and a Vite application with [Database](/docs/database/get-started) configured. You also need a Google OAuth client with Gmail API access and a test account permitted by its consent screen. Run the commands from the app root. This example reads labels and does not send or change mail.
 
 ::tutorial-step{title="Install and configure"}
 ## Install and configure
 
-Install the ViteHub distribution:
+Install ViteHub and Nitro. Keep your existing Database Definition and add these integrations to the app's Vite config.
 
 ```bash [commands/install]
 pnpm add vite-hub nitro h3
+pnpm add -D vite
 ```
 
-Connections need [Database](/docs/database), Env declarations for the Google
-client, and a 32-byte encryption key.
+Merge these options with your existing Database configuration. The Env declarations read the Google client credentials from the server environment.
 
 ```ts [vite.config.ts]
 import { vitehub } from 'vite-hub'
@@ -54,18 +48,24 @@ export default defineConfig({
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
 
-Set the result as the secret `VITEHUB_CONNECTIONS_KEY` on the host. If the key changes, every Connection must be connected again.
+Save the printed key in a secret store and reuse it after restarts. Generating a new key prevents the app from opening existing grants, so you must reconnect those accounts. In the terminal where you will start Vite, set the key and Google credentials:
 
-Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` too. In the Google Cloud
-console, add `<origin>/_vitehub/connections/callback` as an authorized redirect
-URI.
+```bash [commands/credentials]
+export VITEHUB_CONNECTIONS_KEY='paste-the-generated-key'
+export GOOGLE_CLIENT_ID='your-google-client-id'
+export GOOGLE_CLIENT_SECRET='your-google-client-secret'
+```
+
+In Google Cloud, add `http://localhost:5173/_vitehub/connections/callback` as an authorized redirect URI. The origin must match the local URL you use in your browser.
 
 ::
 
 ::tutorial-step{title="Define a Connection"}
 ## Define a Connection
 
-The file name is the Connection name. `google()` adds the `openid` and `email` scopes to show the connected account. Register an OAuth client at the provider with the redirect URI `<origin>/_vitehub/connections/callback`.
+The file name registers the Connection as `google`. The Google provider adds `openid` and `email` scopes to identify the account during consent.
+
+Create a read-only Gmail Connection. `api` selects the typed methods available to callers. The access rule allows server reads and denies writes.
 
 ```ts [server/connections/google.ts]
 import { useServerEnv } from '#vitehub/env/server'
@@ -77,12 +77,10 @@ export default defineConnection({
     clientId: () => useServerEnv().google.clientId,
     clientSecret: () => useServerEnv().google.clientSecret.unseal(),
   }),
-  scopes: ['https://www.googleapis.com/auth/gmail.modify'],
+  scopes: ['https://www.googleapis.com/auth/gmail.readonly'],
+  api: { gmail: ['users.labels.list'] },
   access: {
-    server: { write: ['gmail.*'] },
-    agents: {
-      labeller: { write: ['gmail.messages.*', 'gmail.labels.list', 'gmail.drafts.create'], approve: true },
-    },
+    server: { read: true, write: false },
   },
 })
 ```
@@ -98,7 +96,9 @@ Open the Console, select **Connections**, and select **Connect**. You can also p
 pnpm vite dev
 ```
 
-Keep the server running. In another terminal, run:
+Keep the server running. In another terminal, run the connect command below.
+
+Open the connect URL printed by the first command in your browser. Sign in with the test account and accept the consent screen. Run the status command after the browser returns to the app.
 
 ```bash [commands/connect]
 pnpm vitehub connections connect google
@@ -111,12 +111,14 @@ The status should report a connected account.
 ::tutorial-step{title="Call the provider"}
 ## Call the provider
 
+The route calls Gmail as the connected account. `userId: 'me'` tells Gmail to use that account, and `{ event }` identifies the route in access checks and activity.
+
 ```ts [server/api/labels.get.ts]
 import { defineEventHandler } from 'h3'
 import { useConnection } from 'vite-hub/connections/server'
 
 export default defineEventHandler(async (event) => {
-  const connection = useConnection('google')
+  const connection = useConnection('google', { event })
   return await connection.gmail.users.labels.list({ userId: 'me' })
 })
 ```

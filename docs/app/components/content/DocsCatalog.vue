@@ -119,7 +119,7 @@ function offset(index: number) {
 <template>
   <div ref="catalog" class="not-prose vh-docs-catalog">
     <section v-for="row in rows" :key="row.category" class="vh-docs-catalog-row">
-      <h2 class="vh-docs-catalog-heading">{{ row.category }}</h2>
+      <h2 class="vh-docs-catalog-heading">{{ row.category === "Start" ? "Get started" : row.category }}</h2>
       <ul class="vh-docs-catalog-grid" role="list">
         <li v-for="(tile, index) in row.tiles" :key="tile.key" class="min-w-0">
           <NuxtLink :to="tile.to" class="vh-docs-catalog-tile group">

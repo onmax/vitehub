@@ -47,7 +47,7 @@ Custom H3 and Nuxt routes can import `getRuntimeContext` from
 `vite-hub/runtime/h3`. Call it once per invocation to normalize event bindings,
 host `waitUntil`, and memo storage. Without a real host lifetime API, await the
 returned `flushWaitUntil()` before responding. See the
-[Runtime Context guide](https://vitehub.dev/docs/getting-started/concepts/runtime-context).
+[Runtime Context guide](https://vitehub.dev/docs/reference/runtime-context).
 
 The public presets are `cloudflare`, `netlify`, `vercel`, `deno`, and `node`. Each resolves once to a host, runtime, Nitro output, packaging policy, and service adapters; do not also set `nitro.preset`, `NITRO_PRESET`, `SERVER_PRESET`, or `VITEHUB_HOSTING`.
 

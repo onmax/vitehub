@@ -127,7 +127,7 @@ export const sharedApi = {
 } as const;
 
 export const nuxtHubMigration = {
-  to: "/docs/frameworks-hosts/migrate-from-nuxthub",
+  to: "/docs/getting-started/migrate-from-nuxthub",
   imports: [
     { from: "@nuxthub/kv", to: "vite-hub/kv" },
     { from: "@nuxthub/blob", to: "vite-hub/blob" },

@@ -20,10 +20,13 @@ const pages = markdownFiles(uiDocsRoot).map((path) => ({
   source: readFileSync(path, "utf8"),
 }));
 const componentPages = pages.filter(
-  (page) => !["index.md", "installation.md", "get-started.md"].includes(page.name) && !page.name.startsWith("blocks/"),
+  (page) =>
+    !["index.md", "installation.md", "get-started.md", "built-for-vue.md"].includes(page.name) &&
+    !page.name.startsWith("blocks/"),
 );
 const blockPages = pages.filter((page) => page.name.startsWith("blocks/"));
-const previewNames = (source: string) => Array.from(source.matchAll(previewPattern), (match) => match[1]!);
+const previewNames = (source: string) =>
+  Array.from(source.matchAll(previewPattern), (match) => match[1]!);
 
 describe("UI documentation", () => {
   it("lists component pages in the overview through the generated gallery", () => {
@@ -31,7 +34,9 @@ describe("UI documentation", () => {
 
     expect(source).toContain("::ui-component-gallery");
     expect(source).not.toContain(":::u-page-card\n\n---");
-    expect(existsSync(resolve(docsRoot, "app/components/content/UiComponentGallery.vue"))).toBe(true);
+    expect(existsSync(resolve(docsRoot, "app/components/content/UiComponentGallery.vue"))).toBe(
+      true,
+    );
   });
 
   it("keeps the overview's text list in sync for raw Markdown readers", () => {
@@ -58,7 +63,10 @@ describe("UI documentation", () => {
       let previous = firstPreview;
       for (const section of sections) {
         const index = page.source.indexOf(`\n${section}\n`);
-        expect(index, `${page.name} should have ${section} after the previous section`).toBeGreaterThan(previous);
+        expect(
+          index,
+          `${page.name} should have ${section} after the previous section`,
+        ).toBeGreaterThan(previous);
         previous = index;
       }
     }
@@ -67,7 +75,9 @@ describe("UI documentation", () => {
   it("gives every block page a full-width, resettable preview", () => {
     expect(blockPages.length).toBeGreaterThanOrEqual(3);
     for (const page of blockPages) {
-      expect(page.source, page.name).toMatch(/::component-preview\{name="[A-Za-z]+Block" flush reset\}/);
+      expect(page.source, page.name).toMatch(
+        /::component-preview\{name="[A-Za-z]+Block" flush reset\}/,
+      );
       expect(page.source, page.name).toContain("navigation.group: Console");
     }
   });
@@ -75,7 +85,9 @@ describe("UI documentation", () => {
   it("backs every preview with one example file and leaves no example unused", () => {
     const used = new Set(pages.flatMap((page) => previewNames(page.source)));
     for (const name of used) {
-      expect(existsSync(resolve(examplesRoot, `${name}.vue`)), `${name}.vue should exist`).toBe(true);
+      expect(existsSync(resolve(examplesRoot, `${name}.vue`)), `${name}.vue should exist`).toBe(
+        true,
+      );
     }
     const examples = readdirSync(examplesRoot)
       .filter((file) => file.endsWith(".vue"))
@@ -119,26 +131,19 @@ describe("UI documentation", () => {
     expect(manifest).toContain('"@vite-hub/ui": "workspace:*"');
   });
 
-  it("uses the wide component layout without the desktop outline", () => {
+  it("gives component pages the shared article layout and page outline", () => {
     const page = readFileSync(resolve(docsRoot, "app/pages/docs/[...slug].vue"), "utf8");
+    const article = readFileSync(resolve(docsRoot, "app/components/DocsArticle.vue"), "utf8");
 
-    expect(page).toContain('root: "lg:!grid-cols-1 lg:!gap-0"');
-    expect(page).not.toContain("DocsAsideRight");
-    expect(page).not.toContain("UContentToc");
-    expect(page).toContain("<DocsTutorial v-else-if=\"page && isTutorialPage\"");
-    const tutorial = readFileSync(resolve(docsRoot, "app/components/DocsTutorial.vue"), "utf8");
-    expect(tutorial).toContain("grid-cols-[minmax(0,1fr)_minmax(20rem,42%)]");
-    expect(tutorial).toContain("grid-cols-[minmax(9rem,30%)_minmax(0,1fr)]");
-    expect(tutorial).not.toContain("minmax(0,48rem)");
-    expect(readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8")).toContain("max-width: none");
+    expect(page).toContain('<DocsArticle v-else-if="page" :page="page"');
+    expect(article).toContain("UContentToc");
+    expect(article).toContain('aria-label="Page outline"');
+    expect(article).toContain("min-w-0");
   });
 
   it("gives invocation previews fixed-height containing blocks", () => {
     const invocation = readFileSync(resolve(examplesRoot, "InvocationExample.vue"), "utf8");
-    const inspector = readFileSync(
-      resolve(examplesRoot, "InvocationInspectorExample.vue"),
-      "utf8",
-    );
+    const inspector = readFileSync(resolve(examplesRoot, "InvocationInspectorExample.vue"), "utf8");
 
     expect(invocation).toContain('<div class="h-[34rem]');
     expect(invocation).toContain('class="h-full"');
@@ -147,7 +152,10 @@ describe("UI documentation", () => {
   });
 
   it("switches sections with the primitive rail instead of a product selector", () => {
-    const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
+    const sidebarTop = readFileSync(
+      resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"),
+      "utf8",
+    );
     const sidebars = readFileSync(resolve(docsRoot, "app/components/DocsSidebars.vue"), "utf8");
 
     expect(sidebars).toContain("<DocsRail />");
@@ -157,7 +165,10 @@ describe("UI documentation", () => {
   });
 
   it("keeps the docs sidebar visible without a duplicate picker or search", () => {
-    const sidebarTop = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"), "utf8");
+    const sidebarTop = readFileSync(
+      resolve(docsRoot, "app/components/DocsAsideLeftTop.vue"),
+      "utf8",
+    );
     const sidebar = readFileSync(resolve(docsRoot, "app/components/DocsAsideLeftBody.vue"), "utf8");
     const layout = readFileSync(resolve(docsRoot, "app/layouts/docs.vue"), "utf8");
 
@@ -169,10 +180,10 @@ describe("UI documentation", () => {
   });
 
   it("lists the Vue ecosystem perspective in the getting started sidebar", () => {
-    const page = readFileSync(resolve(docsRoot, "content/docs/getting-started/built-for-vue.md"), "utf8");
+    const page = readFileSync(resolve(docsRoot, "content/docs/ui/built-for-vue.md"), "utf8");
 
     expect(page).not.toContain("navigation: false");
-    expect(page).toContain("navigation.title: Built for the Vue ecosystem");
-    expect(page).toContain("I am Maxi");
+    expect(page).toContain("navigation.title: Why Vue?");
+    expect(page).toContain("The server packages work independently of Vue.");
   });
 });
