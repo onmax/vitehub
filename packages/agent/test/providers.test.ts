@@ -17,7 +17,7 @@ import type { ConfigEnv, UserConfig } from "vite"
 import { describe, expect, it, vi } from "vitest"
 
 import { title } from "../src/capabilities.ts"
-import { http, telegram } from "../src/channels.ts"
+import { http, telegram, webChat } from "../src/channels.ts"
 import { defineAgent } from "../src/index.ts"
 import { agentChatApprovedTools } from "../src/internal/chat-approvals.ts"
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../src/internal/runtime-value.ts"
@@ -6118,10 +6118,14 @@ describe("server helpers", () => {
     expect(adapter.startTyping).not.toHaveBeenCalled()
   })
 
-  it.each((["drop", "parallel", "queue", "reject", "serial", "steer"] as const).flatMap(concurrency => [
-    { concurrency, replyToSubscribedThreads: true },
-    { concurrency, replyToSubscribedThreads: false },
-  ]))("opts in to human subscribed replies with $concurrency concurrency: $replyToSubscribedThreads", async ({ concurrency, replyToSubscribedThreads }) => {
+  it.each([
+    ...(["drop", "parallel", "queue", "reject", "serial", "steer"] as const).flatMap(concurrency => [
+      { concurrency, replyToSubscribedThreads: true, multipleChannels: false },
+      { concurrency, replyToSubscribedThreads: false, multipleChannels: false },
+    ]),
+    { concurrency: "serial" as const, replyToSubscribedThreads: true, multipleChannels: true },
+    { concurrency: "serial" as const, replyToSubscribedThreads: false, multipleChannels: true },
+  ])("opts in to human subscribed replies with $concurrency concurrency: $replyToSubscribedThreads, multiple Channels: $multipleChannels", async ({ concurrency, replyToSubscribedThreads, multipleChannels }) => {
     const stateDir = await mkdtemp(join(tmpdir(), "vitehub-subscribed-replies-"))
     const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
     const adapter = createTestChatAdapter({ isDM: false })
@@ -6130,15 +6134,19 @@ describe("server helpers", () => {
     const handler = createChannelWebhookRouteHandler(
       // SAFETY: This fixture omits host-only context that these routes do not inspect.
       defineAgent({
+        messages: {
+          concurrency,
+          state,
+          stream: false,
+          triggerHistory: "none",
+          replyToSubscribedThreads: multipleChannels ? !replyToSubscribedThreads : undefined,
+        },
         channels: {
+          ...multipleChannels ? { web: webChat() } : {},
           telegram: testTelegram(telegram, {
             adapter: () => adapter as never,
             messages: {
-              concurrency,
-              state,
               replyToSubscribedThreads,
-              stream: false,
-              triggerHistory: "none",
               filter: ({ deliveryKind }) => { deliveryKinds.push(deliveryKind); return true },
             },
           }),

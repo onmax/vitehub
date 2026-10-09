@@ -483,9 +483,9 @@ The command is a dry run by default. Apply a reviewed plan with `--apply` and th
 
 ## Control admission and delivery
 
-Adapter-backed Channels accept messages without a mention only in a direct conversation with the Agent. Group conversations, channels, and shared chats between people require an explicit Agent mention on every message. A previous mention or thread subscription does not grant permission to answer later unmentioned messages. The same rule applies to queued messages and steering an active invocation.
+Adapter-backed Channels accept messages without a mention in a direct conversation with the Agent. By default, group conversations, channels, and shared chats between people require an explicit Agent mention on every message. When `messages.replyToSubscribedThreads` is `true`, a current thread subscription also permits unmentioned human replies. Unmentioned messages from other bots or unsubscribed threads remain ignored. The same rule applies to queued messages and steering an active invocation.
 
-Use `messages.filter` to add application-specific restrictions before an invocation starts. Returning `false` posts no loading message or fallback error because the Agent never started. Accepted deliveries have `deliveryKind: 'direct'` or `deliveryKind: 'mention'`.
+Use `messages.filter` to add application-specific restrictions before an invocation starts. Returning `false` posts no loading message or fallback error because the Agent never started. Accepted deliveries have `deliveryKind: 'direct'`, `deliveryKind: 'mention'`, or `deliveryKind: 'subscribed'`. The `subscribed` kind identifies unmentioned human replies admitted by `messages.replyToSubscribedThreads`.
 
 Set `messages.meta` to a Standard Schema when application-owned Channel metadata must be validated before Capabilities, hooks, or the Driver run. The schema may normalize or add defaults, but its output must be an object. Set `metaRevision` to a stable value and change it whenever the schema contract changes so durable Agent Workflows can reuse parsed metadata across processes. Without a revision, durable execution validates the metadata again. Put both settings on shared Agent message settings or on one Channel to override them for that Channel.
 
