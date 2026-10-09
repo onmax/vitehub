@@ -11,7 +11,7 @@ import { createMemoryWorkspaceStore } from "../storage/memory.ts"
 import { registerWorkspaceStoreAlias } from "../storage/identity.ts"
 import { setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
 import { forwardWorkspaceStoreTarget, resolveWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
-import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, workspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
+import { createWorkspaceMetadataTarget, forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataMutationTarget, resolveWorkspaceMetadataTarget, setWorkspaceMetadata, attachWorkspaceMetadataTarget, type WorkspaceMetadataTarget } from "../storage/metadata-target.ts"
 import { copyWorkspaceSourceMetadata, normalizeWorkspaceSource, normalizeWorkspaceSources, workspaceSourceRequestDescriptorPath } from "./config.ts"
 import { isInternalWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
@@ -796,7 +796,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
       registerWorkspaceStoreAlias(guarded, syncStore)
       return guarded
     })
-    forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, writableWorkspace)
+    attachWorkspaceMetadataTarget(writableWorkspace, () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name))
     forwardWorkspaceStoreTarget(workspace, writableWorkspace)
 
     return {
@@ -810,7 +810,7 @@ export async function createWorkspaceSourceResolutionFacade<Name extends Workspa
     history,
     tools,
   }
-  forwardWorkspaceMetadataTarget({ [workspaceMetadataTarget]: () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name) }, readonlyWorkspace)
+  attachWorkspaceMetadataTarget(readonlyWorkspace, () => createWorkspaceMetadataTarget(overlayStore, resolvedDefinition.name))
   forwardWorkspaceStoreTarget(workspace, readonlyWorkspace)
   const starter = workspaceSessionStarter(workspace)
   if (starter) {

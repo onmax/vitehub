@@ -1,14 +1,27 @@
 import { createClient } from "@libsql/client";
 import { createLibsqlAgentInvocationStore } from "../src/invocations/sqlite.ts";
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/invocations.ts";
-import { describe, expect, it } from "vitest";
-import { babysitterModelAdmission, createBabysitterAdmission, babysitterAdmissionDecision, babysitterBudgetWindows, readBabysitterAdmissionLimits, resolveBabysitterAdmissionLimits } from "../src/presets/babysitter/admission.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { babysitterModelAdmission, createBabysitterAdmission, babysitterAdmissionDecision, babysitterBudgetWindows, resolveBabysitterAdmissionLimits } from "../src/presets/babysitter/admission.ts";
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("Babysitter admission", () => {
-  it("uses bounded defaults and accepts a healthy host", () => {
-    const limits = readBabysitterAdmissionLimits({});
-    expect(limits.hourlyInputTokens).toBe(15e6);
-    expect(limits.dailyInputTokens).toBe(200e6);
+  it("keeps undocumented host environment controls out of the generic policy", async () => {
+    for (const name of ["BABYSITTER_HOURLY_INPUT_TOKENS", "BABYSITTER_DAILY_INPUT_TOKENS", "BABYSITTER_PROXY_MAX_WEEKLY_PERCENT"]) vi.stubEnv(name, "0");
+    vi.stubEnv("BABYSITTER_MIN_FREE_TMP_MB", "999999999999");
+    vi.stubEnv("BABYSITTER_PROXY_STATUS_FILE", "/nonexistent/provider-status.json");
+    const limits = resolveBabysitterAdmissionLimits();
+    expect(limits).toEqual({ minFreeTmpBytes: 4096 * 1024 * 1024, hourlyInputTokens: undefined, dailyInputTokens: undefined, paused: false });
+    const result = await createBabysitterAdmission({ limits })();
+    expect(result.accepting).toBe(true);
+    expect(result.state.errors).toBeUndefined();
+    expect(result.state).not.toHaveProperty("proxy");
+  });
+  it("defaults to unlimited tokens and accepts a healthy host", () => {
+    const limits = resolveBabysitterAdmissionLimits();
+    expect(limits.hourlyInputTokens).toBeUndefined();
+    expect(limits.dailyInputTokens).toBeUndefined();
     expect(babysitterAdmissionDecision({ windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp", freeTmpBytes: 64 * 2 ** 30 }, limits)).toEqual({ accepting: true });
   });
 
@@ -22,7 +35,7 @@ describe("Babysitter admission", () => {
   });
 
   it("keeps callback fields from overriding scheduler authority", async () => {
-    const limits = { ...resolveBabysitterAdmissionLimits(), proxyStatusFile: "/nonexistent/provider-status.json" };
+    const limits = resolveBabysitterAdmissionLimits();
     const check = createBabysitterAdmission({
       limits,
       check: () => ({ reason: "provider-quota", detail: "Quota exhausted", accepting: true, hostOnly: false }),
@@ -37,7 +50,7 @@ describe("Babysitter admission", () => {
   });
 
   it.each([null, {}, { reason: "" }, { reason: "quota", detail: 7 }, { reason: "quota", retryAt: Number.NaN }])("reports malformed custom pause %j", async pause => {
-    const limits = { ...resolveBabysitterAdmissionLimits(), proxyStatusFile: "/nonexistent/provider-status.json" };
+    const limits = resolveBabysitterAdmissionLimits();
     const check = createBabysitterAdmission({ limits,
       // SAFETY: Deliberately test callback returns from JavaScript consumers.
       check: () => pause as never,
@@ -49,14 +62,14 @@ describe("Babysitter admission", () => {
   });
 
   it("parks model passes when temporary storage is low", () => {
-    const limits = readBabysitterAdmissionLimits({});
+    const limits = resolveBabysitterAdmissionLimits();
     const result = babysitterAdmissionDecision({ windows: babysitterBudgetWindows(Date.now()), tmpDir: "/scratch", freeTmpBytes: 3 * 2 ** 30 }, limits);
     expect(result).toMatchObject({ accepting: false, hostOnly: true, reason: "tmp-space-low" });
   });
 
   it("pauses at the hourly budget until the next hour", () => {
     const now = new Date(2026, 9, 5, 19, 13).getTime();
-    const limits = readBabysitterAdmissionLimits({ BABYSITTER_HOURLY_INPUT_TOKENS: "1" });
+    const limits = resolveBabysitterAdmissionLimits({ inputTokens: { hourly: 1 } });
     const result = babysitterAdmissionDecision({ windows: babysitterBudgetWindows(now), tmpDir: "/tmp", hourlyInputTokens: 1 }, limits);
     expect(result).toMatchObject({ accepting: false, reason: "token-budget-hourly", retryAt: new Date(2026, 9, 5, 20).getTime() });
   });
@@ -72,7 +85,7 @@ it("reads paginated usage from the assigned journal", async () => {
       { name: "usage", type: "run", sequence: 2, timestamp, attributes: { "usage.inputTokens": 3 } },
     ] });
   }
-  const check = createBabysitterAdmission({ invocations: defineAgentInvocations({ store }), limits: readBabysitterAdmissionLimits({ BABYSITTER_MIN_FREE_TMP_MB: "0", BABYSITTER_HOURLY_INPUT_TOKENS: "300" }) });
+  const check = createBabysitterAdmission({ invocations: defineAgentInvocations({ store }), limits: resolveBabysitterAdmissionLimits({ minFreeTmpMb: false, inputTokens: { hourly: 300 } }) });
   expect(await check(now)).toMatchObject({ accepting: false, reason: "token-budget-hourly", state: { hourlyInputTokens: 303, dailyInputTokens: 303 } });
 });
 
@@ -90,7 +103,7 @@ it("includes live SQLite observations and exposes retained-journal accounting af
   const now = Date.now();
   const timestamp = new Date(now).toISOString();
   const invocations = defineAgentInvocations({ store });
-  const limits = readBabysitterAdmissionLimits({ BABYSITTER_MIN_FREE_TMP_MB: "0", BABYSITTER_HOURLY_INPUT_TOKENS: "5" });
+  const limits = resolveBabysitterAdmissionLimits({ minFreeTmpMb: false, inputTokens: { hourly: 5 } });
   try {
     await store.create({ id: "live", traceId: "live", createdAt: timestamp, updatedAt: timestamp, status: "running", observations: [] });
     await store.update("live", { timestamp, appendObservation: { name: "usage", type: "run", timestamp, attributes: { "usage.inputTokens": 6, "vitehub.observation.id": "usage-1" } } });

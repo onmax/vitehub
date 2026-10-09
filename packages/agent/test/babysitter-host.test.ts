@@ -40,6 +40,7 @@ it("normalizes escaped PEM newlines from host environment secrets", async () => 
   const pem = privateKey.export({ format: "pem", type: "pkcs1" }).toString();
   vi.stubEnv("GITHUB_APP_ID", "123");
   vi.stubEnv("GITHUB_APP_INSTALLATION_ID", "456");
+  vi.stubEnv("GITHUB_APP_OWNER", "acme");
   vi.stubEnv("GITHUB_APP_PRIVATE_KEY", pem.replaceAll("\n", "\\n"));
 
   await expect(readGitHubAppEnvironment()).resolves.toMatchObject({ appId: 123, installationId: 456, privateKey: pem });

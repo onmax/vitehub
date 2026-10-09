@@ -74,6 +74,8 @@ export default defineAgent({
 | `paused` | `false` | Stop every claim, including direct merges. Use it for a smoke boot or maintenance. |
 | `check` | None | Extra check before each claim, for example a provider quota. Return `{ reason, detail, retryAt }` to stop model passes, or `undefined` to continue. When it throws, the error is shown in health and passes continue. |
 
+The preset reads no token-budget or provider-quota environment variables and no provider status files. Applications that used `BABYSITTER_HOURLY_INPUT_TOKENS`, `BABYSITTER_DAILY_INPUT_TOKENS` or provider-specific quota guards must map them into these options and `admission.check`.
+
 The health route shows the decision in `admission` and the token use, the limits and the `check` result in `budget`.
 
 ## Bound local verification
@@ -120,8 +122,12 @@ Set these variables on the host, or declare them in `env.server.github`:
 | `GITHUB_APP_ID` | The App ID. |
 | `GITHUB_APP_PRIVATE_KEY` or `GITHUB_APP_PRIVATE_KEY_PATH` | The App private key. |
 | `GITHUB_WEBHOOK_SECRET` | The webhook secret. Deliveries without a valid signature are rejected. |
-| `GITHUB_APP_INSTALLATION_ID` | Optional. Without it, each repository uses its own installation. |
+| `GITHUB_APP_INSTALLATION_ID` | Optional fixed installation. Requires `GITHUB_APP_OWNER`; it applies only to that owner. |
+| `GITHUB_APP_OWNER` | Repository owner for the fixed installation, such as `vite-hub`. Server Env field `env.server.github.appOwner`. |
+| `GITHUB_APP_INSTALLATIONS` | Optional JSON object mapping repository owners to installation IDs. Server Env field `env.server.github.appInstallations`. |
 | `VITEHUB_AGENT_STATE_URL` | Agent State, for example `file:/var/lib/babysitter/state.sqlite`. Production builds require it. |
+
+Declare the fixed ID as `env.server.github.appInstallationId` together with `appOwner`. Without an owner, the fixed ID is ignored. Owners without a configured installation use GitHub App discovery, which requires access to the App API.
 
 The Babysitter commits as the App's bot. Workers call `commitRepair` with a message and explicit file paths because the provider sandbox protects Git metadata. GitHub tokens stay on the host; the worker reaches GitHub only through tools that are bound to its pull request. Host dependency installation uses the frozen lockfile before the provider starts. Installation failures wait durably and retry after five minutes.
 
@@ -160,4 +166,4 @@ When the process temporary directory is inside the service's working directory, 
 
 ### Token admission estimates
 
-`BABYSITTER_HOURLY_INPUT_TOKENS` and `BABYSITTER_DAILY_INPUT_TOKENS` are best-effort thresholds over retained Invocation journal usage, not hard host budgets or billing caps. Health reports identify this accounting as `best-effort-retained-journal`. The host samples at most once per minute and caches the largest input-token observation per Invocation, assigned to its latest update time. Active observations are included through the journal API. Concurrent writes during pagination can be missed until a later scan; retention and host restarts can omit usage permanently. The standalone journal retains 5,000 terminal records. Read errors appear in health diagnostics and do not block admission. Use provider-side spending limits when a hard cap is required.
+`admission.inputTokens.hourly` and `admission.inputTokens.daily` are best-effort thresholds over retained Invocation journal usage, not hard host budgets or billing caps. Health reports identify this accounting as `best-effort-retained-journal`. The host samples at most once per minute and caches the largest input-token observation per Invocation, assigned to its latest update time. Active observations are included through the journal API. Concurrent writes during pagination can be missed until a later scan; retention and host restarts can omit usage permanently. The standalone journal retains 5,000 terminal records. Read errors appear in health diagnostics and do not block admission. Use provider-side spending limits when a hard cap is required.

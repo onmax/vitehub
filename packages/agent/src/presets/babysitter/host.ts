@@ -80,6 +80,18 @@ export async function readGitHubAppEnvironment(context: Pick<AgentCallbackContex
   }
   const app: GitHubAppEnvironment = { appId, privateKey };
   if (installation) app.installationId = Number(installation);
+  app.owner = envString(env.appOwner)?.toLowerCase();
+  const configuredInstallations = envString(env.appInstallations);
+  if (configuredInstallations) {
+    const mappings: unknown = JSON.parse(configuredInstallations);
+    if (!isRuntimeRecord(mappings) || Array.isArray(mappings)) throw new Error("GITHUB_APP_INSTALLATIONS must be an owner-to-installation object.");
+    app.installations = Object.fromEntries(Object.entries(mappings).map(([owner, id]) => {
+      const installationId = Number(id);
+      if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error(`Invalid GitHub installation for ${owner}.`);
+      return [owner.toLowerCase(), installationId];
+    }));
+  }
+  if (!app.owner) delete app.installationId;
   return app;
 }
 
@@ -143,7 +155,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   });
   const admission = createBabysitterAdmission({
     invocations: host.invocations,
-    limits: resolveBabysitterAdmissionLimits(agent.options.admission, agent.options.driver),
+    limits: resolveBabysitterAdmissionLimits(agent.options.admission),
     check: agent.options.admission?.check,
   });
   // Workers share the assigned journal and keep provider sessions in the host directory.
@@ -198,7 +210,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     async health() {
       const health = await host.health();
       const queue = await inbox.summary();
-      const guard = await admission();
+      const guard = await admission.health();
       const lastSkip = await inbox.meta("admission-skipped");
       return { ...health, release: agent.version, concurrency: agent.options.concurrency, repositories, queue: {
         working: queue.filter(item => item.status === "working").length,
@@ -214,10 +226,10 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
         lastSkip,
       }, budget: {
         accounting: guard.accounting,
+        observedAt: new Date(guard.observedAt).toISOString(),
         hourly: { inputTokens: guard.state.hourlyInputTokens, limit: guard.limits.hourlyInputTokens, resetsAt: guard.state.windows.hourEnd },
         daily: { inputTokens: guard.state.dailyInputTokens, limit: guard.limits.dailyInputTokens, resetsAt: guard.state.windows.dayEnd },
         tmp: { dir: guard.state.tmpDir, freeBytes: guard.state.freeTmpBytes, minFreeBytes: guard.limits.minFreeTmpBytes },
-        proxy: { provider: guard.limits.proxyProvider, maxWeeklyPercent: guard.limits.proxyMaxWeeklyPercent, ...guard.state.proxy },
         pause: guard.state.pause,
         errors: guard.state.errors,
       } };
