@@ -303,7 +303,7 @@ export function defineCollection<
   const TQuery extends object,
   TItem = TSourceItem,
 >(
-  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput>,
+  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput> | ProviderCollectionLoader<TSourceItem, TQuery>,
   definition: (CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> | ProviderCollectionOptions<TSourceItem, TQuery, TItem>) & {
     transform?: (item: NoInfer<TSourceItem>) => Promise<TItem> | TItem
   },
@@ -315,8 +315,8 @@ export function defineCollection<
   if (defaultLimit > maxLimit) {
     throw sourceErrorDiagnostics.SOURCE_R0008({ message: "[vitehub] Collection defaultLimit cannot exceed maxLimit." })
   }
-  const provider = "pagination" in definition && definition.pagination === "provider"
-  const cursorCodec = provider ? undefined : createCollectionCursorCodec(definition.cursorSchema)
+  const cursorDefinition = "cursorSchema" in definition ? definition : undefined
+  const cursorCodec = cursorDefinition ? createCollectionCursorCodec(cursorDefinition.cursorSchema) : undefined
   const authorize = definition.authorize
   if (authorize !== undefined && authorize !== true && !(authorize instanceof Function)) {
     throw sourceErrorDiagnostics.SOURCE_R0024({ message: "[vitehub] Collection authorize must be true or a function." })
@@ -325,13 +325,15 @@ export function defineCollection<
   return {
     ...(authorize ? { authorize } : {}),
     ...(definition.route === false ? { route: false as const } : {}),
-    ...(definition.get ? { get: async (key: string, options?: { signal?: AbortSignal }) => {
+    ...(definition.get ? { get: async (key: string, options?: { signal?: AbortSignal }): Promise<TItem | null | undefined> => {
       const item = await definition.get!(key, options ?? {})
-      return definition.transform && item !== null && item !== undefined ? await definition.transform(item as TSourceItem) : item
+      if (item === null || item === undefined) return item
+      // SAFETY: Without a transform the public overload fixes TItem to TSourceItem.
+      return definition.transform ? await definition.transform(item) as TItem : item as TItem
     } } : {}),
     async page(request) {
       const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
-      if (provider) {
+      if (!cursorDefinition || !cursorCodec) {
         const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({ cursor: request.cursor, limit, query: request.query, signal: request.signal })
         if (!result || !Array.isArray(result.items) || (result.nextCursor !== null && typeof result.nextCursor !== "string")) {
           throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Provider Collection load() must return items and nextCursor." })
@@ -339,7 +341,7 @@ export function defineCollection<
         const transformedItems = definition.transform ? await Promise.all(result.items.map(definition.transform)) : result.items
         return { items: transformedItems as TItem[], nextCursor: result.nextCursor }
       }
-      const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: await cursorCodec!.decode(request.cursor), limit: limit + 1, query: request.query, signal: request.signal })
+      const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: await cursorCodec.decode(request.cursor), limit: limit + 1, query: request.query, signal: request.signal })
       if (!Array.isArray(sourceItems)) {
         throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
       }
@@ -347,7 +349,7 @@ export function defineCollection<
       const pageItems = sourceItems.slice(0, limit)
       const nextCursor =
         hasMore && pageItems.length
-          ? cursorCodec.encode(definition.cursor(pageItems[pageItems.length - 1]!))
+          ? cursorCodec.encode(cursorDefinition.cursor(pageItems[pageItems.length - 1]!))
           : null
       const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : pageItems
       // SAFETY: The overload without transform fixes TItem to TSourceItem; the other branch ran the typed transform.

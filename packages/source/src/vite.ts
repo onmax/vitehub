@@ -10,6 +10,7 @@ import {
 } from "@vite-hub/internal/build/vite"
 import { createNitroServerKit } from "@vite-hub/internal/nitro-kit"
 import { findExportNames } from "mlly"
+import { createSourceScanner } from "@vite-hub/internal/source-scanner"
 
 import type { Plugin } from "vite"
 import { encodeCollectionRouteSegment } from "./internal/collection-route.ts"
@@ -90,6 +91,18 @@ interface SourcePluginConfig {
 
 interface GeneratedSourceArtifactsSnapshot {
   files: Map<string, string>
+}
+
+function collectionRouteDisabled(source: string, exportName: string, file: string): boolean {
+  const scanner = createSourceScanner(file)
+  const masked = scanner.maskSourceLiterals(source)
+  const escapedExportName = exportName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const declaration = new RegExp(`\\b(?:const|let|var)\\s+${escapedExportName}\\s*=\\s*$`)
+  const call = scanner.findIdentifierCalls(source, "defineCollection").find(candidate =>
+    declaration.test(masked.slice(0, candidate.start)))
+  if (!call) return false
+  const options = call.arguments[1] ?? call.arguments[0]
+  return options !== undefined && scanner.readObjectProperty(options, "route") === "false"
 }
 
 async function snapshotDirectoryFiles(directory: string, files: Map<string, string>): Promise<void> {
@@ -258,7 +271,7 @@ async function discoverCollections(options: SourceGenerationOptions): Promise<Di
         throw sourceErrorDiagnostics.SOURCE_B0004({ message: `[vitehub] Collection file ${JSON.stringify(relative(options.projectRoot, file))} must export a Collection named ${JSON.stringify(exportName)} to match its filename.` })
       }
       const source = await readFile(file, "utf8")
-      return { exportName, file, name, route: !/\broute\s*:\s*false\b/.test(source) }
+      return { exportName, file, name, route: !collectionRouteDisabled(source, exportName, file) }
     }))
   }))).flat().sort((left, right) => left.name.localeCompare(right.name))
 
