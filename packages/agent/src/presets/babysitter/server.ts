@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { fileURLToPath } from "node:url";
+import { agentBuildRevision } from "../../internal/build-revision.ts";
 import { GitHubDependencyConflictError } from "../../server/github-install-inputs.ts";
 import * as v from "valibot";
 import { execFile } from "node:child_process";
@@ -153,9 +155,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const statusChannel = verifiedHostIdentity ? github.channel({ activity: true, pullRequest: { workspace: false } }) : undefined;
   const statusRecovery = createBabysitterStatusRecovery({
     inbox: pullRequestInbox,
-    // The package build stamps its source identity; direct source tests have no build define.
+    // Built packages carry this fingerprint; direct source hosts compute the same inputs.
     // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Guard a compile-time global that is absent when running package sources.
-    revision: baseAgent.version ?? (typeof __VITEHUB_AGENT_BUILD_REVISION__ === "undefined" ? "source" : __VITEHUB_AGENT_BUILD_REVISION__),
+    revision: baseAgent.version ?? (typeof __VITEHUB_AGENT_BUILD_REVISION__ === "undefined" ? agentBuildRevision(fileURLToPath(new URL("../../../", import.meta.url))) : __VITEHUB_AGENT_BUILD_REVISION__),
     publish: statusChannel ? (pending, abortSignal) => publishAgentActivity({ name: `${options.agentName ?? baseAgent.name ?? "babysitter"}-worker`, channels: { github: statusChannel } }, {
       channelId: "github", target: { repository: pending.repository, issue: pending.number }, activity: pending.activity, abortSignal,
     }) : undefined,

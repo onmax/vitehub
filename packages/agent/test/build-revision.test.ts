@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentBuildRevision } from "../build/revision.ts";
+import { agentBuildRevision } from "../src/internal/build-revision.ts";
 
 test("the package build revision tracks source changes with an unchanged manifest version", async t => {
   const root = await mkdtemp(join(tmpdir(), "agent-build-revision-"));

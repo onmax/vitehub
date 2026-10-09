@@ -1,6 +1,6 @@
 import { defineConfig } from "vite-plus";
 import { fileURLToPath } from "node:url";
-import { agentBuildRevision } from "./build/revision.ts";
+import { agentBuildRevision } from "./src/internal/build-revision.ts";
 
 // These entries resolve only through the "#vitehub/agent/provider-agent" package import, so they are not public exports.
 const privateEntryExports = new Set(["./provider-agent", "./runtime/provider-agent-worker"]);

@@ -1,3 +1,4 @@
+import * as buildRevisions from "../src/internal/build-revision.ts";
 import { createCheckWait } from "../src/presets/babysitter/wait.ts";
 import { babysitterBudgetWindows, readBabysitterAdmissionLimits, type BabysitterAdmissionResult } from "../src/presets/babysitter/admission.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
@@ -425,6 +426,30 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
 }
 
 describe("Babysitter preset runtime", () => {
+  it("retries a direct-source worker blocker only when its source revision changes", async () => {
+    vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", undefined);
+    const revision = vi.spyOn(buildRevisions, "agentBuildRevision").mockReturnValue("source-first");
+    const result = { wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
+    const first = await fixture(false, false, { result });
+    const inboxPath = join(first.checkout, "..", "inbox.sqlite");
+    const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal",
+      limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test" });
+    try {
+      await first.reconcile();
+      await first.runtime.inbox.close();
+      const unchanged = await fixture(false, false, { inboxPath, admission });
+      try { await unchanged.reconcile(); expect((await unchanged.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting"); }
+      finally { await unchanged.runtime.inbox.close(); }
+      revision.mockReturnValue("source-second");
+      const upgraded = await fixture(false, false, { inboxPath, admission });
+      try {
+        await upgraded.reconcile();
+        expect((await upgraded.runtime.inbox.get("acme/app", 12))?.status).toBe("ready");
+        expect(upgraded.passes).toHaveLength(0);
+      } finally { await upgraded.runtime.inbox.close(); }
+    } finally { await first.runtime.inbox.close(); revision.mockRestore(); vi.unstubAllGlobals(); }
+  });
+
   it("retries an unversioned Agent worker blocker once per package build", async () => {
     const result = { wait: { kind: "external", reason: "Provide writable .git metadata." }, text: "Cannot commit because .git is read-only." };
     vi.stubGlobal("__VITEHUB_AGENT_BUILD_REVISION__", "build-first");
