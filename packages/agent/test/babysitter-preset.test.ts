@@ -1905,6 +1905,37 @@ describe("Babysitter preset runtime", () => {
     } finally { await f.runtime.inbox.close(); }
   });
 
+  it.each([false, true])("records a verified thread resolution without a webhook, already resolved=%s", async alreadyResolved => {
+    const head = "a".repeat(40);
+    const f = await fixture(false, false, { result: { disposition: "park", text: "Reviewed this head.", reviewedHead: head,
+      wait: { kind: "checks", headSha: head } } });
+    f.choose("resolveReviewThread", { id: "PRRT_1" });
+    let resolved = alreadyResolved;
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const query = args.join(" ");
+      if (query.includes("reviewThreads")) return { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        nodes: [{ id: "PRRT_1", isResolved: false, comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } } }), stderr: "" };
+      if (query.includes("node(id:")) return { stdout: JSON.stringify({ data: { node: { pullRequest: { id: "PR_12" }, isResolved: resolved } } }), stderr: "" };
+      if (query.includes("resolveReviewThread(input:")) {
+        resolved = true;
+        return { stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: "PRRT_1" } } } }), stderr: "" };
+      }
+      return await command(args, request);
+    });
+    try {
+      await f.reconcile();
+      const current = await f.runtime.inbox.get("acme/app", 12);
+      expect(current?.threads[0]?.isResolved).toBe(true);
+      expect(current?.status).toBe("waiting");
+      expect(current?.lastResult).toBe("Reviewed this head.");
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
   it.each([false, true])("keeps owned thread resolutions while fencing external reopens=%s", async reopen => {
     const f = await fixture(false, false, { operationCount: 2, operationInputs: [{ id: "PRRT_1" }, { id: "PRRT_2" }],
       ...(reopen ? { expectedOperationErrorAt: 1 } : {}) });
