@@ -82,7 +82,7 @@ export default defineAgent({
 
 ## Typed questions
 
-`driver.ask` answers typed questions with TypeSafe Jev. Questions are sent in deterministic sequential batches when their combined request would exceed the provider budget; an empty question map skips Jev. Shared state and each question must serialize below 30,000 bytes, otherwise the Invocation fails. The answers are the Invocation output, and `runAgent()` infers their type from the questions:
+`driver.ask` answers typed questions with TypeSafe Jev. Questions are sent in deterministic sequential batches when their combined request would exceed the provider budget; an empty question map skips Jev. For each question, the serialized shared state plus that question and request overhead must fit below 30,000 bytes, otherwise the Invocation fails. The answers are the Invocation output, and `runAgent()` infers their type from the questions:
 
 ```ts
 // server/agents/labeller.ts

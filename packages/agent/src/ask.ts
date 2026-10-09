@@ -138,7 +138,7 @@ function each<T, Q extends AskQuestion>(
   const questions: Record<string, Q> = Object.create(null)
   for (const item of items) {
     const key = options.key(item)
-    if (typeof key !== "string" || key.trim() === "") {
+    if (!key.trim()) {
       throw new TypeError("ask.each keys must be non-empty strings")
     }
     if (Object.hasOwn(questions, key)) {
@@ -151,7 +151,7 @@ function each<T, Q extends AskQuestion>(
 
 /**
  * Builds TypeSafe Jev questions for `defineAgent({ driver: { ask } })`.
- * Each builder returns a plain question object. The Driver sends questions in deterministic sequential batches when needed; shared state and each question must serialize below 30,000 bytes.
+ * Each builder returns a plain question object. The Driver sends questions in deterministic sequential batches when needed; the combined serialized shared state and each question must fit below 30,000 bytes, including request overhead.
  */
 export const ask: {
   chance: typeof chance

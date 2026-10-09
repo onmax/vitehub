@@ -105,8 +105,8 @@ function validateQuestionCriteria(name: string, question: AskQuestion): void {
 }
 
 function hasValidChoiceAnswer(question: Extract<AskQuestion, { type: "choice" }>, answer: unknown): answer is Record<string, unknown> {
-  if (!isRuntimeRecord(answer) || answer.type !== "choice" || typeof answer.choice !== "string" || !isRuntimeRecord(answer.probabilities)) return false
-  if (typeof answer.confidence !== "number" || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) return false
+  if (!isRuntimeRecord(answer) || answer.type !== "choice" || !hasRuntimeType(answer.choice, "string") || !isRuntimeRecord(answer.probabilities)) return false
+  if (!hasRuntimeType(answer.confidence, "number") || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) return false
   if (!isRuntimeRecord(question.criteria) || !Object.hasOwn(question.criteria, answer.choice)) return false
   const probabilities = answer.probabilities
   const labels = Object.keys(question.criteria)
@@ -114,7 +114,7 @@ function hasValidChoiceAnswer(question: Extract<AskQuestion, { type: "choice" }>
   if (labels.length !== probabilityLabels.length || probabilityLabels.some(label => !Object.hasOwn(question.criteria, label))) return false
   const total = labels.reduce((sum, label) => {
     const probability = probabilities[label]
-    return sum + (typeof probability === "number" && Number.isFinite(probability) && probability >= 0 && probability <= 1 ? probability : Number.NaN)
+    return sum + (hasRuntimeType(probability, "number") && Number.isFinite(probability) && probability >= 0 && probability <= 1 ? probability : Number.NaN)
   }, 0)
   return Number.isFinite(total) && Math.abs(total - 1) <= 1e-6
 }
@@ -184,7 +184,10 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
     if (!isRuntimeRecord(question)) throw invalidQuestion(name)
     return [name, toAdvocaatQuestion(name, question)]
   }))
-  if (!Object.keys(wire).length) return {} as AskAnswers<Q>
+  if (!Object.keys(wire).length) {
+    // SAFETY: An empty validated question map has no answers and matches AskAnswers<Q>.
+    return {} as AskAnswers<Q>
+  }
   const entry = toEntry(state)
   const batches = jevQuestionBatches(entry, wire)
   const advocaat = await loadAdvocaat()
