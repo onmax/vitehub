@@ -60,6 +60,31 @@ describe("vitehub/no-server-imports-in-client", () => {
     }, "nuxt")).toEqual(["VHUB0002", "VHUB0002"])
   })
 
+  it("checks the generated auth server alias in client files", async () => {
+    expect(await codes(noServerImportsInClient, {
+      "src/App.vue": '<script setup>import auth from "#vitehub/auth/server"</script>',
+      "server/api/auth.ts": 'export { default } from "#vitehub/auth/server"',
+    })).toEqual(["VHUB0002"])
+  })
+
+  it("accepts inline type specifiers but reports mixed and side-effect declarations", async () => {
+    expect(await codes(noServerImportsInClient, {
+      "app/utils/types.ts": [
+        'import { type Email } from "vite-hub/email/server"',
+        'export { type Email as Mail } from "vite-hub/email/server"',
+        'export type * from "vite-hub/email/server"',
+      ].join("\n"),
+    }, "nuxt")).toEqual([])
+    for (const source of [
+      'import { type Email, email } from "vite-hub/email/server"',
+      'export { type Email, email } from "vite-hub/email/server"',
+      'import "vite-hub/email/server"',
+      'export * from "vite-hub/email/server"',
+    ]) {
+      expect(await codes(noServerImportsInClient, { "app/utils/mail.ts": source }, "nuxt")).toEqual(["VHUB0002"])
+    }
+  })
+
   it("accepts server files, type imports, and client paths", async () => {
     expect(await codes(noServerImportsInClient, {
       "server/api/env.get.ts": "import { useServerEnv } from \"#vitehub/env/server\"\nexport default () => useServerEnv()\n",
@@ -92,6 +117,46 @@ describe("vitehub/destructure-storage-results", () => {
     expect(await codes(destructureStorageResults, {
       "server/api/settings.get.ts": "export default async () => {\n  const settings = await kv.get(\"settings\")\n  return settings\n}\n",
     }, "nuxt")).toEqual(["VHUB0003"])
+  })
+
+  it.each([
+    'async function parameter(kv) { const value = await kv.get("x") }',
+    'const arrow = async ({ kv }, ...blob) => { const value = await kv.get("x"); const other = await blob.get("x") }',
+    'async function caught() { try {} catch (kv) { const value = await kv.get("x") } }',
+    'async function destructured() { const { nested: { kv }, blob = {} } = local; const value = await kv.get("x"); const other = await blob.get("x") }',
+    'async function array() { const [kv] = local; const value = await kv.get("x") }',
+    'async function hoisted() { const value = await kv.get("x"); if (true) { var kv = local } }',
+    'async function declared() { const value = await kv.get("x"); function kv() {} }',
+    'async function classBinding() { class kv {}; const value = await kv.get("x") }',
+    'async function later() { const value = await kv.get("x"); const kv = local }',
+    'async function loop() { for (const kv of locals) { const value = await kv.get("x") } }',
+  ])("limits Nuxt auto-import shadowing to the binding's scope: %s", async (source) => {
+    expect(await codes(destructureStorageResults, {
+      "server/api/scopes.ts": source,
+    }, "nuxt")).toEqual([])
+    expect(await codes(destructureStorageResults, {
+      "server/api/scopes.ts": [
+        source,
+        'async function sibling() { const siblingResult = await kv.get("x") }',
+        'const outerResult = await blob.get("x")',
+      ].join("\n"),
+    }, "nuxt")).toEqual(["VHUB0003", "VHUB0003"])
+  })
+
+  it("resolves imported helpers and store handles by binding, not by name", async () => {
+    expect(await codes(destructureStorageResults, {
+      "server/api/imports.ts": [
+        'import { kv as cache } from "vite-hub/kv"',
+        'const store = cache.store("cache")',
+        'async function shadow(cache, store) { const a = await cache.get("x"); const b = await store.get("x") }',
+        'async function local() { const cache = localCache; const store = cache.store("local"); const value = await store.get("x") }',
+        'async function nested() { const inner = store.store("nested"); const nestedResult = await inner.get("x") }',
+        'async function scoped() { const scopedStore = cache.store("scoped"); const scopedResult = await scopedStore.get("x") }',
+        'async function unrelated(scopedStore) { const value = await scopedStore.get("x") }',
+        'const a = await cache.get("x")',
+        'const b = await store.get("x")',
+      ].join("\n"),
+    })).toEqual(Array(4).fill("VHUB0003"))
   })
 
   it("accepts destructured, indexed, ignored, and unrelated results", async () => {

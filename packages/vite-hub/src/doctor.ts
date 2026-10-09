@@ -19,6 +19,10 @@ const moduleSourceSchema = v.object({
   source: v.object({ value: v.string() }),
   importKind: v.optional(v.string()),
   exportKind: v.optional(v.string()),
+  specifiers: v.optional(v.array(v.object({
+    importKind: v.optional(v.string()),
+    exportKind: v.optional(v.string()),
+  }))),
 })
 const importDeclarationSchema = v.object({
   type: v.literal("ImportDeclaration"),
@@ -63,9 +67,11 @@ const numericIndexSchema = v.object({
 
 function moduleSpecifier(node: unknown) {
   if (!v.is(moduleSourceSchema, node)) return
+  const specifiers = node.specifiers ?? []
   return {
     specifier: node.source.value,
-    typeOnly: node.importKind === "type" || node.exportKind === "type",
+    typeOnly: node.importKind === "type" || node.exportKind === "type"
+      || (specifiers.length > 0 && specifiers.every(specifier => specifier.importKind === "type" || specifier.exportKind === "type")),
   }
 }
 
@@ -106,6 +112,7 @@ export const noInternalImports: DoctorRule = createRule({
 
 const serverOnlyImports = new Set([
   "#vitehub/env/server",
+  "#vitehub/auth/server",
   "@vite-hub/database/drizzle",
   "@vite-hub/env/secret",
   "vite-hub/database/drizzle",
@@ -159,6 +166,68 @@ function unwrap(node: unknown): unknown {
   return v.is(wrapperSchema, node) ? unwrap(node.expression) : node
 }
 
+// Collect bindings before checking uses, including declarations later in a scope.
+const astNodeSchema = v.looseObject({ type: v.string() })
+type StorageBinding = { helper?: boolean, init?: unknown }
+type StorageScope = { parent?: StorageScope, functionScope: boolean, bindings: Map<string, StorageBinding> }
+
+function storageScopes(root: unknown) {
+  const scopes = new WeakMap<object, StorageScope>()
+  const rootScope: StorageScope = { functionScope: true, bindings: new Map() }
+
+  function bind(pattern: unknown, scope: StorageScope, binding: StorageBinding = {}) {
+    if (!v.is(astNodeSchema, pattern)) return
+    switch (pattern.type) {
+      case "Identifier":
+        if (typeof pattern.name === "string") scope.bindings.set(pattern.name, binding)
+        break
+      case "RestElement": bind(pattern.argument, scope); break
+      case "AssignmentPattern": bind(pattern.left, scope); break
+      case "ArrayPattern":
+        if (Array.isArray(pattern.elements)) for (const element of pattern.elements) bind(element, scope)
+        break
+      case "ObjectPattern":
+        if (Array.isArray(pattern.properties)) {
+          for (const property of pattern.properties) {
+            if (v.is(astNodeSchema, property)) bind(property.type === "RestElement" ? property.argument : property.value, scope)
+          }
+        }
+        break
+    }
+  }
+
+  function walk(node: unknown, enclosing: StorageScope, parent?: v.InferOutput<typeof astNodeSchema>) {
+    if (!v.is(astNodeSchema, node)) return
+    if (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") bind(node.id, enclosing)
+    const isFunction = ["FunctionDeclaration", "FunctionExpression", "ArrowFunctionExpression"].includes(node.type)
+    const createsScope = isFunction || ["BlockStatement", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement", "ClassDeclaration", "ClassExpression", "StaticBlock"].includes(node.type)
+    const scope = createsScope ? { parent: enclosing, functionScope: isFunction || node.type === "StaticBlock", bindings: new Map<string, StorageBinding>() } : enclosing
+    scopes.set(node, scope)
+    if (isFunction) {
+      bind(node.id, scope)
+      if (Array.isArray(node.params)) for (const param of node.params) bind(param, scope)
+    }
+    if (node.type === "ClassExpression" || node.type === "ClassDeclaration") bind(node.id, scope)
+    if (node.type === "CatchClause") bind(node.param, scope)
+    if (v.is(importDeclarationSchema, node)) {
+      const name = storageModules.get(node.source.value)
+      for (const specifier of node.specifiers) bind(specifier.local, scope, { helper: Boolean(name && specifier.imported?.name === name) })
+    }
+    if (node.type === "VariableDeclarator") {
+      let target = scope
+      if (parent?.kind === "var") while (!target.functionScope && target.parent) target = target.parent
+      bind(node.id, target, { init: node.init })
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "parent") continue
+      if (Array.isArray(value)) for (const child of value) walk(child, scope, node)
+      else walk(value, scope, node)
+    }
+  }
+  walk(root, rootScope)
+  return scopes
+}
+
 export const destructureStorageResults: DoctorRule = createRule({
   meta: {
     id: "vitehub/destructure-storage-results",
@@ -168,24 +237,30 @@ export const destructureStorageResults: DoctorRule = createRule({
     requires: { script: true },
   },
   create(ctx) {
-    const helpers = new Set<string>()
-    const shadowed = new Set<string>()
-    const stores = new Set<string>()
+    const scopes = storageScopes(ctx.file.scriptAst)
     // Nuxt auto-imports `kv` and `blob` into server files when those features are on.
     const autoImports = ctx.project.framework === "nuxt" && ctx.file.relativePath.startsWith("server/")
       ? new Set(storageModules.values())
       : new Set<string>()
 
-    function isHelper(node: unknown) {
-      if (!v.is(identifierSchema, node)) return false
-      return helpers.has(node.name) || (autoImports.has(node.name) && !shadowed.has(node.name))
-    }
-
-    function isStorage(node: unknown): boolean {
+    function isStorage(node: unknown, seen = new Set<StorageBinding>()): boolean {
       const target = unwrap(node)
-      if (isHelper(target)) return true
-      if (v.is(identifierSchema, target)) return stores.has(target.name)
-      return v.is(memberCallSchema, target) && target.callee.property.name === "store" && isStorage(target.callee.object)
+      if (v.is(identifierSchema, target)) {
+        let scope = scopes.get(target)
+        while (scope) {
+          const binding = scope.bindings.get(target.name)
+          if (binding) {
+            if (binding.helper) return true
+            if (seen.has(binding)) return false
+            seen.add(binding)
+            const init = unwrap(binding.init)
+            return v.is(memberCallSchema, init) && init.callee.property.name === "store" && isStorage(init.callee.object, seen)
+          }
+          scope = scope.parent
+        }
+        return autoImports.has(target.name)
+      }
+      return v.is(memberCallSchema, target) && target.callee.property.name === "store" && isStorage(target.callee.object, seen)
     }
 
     function storageCall(node: unknown) {
@@ -209,23 +284,10 @@ export const destructureStorageResults: DoctorRule = createRule({
 
     return {
       ScriptNode(node) {
-        if (v.is(importDeclarationSchema, node)) {
-          const name = storageModules.get(node.source.value)
-          for (const specifier of node.specifiers) {
-            if (name && specifier.imported?.name === name) helpers.add(specifier.local.name)
-            else shadowed.add(specifier.local.name)
-          }
-          return
-        }
         if (!v.is(resultUseSchema, node)) return
         switch (node.type) {
           case "VariableDeclarator": {
-            if (v.is(identifierSchema, node.id)) shadowed.add(node.id.name)
-            const init = unwrap(node.init)
-            if (v.is(identifierSchema, node.id) && v.is(memberCallSchema, init) && init.callee.property.name === "store" && isStorage(init.callee.object)) {
-              stores.add(node.id.name)
-            }
-            else if (!v.is(arrayPatternSchema, node.id)) check(node.init)
+            if (!v.is(arrayPatternSchema, node.id)) check(node.init)
             return
           }
           case "AssignmentExpression":
