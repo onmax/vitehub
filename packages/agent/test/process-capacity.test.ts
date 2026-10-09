@@ -7,6 +7,9 @@ import { createProcessAgentCapacity } from "../src/runtime/process.ts"
 const GiB = 1024 ** 3
 
 const resources = vi.hoisted(() => ({
+  hostAvailableMemory: 16 * 1024 ** 3,
+  hostCpuPressure: 0,
+  hostMemoryPressure: 0,
   availableMemory: 8 * 1024 ** 3,
   cgroupAvailable: true,
   cpuPressure: 0,
@@ -22,6 +25,9 @@ const resources = vi.hoisted(() => ({
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(async (path: string | URL, _options: { encoding: "utf8", signal: AbortSignal }) => {
     const value = String(path)
+    if (value === "/proc/meminfo") return `MemAvailable: ${resources.hostAvailableMemory / 1024} kB\n`;
+    if (value === "/proc/pressure/cpu") return pressure(resources.hostCpuPressure);
+    if (value === "/proc/pressure/memory") return pressure(resources.hostMemoryPressure);
     if (value === "/proc/self/cgroup") {
       if (!resources.cgroupAvailable) throw new Error("cgroup v2 unavailable")
       return "0::/vitehub-test\n"
@@ -58,6 +64,9 @@ function createBuiltInSample(options: Parameters<typeof createProcessAgentCapaci
 beforeEach(() => {
   vi.clearAllMocks()
   Object.assign(resources, {
+    hostAvailableMemory: 16 * GiB,
+    hostCpuPressure: 0,
+    hostMemoryPressure: 0,
     availableMemory: 8 * GiB,
     cgroupAvailable: true,
     cpuPressure: 0,
@@ -77,6 +86,44 @@ afterEach(() => {
 })
 
 describe("process Agent capacity", () => {
+  it.each([true, false])("pauses for host memory pressure with cgroup available=%s", async cgroupAvailable => {
+    resources.cgroupAvailable = cgroupAvailable;
+    resources.availableMemory = 5 * GiB;
+    resources.hostMemoryPressure = 0.06;
+    const sample = createBuiltInSample();
+    await expect(sample({ active: 1, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 0 });
+    resources.hostMemoryPressure = 0.02;
+    await expect(sample({ active: 1, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 0 });
+    resources.hostMemoryPressure = 0;
+    await expect(sample({ active: 1, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 4 });
+  });
+
+  it("pauses for host CPU pressure with a healthy worker cgroup", async () => {
+    resources.hostCpuPressure = 0.26;
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 0 });
+  });
+
+  it("reserves growth headroom for already active workers", async () => {
+    resources.cgroupAvailable = false;
+    resources.availableMemory = 5 * GiB;
+    const sample = createBuiltInSample({ concurrency: 6, memory: { perInvocationBytes: 2 * GiB, reserveBytes: GiB } });
+    await expect(sample({ active: 2, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 2 });
+  });
+
+  it("keeps a large host reserve separate from a smaller service budget", async () => {
+    resources.hostAvailableMemory = 32 * GiB;
+    resources.availableMemory = 6 * GiB;
+    resources.memoryHigh = 8 * GiB;
+    const sample = createBuiltInSample({ concurrency: 6, memory: { reserveBytes: 8 * GiB, serviceReserveBytes: GiB, perInvocationBytes: 2 * GiB } });
+    await expect(sample({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 2 });
+  });
+
+  it("bounds admission by host MemAvailable even when Node reports more", async () => {
+    resources.hostAvailableMemory = 2 * GiB;
+    const sample = createBuiltInSample();
+    await expect(sample({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 1 });
+  });
+
   it("stays paused while memory.high events keep increasing", async () => {
     const sample = createBuiltInSample()
     const controller = new AbortController()
@@ -92,7 +139,7 @@ describe("process Agent capacity", () => {
       signal: controller.signal,
     })
     expect(vi.mocked(readFile).mock.calls.map(([, readOptions]) => readOptions)).toEqual(
-      Array.from({ length: 8 }, () => ({ encoding: "utf8", signal: controller.signal })),
+      Array.from({ length: 11 }, () => ({ encoding: "utf8", signal: controller.signal })),
     )
 
     resources.memoryHighEvents = 1
@@ -135,7 +182,7 @@ describe("process Agent capacity", () => {
     })
 
     await expect(sample({ active: 1, concurrency: 6, pending: 0, signal: new AbortController().signal })).resolves.toEqual({
-      concurrency: 3,
+      concurrency: 2,
       reason: "capacity available (5.0 GiB memory headroom)",
     })
   })
@@ -161,7 +208,7 @@ describe("process Agent capacity", () => {
     })
 
     await expect(sample({ active: 1, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toEqual({
-      concurrency: 3,
+      concurrency: 2,
       reason: "capacity available (3.0 GiB memory headroom)",
     })
   })
@@ -175,8 +222,8 @@ describe("process Agent capacity", () => {
     })
 
     await expect(sample({ active: 1, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toEqual({
-      concurrency: 2,
-      reason: "capacity available (2.0 GiB memory headroom)",
+      concurrency: 1,
+      reason: "waiting for capacity (2.0 GiB memory headroom)",
     })
   })
 

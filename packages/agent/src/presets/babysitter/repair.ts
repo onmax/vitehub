@@ -1,5 +1,7 @@
+import type { AgentInvocationContextStore } from "../../types.ts";
 import { defineCapability } from "../../capability-runtime.ts";
 import type { GitHubPullRequestOperations } from "../../server/github.ts";
+import { normalizeGitHubMentionAllowlist } from "../../server/github-auto-merge.ts";
 
 const noArguments = { type: "object", properties: {}, additionalProperties: false } as const;
 
@@ -14,10 +16,11 @@ function stringField(input: unknown, key: string, allowEmpty = false): string {
   return value;
 }
 
-export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean) {
+export function repairCapability(operations: GitHubPullRequestOperations, autoMerge: boolean, mentionAllowlist: readonly string[] = [], beforePush?: (context: AgentInvocationContextStore) => Promise<void>) {
+  const allowedMentions = normalizeGitHubMentionAllowlist(mentionAllowlist)
   return defineCapability({
     id: "babysitter.github",
-    tools: {
+    tools: context => ({
       readCheckLogs: {
         name: "readCheckLogs",
         description: "Read failed logs for a GitHub Actions run associated with this PR head.",
@@ -67,6 +70,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           "Push committed repairs to this PR's pinned source branch. After pushing, resolve any review threads fixed by the push before ending the pass.",
         inputSchema: noArguments,
         execute: async () => {
+          await beforePush?.(context.context);
           await operations.push();
           return { pushed: true };
         },
@@ -81,12 +85,27 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
           additionalProperties: false,
         },
         execute: async (input: unknown) => {
-          // Mark host-authored repair comments so inbox admission can correlate
-          // their webhook with this pass instead of treating it as feedback.
-          await operations.comment(`<!-- vitehub-babysitter-repair:repair -->\n${stringField(input, "body")}`);
+          await operations.comment(stringField(input, "body"));
           return { commented: true };
         },
       },
+      // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- The mention tool is intentionally absent until the application configures recipients.
+      ...(allowedMentions.length ? {
+        mentionOnPullRequest: {
+          name: "mentionOnPullRequest",
+          description: `Mention one configured human (${allowedMentions.map(login => `@${login}`).join(", ")}) about a verified blocker that needs their action. This sends a notification; use it sparingly.`,
+          inputSchema: {
+            type: "object",
+            properties: { login: { type: "string", enum: allowedMentions }, body: { type: "string" } },
+            required: ["login", "body"],
+            additionalProperties: false,
+          },
+          execute: async (input: unknown) => {
+            await operations.mention(stringField(input, "login"), stringField(input, "body"));
+            return { mentioned: true };
+          },
+        },
+      } : {}),
       resolveReviewThread: {
         name: "resolveReviewThread",
         description: "Resolve an addressed review thread belonging to this PR.",
@@ -132,7 +151,7 @@ export function repairCapability(operations: GitHubPullRequestOperations, autoMe
             },
           }
         : {}),
-    },
+    }),
   });
 }
 

@@ -16,8 +16,8 @@ export interface RuntimeEnvDeclarationLike {
 export type DatabaseConfigValue = string | RuntimeEnvDeclarationLike
 
 export interface CloudflareD1HttpConfig {
-  authToken: DatabaseConfigValue
-  url: DatabaseConfigValue
+  authToken?: DatabaseConfigValue
+  url?: DatabaseConfigValue
 }
 
 export interface CloudflareD1BindingConfig {
@@ -46,6 +46,7 @@ export interface DatabaseRuntimeD1Options {
   binding?: string
   databaseId?: DatabaseConfigValue
   databaseName?: DatabaseConfigValue
+  cloudflare?: Pick<CloudflareD1BindingConfig, "http">
   driver: "d1"
   local?: DatabaseLocalRuntimeOptions
   migrationsTable?: string
@@ -108,6 +109,12 @@ export interface RuntimeDrizzleDatabaseConfig {
   name: string
 }
 
+export interface CloudflareD1Projection {
+  binding?: string
+  provisionedId?: string
+  resource: "configured" | "inherited" | "opaque"
+}
+
 export interface ResolvedDrizzleDatabaseConfig extends RuntimeDrizzleDatabaseConfig {
   cloudflare?: ResolvedCloudflareD1BindingConfig
   dialect: DatabaseDialect
@@ -120,9 +127,9 @@ export interface ResolvedDrizzleDatabaseConfig extends RuntimeDrizzleDatabaseCon
 export interface ResolvedDBViteConfig {
   databaseNames: string[]
   databases: Record<string, ResolvedDrizzleDatabaseConfig>
-  definitionCloudflareConfigured: Record<string, boolean>
   definitionDefaults: {
     cloudflare?: CloudflareD1BindingConfig
+    cloudflareProjections: Record<string, CloudflareD1Projection>
     connection?: DatabaseConnectionConfig
   }
   definitions: DiscoveredDatabaseDefinition[]

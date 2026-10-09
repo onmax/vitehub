@@ -98,7 +98,7 @@ export async function codeHostWebhookInput(provider: ForgeProvider, delivery: We
       comment: { body, id, user: actor, html_url: nativeComment.html_url || attributes.url, created_at: event.occurredAt.toISOString() },
       issue: { number, title: rawPullRequest.title, body: rawPullRequest.description || rawPullRequest.body,
         user: { login: record(rawPullRequest.author || rawPullRequest.user).username || record(rawPullRequest.user).login },
-        labels: Array.isArray(rawPullRequest.labels) ? rawPullRequest.labels.map(label => hasRuntimeType(label, "string") ? { name: label } : label) : undefined,
+        labels: Array.isArray(rawPullRequest.labels) ? rawPullRequest.labels.map(label => hasRuntimeType(label, "string") ? { name: label } : { name: record(label).name || record(label).title }) : undefined,
         pull_request: { html_url: url, url: provider.kind === "gitlab"
           ? `${provider.baseUrl}/projects/${encodeURIComponent(repository)}/merge_requests/${number}`
           : `${provider.baseUrl}/repos/${repository}/pulls/${number}` }, html_url: url },

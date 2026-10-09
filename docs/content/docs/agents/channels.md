@@ -29,6 +29,8 @@ export default defineAgent({
 
 Built-in helpers include `discord()`, `github()`, [`gitlab()` and `forgejo()`](/docs/agents/code-host-channels), [`gmail()`](/docs/agents/gmail), `http()`, `slack()`, `teams()`, `telegram()`, and `webChat()`. Use `defineChannel()` for an application-owned Channel Kind.
 
+`teams()` instructs the Agent to cite sources with descriptive Markdown links to verified URLs. Chat SDK Channel delivery labels unresolved native web citations as `[source link unavailable]`, including during streaming. Codex app-server does not supply a citation-ID-to-URL map, so ViteHub cannot recover those links from the IDs. Ordinary source links remain intact.
+
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
 ## Act on the Channel message in hooks
@@ -213,7 +215,7 @@ Set `webhooks: []` on the trigger that only receives dispatched items, so the Ch
 
 ## Publish Agent activity without opening a chat
 
-Enable `activity` when an invocation should project its lifecycle into a Channel without treating that Channel as the Agent's conversation transport. With GitHub App webhooks enabled, ViteHub creates the authenticated app-owned comment on `pull_request.opened` unless `pullRequest.reconcile.events` explicitly excludes `opened`; later invocations reuse it. If that event is excluded, the first later invocation creates the comment. The comment claims work with a “Starting” row. One table lists the current and recent sessions, newest first, with links, status, GitHub relative start times, and completed durations. Normalized harness task checkboxes and the latest iteration result appear below it. Previous results stay under a collapsed section. The full transcript stays in the linked session when one is configured.
+Enable `activity` when an invocation should project its lifecycle into a Channel without treating that Channel as the Agent's conversation transport. With GitHub App webhooks enabled, ViteHub creates the authenticated app-owned comment on `pull_request.opened` unless `pullRequest.reconcile.events` explicitly excludes `opened`; later invocations reuse it. If that event is excluded, the first later invocation creates the comment. The comment claims work with a “Starting” row. One table lists the current and recent sessions, newest first, with links, status, GitHub relative start times, and completed durations. Normalized harness task checkboxes and the newest available session's final answer appear below it. All session answers stay in one collapsed section, newest first, with one session link and one paragraph per answer. The full transcript stays in the linked session when one is configured.
 
 Enable the GitHub App webhook for `pull_request` events and route it to the Agent’s generated webhook endpoint to claim the comment when the PR opens, unless `pullRequest.reconcile.events` explicitly excludes `opened`. If it is excluded or the webhook is not delivered, the first later invocation creates the comment.
 

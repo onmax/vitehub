@@ -1577,20 +1577,22 @@ export async function transformEveExtensionCapabilities(
   return applyCodeReplacements(code, replacements)
 }
 
-const supportedEveExtensionContracts: Record<number, Record<string, number>> = {
+const supportedEveExtensionContracts = {
   1: {
-    config: 1,
-    dynamicTool: 8,
-    extension: 1,
-    tool: 5,
+    config: [1],
+    dynamicTool: [8],
+    extension: [1],
+    tool: [5],
   },
   2: {
-    config: 1,
-    dynamicTool: 20,
-    extension: 1,
-    tool: 20,
+    config: [1],
+    // Preserve ViteHub's accepted epochs alongside GitHub Tools 0.8.0.
+    // This adapter-specific list is independent of Eve's runtime support table.
+    dynamicTool: [20, 52],
+    extension: [1],
+    tool: [20, 54],
   },
-}
+} satisfies Record<number, Record<string, readonly number[]>>
 
 async function resolveEveExtensionPackage(
   config: Pick<ResolvedConfig, "createResolver">,
@@ -1616,14 +1618,14 @@ async function resolveEveExtensionPackage(
         const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"))
         const formatVersion = isRecord(manifest) ? manifest.formatVersion : undefined
         const requires = isRecord(manifest) && isRecord(manifest.requires) ? manifest.requires : undefined
-        const contracts = hasRuntimeType(formatVersion, "number")
-          ? supportedEveExtensionContracts[formatVersion]
-          : undefined
-        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !contracts || !requires) {
-          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported manifest.` })
+        if (!isRecord(manifest) || manifest.kind !== "eve-extension" || !requires
+          || (formatVersion !== 1 && formatVersion !== 2)) {
+          throw agentDiagnostics.AGENT_B0014({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} has an unsupported compatibility manifest (expected eve-extension format 1 or 2).` })
         }
+        const contracts = supportedEveExtensionContracts[formatVersion]
         for (const [contract, version] of Object.entries(requires)) {
-          if (contracts[contract] !== version) {
+          const versions = Object.entries(contracts).find(([name]) => name === contract)?.[1]
+          if (!hasRuntimeType(version, "number") || !Number.isInteger(version) || version < 1 || !versions?.includes(version)) {
             throw agentDiagnostics.AGENT_B0015({ message: `[vitehub] Eve extension ${JSON.stringify(specifier)} requires unsupported ${contract}@${String(version)}.` })
           }
         }
@@ -1828,8 +1830,10 @@ async function writeAgentRuntimeRegistry(
     workspaceRegistry: false,
   })
   await writeFile(catalogPath, [...aggregateCatalog.imports, "", ...aggregateCatalog.setup, "", "export { agents }", ""].join("\n"), "utf8")
+  // Use a non-cyclic alias reset entry: server internals also import this registry,
+  // so their reset re-export can be uninitialized during an internal-first reload.
   await writeFile(registryPath, [
-    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/internal"))}`,
+    `import { resetPublicUrlAgentNames } from ${JSON.stringify(subpath(options.agentImportBase, "server/registry"))}`,
     "resetPublicUrlAgentNames()",
     `export default {${entries.length ? `\n  ${entries.join(",\n  ")}\n` : ""}}`,
     `export const metadata = {${generatedAgentIdentityEntries(definitions)}}`,
@@ -3306,7 +3310,13 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
       ]
       // `vitehub agent invocations cancel` runs in the Nitro runtime, so it reaches the application's journals.
       // The handler exists only for the Development Server.
-      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && environment?.command === "serve"
+      // CLI discovery resolves the application config to collect contributors; it does not start Nitro.
+      // The Console's discovery config intentionally includes its broad /_vitehub/** route, so do not
+      // install or validate the development-only invocation handler in that mode.
+      // SAFETY: Vite preserves the optional discovery flag; both flags are checked against true.
+      const cliDiscovery = (config as { server?: { middlewareMode?: unknown }, vitehubCliDiscovery?: unknown }).vitehubCliDiscovery === true
+        || (config as { server?: { middlewareMode?: unknown } }).server?.middlewareMode === true
+      const devNitroHandlers = normalizeAgentOptions(agent) && !denoOutput && nitroContext && !cliDiscovery && environment?.command === "serve"
         ? [{ handler: join(generatedRoot, generatedAgentInvocationsDevHandler), route: agentInvocationsDevRuntimeRoute }]
         : []
       const nitro = installCloudflareState

@@ -1021,6 +1021,7 @@ describe("vitehub", () => {
     expect(aliases).not.toHaveProperty("vite-hub")
     expect(aliases).not.toHaveProperty("unstorage/drivers/upstash")
     expect(aliases).not.toHaveProperty("@vite-hub/kv/runtime/upstash-driver")
+    expect(aliases["vite-hub/_internal/agent/server/registry"]).toMatch(/packages\/vite-hub\/dist\/_internal\/agent\/server\/registry\.js$/)
     expect(aliases["vite-hub/_internal/agent/server/internal"]).toMatch(/packages\/vite-hub\/dist\/_internal\/agent\/server\/internal\.js$/)
     expect(aliases["vite-hub/_internal/sandbox/runtime/state"]).toMatch(/packages\/vite-hub\/dist\/_internal\/sandbox\/runtime\/state\.js$/)
     expect(aliases["vite-hub/shell/workspace"]).toMatch(/packages\/vite-hub\/dist\/shell\/workspace\.js$/)

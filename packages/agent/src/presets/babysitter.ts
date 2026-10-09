@@ -18,6 +18,8 @@ import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 export type { BabysitterMerge, BabysitterMergeMethod, BabysitterMergeReadinessInput, BabysitterMergeReady } from "./babysitter/merge.ts";
 
 export interface BabysitterOptions {
+  /** Process admission policy. Concurrency remains the preset hard maximum. */
+  capacity?: Pick<import("../runtime/process.ts").ProcessAgentCapacityOptions, "memory" | "cpu" | "fallbackConcurrency">;
   /** Select PRs with the same rules as the GitHub Channel. */
   filter: GitHubPullRequestFilter;
   /** Provider Driver that repairs each PR in its checkout. Defaults to `"codex"`. Set the model with `driver.model`. */
@@ -37,6 +39,8 @@ export interface BabysitterOptions {
    * `"> ✅ No new issues found."`. These reviews do not wake a parked PR. Defaults to none.
    */
   noFindingsReviews: string[];
+  /** GitHub logins the worker may notify through its explicit mention capability. Defaults to none. */
+  mentionAllowlist: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
   /** @deprecated Use `merge: "auto"`. */
@@ -161,7 +165,7 @@ type BabysitterDefinition = AgentDefinition<
   AgentInvokerProfile,
   AgentInvocationContextValues,
   BabysitterPassResult
-> & { reviewChecks: string[]; noFindingsReviews: string[] };
+> & { reviewChecks: string[]; noFindingsReviews: string[]; mentionAllowlist: string[] };
 
 export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
@@ -176,10 +180,12 @@ export const babysitter: BabysitterAgent = defineAgent({
     reviewChecks: [] as string[],
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
     noFindingsReviews: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login allowlist.
+    mentionAllowlist: [] as string[],
     concurrency: 1,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, noFindingsReviews, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, autoMerge, concurrency }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -206,6 +212,6 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
-    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews }), babysitterHost);
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, mentionAllowlist }), babysitterHost);
   },
 });
