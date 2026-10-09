@@ -2628,7 +2628,7 @@ describe("agent Vite plugin", () => {
     expect(incomplete.signal.reason).toMatchObject({ name: "AbortError" })
   })
 
-  it("writes generated Nitro handlers that compile under strict TypeScript", async () => {
+  it("writes generated Nitro handlers that compile with checked indexed access", async () => {
     const { hubAgent } = await import("../src/vite.ts")
     const root = await mkdtemp(join(import.meta.dirname, ".vitehub-agent-routes-types-"))
     try {
@@ -2663,6 +2663,8 @@ export default defineAgent({
         `${JSON.stringify(
           {
             extends: resolve(import.meta.dirname, "../tsconfig.json"),
+            // Consumers check generated code against the published declarations, not package sources.
+            compilerOptions: { noUncheckedIndexedAccess: true, paths: {} },
             include: [".vitehub/agent/chat-webhook-route.ts", "server/agents/**/*.ts"],
           },
           null,
@@ -2677,9 +2679,9 @@ export default defineAgent({
           stateProvider === "libsql"
             ? {
                 providers: { state: { provider: "libsql" } },
-                routes: { inspection: true },
+                routes: { inspection: true, aliases: { "/api/telegram/webhook": { agent: "calories", webhook: "telegram" } } },
               }
-            : { routes: { inspection: true } },
+            : { routes: { inspection: true, aliases: { "/api/telegram/webhook": { agent: "calories", webhook: "telegram" } } } },
         )
         if (isRuntimeFunction(plugin.configResolved)) {
           // SAFETY: This fixture is intentionally constructed with the asserted test-only contract.
