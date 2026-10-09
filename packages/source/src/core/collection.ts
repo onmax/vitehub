@@ -52,8 +52,8 @@ export interface Collection<
   page(options: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>>
   parseQuery(input: TQueryInput | CollectionRequestQuery): Promise<TQuery>
   get(key: string, options?: CollectionReadOptions): Promise<TItem | null>
-  query(input: TQueryInput): CollectionQueryBuilder<TItem>
-  all(options: CollectionReadOptions & { query: TQueryInput; limit?: number }): Promise<TItem[]>
+  query(input?: TQueryInput): CollectionQueryBuilder<TItem>
+  all(options?: CollectionReadOptions & { query?: TQueryInput; limit?: number }): Promise<TItem[]>
   /** The query schema, when the Collection has one. Tools read it to describe accepted query keys. */
   readonly querySchema?: StandardSchemaV1<unknown, TQuery>
 }
@@ -147,7 +147,7 @@ export type CollectionClientItem<TCollection extends AnyCollection> = JSONSerial
 >
 
 export type CollectionQuery<TCollection extends AnyCollection> =
-  TCollection extends Collection<any, any, infer TQueryInput> ? TQueryInput : never
+  TCollection extends Collection<any, infer TQuery, any> ? CollectionQueryInput<TQuery> : never
 
 export type CollectionLoader<TSourceItem, TQuery extends object, TCursor extends CollectionCursorValue> = (
   options: CollectionLoadOptions<TQuery, TCursor>,
@@ -163,7 +163,6 @@ export interface CollectionOptions<
 > {
   /** `true` requires a signed-in Auth session. A callback also decides each request after sign-in. */
   authorize?: AccessAuthorizeOption
-  pagination?: "provider"
   route?: false
   get?: (key: string, options: CollectionReadOptions) => Promise<TSourceItem | null | undefined>
   cursor(item: NoInfer<TSourceItem>): Readonly<TCursorInput>
@@ -407,7 +406,7 @@ export function defineCollection<
     return { items: transformedItems as TItem[], nextCursor }
   }
 
-  function query(input: TQueryInput, selected?: string[]): CollectionQueryBuilder<TItem> {
+  function query(input: TQueryInput = {} as TQueryInput, selected?: string[]): CollectionQueryBuilder<TItem> {
     function project(item: TItem): TItem {
       return selected === undefined ? item : Object.fromEntries(selected.map(key => [key, (item as Record<string, unknown>)[key]])) as TItem
     }
@@ -448,7 +447,7 @@ export function defineCollection<
     page,
     parseQuery,
     query(input) { return query(input) },
-    all({ query: input, ...options }) { return query(input).all(options) },
+    all({ query: input = {} as TQueryInput, ...options } = {}) { return query(input).all(options) },
     async get(key, options = {}) {
       options.signal?.throwIfAborted()
       if (typeof key !== "string" || !key) throw new TypeError("[vitehub] Collection get() expects a nonempty string key.")

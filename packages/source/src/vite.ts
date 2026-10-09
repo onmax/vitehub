@@ -253,9 +253,12 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (declaration?.type === "VariableDeclaration") for (const item of declaration.declarations) {
       if (item.id.type === "Identifier") declarations.set(item.id.name, item.init as AstNode)
     }
+  }
+  for (const statement of parsed.program.body) {
     if (statement.type === "ExportNamedDeclaration") for (const specifier of statement.specifiers) {
       if (specifier.type === "ExportSpecifier" && specifier.exported.type === "Identifier" && specifier.local.type === "Identifier") {
-        declarations.set(specifier.exported.name, declarations.get(specifier.local.name)!)
+        const value = declarations.get(specifier.local.name)
+        if (value) declarations.set(specifier.exported.name, value)
       }
     }
   }
@@ -276,7 +279,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   for (const property of options.properties) {
     if (property.type === "SpreadElement") continue
     const key = property.key as AstNode
-    if ((key.name ?? key.value) === "route") {
+    const keyName = key.name ?? key.value
+    if (keyName === "route") {
       const value = unwrap(property.value)
       if (value?.type === "Literal" && value.value === false) route = false
       else route = undefined
