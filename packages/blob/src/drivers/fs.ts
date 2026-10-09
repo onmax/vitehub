@@ -1,5 +1,6 @@
+import type { BigIntStats } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
-import { lstat, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve, sep } from "node:path"
 import { object, optional, parse, record, safeParse, string } from "valibot"
 
@@ -127,7 +128,32 @@ async function bodyToBytes(body: BlobPutBody) {
   return new Uint8Array(await new Response(body as any).arrayBuffer())
 }
 
-async function readMetadata(root: string, pathname: string): Promise<FsBlobMetadata> {
+function fileVersion(stats: BigIntStats) {
+  return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+}
+
+function generationMetaPrefix(root: string, pathname: string) {
+  const normalized = relative(root, resolveBlobPath(root, pathname)).split(sep).join("/")
+  // Keep sidecar filenames bounded even for deeply nested Blob keys.
+  return `generation-${createHash("sha256").update(normalized).digest("hex")}-`
+}
+
+function generationMetaPath(root: string, pathname: string, stats: BigIntStats) {
+  // Inode and birth time survive rename; ctime does not. Deletion pins the
+  // inode until sidecar cleanup finishes, even when birth time is unavailable.
+  return resolve(root, ".vitehub", "blob-meta", `${generationMetaPrefix(root, pathname)}${stats.dev}-${stats.ino}-${stats.birthtimeNs}.json`)
+}
+
+async function readMetadata(root: string, pathname: string, stats: BigIntStats): Promise<FsBlobMetadata> {
+  const generation = generationMetaPath(root, pathname, stats)
+  await assertNoSymlinkPath(root, generation)
+  try {
+    return parse(fsBlobMetadataSchema, JSON.parse(await readFile(generation, "utf8")))
+  }
+  catch (error) {
+    if (!isNotFound(error)) throw error
+  }
+  // Existing plain files and legacy sidecars remain readable.
   try {
     const path = resolveMetaPath(root, pathname)
     await assertNoSymlinkPath(root, path)
@@ -140,14 +166,30 @@ async function readMetadata(root: string, pathname: string): Promise<FsBlobMetad
   }
 }
 
-async function writeMetadata(root: string, pathname: string, meta: FsBlobMetadata) {
-  const path = resolveMetaPath(root, pathname)
-  await assertNoSymlinkPath(root, path)
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, JSON.stringify(meta), "utf8")
+async function writeAtomic(root: string, path: string, bytes: Uint8Array | string, beforePublish?: (temporary: string) => Promise<void>) {
+  // Keep incomplete bytes outside user listings, then publish one complete file.
+  const temporary = resolve(root, ".vitehub", "blob-writes", randomUUID())
+  await assertNoSymlinkPath(root, temporary)
+  await mkdir(dirname(temporary), { recursive: true })
+  try {
+    await writeFile(temporary, bytes, { flag: "wx" })
+    await beforePublish?.(temporary)
+    await assertNoSymlinkPath(root, path)
+    await rename(temporary, path)
+  }
+  finally {
+    await rm(temporary, { force: true })
+  }
 }
 
-async function removeMetadata(root: string, pathname: string) {
+async function removeMetadata(root: string, pathname: string, generation?: BigIntStats) {
+  // Only reclaim a generation observed before unlinking the payload. A prefix
+  // sweep can erase a concurrent writer's prepared (or newly live) metadata.
+  if (generation) {
+    const path = generationMetaPath(root, pathname, generation)
+    await assertNoSymlinkPath(root, path)
+    await rm(path, { force: true })
+  }
   for (const directory of ["blob-meta", "blob-hashes"]) {
     const path = resolveMetaPath(root, pathname, directory)
     await assertNoSymlinkPath(root, path)
@@ -173,7 +215,7 @@ async function writeHash(root: string, pathname: string, hash: { contentHash: st
   const path = resolveMetaPath(root, pathname, "blob-hashes")
   await assertNoSymlinkPath(root, path)
   await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, JSON.stringify(hash), "utf8")
+  await writeAtomic(root, path, JSON.stringify(hash))
 }
 
 function toBlobObject(entry: FsBlobEntry): BlobObject {
@@ -204,18 +246,19 @@ async function readEntry(root: string, pathname: string): Promise<FsBlobEntry | 
         }
       })()
       if (!stats?.isFile()) return null
-      const meta = await readMetadata(root, pathname)
-      const fileVersion = `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}:${stats.ctimeNs}`
+      const meta = await readMetadata(root, pathname, stats)
+      const version = fileVersion(stats)
       const cached = await readHash(root, pathname)
-      let contentHash = cached?.fileVersion === fileVersion ? cached.contentHash : undefined
+      let contentHash = cached?.fileVersion === version ? cached.contentHash : undefined
       if (!contentHash) {
         contentHash = createHash("sha256").update(await readFile(path)).digest("hex")
         const after = await stat(path, { bigint: true })
-        if (fileVersion !== `${after.dev}:${after.ino}:${after.size}:${after.mtimeNs}:${after.ctimeNs}`) continue
-        await writeHash(root, pathname, { contentHash, fileVersion }).catch((error) => {
+        if (version !== fileVersion(after)) continue
+        await writeHash(root, pathname, { contentHash, fileVersion: version }).catch((error) => {
           console.error("[vitehub/blob] Filesystem hash cache write failed", error)
         })
       }
+      if (version !== fileVersion(await stat(path, { bigint: true }))) continue
       return {
         contentHash,
         meta,
@@ -368,15 +411,69 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await Promise.all((Array.isArray(pathnames) ? pathnames : [pathnames]).map(async pathname => {
         const path = resolveBlobPath(root, pathname)
         await assertNoSymlinkPath(root, path)
-        await rm(path, { force: true })
-        await removeMetadata(root, pathname)
+        const generation = await stat(path, { bigint: true }).catch((error) => {
+          if (isNotFound(error)) return undefined
+          throw error
+        })
+        if (!generation) {
+          await removeMetadata(root, pathname)
+          return
+        }
+        if (!generation.isFile()) {
+          const error: NodeJS.ErrnoException = new Error(`Blob pathname is not a file: ${pathname}`)
+          error.code = "EISDIR"
+          throw error
+        }
+        // Move the payload out of the public namespace before cleaning its
+        // generation metadata. This preserves the inode for cleanup while
+        // avoiding Windows delete-on-close handles that keep the pathname
+        // unavailable to a concurrent publisher.
+        const staging = resolve(root, ".vitehub", "blob-deletes", randomUUID())
+        await assertNoSymlinkPath(root, staging)
+        await mkdir(dirname(staging), { recursive: true })
+        try {
+          try {
+            await rename(path, staging)
+          }
+          catch (error) {
+            // Another delete already moved the payload. It owns metadata
+            // cleanup; touching the pathname now could affect a replacement.
+            if (isNotFound(error)) return
+            throw error
+          }
+          await removeMetadata(root, pathname, generation)
+        }
+        finally {
+          await rm(staging, { force: true })
+        }
       }))
     },
     async get(pathname) {
-      const bytes = await this.getArrayBuffer(pathname)
-      if (!bytes) return null
-      const meta = await readMetadata(root, pathname)
-      return new Blob([bytes], { type: meta.contentType || "" })
+      try {
+        const path = resolveBlobPath(root, pathname)
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const before = await (async () => {
+            try {
+              await assertNoSymlinkPath(root, path)
+              return await stat(path, { bigint: true })
+            }
+            catch (error) {
+              if (isDirectoryError(error)) return null
+              throw error
+            }
+          })()
+          if (!before?.isFile()) return null
+          const bytes = await readFile(path)
+          const meta = await readMetadata(root, pathname, before)
+          if (fileVersion(before) !== fileVersion(await stat(path, { bigint: true }))) continue
+          return new Blob([bytes], { type: meta.contentType || "" })
+        }
+        throw new Error("Blob changed while reading its filesystem contents.")
+      }
+      catch (error) {
+        if (isNotFound(error)) return null
+        throw error
+      }
     },
     async getArrayBuffer(pathname) {
       try {
@@ -429,10 +526,17 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
       await assertNoSymlinkPath(root, path)
       await assertNoSymlinkPath(root, resolveMetaPath(root, pathname))
       await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, bytes)
-      await writeMetadata(root, pathname, {
-        contentType: putOptions.contentType || (body instanceof Blob ? body.type : undefined),
-        customMetadata: putOptions.customMetadata,
+      await writeAtomic(root, path, bytes, async (temporary) => {
+        const stats = await stat(temporary, { bigint: true })
+        const metadataPath = generationMetaPath(root, pathname, stats)
+        await assertNoSymlinkPath(root, metadataPath)
+        await mkdir(dirname(metadataPath), { recursive: true })
+        // Prepare immutable metadata before the only visible publication step:
+        // renaming the payload. Readers select metadata by that payload's inode.
+        await writeAtomic(root, metadataPath, JSON.stringify({
+          contentType: putOptions.contentType || (body instanceof Blob ? body.type : undefined),
+          customMetadata: putOptions.customMetadata,
+        }))
       })
       const entry = await readEntry(root, pathname)
       return toBlobObject(entry!)
