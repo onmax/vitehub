@@ -106,7 +106,8 @@ test('stale claims and replaced heads do not publish an obsolete result', async 
   const { createBabysitterStatusRecovery } = await loadRecovery()
   await inbox.release(claim)
   assert.equal(await inbox.finish(claim, blocked()), false)
-  assert.equal((await inbox.metaEntries('status-outbox:v1:')).length, 0)
+  assert.deepEqual((await inbox.pendingStatusDeliveries()).map(pending => ({ head: pending.head, projection: pending.projection, status: pending.activity.status })),
+    [{ head, projection: true, status: 'queued' }], 'releasing custody may publish only the current queued projection')
   const [current] = await inbox.claim(1)
   await inbox.finish(current!, blocked())
   await inbox.seed(repository, { ...pr, head: { ...pr.head, sha: 'c'.repeat(40) } })
@@ -152,6 +153,9 @@ for (const reason of [
   'Host must restore the prepared merge metadata/index for PR HEAD, retaining repair files.',
   'commitRepair reproduced: Prepared merge metadata or index changed outside the host repair tools.',
   'Host commitRepair repeatedly rejects dependency state despite successful refreshDependencies and repeated focused validation.',
+  'commitRepair again rejected dependency state after refreshDependencies succeeded and validation passed. The repair-host operator must correct the dependency-installation fingerprint guard.',
+  'Host commitRepair cannot stage restored AGENTS.md because it is marked skip-worktree/outside sparse checkout. Update host staging to support this intentional restoration, then comment on the PR to resume. No repair commit or push occurred.',
+  'commitRepair repeatedly reports “Dependency inputs changed or installation failed” despite successful refreshDependencies and subsequent validation. Fix the host dependency-state guard, preserve the prepared repair files, and comment on this PR after correction to resume publication.',
 ]) test(`a corrected release retries the prepared merge worker blocker once: ${reason}`, async t => {
   const { inbox, claim, open } = await fixture(t)
   const result = { text: reason, wait: { kind: 'external' as const, headSha: head, reason, evidenceKey: 'merge-metadata' } }
@@ -762,7 +766,7 @@ test('superseded retry results never publish under the newer generation', async 
   assert.equal((await inbox.get(repository, pr.number))?.status, 'ready')
   const published: string[] = []
   await createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async pending => { published.push(pending.text) } }).flush()
-  assert.deepEqual(published, [])
+  assert.deepEqual(published, ['New pull request evidence is queued.'], 'obsolete retry text must not replace the current queued projection')
   assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
 })
 
@@ -1073,4 +1077,32 @@ test('ordinary feedback persists queued status before another worker can claim t
   await inbox.wake((await inbox.get(repository, 239))!, 'actionable-same-head-feedback')
   assert.equal((await inbox.get(repository, 239))?.status, 'ready')
   assert.equal((await inbox.pendingStatusDeliveries())[0]?.text, 'New pull request evidence is queued.')
+})
+
+
+for (const transition of ['ready-feedback', 'superseded-owner'] as const) test(`ready work replaces a published failure after ${transition}`, async t => {
+  const { inbox, claim } = await fixture(t)
+  await inbox.finish(claim, { text: 'Repair failed transiently.', retry: true })
+  const recovery = createBabysitterStatusRecovery({ inbox, revision: 'release-1', publish: async () => {} })
+  await recovery.flush()
+  assert.deepEqual(await inbox.pendingStatusDeliveries(), [])
+  assert.equal((await inbox.get(repository, pr.number))?.status, 'ready')
+  let active = claim
+  if (transition === 'superseded-owner') {
+    const waiting = (await inbox.get(repository, pr.number))!
+    await inbox.ingest('clear-backoff', 'issue_comment', { repository: { full_name: repository }, action: 'created', issue: { number: pr.number, pull_request: {} }, comment: { id: 90, body: 'Retry the repair.', user: { login: 'reviewer' } } })
+    assert.ok(waiting.nextAt > 0)
+    const [reclaimed] = await inbox.claim(1)
+    assert.ok(reclaimed)
+    active = reclaimed
+  }
+  await inbox.ingest('new-feedback-for-ready-work', 'issue_comment', { repository: { full_name: repository }, action: 'created', issue: { number: pr.number, pull_request: {} }, comment: { id: 91, body: 'Address the new review.', user: { login: 'reviewer' } } })
+  if (transition === 'superseded-owner') await inbox.finish(active, { text: 'Obsolete completion.' })
+  const current = (await inbox.get(repository, pr.number))!
+  assert.equal(current.status, 'ready')
+  assert.equal(current.lease, null)
+  const [projection] = await inbox.pendingStatusDeliveries()
+  assert.equal(projection?.text, 'New pull request evidence is queued.')
+  assert.equal(projection?.generation, current.generation)
+  assert.equal(projection?.activity.status, 'queued')
 })

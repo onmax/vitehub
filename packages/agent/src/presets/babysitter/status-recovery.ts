@@ -6,6 +6,9 @@ export function isWorkerBlocker(snapshot: Pick<Snapshot, "wait" | "lastResult">)
   if (snapshot.wait?.kind !== "external" || snapshot.wait.wake || snapshot.wait.retryAt !== undefined) return false;
   const text = `${snapshot.wait.reason}\n${snapshot.lastResult ?? ""}`;
   return /MCP tool call requires approval|approval policy is never|read.only[^\n]{0,80}\.git|\.git[^\n]{0,80}read.only|writable (?:\.git|Git (?:metadata|checkout))|restore frozen-lockfile dependency installation|host must prepare (?:the )?exact.base merge|host must restore (?:the )?prepared merge metadata\/index|prepared merge metadata or index changed outside the host repair tools/i.test(text)
+    || /commitRepair[^\n]{0,40}(?:rejects|rejected) dependency state[^\n]{0,80}(?:successful|refreshDependencies)/i.test(text)
+    || /host commitRepair cannot stage restored [^\n]{0,100}(?:skip-worktree|outside sparse checkout)/i.test(text)
+    || /commitRepair[^\n]{0,40}reports[^\n]{0,10}Dependency inputs changed or installation failed[^\n]{0,50}successful refreshDependencies/i.test(text)
     || /host (?:commitRepair|commit gate)[^\n]{0,80}rejects dependency state[^\n]{0,80}(?:successful|refreshDependencies)/i.test(text);
 }
 

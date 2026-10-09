@@ -249,11 +249,13 @@ export class PullRequestInbox {
     let reopened = false
     let resumed = false
     let wasWorking = false
+    let readySuperseded = false
     if (this.activityAuthors.size && (s.status === 'ready' || s.status === 'terminal')) {
-      const [previous] = await tx.execute(`SELECT status FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, s.repository, s.number])
+      const [previous] = await tx.execute(`SELECT status, generation FROM ${this.tables.pullRequests} WHERE scope=? AND repository=? AND number=?`, [this.scope, s.repository, s.number])
       reopened = s.status === 'ready' && previous?.status === 'terminal'
       resumed = s.status === 'ready' && previous?.status === 'waiting'
       wasWorking = previous?.status === 'working'
+      readySuperseded = s.status === 'ready' && (wasWorking || previous?.status === 'ready' && s.generation > Number(previous.generation))
     }
     this.compactTerminal(s)
     const head = s.pr?.head?.sha
@@ -263,11 +265,11 @@ export class PullRequestInbox {
       s.dirtyAt, s.nextAt, s.lease, s.leaseUntil, s.wait ? 1 : 0, s.progressBudget?.exhausted && s.progressBudget.head === head ? 1 : 0,
       s.pr?.state === undefined ? null : String(s.pr.state).toLowerCase(), head ?? null, s.pr?.head?.ref ?? null, s.pr?.base?.ref ?? null,
     ])
-    if (this.activityAuthors.size && (s.status === 'terminal' || reopened || resumed)) {
+    if (this.activityAuthors.size && (s.status === 'terminal' || reopened || resumed || readySuperseded)) {
       const target = statusTargetKey(s)
       const pending = v.safeParse(statusDeliverySchema, await this.metaIn(tx, `${statusOutboxPrefix}${target}`))
       const sent = v.safeParse(statusAcknowledgementSchema, await this.metaIn(tx, `${statusSentPrefix}${target}`))
-      if (reopened || resumed || wasWorking || (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed')) {
+      if (reopened || resumed || wasWorking || readySuperseded && (pending.success || sent.success) || (pending.success ? !isStatusDeliveryCurrent(pending.output, s) : sent.success && sent.output.status !== 'completed')) {
         await this.enqueueStatusProjectionIn(tx, s)
       }
     }
