@@ -922,6 +922,17 @@ has no merge tool and the host rejects auto-merge operations. With `"auto"`, it
 requests GitHub native auto-merge subject to current PR admission and repository
 checks and reviews. Workers never merge directly or delete branches.
 
+Before a repair push, the host durably associates the exact candidate commit with
+its active claim. Check and status webhooks for that commit are retained even when
+they arrive before the source-push and synchronize webhooks. This association does
+not count as a successful push and expires with the claim. A wait after several
+repair pushes retains every verified push receipt, including when host admission
+closes during a provider retry.
+
+A pass can resolve several addressed review threads without cancelling itself
+when its own resolution webhooks arrive. New comments and external thread reopens
+still revoke further repair operations.
+
 ### Bound repeated PR work
 
 The Node inbox accepts `budgets: { providerRetries: 3, noProgress: 3 }`.
