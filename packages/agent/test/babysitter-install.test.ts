@@ -125,10 +125,11 @@ describe.runIf(process.platform === "linux")("Babysitter dependency install cach
     await writeFile(join(pnpm.bin, "delay"), "0.3");
     const install = createBabysitterInstaller({ cache: { directory: await directory("cache") } }, pnpm.env, "test/repo");
     const [left, right] = [await workspace(), await workspace()];
-    const [first, second] = await Promise.all([install(left, signal()), install(right, signal())]);
-    expect(first).toMatchObject({ ok: true, cache: "miss" });
-    expect(second).toMatchObject({ ok: true, cache: "hit" });
-    expect(second?.waitMs).toBeGreaterThan(100);
+    const results = await Promise.all([install(left, signal()), install(right, signal())]);
+    expect(results).toMatchObject([{ ok: true }, { ok: true }]);
+    // Fingerprint reads race before locking. Either caller can own the install.
+    expect(results.map(result => result?.cache).sort()).toEqual(["hit", "miss"]);
+    expect(results.find(result => result?.cache === "hit")?.waitMs).toBeGreaterThan(100);
     expect((await pnpm.calls()).filter(call => !call.includes("--offline"))).toHaveLength(1);
   });
 
