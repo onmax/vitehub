@@ -146,7 +146,10 @@ async function pruneBuildDirectories(store: WorkspaceStore, workspace: string): 
         await writeBuildMetadata(store, buildDirectoryUsersMetaKey, users)
         // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Store implementations may throw untyped filesystem errors.
         const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined
-        if (code === "ENOTEMPTY") {
+        // The memory Store uses this specific Workspace error for non-empty removal.
+        const nonEmptyRace = code === "ENOTEMPTY"
+          || (code === "WORKSPACE_FAILED" && error instanceof Error && error.message === `[vitehub] Workspace directory is not empty: ${path}.`)
+        if (nonEmptyRace) {
           // A concurrent writer won the empty-directory race. Keep the path
           // owned so a later sync can retry after that writer is finished.
           retained.push(path)

@@ -22,9 +22,11 @@ export {
 } from "./runtime/state.ts"
 export {
   createWorkspaceSourceResolutionFacade,
+  forwardWorkspaceFacade,
   hasWorkspaceSourceResolvers,
   resolveWorkspaceSources,
 } from "./sources/resolution.ts"
+export { createWorkspaceHistoryReader } from "./core/history.ts"
 export {
   getWorkspaceSourceRequestDescriptor,
   isWorkspaceSourceRequestOnly,

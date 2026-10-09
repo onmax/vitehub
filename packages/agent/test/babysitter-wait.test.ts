@@ -93,6 +93,21 @@ describe("Babysitter check waits", () => {
     expect(hasPendingChecks(await parked(), policy)).toBe(false);
     expect(hasPendingChecks(await parked(s => { s.checks["queued"] = { id: 8, name: "test", status: "queued", head_sha: head, app: { id: 5 } } }), policy)).toBe(true);
   });
+  it.each(["failure", "in_progress"])("ignores superseded %s runs when recording and waking waits", async state => {
+    const snapshot = await parked(s => {
+      s.checks = {};
+      s.wait = { headSha: head, ...createCheckWait(s, policy) };
+      s.checks.old = { id: 1, name: "lint", head_sha: head, status: state === "failure" ? "completed" : state, conclusion: state === "failure" ? state : null, app: { id: 5 } };
+      s.checks.new = { id: 2, name: "lint", head_sha: head, status: "completed", conclusion: "success", app: { id: 5 } };
+    });
+    expect(createCheckWait(snapshot, policy).knownFailures).toEqual([]);
+    expect(hasPendingChecks(snapshot, policy)).toBe(false);
+    expect(wakeReasons(snapshot, "pending", policy)).toEqual([]);
+    snapshot.wait!.defer = "checks";
+    expect(wakeReasons(snapshot, "pending", policy)).toEqual([]);
+    expect(wakeReasons(snapshot, "passed", policy)).toEqual(["gates-settled"]);
+  });
+
   it("holds reproduced manual blockers through green checks and existing threads", async () => {
     const snapshot = await parked(s => { s.threads = [{ id: "T1", isResolved: false, comments: [] }]; });
     const checkWait = createCheckWait(snapshot, policy);
@@ -136,6 +151,8 @@ describe("Babysitter check waits", () => {
     snapshot.wait = { headSha: head, ...createCheckWait(snapshot, ignoring) };
     snapshot.comments["15"] = preview;
     expect(wakeReasons(snapshot, "pending", ignoring)).toEqual([]);
+    snapshot.reviews["16"] = { ...preview, id: 16, state: "CHANGES_REQUESTED" };
+    expect(wakeReasons(snapshot, "pending", ignoring)).toEqual(["feedback-changed"]);
   });
 
   it("holds an external dependency through an unrelated green PR check", async () => {

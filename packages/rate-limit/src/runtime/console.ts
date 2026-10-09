@@ -1,5 +1,6 @@
 import * as v from "valibot"
-import { isViteHubDevSecretEqual, validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { validateViteHubNitroDevRequest } from "@vite-hub/internal/dev-endpoint"
+import { isViteHubSecretEqual } from "@vite-hub/internal/secret"
 import { redactInspectionText } from "@vite-hub/internal/inspect"
 
 import { peekRateLimit, resetRateLimit } from "../counters.ts"
@@ -39,7 +40,7 @@ function redact<T extends RateLimitPeekInspection | RateLimitResetInspection>(re
  */
 export async function handleRateLimitDevRequest(request: Request, runtimeToken: string): Promise<Response> {
   const { rejection } = await validateViteHubNitroDevRequest(request, {
-    authorize: request => isViteHubDevSecretEqual(request.headers.get(rateLimitDevRuntimeTokenHeader), runtimeToken)
+    authorize: request => isViteHubSecretEqual(request.headers.get(rateLimitDevRuntimeTokenHeader), runtimeToken)
       ? undefined
       : new Response("Forbidden Rate Limit runtime request.", { status: 403, headers: { "cache-control": "no-store" } }),
     header: rateLimitDevHeader,

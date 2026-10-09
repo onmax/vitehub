@@ -1,5 +1,12 @@
 import { envBridgeError, sanitizeEnvBridgeError } from "./bridge-error.ts";
-import { envAccessAuthority, type envAccessGrant } from "./internal/access.ts";
+import {
+  envAccessAuthority,
+  envIdentifier as identifier,
+  grantEnvAccess,
+  validateEnvActor as validateActor,
+  type EnvAttribution,
+  type envAccessGrant,
+} from "./internal/access.ts";
 import { SecretEnv } from "./secret.ts";
 import type { EnvProvider, EnvProviderValues } from "./types.ts";
 
@@ -8,26 +15,22 @@ export interface EnvActor {
   id: string;
   kind: "user" | "agent" | "service";
 }
-/** Attribution from trusted server code. Durable grants decide what the actor can do. */
-export interface EnvActorAccessContext {
-  actor: EnvActor;
-  /** Administrator access needs a context from `createEnvAuthenticator()`. */
-  admin?: false;
-  /** Optional credential/permission ceiling from a verified agent token. */
-  scope?: readonly { key: string; permissions: readonly EnvPermission[] }[];
-  traceId?: string;
-  invocationId?: string;
-}
-/** A frozen context that only Env creates after its own check. Keep it in trusted request code. */
-export interface EnvGrantedAccessContext {
+/** A ceiling over durable grants, from a verified Agent token. */
+export type EnvAccessScope = readonly { readonly key: string; readonly permissions: readonly EnvPermission[] }[];
+/**
+ * A frozen context that only Env creates. Use the type in application code, but get the value from
+ * `createEnvAuthenticator()`, the bridge runtime, or a ViteHub integration. Keep it in trusted request code.
+ */
+export interface EnvAccessContext {
   readonly [envAccessGrant]: true;
   readonly actor: Readonly<EnvActor>;
+  /** Only `createEnvAuthenticator()` creates an administrator context. */
   readonly admin?: true;
-  readonly scope?: undefined;
+  /** Optional credential/permission ceiling from a verified agent token. */
+  readonly scope?: EnvAccessScope;
   readonly traceId?: string;
   readonly invocationId?: string;
 }
-export type EnvAccessContext = EnvActorAccessContext | EnvGrantedAccessContext;
 export interface EnvGrant {
   actor: EnvActor;
   key: string;
@@ -75,8 +78,10 @@ export interface EnvAccessStore {
 export interface EnvBridgeOptions {
   secrets: EnvSecretStore;
   access: EnvAccessStore;
-  /** Derive runtime attribution from trusted invocation/request context. */
-  runtimeContext: () => EnvAccessContext | Promise<EnvAccessContext>;
+  /** The identity of this runtime. Reads without an explicit access context get only its durable grants. */
+  runtimeActor: EnvActor;
+  /** Optional trace and invocation IDs for runtime reads, from trusted invocation context. */
+  runtimeAttribution?: () => EnvAttribution | undefined | Promise<EnvAttribution | undefined>;
   /** Export already persisted events, for example through evlog. */
   emit?: (event: EnvActivity) => void | Promise<void>;
 }
@@ -105,17 +110,6 @@ export interface EnvBridge extends EnvProvider {
   revoke(context: EnvAccessContext, actor: EnvActor, key: string): Promise<void>;
 }
 
-function identifier(value: string): void {
-  // eslint-disable-next-line no-control-regex
-  if (!value || value.length > 512 || /[\u0000-\u001f]/.test(value))
-    throw envBridgeError("invalid");
-}
-
-function validateActor(actor: EnvActor): void {
-  identifier(actor.id);
-  if (!["user", "agent", "service"].includes(actor.kind)) throw envBridgeError("invalid");
-}
-
 async function safe<T>(run: () => Promise<T>): Promise<T> {
   try {
     return await run();
@@ -141,22 +135,18 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
     key: string,
     permission: EnvPermission | "activity" | "admin",
   ): Promise<boolean> {
+    // Only Env creates contexts. Each one carries the authority that its producer could prove.
+    const authority = envAccessAuthority(context);
     identifier(key);
     validateActor(context.actor);
-    // Only Env-created contexts carry authority beyond durable grants.
-    const authority = envAccessAuthority(context);
-    if (authority)
-      return (
-        "admin" in authority ||
-        (authority.bridge === bridge &&
-          authority.key === key &&
-          permission !== "admin" &&
-          authority.permissions.includes(permission))
-      );
+    if (authority.kind === "admin") return true;
+    if (authority.bridge && authority.bridge !== bridge) return false;
+    if (authority.kind === "key")
+      return authority.key === key && permission !== "admin" && authority.permissions.includes(permission);
     if (permission === "admin" || permission === "activity") return false;
     if (
-      context.scope &&
-      !context.scope.some((grant) => grant.key === key && grant.permissions.includes(permission))
+      authority.scope &&
+      !authority.scope.some((grant) => grant.key === key && grant.permissions.includes(permission))
     )
       return false;
     const grants = await safe(() => options.access.grants(key));
@@ -180,6 +170,7 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
       permissions?: readonly EnvPermission[];
     },
   ): Promise<T> {
+    envAccessAuthority(context);
     identifier(key);
     validateActor(context.actor);
     const operationId = crypto.randomUUID();
@@ -230,7 +221,12 @@ export function createEnvBridge(options: EnvBridgeOptions): EnvBridge {
       );
     },
     async read({ keys, signal, access }): Promise<EnvProviderValues> {
-      const context = access ?? (await options.runtimeContext());
+      const context =
+        access ??
+        grantEnvAccess(
+          { ...(await options.runtimeAttribution?.()), actor: options.runtimeActor },
+          { kind: "actor", bridge },
+        );
       const values: Array<[string, string | undefined]> = [];
       for (const key of keys) {
         signal?.throwIfAborted();

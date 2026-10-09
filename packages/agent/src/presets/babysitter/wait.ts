@@ -54,7 +54,7 @@ function withoutFindings(review: GitHubEvidence, policy: ContextPolicy): boolean
 /** Feedback, intent, and base that need a model pass when they change. CI results are excluded. */
 export function repairContextKey(s: Snapshot, policy: ContextPolicy): string {
   const pr = s.pr;
-  const fromWorker = (value: GitHubEvidence) => policy.workerAuthors.has(login(value)) || policy.ignoreFeedbackAuthors?.has(login(value)) === true;
+  const fromWorker = (value: GitHubEvidence) => String(value.state).toUpperCase() !== "CHANGES_REQUESTED" && (policy.workerAuthors.has(login(value)) || policy.ignoreFeedbackAuthors?.has(login(value)) === true);
   const external = (values: Record<string, GitHubEvidence>) => Object.fromEntries(Object.entries(values).filter(([, value]) => !fromWorker(value)));
   const reviews = Object.fromEntries(Object.entries(external(s.reviews)).filter(([, value]) => !withoutFindings(value, policy)));
   const ownCommentIds = new Set(Object.values(s.reviewComments).filter(fromWorker).flatMap(commentIds));
@@ -107,7 +107,7 @@ export function reviewCheckRunning(s: Snapshot, policy: Pick<BabysitterWaitPolic
 }
 
 export function failureKeys(s: Snapshot): string[] {
-  return currentCheckSignals(s).filter(signal => failed.has(String(signal.conclusion ?? signal.state)))
+  return latestCheckSignals(s).filter(signal => failed.has(String(signal.conclusion ?? signal.state)))
     .map(signal => `${String(signal.id ?? signal.context)}:${String(signal.conclusion ?? signal.state)}`).sort();
 }
 
@@ -159,6 +159,22 @@ export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckStat
 }
 
 /** Infer a check wait only from pending current-head provider evidence. */
-export function hasPendingChecks(snapshot: Snapshot, policy: BabysitterWaitPolicy): boolean {
-  return currentCheckSignals(snapshot).some(signal => pending.has(String(signal.status ?? signal.state)));
+export function hasPendingChecks(snapshot: Snapshot, _policy: BabysitterWaitPolicy): boolean {
+  return latestCheckSignals(snapshot).some(signal => pending.has(String(signal.status ?? signal.state)));
+}
+
+/** The reader paginates and projects individual records from every REST page. */
+export async function checksDependencyEvidence(wake: { repository: string; headSha: string }, read: (path: string, projection: string) => Promise<unknown[]>) {
+  const checks = await read(`repos/${wake.repository}/commits/${wake.headSha}/check-runs?per_page=100`, ".check_runs[]");
+  const statuses = await read(`repos/${wake.repository}/commits/${wake.headSha}/statuses?per_page=100`, ".[]");
+  return hash({
+    checks: checks.map(check => {
+      if (!isRuntimeRecord(check)) throw new Error("Invalid dependency check evidence.");
+      return JSON.stringify([check.id, check.status, check.conclusion]);
+    }).sort(),
+    statuses: statuses.map(status => {
+      if (!isRuntimeRecord(status)) throw new Error("Invalid dependency status evidence.");
+      return JSON.stringify([status.id, status.context, status.state]);
+    }).sort(),
+  });
 }

@@ -1,3 +1,5 @@
+import { defineGrant, type Grant } from "@vite-hub/runtime/internal/grant"
+
 import { AgentHttpError } from "../http-error.ts"
 import {
   isRuntimeBoolean,
@@ -30,20 +32,17 @@ interface AgentChatApprovalCustodyOptions {
   ttlMs?: number
 }
 
-declare const agentChatApprovalGrantBrand: unique symbol
-
-/** Proof that the approval owner read the tools approved in one chat session for one request. */
-export interface AgentChatApprovalGrant {
-  readonly [agentChatApprovalGrantBrand]: true
-}
-
 interface AgentChatApprovalGrantBinding {
   invokerId: string
   sessionId: string
   tools: ReadonlySet<string>
 }
 
-const agentChatApprovalGrants = new WeakMap<AgentChatApprovalGrant, AgentChatApprovalGrantBinding>()
+const agentChatApproval = defineGrant("vitehub.agent.chat-approval", (binding: AgentChatApprovalGrantBinding) => binding)
+
+/** Proof that the approval owner read the tools approved in one chat session for one request. */
+export type AgentChatApprovalGrant = Grant<"vitehub.agent.chat-approval">
+
 const agentChatApprovalGrantKey: unique symbol = Symbol("vitehub.agent.chat-approval-grant")
 
 const defaultAgentChatApprovalTtlMs = 24 * 60 * 60 * 1000
@@ -131,11 +130,7 @@ export function resolveAgentChatApprovalTtl(maximumTtlMs?: number): number {
 }
 
 function createAgentChatApprovalGrant(binding: AgentChatApprovalGrantBinding): AgentChatApprovalGrant | undefined {
-  if (!binding.tools.size) return
-  // SAFETY: The brand is type-only; the WeakMap entry below is the runtime proof.
-  const grant = Object.freeze({}) as AgentChatApprovalGrant
-  agentChatApprovalGrants.set(grant, binding)
-  return grant
+  return binding.tools.size ? agentChatApproval.issue(binding) : undefined
 }
 
 /**
@@ -150,10 +145,11 @@ export function withAgentChatApprovalGrant<T extends object>(context: T, grant: 
  * Read the tools approved for this chat session. Only a grant from `authorize()`
  * that matches the current invoker and chat session counts.
  */
-export function agentChatApprovedTools(context: object & { invoker: { id: string } }, sessionId: unknown): ReadonlySet<string> {
-  // SAFETY: Only withAgentChatApprovalGrant writes this module-private key; the WeakMap check below rejects other values.
-  const grant = (context as { [agentChatApprovalGrantKey]?: AgentChatApprovalGrant })[agentChatApprovalGrantKey]
-  const binding = grant && agentChatApprovalGrants.get(grant)
+export function agentChatApprovedTools(
+  context: { readonly invoker: { id: string }, readonly [agentChatApprovalGrantKey]?: unknown },
+  sessionId: unknown,
+): ReadonlySet<string> {
+  const binding = agentChatApproval.check(context[agentChatApprovalGrantKey])
   return binding && binding.invokerId === context.invoker.id && binding.sessionId === sessionId
     ? new Set(binding.tools)
     : new Set()

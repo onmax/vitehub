@@ -1,6 +1,11 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { anthropic, cliproxy, defineGateway, litellm, ollama, openai, openrouter, vercel } from "../src/gateways.ts"
+import { discoverAgentGatewayEnv } from "../src/channel-env-discovery.ts"
+import { anthropic, cliproxy, cloudflareAccess, defineGateway, litellm, ollama, openai, openrouter, vercel } from "../src/gateways.ts"
 import { createAgentInspectionMetadata, defineAgent } from "../src/index.ts"
 import { normalizeAgentDriver } from "../src/internal/agent-driver.ts"
 import { resolveAgentDriverGateway } from "../src/internal/agent-gateway.ts"
@@ -15,17 +20,15 @@ describe("gateway presets", () => {
   it("maps each preset to the base URL that each Driver expects", () => {
     expect(cliproxy({ url: "https://proxy.example/v1/" }).baseURL).toEqual({ "codex": "https://proxy.example/v1", "claude-code": "https://proxy.example" })
     expect(litellm({ url: "http://litellm:4000" }).baseURL).toEqual({ "codex": "http://litellm:4000/v1", "claude-code": "http://litellm:4000" })
-    expect(ollama().baseURL).toEqual({ "codex": "http://localhost:11434/v1", "claude-code": "http://localhost:11434" })
+    expect(ollama({ url: "http://gpu:11434" }).baseURL).toEqual({ "codex": "http://gpu:11434/v1", "claude-code": "http://gpu:11434" })
     expect(openrouter().baseURL).toEqual({ "codex": "https://openrouter.ai/api/v1", "claude-code": "https://openrouter.ai/api" })
     expect(vercel().baseURL).toEqual({ "codex": "https://ai-gateway.vercel.sh/codex/v1", "claude-code": "https://ai-gateway.vercel.sh/claude-code" })
     expect(openai().baseURL).toEqual({ codex: "https://api.openai.com/v1" })
     expect(anthropic().baseURL).toEqual({ "claude-code": "https://api.anthropic.com" })
   })
 
-  it("requires a URL for hosted gateways", () => {
+  it("rejects an empty explicit URL", () => {
     expect(() => cliproxy({ url: " " })).toThrow("cliproxy({ url })")
-    // SAFETY: This fixture omits the required option to test runtime validation.
-    expect(() => litellm(undefined as never)).toThrow("litellm({ url })")
   })
 
   it("validates custom gateways", () => {
@@ -110,6 +113,100 @@ describe("gateway resolution", () => {
   it("rejects empty header values instead of letting Codex drop them", async () => {
     const gateway = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: { "CF-Access-Client-Id": () => undefined } })
     await expect(resolveAgentDriverGateway(gateway, "codex", context)).rejects.toThrow('header "CF-Access-Client-Id" resolved to an empty value')
+  })
+})
+
+describe("gateway Server Env", () => {
+  it("reads the URL and key of a hosted preset for each invocation", async () => {
+    vi.stubEnv("CLIPROXY_URL", "https://env-proxy.example/v1/")
+    vi.stubEnv("CLIPROXY_API_KEY", "env-key")
+    const gateway = cliproxy()
+    expect((await resolveAgentDriverGateway(gateway, "claude-code", context)).environment).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: "env-key",
+      ANTHROPIC_BASE_URL: "https://env-proxy.example",
+    })
+    vi.stubEnv("CLIPROXY_URL", "https://rotated.example")
+    expect((await resolveAgentDriverGateway(gateway, "codex", context)).launchArgs).toContain('base_url=\\"https://rotated.example/v1\\"')
+  })
+
+  it("reads canonical VITEHUB_ names before vendor names", async () => {
+    vi.stubEnv("CLIPROXY_URL", "https://vendor.example")
+    vi.stubEnv("VITEHUB_CLIPROXY_URL", "https://canonical.example")
+    vi.stubEnv("CLIPROXY_API_KEY", "vendor-key")
+    vi.stubEnv("VITEHUB_CLIPROXY_API_KEY", "")
+    vi.stubEnv("CF_ACCESS_CLIENT_ID", "vendor-id")
+    vi.stubEnv("VITEHUB_CLOUDFLARE_ACCESS_CLIENT_ID", "canonical-id")
+    vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "secret")
+    const resolved = await resolveAgentDriverGateway(cliproxy({ headers: cloudflareAccess() }), "claude-code", context)
+    // An empty canonical value counts as unset, so the vendor key supplies it.
+    expect(resolved.environment).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: "vendor-key",
+      ANTHROPIC_BASE_URL: "https://canonical.example",
+      ANTHROPIC_CUSTOM_HEADERS: "CF-Access-Client-Id: canonical-id\nCF-Access-Client-Secret: secret",
+    })
+  })
+
+  it("names the URL variable when it is missing", async () => {
+    vi.stubEnv("CLIPROXY_URL", "")
+    vi.stubEnv("LITELLM_URL", "")
+    await expect(resolveAgentDriverGateway(cliproxy({ apiKey: "k" }), "codex", context)).rejects.toThrow('Gateway "cliproxy" needs a URL. Set CLIPROXY_URL, or pass url.')
+    await expect(resolveAgentDriverGateway(litellm({ apiKey: "k" }), "codex", context)).rejects.toThrow("Set LITELLM_URL, or pass url.")
+  })
+
+  it("defaults Ollama to a local server without a key", async () => {
+    vi.stubEnv("OLLAMA_URL", "")
+    vi.stubEnv("OLLAMA_API_KEY", "")
+    expect((await resolveAgentDriverGateway(ollama(), "claude-code", context)).environment).toMatchObject({
+      ANTHROPIC_AUTH_TOKEN: "ollama",
+      ANTHROPIC_BASE_URL: "http://localhost:11434",
+    })
+  })
+
+  it("reads Cloudflare Access service-token headers", async () => {
+    vi.stubEnv("CF_ACCESS_CLIENT_ID", "client-id")
+    vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "client-secret")
+    const gateway = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: cloudflareAccess() })
+    expect((await resolveAgentDriverGateway(gateway, "claude-code", context)).environment.ANTHROPIC_CUSTOM_HEADERS)
+      .toBe("CF-Access-Client-Id: client-id\nCF-Access-Client-Secret: client-secret")
+    vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "")
+    await expect(resolveAgentDriverGateway(gateway, "codex", context)).rejects.toThrow("Set CF_ACCESS_CLIENT_SECRET, or pass cloudflareAccess({ clientSecret })")
+    vi.stubEnv("CF_ACCESS_CLIENT_SECRET", "env-secret")
+    const unset = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: cloudflareAccess({ clientSecret: undefined }) })
+    await expect(resolveAgentDriverGateway(unset, "codex", context)).rejects.toThrow('header "CF-Access-Client-Secret" resolved to an empty value')
+    const explicit = cliproxy({ url: "https://proxy.example", apiKey: "k", headers: cloudflareAccess({ clientId: "id", clientSecret: { unseal: () => "secret" } }) })
+    expect((await resolveAgentDriverGateway(explicit, "codex", context)).environment).toMatchObject({ VITEHUB_GATEWAY_HEADER_0: "id", VITEHUB_GATEWAY_HEADER_1: "secret" })
+  })
+
+  it("declares optional Server Env for the presets that Agents use", async () => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-gateway-env-"))
+    try {
+      await mkdir(join(root, "server", "agents", "dev"), { recursive: true })
+      await mkdir(join(root, "server", "agents", "plain"), { recursive: true })
+      await writeFile(join(root, "server", "agents", "dev", "agent.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `import { cliproxy, cloudflareAccess as access } from "vite-hub/agent/gateways"`,
+        `export default defineAgent({ driver: { kind: "codex", gateway: cliproxy({ headers: access() }) } })`,
+      ].join("\n"))
+      await writeFile(join(root, "server", "agents", "plain", "agent.ts"), [
+        `import { defineAgent } from "vite-hub/agent"`,
+        `const vercel = () => ({})`,
+        `export default defineAgent({ driver: { kind: "codex", gateway: vercel() } })`,
+      ].join("\n"))
+
+      expect(discoverAgentGatewayEnv({ rootDir: root })).toEqual({
+        cliproxy: {
+          apiKey: { names: ["CLIPROXY_API_KEY"], required: false, secret: true },
+          url: { names: ["CLIPROXY_URL"], required: false, secret: false },
+        },
+        cloudflareAccess: {
+          clientId: { names: ["CF_ACCESS_CLIENT_ID"], required: false, secret: true },
+          clientSecret: { names: ["CF_ACCESS_CLIENT_SECRET"], required: false, secret: true },
+        },
+      })
+    }
+    finally {
+      await rm(root, { force: true, recursive: true })
+    }
   })
 })
 

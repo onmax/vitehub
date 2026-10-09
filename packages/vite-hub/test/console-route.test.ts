@@ -8,9 +8,26 @@ import {
   decodeAgentRouteParam,
   encodeAgentRouteParam,
   resolveConsoleRouteName,
+  resolveUsageSessionsAgent,
 } from "../src/console/runtime/console-route.ts"
 
 describe("Console routes", () => {
+  it("opens sessions for the Agent in a direct filtered Usage URL", () => {
+    expect(resolveUsageSessionsAgent({ agent: "support" })).toBe("support")
+    expect(resolveUsageSessionsAgent({ agent: "support", returnAgent: "writer" }, "writer")).toBe("support")
+    expect(resolveUsageSessionsAgent({ agent: "team/support" })).toBe("team/support")
+  })
+
+  it("returns to the originating Agent when Usage has no valid Agent filter", () => {
+    expect(resolveUsageSessionsAgent({}, "writer")).toBe("writer")
+    expect(resolveUsageSessionsAgent({ returnAgent: "writer" })).toBe("writer")
+    expect(resolveUsageSessionsAgent({})).toBeUndefined()
+    for (const agent of [null, ["support", "writer"], "", " ", "x".repeat(513)]) {
+      expect(resolveUsageSessionsAgent({ agent, returnAgent: "writer" })).toBe("writer")
+    }
+    expect(resolveUsageSessionsAgent({ agent: " support " })).toBe("support")
+  })
+
   it.each([
     ["/_vitehub", ""],
     ["/portal/_vitehub", "/portal"],

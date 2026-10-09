@@ -4,11 +4,12 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { createEnvBridge, type EnvAccessContext } from "../src/bridge.ts"
 import { createDatabaseEnvStore } from "../src/database.ts"
 import { createEnvBridgeHandler } from "../src/http.ts"
-import { adminContext } from "./helpers.ts"
+import { agentEnvAccess } from "./agent-access.ts"
+import { adminContext, agentTokenContext } from "./helpers.ts"
 
 const origin = "https://console.example"
 const admin = await adminContext()
-const agent: EnvAccessContext = { actor: { kind: "agent", id: "reviewer" } }
+const agent = agentEnvAccess({ name: "reviewer" })
 const key = "private/provider/github"
 const path = "github.token"
 const secret = "ghp_synthetic_secret_1234"
@@ -33,7 +34,7 @@ function setup(context: EnvAccessContext | null = admin) {
     encryptionKey: new Uint8Array(32).fill(9),
     previews: true,
   })
-  const bridge = createEnvBridge({ ...store, runtimeContext: () => admin })
+  const bridge = createEnvBridge({ ...store, runtimeActor: { kind: "service", id: "runtime" } })
   const authenticate = vi.fn(async (_request: Request) => context)
   const resolve = vi.fn((requested: string) =>
     requested === path ? { key, management: { bridge, authenticate } } : undefined,
@@ -75,7 +76,7 @@ describe("Env management HTTP", () => {
   })
 
   it("enforces the verified token scope over durable grants", async () => {
-    const { handler, bridge } = setup({ ...agent, scope: [{ key, permissions: ["inspect"] }] })
+    const { handler, bridge } = setup(await agentTokenContext("reviewer", [{ key, permissions: ["inspect"] }]))
     await bridge.replace(admin, { key, value: secret, expectedRevision: null })
     await bridge.grant(admin, { key, actor: agent.actor, permissions: ["inspect", "preview"] })
     const inspected = await handler(request({ path, action: "inspect" }))
@@ -86,12 +87,14 @@ describe("Env management HTTP", () => {
     expect((await handler(request({ path, action: "grants" }))).status).toBe(403)
   })
 
-  it("rejects an administrator context that authentication code copied or built", async () => {
+  it("rejects a context that authentication code copied or built", async () => {
     for (const context of [
       { ...admin, scope: [{ key, permissions: ["inspect"] }] },
       { actor: admin.actor, admin: true },
+      { actor: agent.actor },
+      { ...agent },
     ]) {
-      // @ts-expect-error Only Env creates administrator contexts.
+      // @ts-expect-error Only Env creates access contexts.
       const { handler, bridge } = setup(context)
       const response = await handler(request({ path, action: "grants" }))
       expect(response.status).toBe(503)
@@ -148,7 +151,7 @@ describe("Env management HTTP", () => {
         )
       ).status,
     ).toBe(200)
-    expect(await bridge.read({ env: {}, keys: [key, "unlisted"] })).toEqual({
+    expect(await bridge.read({ env: {}, keys: [key, "unlisted"], access: admin })).toEqual({
       [key]: secret,
       unlisted: "private",
     })
@@ -180,7 +183,7 @@ describe("Env management HTTP", () => {
       (await handler(request({ path, action: "replace", value: "stale", expectedRevision: null })))
         .status,
     ).toBe(409)
-    expect(await bridge.read({ env: {}, keys: [key] })).toEqual({ [key]: secret })
+    expect(await bridge.read({ env: {}, keys: [key], access: admin })).toEqual({ [key]: secret })
   })
 
   it("validates malformed JSON, action arguments and paths before mutation", async () => {

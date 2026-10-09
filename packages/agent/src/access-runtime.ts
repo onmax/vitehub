@@ -1,9 +1,10 @@
+import { defineGrant } from "@vite-hub/runtime/internal/grant"
+
 import type { ReadonlyWorkspaceFacade, WorkspaceName } from "@vite-hub/workspace"
 import type { AgentAccessWorkspaceScopeContext, AgentInvocationContextStore } from "./types.ts"
 
 export const workspaceOverrideSymbol: unique symbol = Symbol.for("vitehub.agent.workspaceOverride") as never
 const trustedSourceResolutionDefinitions = new WeakSet<AgentInvocationContextStore>()
-const workspaceAccessScopeGrants = new WeakMap<AgentInvocationContextStore, WorkspaceAccessScopeGrant>()
 const trustedSourceFreeInspections = new WeakSet<AgentInvocationContextStore>()
 const workspaceAccessWrappers = new WeakMap<AgentInvocationContextStore, (workspace: ReadonlyWorkspaceFacade) => ReadonlyWorkspaceFacade>()
 
@@ -19,6 +20,14 @@ export interface WorkspaceAccessScopeGrant {
   readonly scope: string
   readonly sources: readonly string[]
 }
+
+const workspaceAccessScope = defineGrant("vitehub.agent.workspace-access-scope", (scope: WorkspaceAccessScopeGrant): WorkspaceAccessScopeGrant => Object.freeze({
+  all: scope.all === true,
+  paths: Object.freeze([...scope.paths]),
+  role: scope.role,
+  scope: scope.scope,
+  sources: Object.freeze([...scope.sources]),
+}))
 
 export interface WorkspaceOverrideRuntime<Name extends WorkspaceName = WorkspaceName> {
   [workspaceOverrideSymbol]: (workspace: ReadonlyWorkspaceFacade<Name>) => void
@@ -36,30 +45,25 @@ export function grantWorkspaceAccessScope(
   context: AgentInvocationContextStore,
   scope: WorkspaceAccessScopeGrant,
 ): void {
-  const grant: WorkspaceAccessScopeGrant = Object.freeze({
-    all: scope.all === true,
-    paths: Object.freeze([...scope.paths]),
-    role: scope.role,
-    scope: scope.scope,
-    sources: Object.freeze([...scope.sources]),
-  })
+  const grant = workspaceAccessScope.issue(scope)
+  const granted = workspaceAccessScope.verify(grant)
   // A pre-existing grant may update its own public copy. A first grant must not replace a caller value.
-  const overwrite = workspaceAccessScopeGrants.has(context)
+  const overwrite = workspaceAccessScope.attached(context) !== undefined
   context.set("access", {
     workspaceScope: {
-      all: grant.all,
-      paths: [...grant.paths],
-      role: grant.role,
-      scope: grant.scope,
-      sources: [...grant.sources],
+      all: granted.all,
+      paths: [...granted.paths],
+      role: granted.role,
+      scope: granted.scope,
+      sources: [...granted.sources],
     },
   }, { overwrite })
-  workspaceAccessScopeGrants.set(context, grant)
+  workspaceAccessScope.attach(context, grant)
 }
 
 /** Returns the Workspace Scope that `access()` granted, or `undefined`. Values written to the `"access"` key are ignored. */
 export function trustedWorkspaceAccessScope(context: AgentInvocationContextStore): WorkspaceAccessScopeGrant | undefined {
-  return workspaceAccessScopeGrants.get(context)
+  return workspaceAccessScope.check(workspaceAccessScope.attached(context))
 }
 
 export function registerWorkspaceAccessWrapper(

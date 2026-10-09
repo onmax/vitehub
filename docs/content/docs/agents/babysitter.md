@@ -40,9 +40,11 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `ignoreFeedbackAuthors` | `[]` | Logins, such as deployment preview bots, whose comments and reviews never need an assessment. They do not block a direct merge or wake a waiting PR. |
 | `deferWhilePending` | `true` | Wait for running required checks and review checks before a pass, so one pass handles CI and review results together. A failure or a conflict starts the pass at once. |
 | `noProgressBudget` | `3` | Passes on one head that can end without a push or a recorded wait. Then the PR waits until its head changes or a person comments. `false` disables the budget. |
-| `install` | `true` | Install dependencies on the host before the model starts. `true` detects pnpm, npm, Yarn or Bun from the lockfile and installs it frozen; `{ command, args }` overrides it; `{ cache: { directory, entries } }` configures the pnpm cache; `false` skips it. |
+| `install` | `true` | Install dependencies on the host before the model starts. `true` detects pnpm, npm or Yarn from the lockfile and installs it frozen; `{ command, args }` overrides it; `{ cache: { directory, entries } }` configures the pnpm cache; `false` skips it. |
+| `mentionAllowlist` | `[]` | Exact GitHub logins the worker may notify through `mentionOnPullRequest`. The tool is reserved for verified blockers that need one person's action. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
 | `admission` | `{}` | Token budgets, a free-space guard and custom checks that stop model passes. See [Limit model passes](#limit-model-passes). |
+| `capacity` | Process defaults | Host admission `memory`, `cpu`, and `fallbackConcurrency` settings. |
 
 ## Limit model passes
 
@@ -74,9 +76,42 @@ export default defineAgent({
 
 The health route shows the decision in `admission` and the token use, the limits and the `check` result in `budget`.
 
+## Bound local verification
+
+Start with one concurrent repair on a shared Linux host. Use `options.capacity.memory.perInvocationBytes` for each worker's growth budget and `reserveBytes` for memory that other services need. Use `serviceReserveBytes` for the reserve inside the process or cgroup budget (1 GiB by default); the host reserve is applied only to host memory. Linux admission checks host and cgroup pressure and reserves growth headroom for active workers. Set `options.capacity.fallbackConcurrency` to zero if a failed sample must pause admission.
+
+A Babysitter Box uses the host-prepared PR checkout as its `cwd`. Configure its runtime, Home and requirements; the preset owns the working tree.
+
+Admission only gates new work. Configure [Box memory limits](/docs/agents/boxes) to contain provider commands and native tools. The preset runs focused local tests and lint, then uses hosted CI for full typechecks and builds. A maintainer can require a bounded local reproduction. A memory-limit failure must lead to a smaller workload or a different budget before retrying.
+
+## Share the Console journal
+
+The Babysitter uses the invocation journal assigned to its discovered Agent. Set the Console journal in the ViteHub project configuration so the Console and the long-lived worker inspect the same records:
+
+```ts [vite.config.ts]
+import { defineConfig } from 'vite'
+import { vitehub } from 'vite-hub'
+
+export default defineConfig({
+  plugins: [vitehub({
+    preset: 'node',
+    console: {
+      exposure: 'host-managed',
+      authorize: './server/console-authorize.ts',
+      databaseUrl: 'file:/var/lib/babysitter/console.sqlite',
+    },
+  })],
+})
+```
+
+Create `server/console-authorize.ts` with your host session policy as shown in [host-managed Console access](/docs/development/console#protect-the-console-route). Every Console data route calls this function before it reads data.
+
+The worker records and recovers Invocations under `<discovered-agent-name>-worker`, for example `babysitter-worker`. Each discovered Babysitter Agent has its own recovery scope. Other Agents can keep using the same journal without having their active Invocations failed. A standalone process host without an assigned journal keeps its private `dataDir/invocations.sqlite` file.
+
+
 ## Configure GitHub
 
-Create a GitHub App with read and write access to contents, pull requests, issues, and checks. Subscribe it to pull request, review, review comment, review thread, issue comment, check run, check suite, status, and push events. Set its webhook URL to `https://<host>/api/_vitehub/agents/babysitter/webhooks/github`.
+Create a GitHub App with read and write access to contents, pull requests, issues, checks, and Actions. The Actions permission is required to rerun failed workflow jobs. Subscribe it to pull request, review, review comment, review thread, issue comment, check run, check suite, status, and push events. Set its webhook URL to `https://<host>/api/_vitehub/agents/babysitter/webhooks/github`.
 
 Set these variables on the host, or declare them in `env.server.github`:
 
@@ -88,7 +123,9 @@ Set these variables on the host, or declare them in `env.server.github`:
 | `GITHUB_APP_INSTALLATION_ID` | Optional. Without it, each repository uses its own installation. |
 | `VITEHUB_AGENT_STATE_URL` | Agent State, for example `file:/var/lib/babysitter/state.sqlite`. Production builds require it. |
 
-The Babysitter commits as the App's bot. GitHub tokens stay on the host; the worker reaches GitHub only through tools that are bound to its pull request.
+The Babysitter commits as the App's bot. Workers call `commitRepair` with a message and explicit file paths because the provider sandbox protects Git metadata. GitHub tokens stay on the host; the worker reaches GitHub only through tools that are bound to its pull request. Host dependency installation uses the frozen lockfile before the provider starts. Installation failures wait durably and retry after five minutes.
+
+Host installation accepts HTTPS downloads from `registry.npmjs.org`, `registry.yarnpkg.com`, `pkg.pr.new`, `github.com`, and `codeload.github.com`. Local dependencies and workspace patterns must stay inside the checkout. Other registries, network protocols, and custom ports are rejected before the package manager runs. Use `install: false` with dependencies prepared in an isolated workspace when a repository needs other sources.
 
 ## Deploy
 
@@ -115,8 +152,12 @@ Feedback that a pass assessed, or answered with a repair push, stays assessed on
 
 A pull request that ends `noProgressBudget` passes on one head without progress waits until its head changes or a person comments. Stack parents are claimed before other work, and a restart releases the claims of the previous process. A stacked pull request whose parent merged into the default branch is moved to the default branch.
 
-The host installs dependencies in each pass workspace before the model starts. The install gets only `PATH`, `HOME`, locale, package manager and `NODE_OPTIONS` variables, never the provider or GitHub credentials, and runs the repository's lifecycle scripts. The result is in `.git/vitehub-install.json` for the model.
+The host installs dependencies in each pass workspace before the model starts. The install gets only `PATH`, `HOME`, locale, package manager and `NODE_OPTIONS` variables, never the provider or GitHub credentials, and disables lifecycle scripts for detected installs. Custom install commands are trusted host configuration. The result is in `.git/vitehub-install.json` for the model.
 
-On Linux, a detected pnpm install reuses the `node_modules` trees of an earlier pass with the same lockfile, workspace file, root `package.json`, `.npmrc`, patches and Node version. The host hardlinks the trees into the workspace, as pnpm links its own store, and verifies them with a frozen offline install; a failed check gets a clean install. Passes that need the same trees wait for the first install. The cache directory must be on the same filesystem as the pass workspaces. It defaults to `BABYSITTER_INSTALL_CACHE` or `vitehub-install-cache` in the temporary directory, and keeps `BABYSITTER_INSTALL_CACHE_ENTRIES` or 8 entries. Set `install: { cache: false }` to disable it.
+On Linux, a detected pnpm install reuses the `node_modules` trees of an earlier pass with the same repository identity, lockfile, workspace file, package manifests, `.npmrc` files, patches and Node version. The host copies trees with independent writable inodes (using copy-on-write when supported), and verifies them with a frozen offline install; a failed check gets a clean install. Passes that need the same trees wait for the first install. It defaults to `BABYSITTER_INSTALL_CACHE` or `vitehub-install-cache` in the temporary directory, and keeps `BABYSITTER_INSTALL_CACHE_ENTRIES` or 8 entries. Set `install: { cache: false }` to disable it.
 
 When the process temporary directory is inside the service's working directory, the host removes pass workspaces left by an earlier process at startup.
+
+### Token admission estimates
+
+`BABYSITTER_HOURLY_INPUT_TOKENS` and `BABYSITTER_DAILY_INPUT_TOKENS` are best-effort thresholds over retained Invocation journal usage, not hard host budgets or billing caps. Health reports identify this accounting as `best-effort-retained-journal`. The host samples at most once per minute and caches the largest input-token observation per Invocation, assigned to its latest update time. Active observations are included through the journal API. Concurrent writes during pagination can be missed until a later scan; retention and host restarts can omit usage permanently. The standalone journal retains 5,000 terminal records. Read errors appear in health diagnostics and do not block admission. Use provider-side spending limits when a hard cap is required.

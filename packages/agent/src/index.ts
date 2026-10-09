@@ -1,3 +1,4 @@
+import { agentEnvIdentity, createAgentEnvIdentity } from "./internal/env-identity.ts"
 import { readWorkflowJournalName } from "./internal/workflow-journal-name.ts"
 import type { AgentPresetConfig, AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
 export type { AgentPresetConfig, AgentPresetOptions, ConfiguredAgentDefinition } from "./agent-presets.ts"
@@ -455,6 +456,7 @@ export type {
   AgentInvocationContextStore,
   AgentInvocationContextValues,
   AgentInvocationHooks,
+  AgentInvocationReference,
   AgentIntegrationsOptions,
   AgentInvoker,
   AgentInvokerMeta,
@@ -531,6 +533,7 @@ export type {
   AgentToolInspection,
   AgentTriggerContext,
   AgentTriggerDefinition,
+  AgentTriggerFailedEvent,
   AgentTriggerInvokeResult,
   AgentTriggerRunInvokeResult,
   AgentToolResolver,
@@ -848,6 +851,12 @@ type CheckedInvocationTools<TTools> = {
 const agentWorkflowHandles = new WeakMap<object, Map<string, WorkflowHandle<AgentWorkflowInvocationPayload, unknown>>>()
 const agentWorkflowNames = new Set<string>()
 const agentIdentityOwner = Symbol("vitehub.agentIdentityOwner")
+const agentWorkflowDiscovery = Symbol("vitehub.agentWorkflowDiscovery")
+type IdentityRuntimeContext<TRuntimeConfig extends AgentRuntimeConfig = AgentRuntimeConfig> = AgentRuntimeContext<TRuntimeConfig> & {
+  [agentIdentityOwner]?: object
+  [agentWorkflowDiscovery]?: boolean
+  [agentEnvIdentity]?: AgentRuntimeContext["agentIdentity"]
+}
 
 // Name journal records like the Console lists them: explicit name, host identity, then discovered file name.
 function agentInvocationName(agent: { name?: string }, context: Pick<AgentRuntimeContext, "agentIdentity">): string | undefined {
@@ -860,13 +869,27 @@ interface DefaultAgentWorkflowRuntimeBinding extends AgentWorkflowRuntimeBinding
 
 function withAgentIdentityOwner<TRuntimeConfig extends AgentRuntimeConfig>(
   agent: AgentInput<AgentRuntimeContext<TRuntimeConfig>>,
-  context: AgentRuntimeContext<TRuntimeConfig>,
-): AgentRuntimeContext<TRuntimeConfig> {
+  context: IdentityRuntimeContext<TRuntimeConfig>,
+): IdentityRuntimeContext<TRuntimeConfig> {
   if (agent.github && !context.githubIdentity) context = { ...context, githubIdentity: agent.github }
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  if (!context.agentIdentity || (context as AgentRuntimeContext & { [agentIdentityOwner]?: object })[agentIdentityOwner]) return context
-  // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
-  return { ...context, [agentIdentityOwner]: agent as object } as AgentRuntimeContext<TRuntimeConfig>
+  // Only reuse identity for the same Definition. An unnamed child cannot inherit its parent's grants.
+  const owner = context[agentIdentityOwner]
+  if (owner === agent) return context
+  // Keep host discovery separate from the identity minted for Connection access.
+  const discovered = context[agentWorkflowDiscovery] ?? Boolean(context.agentIdentity)
+  context = { ...context, [agentWorkflowDiscovery]: discovered }
+  const name = agent.name || readDiscoveredAgentName(agent)
+  if (!name) return { ...context, agentIdentity: !owner ? context.agentIdentity : undefined, [agentIdentityOwner]: agent, [agentEnvIdentity]: undefined }
+  const envIdentity = createAgentEnvIdentity({ ...(!owner ? context.agentIdentity : {}), name })
+  return {
+    ...context,
+    // Host identity controls routing and attribution; Env authority belongs to the Definition.
+    agentIdentity: !owner && context.agentIdentity
+      ? createAgentEnvIdentity(context.agentIdentity, name)
+      : agent.name ? envIdentity : undefined,
+    [agentEnvIdentity]: envIdentity,
+    [agentIdentityOwner]: agent,
+  }
 }
 
 function hasAgentDefinition(value: unknown): value is AgentDefinition {
@@ -888,9 +911,10 @@ function resolveAgentWorkflowRuntimeBinding<
 
 function canDispatchAgentWorkflow(
   binding: AgentWorkflowRuntimeBinding | undefined,
-  context: AgentRuntimeContext,
+  context: IdentityRuntimeContext,
 ): binding is AgentWorkflowRuntimeBinding {
-  return Boolean(binding && (!("discoveryDefault" in binding) || context.agentIdentity))
+  const discovered = context[agentWorkflowDiscovery] ?? Boolean(context.agentIdentity)
+  return Boolean(binding && (!("discoveryDefault" in binding) || (discovered && context.agentIdentity)))
 }
 
 function resolveAgentWorkflowName<TRuntimeConfig extends AgentRuntimeConfig>(
@@ -1683,6 +1707,7 @@ async function applyChannelDeliveryEffectIntents<
   for (const intent of intents) {
     const handlers = active ? channelDeliveryEffectHandlers(active.channel, intent) : []
     const metadata = {
+      ...(active?.channelId ? { "channel.effect.channel": active.channelId } : {}),
       "channel.effect.intent": intent.intent,
       "channel.effect.kind": intent.kind,
       "channel.effect.supported": handlers.length > 0,
@@ -4373,7 +4398,8 @@ async function createAgentInvocationContext<
   // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
   const internalDefinition = definition as AgentDefinitionWithBaseResolve<TRuntimeConfig, CALL_OPTIONS> | undefined
   const capabilitiesResolver = internalDefinition?.[baseAgentCapabilitiesResolver]
-  const activeChannel = activeAgentChannel(definition?.channels, invocationContext, context.run)?.channel
+  const activeChannelContext = activeAgentChannel(definition?.channels, invocationContext, context.run)
+  const activeChannel = activeChannelContext?.channel
   const channelCapabilities = activeChannel?.capabilities || []
   const initialTelemetry = agentCapabilityTelemetry([
     ...(definition?.capabilities || []),
@@ -4679,11 +4705,24 @@ async function createAgentInvocationContext<
         }
         await validateCapabilityInput(false)
         if (intercept) {
+          const channelMessage = capabilities.input.data === undefined && !internalDefinition?.[baseAgentData] && activeChannelContext
+            ? await channelMessageData(
+              activeChannelContext.channel,
+              activeChannelContext.channelId,
+              invocationContext,
+              invocationContext.get("agent.trigger")?.source === "channel",
+            )
+            : undefined
           const value = await runObservedAgentHook(observedHooks, {
             name: "agent:intercept",
             owner: "agent",
             phase: "input",
-          }, () => intercept({ ...hookContext(), data: capabilities.input.data }))
+          }, () => intercept({
+            ...hookContext(),
+            data: capabilities.input.data === undefined && channelMessage !== undefined
+              ? channelMessage
+              : capabilities.input.data,
+          }))
           if (value !== undefined) intercepted = { value }
         }
       }
