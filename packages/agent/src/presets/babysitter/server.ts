@@ -1,10 +1,11 @@
+import { execFile } from "node:child_process";
+import { access, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath } from "node:url";
 import { agentBuildRevision } from "../../internal/build-revision.ts";
 import { GitHubDependencyConflictError } from "../../server/github-install-inputs.ts";
 import * as v from "valibot";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { join } from "node:path";
 import { readAsyncMerge, requestAsyncMerge } from "./async-merge.ts";
 import { prepareGitHubRepairBase } from "../../server/github-repair.ts";
@@ -48,11 +49,13 @@ import { importBoxRepairFiles, importBoxRepairWorkspace, publishBoxDependencies 
 import { activeProviderBox } from "../../internal/provider-box.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
-import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
-import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
-import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
+import { directMergeReadiness, feedbackFingerprints, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
+import { checksDependencyEvidence, createCheckWait, failureKeys, hasPendingChecks, reviewCheckRunning, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
 import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admission.ts";
+import { boundedMergeReady } from "./merge-ready.ts";
+import { createBabysitterInstaller } from "./install.ts";
+import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { createBabysitterStatusRecovery, isWorkerBlocker } from "./status-recovery.ts";
 
 declare const __VITEHUB_AGENT_BUILD_REVISION__: string;
@@ -81,24 +84,7 @@ export interface BabysitterRuntimeOptions {
   postPushGraceMs?: number;
   /** Delay between provider rate-limit retries. Defaults to 10 seconds. */
   providerRetryDelayMs?: number;
-  admission?: () => Promise<BabysitterAdmissionResult>;
-}
-
-/** Bound policy hooks inside an owner slot, never in the scheduler wait scan. */
-export async function boundedMergeReady(read: () => true | string | Promise<true | string>, signal: AbortSignal, timeoutMs = 10_000) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let abort: () => void = () => {};
-  try {
-    signal.throwIfAborted();
-    return await Promise.race([Promise.resolve().then(read), new Promise<never>((_resolve, reject) => {
-      abort = () => reject(signal.reason);
-      signal.addEventListener("abort", abort, { once: true });
-      timer = setTimeout(() => reject(new Error("Merge readiness timed out.")), timeoutMs);
-    })]);
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", abort);
-  }
+  admission?: () => Promise<Pick<BabysitterAdmissionResult, "accepting" | "hostOnly" | "reason" | "retryAt" | "detail">>;
 }
 
 /** Provider quota and rate-limit failures. Cancellation is never a rate limit. */
@@ -136,13 +122,17 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   // Only trust the host identity when it matches the configured allowlist;
   // unverified names must never suppress activity feedback.
   const activityAuthors = verifiedHostIdentity ? [verifiedHostIdentity] : [];
+  const noProgressBudget = baseAgent.noProgressBudget ?? presetOptions.noProgressBudget ?? 3;
   const pullRequestInbox = new PullRequestInbox({
     ...(options.inboxStorage ? { storage: options.inboxStorage, scope: options.inboxScope ?? options.agentName ?? baseAgent.name ?? "babysitter" } : { path: options.inboxPath }),
     repositories: options.repositories,
     filter: presetOptions.filter,
     activityAuthors,
+    budgets: noProgressBudget === false ? {} : { noProgress: noProgressBudget },
   });
+  const deferWhilePending = baseAgent.deferWhilePending ?? presetOptions.deferWhilePending ?? true;
   const waitPolicy: BabysitterWaitPolicy = {
+    ignoreFeedbackAuthors: new Set((baseAgent.ignoreFeedbackAuthors ?? presetOptions.ignoreFeedbackAuthors ?? []).map(author => author.trim().toLowerCase())),
     workerAuthors: new Set(activityAuthors.flatMap(author => [author.toLowerCase(), `${author.toLowerCase().replace(/\[bot\]$/, "")}[bot]`])),
     pendingReviewChecks: new Set((presetOptions.reviewChecks ?? []).map(name => name.toLowerCase())),
     wakeWhenReady: merge.mode === "direct",
@@ -165,7 +155,6 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     error: schedulerError,
   });
   const active = new Set<string>();
-  const execFileAsync = promisify(execFile);
   async function readRest(path: string, projection = ".[]", signal?: AbortSignal) {
     const repository = path.split("/").slice(1, 3).join("/");
     const result = await github.command(
@@ -253,16 +242,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const requiredChecks = createGitHubRequiredCheckPolicyReader(async (path) => {
     const repository = path.split("/").slice(1, 3).join("/");
     try {
-      // The hosted gh CLI does not provide `--slurp`; ask it to emit one JSON
-      // value per line and assemble the already-paginated response here.
-      const rules = path.includes("/rules/");
-      const result = await github.command(
-        ["api", "--paginate", path, "--jq", rules ? ".[] | @json" : ". | @json"],
-        { repository, timeout: 60_000 },
-      );
-      const values = result.stdout.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
-      // Rules are a list; protection and branch endpoints return one object.
-      return { status: 200, data: rules ? values : values[0], nextPage: null };
+      const list = path.includes("/rules/");
+      const result = await github.command(["api", "--paginate", path, "--jq", list ? ".[] | @json" : ". | @json"], { repository, timeout: 60_000 });
+      const pages: unknown[] = result.stdout.trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+      // gh emits one JSON value per line. Rules are a list; protection endpoints return one object.
+      return { status: 200, data: list ? pages : pages[0], nextPage: null };
     } catch (error) {
       return { status: Number(String(error).match(/HTTP\s+(\d{3})/i)?.[1] ?? 0) };
     }
@@ -364,11 +348,13 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const evaluation = evaluateGitHubRequiredChecks(policy, snapshotCheckEvidence(snapshot));
     const assessment = await pullRequestInbox.meta(`review-assessment:${repository}#${number}`);
     const reviewedEvidenceKey = isRuntimeRecord(assessment) && assessment.head === snapshot.pr?.head?.sha && hasRuntimeType(assessment.evidenceKey, "string") ? assessment.evidenceKey : undefined;
-    let decision = directMergeReadiness(snapshot, evaluation.state, { pendingReviewChecks: waitPolicy.pendingReviewChecks, workerAuthors: waitPolicy.workerAuthors, reviewedEvidenceKey });
+    const assessedFeedback = new Set(isRuntimeRecord(assessment) && Array.isArray(assessment.feedback) ? assessment.feedback.filter(item => hasRuntimeType(item, "string")) : []);
+    let decision = directMergeReadiness(snapshot, evaluation.state, { ...waitPolicy, assessedFeedback, reviewedEvidenceKey });
     if (decision.ready && merge.ready) {
+      const callback = merge.ready;
       const head = decision.head;
-      const readyHook = merge.ready;
-      const ready = await boundedMergeReady(() => readyHook({ repository, number, head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state }), signal);
+      const ready = await boundedMergeReady(() => callback({ repository, number, head, snapshot: structuredClone(snapshot), requiredChecks: evaluation.state }), signal);
+      if (signal.aborted) return "blocked";
       if (ready !== true) decision = { ready: false, reason: ready };
     }
     if (!decision.ready) {
@@ -453,10 +439,97 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
   const providerRetryDelayMs = options.providerRetryDelayMs ?? 10_000;
 
-  async function requiredCheckState(snapshot: Snapshot) {
+  async function requiredCheckEvaluation(snapshot: Snapshot) {
     const base = snapshot.pr?.base?.ref;
-    if (!base) return "unknown" as const;
-    return evaluateGitHubRequiredChecks(await requiredChecks.read(snapshot.repository, base), snapshotCheckEvidence(snapshot)).state;
+    if (!base) return undefined;
+    return evaluateGitHubRequiredChecks(await requiredChecks.read(snapshot.repository, base), snapshotCheckEvidence(snapshot));
+  }
+
+  async function requiredCheckState(snapshot: Snapshot) {
+    return (await requiredCheckEvaluation(snapshot))?.state ?? "unknown";
+  }
+
+  /**
+   * Remembers the feedback that a pass assessed or answered with a repair push. A later head needs
+   * an assessment only for feedback that arrived since.
+   */
+  async function recordAssessment(snapshot: Snapshot, current: { head?: string; evidenceKey?: string } = {}) {
+    const key = `review-assessment:${snapshot.repository}#${snapshot.number}`;
+    const previous = await pullRequestInbox.meta(key);
+    const record = isRuntimeRecord(previous) ? previous : {};
+    const known = Array.isArray(record.feedback) ? record.feedback.filter(item => hasRuntimeType(item, "string")) : [];
+    await pullRequestInbox.setMeta(key, {
+      head: current.head ?? record.head,
+      evidenceKey: current.evidenceKey ?? record.evidenceKey,
+      // Keep the newest identities; a long-lived PR cannot grow this record without bound.
+      feedback: [...new Set([...known, ...feedbackFingerprints(snapshot, waitPolicy)])].slice(-2000),
+    });
+  }
+
+  /** Why a pass waits for running gates, or undefined when it runs now. A failure or conflict always runs now. */
+  async function pendingGateDeferral(snapshot: Snapshot): Promise<string | undefined> {
+    if (!deferWhilePending) return undefined;
+    const pr = snapshot.pr;
+    if (!pr || pr.mergeable === false || pr.mergeable_state === "dirty" || failureKeys(snapshot).length) return undefined;
+    if (reviewCheckRunning(snapshot, waitPolicy)) return "review checks";
+    const evaluation = await requiredCheckEvaluation(snapshot);
+    // A required check that never reported may never run, so only running checks defer a pass.
+    return evaluation?.state === "pending" && !evaluation.missing.length ? "required checks" : undefined;
+  }
+
+  const installOption = baseAgent.install ?? presetOptions.install ?? true;
+  const installer = createBabysitterInstaller(installOption);
+
+  /**
+   * Installs dependencies on the host before the provider starts, so the model spends no turns on
+   * setup. Validated inputs are installed in a protected snapshot and published only on success.
+   */
+  async function installDependencies(cwd: string, signal: AbortSignal, owner: Record<string, unknown>, nodeOptions: string | undefined) {
+    // Trusted custom commands also support workspaces without Node dependency inputs.
+    const hasInputs = await Promise.all(["package.json", "pnpm-workspace.yaml"].map(name => access(join(cwd, name)).then(() => true, () => false)));
+    if (isRuntimeRecord(installOption) && installOption.command && !hasInputs.some(Boolean)) {
+      const record = await installer(cwd, signal, nodeOptions, hasRuntimeType(owner.repository, "string") ? owner.repository : cwd);
+      if (!record) return;
+      const gitDirectory = (await promisify(execFile)("git", ["rev-parse", "--absolute-git-dir"], { cwd, encoding: "utf8", timeout: 5000, signal })).stdout.trim();
+      await writeFile(join(gitDirectory, "vitehub-install.json"), JSON.stringify(record));
+      const { output, ...timing } = record;
+      schedulerEvent("babysitter.install.finished", { ...owner, ...timing });
+      if (!record.ok) throw new GitHubWorkspaceInstallError(new Error(output));
+      return;
+    }
+    await installGitHubPullRequestWorkspace(cwd, signal, async prepared => {
+      const record = await installer(prepared.cwd, signal, nodeOptions, hasRuntimeType(owner.repository, "string") ? owner.repository : cwd, prepared);
+      if (!record) return;
+      const { output, ...timing } = record;
+      schedulerEvent("babysitter.install.finished", { ...owner, ...timing });
+      if (!record.ok) throw new Error(output || "Dependency installation failed.");
+      return { ...timing, scripts: isRuntimeRecord(installOption) && installOption.command ? "custom" : false };
+    });
+  }
+
+  /** A ready event may wake a direct merge, but must not start a model pass when
+   * the user supplied merge predicate still blocks that merge. */
+  async function directMergeWakeAllowed(snapshot: Snapshot, requiredChecks: Awaited<ReturnType<typeof requiredCheckState>>): Promise<boolean> {
+    if (merge.mode !== "direct" || !merge.ready) return true;
+    const head = snapshot.pr?.head?.sha;
+    if (!head) return false;
+    const callback = merge.ready;
+    try {
+      return await boundedMergeReady(() => callback({
+        repository: snapshot.repository,
+        number: snapshot.number,
+        head,
+        snapshot: structuredClone(snapshot),
+        requiredChecks,
+      })) === true;
+    } catch (error) {
+      schedulerEvent("babysitter.direct_merge.skipped", {
+        pullRequest: snapshot.number,
+        repository: snapshot.repository,
+        reason: `merge readiness check failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 160)}`,
+      });
+      return false;
+    }
   }
 
   const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -467,7 +540,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
       if (!isRuntimeRecord(pr)) throw new Error("Missing external pull-request state.");
       return digest({ state: pr.state, mergedAt: pr.merged_at, head: isRuntimeRecord(pr.head) ? pr.head.sha : undefined });
     }
-    return checksDependencyEvidence(wake, readRest);
+    return await checksDependencyEvidence(wake, (path, projection) => readRest(path, projection));
   }
   async function externalWait(observed: Snapshot, wake: PullRequestWake | undefined, reason: string) {
     if (!wake) await statusRecovery.recordWorkerBlocker(observed, reason);
@@ -497,7 +570,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(true)) {
       if (snapshot.generation <= snapshot.handled && (snapshot.wait?.retryAt ?? Infinity) > Date.now() && !snapshot.wait?.wake) continue;
       const checks = await requiredCheckState(snapshot);
-      const reasons = wakeReasons(snapshot, checks, waitPolicy);
+      let reasons = wakeReasons(snapshot, checks, waitPolicy);
+      if (reasons.includes("ready-to-merge") && !(await directMergeWakeAllowed(snapshot, checks))) {
+        reasons = reasons.filter(reason => reason !== "ready-to-merge");
+      }
       if (snapshot.wait?.retryAt !== undefined && snapshot.wait.retryAt <= Date.now()) reasons.push("merge-retry");
       if (snapshot.wait?.wake) {
         const dependencyKey = `dependency:${snapshot.repository}#${snapshot.number}`;
@@ -555,6 +631,11 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   function workload() {
     return { running: active.size };
   }
+
+  // PRs that a paused admission already checked for host-only work, by generation and revision.
+  // They stay unclaimed until their evidence changes.
+  const hostOnlyChecked = new Map<string, string>();
+  const hostOnlyStamp = (s: Snapshot) => `${s.generation}:${s.revision ?? 0}`;
 
   async function reconcile(
     reason: string,
@@ -661,13 +742,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.
-    const remainingCapacity = Math.max(0, ownerLimit - active.size);
+    const remainingCapacity = Math.max(0, ownerLimit + (modelAdmission ? 0 : 5) - active.size);
     const lane = await pullRequestInbox.claim(Math.min(5, remainingCapacity), {
       only: snapshot => Boolean(snapshot.recoveryHead && snapshot.recoveryHead === snapshot.pr?.head?.sha),
       includeBlocked: true,
+      skip: snapshot => !modelAdmission && hostOnlyChecked.get(`${snapshot.repository}#${snapshot.number}`) === hostOnlyStamp(snapshot),
     });
     // Admission limits model dispatch. Merges and stack retargets remain host work.
-    const regular = await pullRequestInbox.claim(Math.max(0, remainingCapacity - lane.length));
+    const regular = await pullRequestInbox.claim(Math.max(0, remainingCapacity - lane.length), { skip: snapshot => !modelAdmission && hostOnlyChecked.get(`${snapshot.repository}#${snapshot.number}`) === hostOnlyStamp(snapshot) });
     const jobs = [...lane, ...regular];
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
@@ -802,6 +884,25 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               });
               return;
             }
+          }
+          const deferral = await pendingGateDeferral(inboxClaim.snapshot);
+          if (deferral) {
+            // Running gates finish soon. One later pass then handles their results and the feedback together.
+            await pullRequestInbox.finish(inboxClaim, {
+              text: inboxClaim.snapshot.lastResult || `Waiting for ${deferral} before the next pass.`,
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), defer: "checks" },
+            });
+            outcome = "waiting";
+            schedulerEvent("babysitter.wait.kept", { ...owner, head_sha: inboxClaim.snapshot.pr?.head?.sha, avoided_invocation: true, reason: `deferred:${deferral}` });
+            return;
+          }
+          if (!modelAdmission && inboxClaim.snapshot.recoveryHead !== inboxClaim.snapshot.pr?.head?.sha) {
+            // The PR needs a model pass. Leave it queued unchanged until admission reopens.
+            await pullRequestInbox.release(inboxClaim);
+            const released = await pullRequestInbox.get(repository, number);
+            if (released) hostOnlyChecked.set(`${repository}#${number}`, hostOnlyStamp(released));
+            outcome = "admission-paused";
+            return;
           }
           if (!(await hydrateFailedCiEvidence(pullRequestInbox, inboxClaim, {
             readJson: (path, projection) => readRest(path, projection, passSignal),
@@ -969,7 +1070,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   throw changed;
                 }
               };
-              const prepareRepairWorkspace = async (directory: string) => {
+              const prepareRepairWorkspace = async (directory: string, nodeOptions?: string) => {
                 if (!preparedDirectories.has(directory)) {
                   if (directory !== checkout) await prepared.prepareWorkspace(directory, { restoreInstructions: true });
                   if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
@@ -979,7 +1080,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   }
                   if (presetOptions.install !== false) {
                     // Dependency conflicts must be resolved before the explicit refresh tool can install.
-                    try { await installGitHubPullRequestWorkspace(directory, abortSignal); }
+                    try { await installDependencies(directory, abortSignal, owner, nodeOptions); }
                     catch (error) { if (!preparedMergeBase || abortSignal.aborted || !(error instanceof GitHubWorkspaceInstallError) || !(error.cause instanceof GitHubDependencyConflictError)) throw error; }
                   }
                   preparedDirectories.add(directory);
@@ -1013,7 +1114,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
                   await assertRepairBase();
-                  if (presetOptions.install !== false) await installGitHubPullRequestWorkspace(providerDirectory, abortSignal);
+                  if (presetOptions.install !== false) await installDependencies(providerDirectory, abortSignal, owner, undefined);
                   await assertLease();
                 },
                 commitRepair: async (input) => {
@@ -1221,7 +1322,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   },
                   ...(workerSettings.box ? undefined : { launch: async (context: AgentProviderLaunchContext) => {
                     if (context.purpose !== "inspection") {
-                      await prepareRepairWorkspace(context.cwd);
+                      await prepareRepairWorkspace(context.cwd, hasRuntimeType(context.environment.NODE_OPTIONS, "string") ? context.environment.NODE_OPTIONS : undefined);
                       providerDirectory = context.cwd;
                     }
                     const launch = workerDriver.launch
@@ -1303,7 +1404,9 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           const current = await pullRequestInbox.get(repository, number);
           const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
-          if (assessed) await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
+          if (assessed) await recordAssessment(inboxClaim.snapshot, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
+          // A repair push answers every finding the pass saw; the instructions require a fix or an explicit rejection first.
+          else if (pushedHead && disposition === "park") await recordAssessment(inboxClaim.snapshot);
           let recorded = false;
           const terminal = current?.status === "terminal";
           if (terminal) {

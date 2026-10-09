@@ -847,12 +847,38 @@ merge. `reviewChecks` lists check names, such as a review bot's check, that keep
 a PR waiting while they run. A comment-only review with an empty body does not
 wake a waiting PR; its inline comments do. `noFindingsReviews` lists body
 prefixes, such as `"> ✅ No new issues found."`, of comment-only reviews that
-report no findings; these do not wake it either. A PR that ends three passes on one head without a
-push waits for new evidence. A stacked PR whose parent merged into the default
+report no findings; these do not wake it either. `ignoreFeedbackAuthors` lists
+logins, such as deployment preview bots, whose comments and reviews never need an
+assessment. Feedback that a pass assessed or answered with a repair push stays
+assessed on later heads, so a direct merge needs a model pass only for new
+feedback. Bot issue comments count by identity, not body. Without required
+checks on the base branch, the newest run of every current-head check must
+finish before a merge.
+
+`deferWhilePending` (default `true`) holds a pass while required checks or
+review checks run, unless a failure or conflict already needs repair; the PR
+wakes once the gates stop. `noProgressBudget` (default `3`, `false` disables it)
+stops a head after that many passes without a push or a recorded wait, until the
+head changes or a person comments. `install` (default `true`) installs
+dependencies on the host before the model starts: it detects pnpm, npm or
+Yarn from the lockfile and installs frozen, or runs `{ command, args }`. The
+install gets a scrubbed environment and records its result and timing in
+`.git/vitehub-install.json`. On Linux, a detected pnpm install reuses the
+`node_modules` trees through independent copies (copy-on-write where supported).
+The cache is scoped by repository identity, lockfile, workspace configuration,
+package manifests, `.npmrc` files, patches and Node version. Restored trees are
+verified offline, with one install per cache key at a time. Detected installs
+disable lifecycle and build scripts; custom commands are trusted host configuration.
+`install: { cache: { directory, entries } }` configures the cache, and
+`cache: false` disables it. At startup, the built-in host removes pass
+workspaces from an earlier process when its temporary directory is inside the
+service directory. Stack parents are claimed first, and a restart
+releases the claims of the previous process. A stacked PR whose parent merged into the default
 branch is retargeted to the default branch. A provider rate limit is retried
 three times; after that, model dispatch waits for an hour. Each owner rechecks
 the durable deadline before dispatch, including after workspace setup. Host
 merges and stack retargets continue during the cooldown.
+While the built-in resource guard pauses model passes for a spent token budget, low temporary space or exhausted proxy accounts, host work continues. A token budget of `0` stops every claim.
 
 Colocated `instructions.md` fills the preset's instruction slot without adding
 headings. Explicit `driver.instructions` replaces that slot. Use

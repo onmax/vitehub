@@ -39,15 +39,51 @@ export interface BabysitterOptions {
    * `"> ✅ No new issues found."`. These reviews do not wake a parked PR. Defaults to none.
    */
   noFindingsReviews: string[];
+  /**
+   * Logins whose comments and reviews never need an assessment, such as deployment preview bots.
+   * Their items do not block a direct merge or wake a waiting PR. Defaults to none.
+   */
+  ignoreFeedbackAuthors: string[];
+  /**
+   * Passes on one head that may end without a push or a recorded wait before the PR stops until its
+   * head changes or a person comments. `false` disables the budget. Defaults to 3.
+   */
+  noProgressBudget: number | false;
+  /**
+   * Wait for running required checks and review checks before a pass, unless a failure or conflict
+   * already needs repair. One pass then handles CI and review results together. Defaults to `true`.
+   */
+  deferWhilePending: boolean;
+  /**
+   * Install dependencies on the host before the provider starts. `true` detects pnpm, npm or
+   * Yarn from the lockfile and installs it frozen. A command overrides the detection. A detected pnpm
+   * install reuses the trees of earlier passes. Defaults to `true`.
+   */
+  install: BabysitterInstall;
   /** GitHub logins the worker may notify through its explicit mention capability. Defaults to none. */
   mentionAllowlist: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
-  /** Install frozen dependencies on the host before repair. Lifecycle scripts stay disabled. Defaults to true. */
-  install: boolean;
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
+
+/**
+ * Dependency install before each pass. `true` detects the package manager from the lockfile;
+ * `false` skips the install.
+ */
+export type BabysitterInstall = boolean | {
+  /** Install command. Defaults to the package manager detected from the lockfile. */
+  command?: string;
+  args?: string[];
+  /**
+   * Reuse the node_modules trees of a detected pnpm install across passes with the same lockfile,
+   * using independent copy-on-write copies on Linux. `directory` defaults to `BABYSITTER_INSTALL_CACHE` or
+   * `<tmpdir>/vitehub-install-cache` and must share a filesystem with the pass workspaces.
+   * `entries` defaults to `BABYSITTER_INSTALL_CACHE_ENTRIES` or 8. `false` disables the cache.
+   */
+  cache?: false | { directory?: string; entries?: number };
+};
 
 export type BabysitterPassWake =
   | { kind: "checks"; repository: string; headSha: string }
@@ -118,6 +154,18 @@ export const babysitterPassResultSchema = {
   },
 };
 
+function validInstall(install: unknown): boolean {
+  if (hasRuntimeType(install, "boolean")) return true;
+  if (!isRuntimeRecord(install)) return false;
+  const { command, args, cache } = install;
+  if (command !== undefined && !(hasRuntimeType(command, "string") && command.trim())) return false;
+  if (args !== undefined && (command === undefined || !Array.isArray(args) || !args.every(arg => hasRuntimeType(arg, "string")))) return false;
+  if (cache === undefined || cache === false) return true;
+  if (!isRuntimeRecord(cache)) return false;
+  return (cache.directory === undefined || (hasRuntimeType(cache.directory, "string") && cache.directory.trim() !== ""))
+    && (cache.entries === undefined || (Number.isSafeInteger(cache.entries) && Number(cache.entries) >= 1));
+}
+
 const babysitterHost: AgentProcessHostContribution = {
   async create(context) {
     const { createBabysitterProcessHost } = await import("./babysitter/host.ts");
@@ -167,7 +215,15 @@ type BabysitterDefinition = AgentDefinition<
   AgentInvokerProfile,
   AgentInvocationContextValues,
   BabysitterPassResult
-> & { reviewChecks: string[]; noFindingsReviews: string[]; install: boolean; mentionAllowlist: string[] };
+> & {
+  reviewChecks: string[];
+  noFindingsReviews: string[];
+  ignoreFeedbackAuthors: string[];
+  noProgressBudget: number | false;
+  deferWhilePending: boolean;
+  install: BabysitterInstall;
+  mentionAllowlist: string[];
+};
 
 export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
@@ -182,13 +238,19 @@ export const babysitter: BabysitterAgent = defineAgent({
     reviewChecks: [] as string[],
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented prefix list.
     noFindingsReviews: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login list.
+    ignoreFeedbackAuthors: [] as string[],
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented budget union.
+    noProgressBudget: 3 as number | false,
+    deferWhilePending: true,
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The default widens to the documented install union.
+    install: true as BabysitterInstall,
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login allowlist.
     mentionAllowlist: [] as string[],
     concurrency: 1,
-    install: true,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, autoMerge, concurrency, install }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install, autoMerge, concurrency }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -198,6 +260,18 @@ export const babysitter: BabysitterAgent = defineAgent({
     if (noFindingsReviews.some((prefix) => prefix.length === 0)) {
       throw new TypeError("[vitehub] Babysitter noFindingsReviews cannot contain an empty prefix.");
     }
+    if (!Array.isArray(ignoreFeedbackAuthors) || ignoreFeedbackAuthors.some(author => !hasRuntimeType(author, "string") || !author.trim())) {
+      throw new TypeError("[vitehub] Babysitter ignoreFeedbackAuthors must list GitHub logins.");
+    }
+    if (noProgressBudget !== false && (!Number.isSafeInteger(noProgressBudget) || noProgressBudget < 1)) {
+      throw new TypeError("[vitehub] Babysitter noProgressBudget must be a positive integer or false.");
+    }
+    if (!hasRuntimeType(deferWhilePending, "boolean")) {
+      throw new TypeError("[vitehub] Babysitter deferWhilePending must be a boolean.");
+    }
+    if (!validInstall(install)) {
+      throw new TypeError("[vitehub] Babysitter install must be a boolean or { command, args, cache }.");
+    }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);
     const definition = defineAgent({
@@ -206,8 +280,6 @@ export const babysitter: BabysitterAgent = defineAgent({
       channels: { github: babysitterIntake },
       driver: {
         kind: driver,
-        // Keep edit-mode restrictions and deny native escalation without prompting.
-        // PR-bound repair tools retain their separate host authorization.
         permissions: "allow-edits-unattended",
         instructions: {
           template: babysitterInstructions,
@@ -215,6 +287,6 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
-    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, mentionAllowlist, install }), babysitterHost);
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, mentionAllowlist, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install }), babysitterHost);
   },
 });

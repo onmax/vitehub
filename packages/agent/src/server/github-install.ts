@@ -17,10 +17,15 @@ export class GitHubWorkspaceInstallError extends Error {
   constructor(cause: unknown) { super(`Frozen dependency installation failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
 }
 
+/** Trusted host hook for dependency caching; commands and inputs have already been validated. */
+export interface GitHubInstallRunner {
+  (input: { cwd: string; command: string[]; env: NodeJS.ProcessEnv; fingerprint: string }): Promise<Record<string, unknown> | void>;
+}
+
 let installationTail: Promise<void> = Promise.resolve();
 
 /** Install frozen dependencies before entering the provider's network sandbox. */
-export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal): Promise<void> {
+export async function installGitHubPullRequestWorkspace(target: string, signal?: AbortSignal, run?: GitHubInstallRunner): Promise<void> {
   signal?.throwIfAborted();
   if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
   signal?.throwIfAborted();
@@ -46,7 +51,7 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
     ]);
     clearTimeout(queueTimeout);
     signal?.throwIfAborted();
-    await installWorkspace(target, signal);
+    await installWorkspace(target, signal, run);
   } finally {
     clearTimeout(queueTimeout);
     signal?.removeEventListener("abort", abort);
@@ -54,7 +59,7 @@ export async function installGitHubPullRequestWorkspace(target: string, signal?:
   }
 }
 
-async function installWorkspace(target: string, signal?: AbortSignal): Promise<void> {
+async function installWorkspace(target: string, signal?: AbortSignal, run?: GitHubInstallRunner): Promise<void> {
   if (!(await exists(join(target, "package.json"))) && !(await exists(join(target, "pnpm-workspace.yaml")))) return;
   signal?.throwIfAborted();
   const home = join(target, ".git", "vitehub-install-home");
@@ -64,6 +69,7 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
   await writeFile(join(home, "package.json"), JSON.stringify({ type: "commonjs" }));
   const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: home, TMPDIR: process.env.TMPDIR, YARN_ENABLE_SCRIPTS: "false", YARN_IGNORE_PATH: "1", COREPACK_ENV_FILE: "0", COREPACK_NPM_REGISTRY: "https://registry.npmjs.org", COREPACK_ENABLE_PROJECT_SPEC: "0", COREPACK_DEFAULT_TO_LATEST: "0", COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" };
   const record = join(target, ".git", "vitehub-install.json");
+  let runMetadata: Record<string, unknown> | void = undefined;
   let command: string | undefined;
   let args: string[] = [];
   let yarnConfig: string | undefined;
@@ -119,7 +125,10 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
       }
     }
     else throw new Error("Frozen dependency installation requires a supported lockfile.");
-    try { await exec(command, args, { cwd: source, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 }); }
+    try {
+      if (run) runMetadata = await run({ cwd: source, command: [command, ...args], env, fingerprint });
+      else await exec(command, args, { cwd: source, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
+    }
     catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT" && command === "corepack") {
         throw new Error("Babysitter host installation requires Corepack in PATH. Install Corepack on the trusted host; Node 25 and newer do not bundle it.", { cause: error });
@@ -129,7 +138,7 @@ async function installWorkspace(target: string, signal?: AbortSignal): Promise<v
     const current = await validateGitHubInstallInputs(target).catch(() => undefined);
     if (current !== fingerprint) throw new Error("Dependency inputs changed during installation. Call refreshDependencies again before validation.");
     await publishGitHubInstallSnapshot(snapshot, signal);
-    await writeFile(record, JSON.stringify({ status: "installed", fingerprint, command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: false }));
+    await writeFile(record, JSON.stringify({ ...runMetadata, status: "installed", fingerprint, command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: runMetadata?.scripts ?? false }));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     await writeFile(record, JSON.stringify({ status: "failed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), reason })).catch(() => undefined);

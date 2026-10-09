@@ -24,6 +24,30 @@ it("installs on the host with a frozen lockfile and no host secrets or lifecycle
   expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false });
 });
+it("publishes cached runner output only through the validated snapshot", async () => {
+  const root = await fixture();
+  await installGitHubPullRequestWorkspace(root, undefined, async input => {
+    expect(input.cwd).not.toBe(root);
+    expect(input.env.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
+    expect(input.command).toContain("--ignore-scripts");
+    await mkdir(join(input.cwd, "node_modules"));
+    await writeFile(join(input.cwd, "node_modules", "cached.txt"), "isolated");
+    return { cache: "hit", durationMs: 1 };
+  });
+  expect(await readFile(join(root, "node_modules", "cached.txt"), "utf8")).toBe("isolated");
+  expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false, cache: "hit" });
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+});
+
+it("rejects changed live dependency inputs after a cached runner completes", async () => {
+  const root = await fixture();
+  await expect(installGitHubPullRequestWorkspace(root, undefined, async input => {
+    await mkdir(join(input.cwd, "node_modules"));
+    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { changed: "1.0.0" } }));
+  })).rejects.toThrow("Dependency inputs changed during installation");
+  await expect(assertGitHubDependenciesCurrent(root)).rejects.toThrow();
+});
+
 it.each(["~1.2.1", "~2.2.10 || ^3.0.0", "~ 1.2", "~1"])("accepts the tilde dependency range %s", async range => {
   const root = await fixture();
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { example: range } }));

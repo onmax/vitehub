@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process";
+import { lstat, mkdtemp, readdir, readFile, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { lstat, mkdtemp, readFile, readdir, rename } from "node:fs/promises";
-import { join } from "node:path";
 import { channelEnv } from "../../channel-env.ts";
 import { defineAgent } from "../../index.ts";
 import type { AgentInput, AgentCallbackContext } from "../../index.ts";
@@ -41,21 +42,14 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
   if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new Error(`[vitehub] Refusing to clean unsafe Babysitter checkout pool: ${root}`);
   }
-  // Claim the entry in a private directory before deleting anything. A new
-  // pool at the original path must never become a recursive cleanup target.
   const quarantine = await mkdtemp(join(dataDir, ".checkouts-cleanup-"));
   const claimed = join(quarantine, "checkouts");
   await rename(root, claimed);
   const claimedInfo = await lstat(claimed, { bigint: true });
   if (!claimedInfo.isDirectory() || claimedInfo.dev !== info.dev || claimedInfo.ino !== info.ino) {
-    // Preserve an unexpected entry for inspection; do not overwrite a new pool
-    // in an attempt to restore it.
     throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
   }
   const entries = await readdir(claimed, { withFileTypes: true });
-  // A child process pins its cwd before checking its identity. Relative paths
-  // stay bound to that directory even if another process renames it. Never
-  // recursively remove the claimed pathname, including during retries.
   await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", `
     import { lstat, readdir, rm } from "node:fs/promises";
     const info = await lstat(".", { bigint: true });
@@ -66,10 +60,6 @@ export async function cleanupLegacyBabysitterCheckouts(dataDir: string): Promise
       await rm(entry, { force: true, recursive: true, maxRetries: 5, retryDelay: 100 });
     }
   `, String(info.dev), String(info.ino)], { cwd: claimed });
-  // Verify that the visible entry still names the claimed inode, but never
-  // remove it by pathname: a concurrent replacement after this check could
-  // otherwise be deleted by `rmdir()`. Retain the two empty directories after
-  // migration; later startups find no legacy pool and create no new quarantine.
   const remaining = await lstat(claimed, { bigint: true });
   if (remaining.dev !== info.dev || remaining.ino !== info.ino) {
     throw new Error(`[vitehub] Refusing to clean replaced Babysitter checkout pool: ${claimed}`);
@@ -111,6 +101,26 @@ export function babysitterRepositories(filter: unknown): string[] {
   const repositories = Array.isArray(allow) ? allow.filter((value): value is string => hasRuntimeType(value, "string") && /^[\w.-]+\/[\w.-]+$/.test(value)) : [];
   if (!repositories.length) throw new Error('[vitehub] Set options.filter.repository.allow to the "owner/name" repositories that the Babysitter serves.');
   return repositories.map(repository => repository.toLowerCase());
+}
+
+const passWorkspace = /^(?:vitehub-provider-(?:launch-)?[A-Za-z0-9]{6}|vitehub-baseline-[A-Za-z0-9]{6}|vitehub-[\w.-]+-pr-\d+-[A-Za-z0-9]{6}(?:\.meta\.json)?|t3-provider-runtime-[A-Za-z0-9]{6})$/;
+
+/**
+ * Removes pass workspaces that an interrupted process left in `root`. It sweeps only a temporary
+ * directory inside the service's working directory, which no other process shares, and keeps
+ * anything this process created.
+ */
+export async function sweepBabysitterWorkspaces(root = tmpdir(), startedAt = performance.timeOrigin, cwd = process.cwd()): Promise<number> {
+  if (!resolve(root).startsWith(`${resolve(cwd)}${sep}`)) return 0;
+  let removed = 0;
+  for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    if (!passWorkspace.test(entry.name)) continue;
+    const path = join(root, entry.name);
+    const info = await lstat(path).catch(() => undefined);
+    if (!info || info.mtimeMs >= startedAt) continue;
+    await rm(path, { force: true, recursive: true, maxRetries: 3 }).then(() => removed++, () => {});
+  }
+  return removed;
 }
 
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
@@ -168,6 +178,8 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
     admission,
   });
   const inbox = runtime.inbox;
+  // No pass runs yet, so workspaces from an earlier process are garbage.
+  const swept = await sweepBabysitterWorkspaces();
   return {
     start() {
       registerAgentProcessHostIntake(context.agentName, async ({ deliveryId, event, payload }) => {
@@ -176,9 +188,16 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
         return Response.json(result, { status: 202 });
       });
       // Bring over an inbox file from a hand-wired Babysitter once, before the first claim.
+      // This process owns the inbox scope, so no lease from an earlier process belongs to a running pass.
       void inbox.importLegacyFile(".vitehub/pull-request-inbox.sqlite")
         .catch(error => host.error("babysitter.legacy-import.failed", error))
-        .finally(() => host.start());
+        .then(() => inbox.releaseLeases())
+        .then(released => { if (released) host.event("babysitter.leases.released", { released }) },
+          error => host.error("babysitter.leases.release-failed", error))
+        .finally(() => {
+          if (swept) host.event("babysitter.workspaces.swept", { removed: swept });
+          host.start();
+        });
     },
     async close() {
       registerAgentProcessHostIntake(context.agentName, undefined);
@@ -199,11 +218,13 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
         waiting: queue.filter(item => item.status === "waiting").length,
       }, admission: {
         accepting: guard.accepting,
+        hostOnly: guard.hostOnly,
         reason: guard.reason,
         retryAt: guard.retryAt,
         detail: guard.detail,
         lastSkip,
       }, budget: {
+        accounting: guard.accounting,
         observedAt: new Date(guard.observedAt).toISOString(),
         hourly: { inputTokens: guard.state.hourlyInputTokens, limit: guard.limits.hourlyInputTokens, resetsAt: guard.state.windows.hourEnd },
         daily: { inputTokens: guard.state.dailyInputTokens, limit: guard.limits.dailyInputTokens, resetsAt: guard.state.windows.dayEnd },

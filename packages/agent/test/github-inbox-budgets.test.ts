@@ -132,6 +132,26 @@ test('exhausted same-head deliveries persist feedback and closure without queuei
   assert.equal((await inbox.claim(1)).length, 0)
 })
 
+test('a person commenting on an exhausted head resets its budget; bots do not', async t => {
+  const inbox = memory(t); await inbox.seed(repository, pr())
+  for (let index = 0; index < 3; index++) {
+    await wake(inbox, index)
+    await inbox.finish((await inbox.claim(1))[0]!, { text: 'waiting', progress: { kind: 'no-progress' } })
+  }
+  const comment = (id: number, login: string, type: string) => inbox.ingest(`comment-${id}`, 'issue_comment', {
+    repository: { full_name: repository }, issue: { number: 7, pull_request: {} }, sender: { login, type },
+    comment: { id, body: `feedback ${id}`, user: { login, type } },
+  })
+  assert.deepEqual((await comment(20, 'review-bot[bot]', 'Bot')).queued, [])
+  assert.equal((await inbox.claim(1)).length, 0)
+  assert.deepEqual((await comment(21, 'maintainer', 'User')).queued, [7])
+  const budget = (await inbox.get(repository, 7))?.progressBudget
+  assert.equal(budget?.exhausted, false)
+  assert.equal(budget?.count, 0)
+  assert.equal(budget?.resetReason, 'issue_comment:maintainer')
+  assert.equal((await inbox.claim(1)).length, 1)
+})
+
 test('new heads get a fresh budget and stale completions cannot charge them', async t => {
   const inbox = memory(t); await inbox.seed(repository, pr())
   const old = (await inbox.claim(1))[0]!
