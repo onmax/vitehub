@@ -120,6 +120,7 @@ catalogs:
     unstorage: 2.0.0-alpha.10
     uploadthing: ^7.7.4
   tooling:
+    "@yarnpkg/parsers": 3.1.0
     "@types/node": ^24.19.1
     "@types/picomatch": ^4.0.3
     esbuild: ^0.28.2

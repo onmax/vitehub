@@ -1,5 +1,6 @@
 import { providerCallbackMetadata, withProviderCallbackMetadata } from "./internal/provider-callback-metadata.ts"
 import { protectGeneratedProviderGitFiles } from "./internal/generated-provider-git-files.ts"
+import { preparedProviderCheckoutHead } from "./internal/prepared-provider-checkout.ts"
 import { codexLaunchArgs } from "./internal/codex-launch-args.ts"
 import { resolveAgentDriverGateway, withAgentDriverGatewayEnvironment } from "./internal/agent-gateway.ts"
 import { resolveAgentInstructions } from "./agent-instructions.ts"
@@ -2481,6 +2482,39 @@ function usageEvent(event: Extract<ProviderRuntimeEvent, { type: "thread.token-u
   }
 }
 
+function terminalUsageEvent(event: Extract<ProviderRuntimeEvent, { type: "turn.completed" | "turn.aborted" }>, options: {
+  model?: string
+  provider: "claude-code" | "codex"
+  transport?: "gateway"
+}): StreamEvent | undefined {
+  const usage = event.payload.tokenUsage
+  if (!usage || usage.usageStatus === "unavailable"
+    || usage.inputTokens === undefined || usage.outputTokens === undefined
+    || !Number.isFinite(usage.inputTokens) || !Number.isFinite(usage.outputTokens)) return
+  // The runtime accumulates these counters within this turn, including after
+  // resume. Latest-response snapshots cannot establish the same totals.
+  return {
+    type: "usage",
+    usageRecord: {
+      model: options.model,
+      provider: options.provider,
+      transport: options.transport,
+      raw: usage,
+      usage: {
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.inputTokens + usage.outputTokens,
+        inputTokenDetails: {
+          ...(usage.cachedInputTokens === undefined ? {} : { cacheReadTokens: usage.cachedInputTokens }),
+          ...(usage.cacheCreationTokens === undefined ? {} : { cacheWriteTokens: usage.cacheCreationTokens }),
+        },
+        outputTokenDetails: { ...(usage.reasoningTokens === undefined ? {} : { reasoningTokens: usage.reasoningTokens }) },
+        details: { usageStatus: usage.usageStatus, usageScope: usage.usageScope, hasSubagents: usage.hasSubagents },
+      },
+    },
+  }
+}
+
 function providerDataEvent(event: ProviderRuntimeEvent): StreamEvent {
   // SAFETY: Provider driver normalization establishes the asserted provider runtime contract.
   const payload = event.payload as Record<string, unknown>
@@ -2651,11 +2685,15 @@ function providerEvent(event: ProviderRuntimeEvent, tools: AgentToolSet | undefi
       return event.payload.exitKind === "error" ? [{ error: event.payload.reason || "Provider session exited.", recoverable: event.payload.recoverable, type: "error" }] : [providerDataEvent(event)]
     case "turn.completed":
       const error = event.payload.errorMessage || (event.payload.state === "completed" ? undefined : `Provider turn ${event.payload.state}.`)
-      return error
+      const completedUsage = terminalUsageEvent(event, options)
+      const completedEvents: StreamEvent[] = error
         ? [{ error, type: "error" }]
         : [{ reason: event.payload.stopReason || event.payload.state, type: "finish" }]
+      return completedUsage ? [completedUsage, ...completedEvents] : completedEvents
     case "turn.aborted":
-      return [{ error: `Provider turn aborted${event.payload.reason ? `: ${event.payload.reason}` : "."}`, type: "error" }]
+      const abortedUsage = terminalUsageEvent(event, options)
+      const abortedEvents: StreamEvent[] = [{ error: `Provider turn aborted${event.payload.reason ? `: ${event.payload.reason}` : "."}`, type: "error" }]
+      return abortedUsage ? [abortedUsage, ...abortedEvents] : abortedEvents
     case "turn.plan.updated":
       return [{ data: event.payload, id: event.turnId ? `plan:${event.turnId}` : undefined, type: "data-agent-plan" }]
     case "turn.diff.updated":
@@ -2967,9 +3005,6 @@ async function* runProvider<
       )
       toolchainPath.push(...toolchain.bin)
     }
-    // An application-owned Git checkout in driver.cwd must not track generated instruction files either.
-    const pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
-      || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
     if (workspaceSession) {
       clearActiveWorkspaceFiles = setActiveAgentWorkspaceFiles(context.context, {
         async readFile(path) {
@@ -3019,95 +3054,6 @@ async function* runProvider<
         void execution.finally(() => activeWorkspaceCommands.delete(execution)).catch(() => undefined)
         return execution
       })
-    }
-    let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
-    let materializeInstructions = Boolean(instructions)
-    if (!instructions && options.provider === "claude-code") {
-      const nativeInstructions = await readFile(join(providerCwd, "CLAUDE.md"), "utf8").catch(() => undefined)
-      if (nativeInstructions !== undefined) instructions = nativeInstructions
-      else {
-        instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
-        materializeInstructions = Boolean(instructions)
-      }
-    }
-    const preserveNativeInstructions = !materializeInstructions
-    const provenanceInstructions = sourceProvenanceInstructions(sourceProvenance)
-    if (!instructions && provenanceInstructions && options.provider === "codex") {
-      instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
-    }
-    if (provenanceInstructions) {
-      instructions = [instructions, provenanceInstructions].filter(Boolean).join("\n\n")
-      materializeInstructions = true
-    }
-    const inspectedTools = inspectAgentTools(context.tools)
-    if (!isAuxiliaryAgentAdapterContext(context)) {
-      await updateAgentTelemetryConfiguration(context.context, {
-        driver: {
-          ...(options.model ? { model: { id: options.model, provider: options.provider } } : {}),
-          provider: options.provider,
-        },
-        ...(instructions ? { instructions: [instructions] } : {}),
-        ...(inspectedTools ? { tools: inspectedTools } : {}),
-      })
-    }
-    if (instructions && materializeInstructions && options.box) {
-      // The provider reads these from Box Home, so the checked-out tree stays unchanged.
-      if (options.provider === "claude-code") {
-        claudeBoxPromptFile = ".claude/vitehub-system-prompt.md"
-        providerBoxHomeFiles[claudeBoxPromptFile] = instructions
-      }
-      else providerBoxHomeFiles[".codex/AGENTS.md"] = instructions
-    }
-    else if (instructions && materializeInstructions) {
-      const promptFileInstructions = options.provider === "claude-code" && preserveNativeInstructions && provenanceInstructions
-        ? provenanceInstructions
-        : instructions
-      if (options.provider === "claude-code") {
-        // Deliver generated instructions once, without Claude's native @path imports.
-        // Preserve native instruction files when only adding source provenance.
-        if (!preserveNativeInstructions) {
-          generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "CLAUDE.md"), ""))
-        }
-        claudePromptFile = join(providerCwd, ".claude", "vitehub-system-prompt.md")
-        generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, claudePromptFile, promptFileInstructions))
-      } else {
-        const generated = await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "AGENTS.md"), instructions)
-        if (preserveNativeInstructions && provenanceInstructions && generated.content !== undefined) {
-          // Remove only the injected text so native instruction edits reach Workspace write-back.
-          generated.appendedContent = `${generated.content.length ? "\n\n" : ""}${provenanceInstructions}`
-        }
-        generatedProviderFiles.push(generated)
-      }
-    }
-    const colocatedSkills = context.context.get(colocatedAgentSkillsContextKey)
-    for (const source of Object.values(colocatedSkills || {})) {
-      if (!isRuntimeRecord(source)
-        || !("content" in source)
-        || !("workspacePath" in source)
-        || !(hasRuntimeType(source.content, "string") || source.content instanceof Uint8Array)
-        || !hasRuntimeType(source.workspacePath, "string")) continue
-      const target = resolve(providerCwd, source.workspacePath)
-      if (target !== providerCwd && !target.startsWith(`${providerCwd}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
-      if (options.box) {
-        addProviderBoxSkill(providerBoxHomeFiles, relative(providerCwd, target), source.content)
-        continue
-      }
-      // Preserve resolved Workspace Sources only after validating the complete path.
-      const { entry } = await inspectGeneratedProviderFilePath(providerCwd, target)
-      if (entry?.isFile()) continue
-      generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, target, source.content))
-    }
-    if (preparedWorkspace?.projectRoot) {
-      generatedProviderFiles.push(...await materializeNestedProviderSkills(root, providerCwd))
-    }
-    generatedProviderFiles.push(...await materializeProviderSkillCompatibility(providerCwd))
-    if (pullRequestRoot || preparedWorkspace?.projectRoot) {
-      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(providerCwd, generatedProviderFiles.map(file => file.path))
-    }
-    // A root pull request checkout is the Driver's repository. Do not add a baseline commit to its branch.
-    if (workspaceSession && !pullRequestRoot) {
-      await workspaceSession.exec("git", ["add", "-A"], { abortSignal: effectiveSignal })
-      await workspaceSession.exec("git", ["-c", "user.name=ViteHub", "-c", "user.email=vitehub@localhost", "commit", "--allow-empty", "-qm", "vitehub provider baseline"], { abortSignal: effectiveSignal })
     }
     effectiveSignal?.throwIfAborted()
     codexCredentialHome = await waitForProviderOperation(
@@ -3209,6 +3155,16 @@ async function* runProvider<
         ? { PATH: `${[capabilityEnvironment?.PATH, ...toolchainPath].filter(Boolean).join(delimiter)}${delimiter}${providerEnvironmentOverrides?.PATH || process.env.PATH || ""}` }
         : {}),
     })
+    const nativeUnattendedTools = options.provider === "codex" && options.permissions === "allow-edits-unattended" && Object.keys(context.tools || {}).length > 0
+    if (nativeUnattendedTools) {
+      toolServer = await waitForProviderOperation(
+        startToolServer(context.tools!, effectiveSignal, emitToolEvent, capabilityApprovals, capabilityApprovalIds),
+        effectiveSignal,
+        lateToolServer => lateToolServer.close(),
+        observeLateCleanup,
+      )
+      providerRuntimeEnvironment.T3_MCP_BEARER_TOKEN = toolServer.mcp.authorizationHeader.slice("Bearer ".length)
+    }
     let providerLauncher: string | undefined
     if (options.launch !== undefined) {
       if (!hasRuntimeType(providerCommand, "string")) {
@@ -3242,6 +3198,114 @@ async function* runProvider<
       )
       providerLauncher = materializedLauncher.path
       providerLaunchDiagnosticPath = materializedLauncher.diagnosticPath
+    }
+    // Launch may restore source Git ancestry after Workspace initialization.
+    // Only host-prepared checkout ancestry owns an otherwise ordinary Workspace root.
+    let pullRequestRoot = preparedWorkspace?.pullRequestRoot === true
+      || (!ownsRoot && Boolean(await lstat(join(root, ".git")).catch(() => undefined)))
+    if (!pullRequestRoot && workspaceSession && !preparedWorkspace?.projectRoot) {
+      const expected = await waitForProviderOperation(
+        preparedProviderCheckoutHead(root),
+        effectiveSignal,
+      )
+      if (expected) {
+        const head = await waitForProviderOperation(
+          workspaceSession.exec("git", ["rev-parse", "--verify", "HEAD"], { abortSignal: effectiveSignal }),
+          effectiveSignal,
+        )
+        if (head.exitCode !== 0 || head.stdout.trim() !== expected) throw new Error("Host-prepared provider checkout HEAD changed during launch.")
+        pullRequestRoot = true
+      }
+    }
+    // Host launch preparation must see source-authored instruction files.
+    let instructions = await waitForProviderOperation(resolveInstructions(options, context), effectiveSignal)
+    let materializeInstructions = Boolean(instructions)
+    if (!instructions && options.provider === "claude-code") {
+      const nativeInstructions = await readFile(join(providerCwd, "CLAUDE.md"), "utf8").catch(() => undefined)
+      if (nativeInstructions !== undefined) instructions = nativeInstructions
+      else {
+        instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
+        materializeInstructions = Boolean(instructions)
+      }
+    }
+    const preserveNativeInstructions = !materializeInstructions
+    const provenanceInstructions = sourceProvenanceInstructions(sourceProvenance)
+    if (!instructions && provenanceInstructions && options.provider === "codex") {
+      instructions = await readFile(join(providerCwd, "AGENTS.md"), "utf8").catch(() => undefined)
+    }
+    if (provenanceInstructions) {
+      instructions = [instructions, provenanceInstructions].filter(Boolean).join("\n\n")
+      materializeInstructions = true
+    }
+    const inspectedTools = inspectAgentTools(context.tools)
+    if (!isAuxiliaryAgentAdapterContext(context)) {
+      await updateAgentTelemetryConfiguration(context.context, {
+        driver: {
+          ...(options.model ? { model: { id: options.model, provider: options.provider } } : {}),
+          provider: options.provider,
+        },
+        ...(instructions ? { instructions: [instructions] } : {}),
+        ...(inspectedTools ? { tools: inspectedTools } : {}),
+      })
+    }
+    if (instructions && materializeInstructions && options.box) {
+      // The provider reads these from Box Home, so the checked-out tree stays unchanged.
+      if (options.provider === "claude-code") {
+        claudeBoxPromptFile = ".claude/vitehub-system-prompt.md"
+        providerBoxHomeFiles[claudeBoxPromptFile] = instructions
+      }
+      else providerBoxHomeFiles[".codex/AGENTS.md"] = instructions
+    }
+    else if (instructions && materializeInstructions) {
+      const promptFileInstructions = options.provider === "claude-code" && preserveNativeInstructions && provenanceInstructions
+        ? provenanceInstructions
+        : instructions
+      if (options.provider === "claude-code") {
+        // Deliver generated instructions once, without Claude's native @path imports.
+        // Preserve native instruction files when only adding source provenance.
+        if (!preserveNativeInstructions) {
+          generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "CLAUDE.md"), ""))
+        }
+        claudePromptFile = join(providerCwd, ".claude", "vitehub-system-prompt.md")
+        generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, claudePromptFile, promptFileInstructions))
+      } else {
+        const generated = await materializeGeneratedProviderFile(providerCwd, join(providerCwd, "AGENTS.md"), instructions)
+        if (preserveNativeInstructions && provenanceInstructions && generated.content !== undefined) {
+          // Remove only the injected text so native instruction edits reach Workspace write-back.
+          generated.appendedContent = `${generated.content.length ? "\n\n" : ""}${provenanceInstructions}`
+        }
+        generatedProviderFiles.push(generated)
+      }
+    }
+    const colocatedSkills = context.context.get(colocatedAgentSkillsContextKey)
+    for (const source of Object.values(colocatedSkills || {})) {
+      if (!isRuntimeRecord(source)
+        || !("content" in source)
+        || !("workspacePath" in source)
+        || !(hasRuntimeType(source.content, "string") || source.content instanceof Uint8Array)
+        || !hasRuntimeType(source.workspacePath, "string")) continue
+      const target = resolve(providerCwd, source.workspacePath)
+      if (target !== providerCwd && !target.startsWith(`${providerCwd}/`)) throw agentDiagnostics.AGENT_R0712({ message: "[vitehub] Colocated Skill path must stay inside the provider Workspace." })
+      if (options.box) {
+        addProviderBoxSkill(providerBoxHomeFiles, relative(providerCwd, target), source.content)
+        continue
+      }
+      // Preserve resolved Workspace Sources only after validating the complete path.
+      const { entry } = await inspectGeneratedProviderFilePath(providerCwd, target)
+      if (entry?.isFile()) continue
+      generatedProviderFiles.push(await materializeGeneratedProviderFile(providerCwd, target, source.content))
+    }
+    if (preparedWorkspace?.projectRoot) {
+      generatedProviderFiles.push(...await materializeNestedProviderSkills(root, providerCwd))
+    }
+    generatedProviderFiles.push(...await materializeProviderSkillCompatibility(providerCwd))
+    if (pullRequestRoot || preparedWorkspace?.projectRoot) {
+      restoreGeneratedGitMetadata = await protectGeneratedProviderGitFiles(providerCwd, generatedProviderFiles.map(file => file.path))
+    }
+    // A root pull request checkout is the Driver's repository. Do not add a baseline commit to its branch.
+    if (workspaceSession && !pullRequestRoot) {
+      await workspaceSession.exec("git", ["add", "-A"], { abortSignal: effectiveSignal })
+      await workspaceSession.exec("git", ["-c", "user.name=ViteHub", "-c", "user.email=vitehub@localhost", "commit", "--allow-empty", "-qm", "vitehub provider baseline"], { abortSignal: effectiveSignal })
     }
     if (options.box) {
       if (!launchRoot) throw agentDiagnostics.AGENT_R0717({ message: "[vitehub] Provider launcher root was not prepared." })
@@ -3290,6 +3354,21 @@ async function* runProvider<
       auxiliaryEnvironmentLaunchArgs,
       generatedLaunchArgs,
       gateway?.launchArgs,
+      // The assigned host tools enforce Capability authorization themselves.
+      // Preauthorize their exact names so unattended native approval cannot
+      // reject them before the host receives the request. Shell policy stays intact.
+      ...(nativeUnattendedTools
+        ? [
+          ...(toolServer ? [`-c 'mcp_servers.t3-code.url=${JSON.stringify(toolServer.mcp.endpoint)}'`] : []),
+          '-c \'mcp_servers.t3-code.bearer_token_env_var="T3_MCP_BEARER_TOKEN"\'',
+          // Clear only this invocation's transport token in native shell tools.
+          // Preserve the caller's existing environment exclusions.
+          '-c \'shell_environment_policy.set.T3_MCP_BEARER_TOKEN=""\'',
+          // CLI override paths split on dots without parsing quoted TOML keys.
+          // An inline table preserves the exact tool names, including punctuation.
+          `-c '${(`mcp_servers.t3-code.tools={${Object.keys(context.tools ?? {}).map(name => `${JSON.stringify(name)}={approval_mode="approve"}`).join(",")}}`).replaceAll("'", "'\\''")}'`,
+        ]
+        : []),
       // Login profiles reset PATH and hide the invocation's managed browser CLI.
       ...(options.provider === "codex" && capabilityEnvironment?.PATH ? ['-c "allow_login_shell=false"'] : []),
       ...(codexCredentialHome ? ['-c "cli_auth_credentials_store=\\"file\\""'] : []),
@@ -3337,7 +3416,7 @@ async function* runProvider<
       finalizeLateRuntimeCreation,
     )
     effectiveSignal?.throwIfAborted()
-    if (Object.keys(context.tools || {}).length) {
+    if (!toolServer && Object.keys(context.tools || {}).length) {
       toolServer = await waitForProviderOperation(
         startToolServer(context.tools!, effectiveSignal, emitToolEvent, capabilityApprovals, capabilityApprovalIds),
         effectiveSignal,
@@ -3351,7 +3430,10 @@ async function* runProvider<
     effectiveSignal?.throwIfAborted()
     const session = await waitForProviderOperation(runtime.startSession({
       cwd: providerCwd,
-      mcp: toolServer?.mcp,
+      // The runtime's thread-scoped MCP map replaces server configuration,
+      // including per-tool approval modes. Use the complete launch configuration
+      // for these host-authorized unattended tools instead.
+      mcp: nativeUnattendedTools ? undefined : toolServer?.mcp,
       model: options.model,
       resumeCursor,
       runtimeMode: providerRuntimeMode[options.permissions ?? defaultAgentProviderPermissions],
@@ -3509,7 +3591,13 @@ async function* runProvider<
         caught = effectiveSignal?.aborted
           ? effectiveSignal.reason ?? new DOMException("[vitehub] Provider Agent Driver invocation aborted.", "AbortError")
           : agentDiagnostics.AGENT_R0722({ message: `[vitehub] Provider Agent Driver turn aborted${current.value.payload.reason ? `: ${current.value.payload.reason}` : "."}` })
-        if (effectiveSignal?.aborted) throw caught
+        if (effectiveSignal?.aborted) {
+          // Deliver measured terminal usage before cancellation closes the stream.
+          for (const event of normalized) {
+            if (event.type === "usage") yield event
+          }
+          throw caught
+        }
       }
       if (isTerminalEvent(current.value, turn.turnId) && !caught) completed = true
       while (pendingToolEvents.length) yield pendingToolEvents.shift()!

@@ -1150,6 +1150,8 @@ describe("agent Vite plugin", () => {
     process.env.VITEHUB_HOSTING = "netlify"
     const root = await mkdtemp(join(tmpdir(), "vitehub-agent-netlify-workspace-sources-"))
     const agentRoot = join(root, "server", "agents", "support")
+    // Bound this consumer independently of Git metadata above the temporary root.
+    await mkdir(join(root, ".git"))
     try {
       await mkdir(join(agentRoot, "workspace"), { recursive: true })
       await Promise.all([

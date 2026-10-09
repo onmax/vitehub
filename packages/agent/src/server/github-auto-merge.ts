@@ -3,6 +3,7 @@ import html from "comark/plugins/html"
 import type { ComarkPlugin, Node as MarkdownNode } from "comark"
 import * as v from "valibot"
 import type { GitHubHost } from "./github-host.ts"
+import type { GitHubRepairCommit } from "./github-repair.ts"
 
 const actor = v.nullable(v.object({ login: v.string(), __typename: v.string() }))
 const reviewSchema = v.object({ author: actor, state: v.string() })
@@ -76,6 +77,10 @@ export interface GitHubPullRequestOperationsOptions {
   commentPrefix?: string
   /** Host-owned checkout push, already bound to its source branch and expected-head lease. */
   push?: () => Promise<string>
+  /** Host-owned frozen installation after resolving dependency conflicts. */
+  refreshDependencies?: () => Promise<void>
+  /** Host-owned staging and commit in the assigned repair checkout. */
+  commitRepair?: (input: GitHubRepairCommit) => Promise<string>
   signal?: AbortSignal
 }
 
@@ -102,6 +107,8 @@ export interface GitHubPullRequestOperations {
   resolveThread(id: string): Promise<void>
   updateMetadata(input: { title?: string, body?: string }): Promise<void>
   push(): Promise<void>
+  refreshDependencies(): Promise<void>
+  commitRepair(input: GitHubRepairCommit): Promise<string>
 }
 
 const snapshotQuery = `query($owner:String!,$name:String!,$number:Int!){
@@ -443,6 +450,17 @@ export function createGitHubPullRequestOperations(
         if (rechecked.pullRequest.body !== current.pullRequest.body) throw new Error("Pull request body changed while validating the update; retry.")
       }
       await github.command(args, commandOptions)
+    },
+    async refreshDependencies() {
+      if (!options.refreshDependencies) throw new Error("This worker has no dependency refresh operation.")
+      await snapshot()
+      await options.refreshDependencies()
+    },
+    async commitRepair(input) {
+      if (!options.commitRepair) throw new Error("This worker has no host-owned commit operation.")
+      await snapshot()
+      options.signal?.throwIfAborted()
+      return await options.commitRepair(input)
     },
     async push() {
       if (!options.push) throw new Error("This worker has no host-owned push operation.")

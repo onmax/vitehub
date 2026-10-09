@@ -36,6 +36,7 @@ Add `instructions.md` next to `agent.ts` for project-specific guidance. It fills
 | `driver` | `'codex'` | `'codex'` or `'claude-code'`. Set the model and provider settings with the ordinary `driver` field. |
 | `merge` | `false` | `false`, `'auto'` (request GitHub auto-merge), `'direct'` (merge a ready PR on the host), or `{ strategy: 'direct', method, ready }`. |
 | `reviewChecks` | `[]` | Check names, such as a review bot's check, that keep a PR waiting while they run. |
+| `install` | `true` | Install frozen dependencies on the host before repair, with lifecycle scripts disabled. |
 | `noFindingsReviews` | `[]` | Body prefixes of comment-only reviews that report no findings, such as `'> ✅ No new issues found.'`. They do not wake a waiting PR. |
 | `mentionAllowlist` | `[]` | Exact GitHub logins the worker may notify through `mentionOnPullRequest`. The tool is reserved for verified blockers that need one person's action. |
 | `concurrency` | `1` | Pull requests repaired at the same time. |
@@ -75,7 +76,7 @@ The worker records and recovers Invocations under `<discovered-agent-name>-worke
 
 ## Configure GitHub
 
-Create a GitHub App with read and write access to contents, pull requests, issues, and checks. Subscribe it to pull request, review, review comment, review thread, issue comment, check run, check suite, status, and push events. Set its webhook URL to `https://<host>/api/_vitehub/agents/babysitter/webhooks/github`.
+Create a GitHub App with read and write access to contents, pull requests, issues, checks, and Actions. The Actions permission is required to rerun failed workflow jobs. Subscribe it to pull request, review, review comment, review thread, issue comment, check run, check suite, status, and push events. Set its webhook URL to `https://<host>/api/_vitehub/agents/babysitter/webhooks/github`.
 
 Set these variables on the host, or declare them in `env.server.github`:
 
@@ -87,7 +88,9 @@ Set these variables on the host, or declare them in `env.server.github`:
 | `GITHUB_APP_INSTALLATION_ID` | Optional. Without it, each repository uses its own installation. |
 | `VITEHUB_AGENT_STATE_URL` | Agent State, for example `file:/var/lib/babysitter/state.sqlite`. Production builds require it. |
 
-The Babysitter commits as the App's bot. GitHub tokens stay on the host; the worker reaches GitHub only through tools that are bound to its pull request.
+The Babysitter commits as the App's bot. Workers call `commitRepair` with a message and explicit file paths because the provider sandbox protects Git metadata. GitHub tokens stay on the host; the worker reaches GitHub only through tools that are bound to its pull request. Host dependency installation uses the frozen lockfile before the provider starts. Installation failures wait durably and retry after five minutes.
+
+Host installation accepts HTTPS downloads from `registry.npmjs.org`, `registry.yarnpkg.com`, `pkg.pr.new`, `github.com`, and `codeload.github.com`. Local dependencies and workspace patterns must stay inside the checkout. Other registries, network protocols, and custom ports are rejected before the package manager runs. Use `install: false` with dependencies prepared in an isolated workspace when a repository needs other sources.
 
 ## Deploy
 
@@ -111,3 +114,7 @@ To replace the process, send SIGUSR2, wait until the drain route reports `draine
 5. With `merge: 'direct'`, passing required checks also wake it. The host merges when every check passed, every review thread is resolved, and GitHub reports the pull request as clean on the default branch. It never merges into another branch.
 
 A pull request that ends three passes on one head without a push waits for new evidence. A stacked pull request whose parent merged into the default branch is moved to the default branch.
+
+### Token admission estimates
+
+`BABYSITTER_HOURLY_INPUT_TOKENS` and `BABYSITTER_DAILY_INPUT_TOKENS` are best-effort thresholds over retained Invocation journal usage, not hard host budgets or billing caps. Health reports identify this accounting as `best-effort-retained-journal`. The host samples at most once per minute and caches the largest input-token observation per Invocation, assigned to its latest update time. Active observations are included through the journal API. Concurrent writes during pagination can be missed until a later scan; retention and host restarts can omit usage permanently. The standalone journal retains 5,000 terminal records. Read errors appear in health diagnostics and do not block admission. Use provider-side spending limits when a hard cap is required.

@@ -43,6 +43,8 @@ export interface BabysitterOptions {
   mentionAllowlist: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
+  /** Install frozen dependencies on the host before repair. Lifecycle scripts stay disabled. Defaults to true. */
+  install: boolean;
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
@@ -165,7 +167,7 @@ type BabysitterDefinition = AgentDefinition<
   AgentInvokerProfile,
   AgentInvocationContextValues,
   BabysitterPassResult
-> & { reviewChecks: string[]; noFindingsReviews: string[]; mentionAllowlist: string[] };
+> & { reviewChecks: string[]; noFindingsReviews: string[]; install: boolean; mentionAllowlist: string[] };
 
 export type BabysitterAgent = ConfiguredAgentDefinition<BabysitterOptions, BabysitterDefinition>;
 
@@ -183,9 +185,10 @@ export const babysitter: BabysitterAgent = defineAgent({
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login allowlist.
     mentionAllowlist: [] as string[],
     concurrency: 1,
+    install: true,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, autoMerge, concurrency, install }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -212,6 +215,6 @@ export const babysitter: BabysitterAgent = defineAgent({
         output: { schema: babysitterPassResultSchema },
       },
     });
-    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, mentionAllowlist }), babysitterHost);
+    return withAgentProcessHost(Object.assign(definition, { reviewChecks, noFindingsReviews, mentionAllowlist, install }), babysitterHost);
   },
 });

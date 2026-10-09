@@ -210,6 +210,7 @@
     "@t3tools/provider-runtime": "catalog:",
     "@vercel/connect": "2.4.0",
     "@vercel/nft": "catalog:vercel",
+    "@yarnpkg/parsers": "catalog:tooling",
     "@vite-hub/box": "workspace:*",
     "@vite-hub/env": "workspace:*",
     "@vite-hub/markdown-template": "workspace:*",
@@ -224,7 +225,8 @@
     "forges": "catalog:",
     "nostics": "catalog:runtime",
     "proper-lockfile": "catalog:",
-    "valibot": "catalog:runtime"
+    "valibot": "catalog:runtime",
+    "yaml": "catalog:tooling"
   },
   "devDependencies": {
     "@agntn/web": "catalog:ai",

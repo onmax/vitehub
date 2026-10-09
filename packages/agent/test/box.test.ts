@@ -300,6 +300,24 @@ describe("Agent Box environment", () => {
 })
 
 describe("Agent Box relay", () => {
+  it("rejects host Capability tools in a Box without a shared network before provider startup", async () => {
+    const root = await temporaryRoot()
+    const { first, repository } = await gitRepository(root)
+    const runtime = providerRuntime("box-isolated-tools", async () => undefined)
+    const context = {
+      ...invocationContext("box-isolated-tools", { prompt: "repair", options: { ref: "refs/heads/first", sha: first, token: "token" } }),
+      tools: { repair: { name: "repair", description: "Host repair", inputSchema: { type: "object" }, execute: vi.fn() } },
+    }
+    await expect(createProviderAgentAdapter<PullRequestOptions>({
+      box: { ...testBox(repository), runtime: { kind: "crabbox", profile: "remote" } },
+      provider: "codex",
+      permissions: "allow-edits-unattended",
+      providerSettings: { binaryPath: process.execPath },
+      // SAFETY: The fixture provides the provider invocation fields read by the adapter.
+    }).generate(context as never)).rejects.toMatchObject({ code: "AGENT_R0961" })
+    expect(runtime.startSession).not.toHaveBeenCalled()
+    expect(openedBoxSession.current).toBeUndefined()
+  })
   it("materializes nested pull request Skills in Box Home", async () => {
     const threadId = "thread-nested-pull-request-provider-root"
     let root = ""
