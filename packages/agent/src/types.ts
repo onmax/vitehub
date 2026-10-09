@@ -2203,7 +2203,7 @@ export type AgentChatSendMessage = (message: AgentChatMessage) => Promise<void>
 
 export type AgentMessageConcurrency = "drop" | "parallel" | "queue" | "reject" | "serial" | "steer" | (string & {})
 
-export type AgentMessageDeliveryKind = "direct" | "mention"
+export type AgentMessageDeliveryKind = "direct" | "mention" | "subscribed"
 
 export type AgentMessageLockScope = "agent" | "channel" | "thread" | (string & {})
 
@@ -2253,6 +2253,8 @@ export interface AgentMessageChannelSettings<TRuntimeConfig extends AgentRuntime
   }
   lockScope?: AgentMessageLockScope
   messageHistory?: unknown
+  /** Accept human replies without a mention only in threads subscribed through this Agent's chat state. Defaults to false. */
+  replyToSubscribedThreads?: boolean
   meta?: StandardSchemaV1<unknown, Record<string, unknown>>
   metaRevision?: string
   sessions?: boolean | AgentChatSessionOptions

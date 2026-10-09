@@ -6753,11 +6753,13 @@ function createChatSdkMessageThread(
   })
 }
 
-async function serialMessageDeliveryKind(thread: Thread, message: ChatSdkMessage): Promise<AgentMessageDeliveryKind | undefined> {
+async function serialMessageDeliveryKind(thread: Thread, message: ChatSdkMessage, options: AgentChatOptions | undefined): Promise<AgentMessageDeliveryKind | undefined> {
   if (thread.isDM) return "direct"
-  if (!message.isMention) return
-  if (!(await thread.isSubscribed())) await thread.subscribe().catch(() => undefined)
-  return "mention"
+  if (message.isMention) {
+    if (!(await thread.isSubscribed())) await thread.subscribe().catch(() => undefined)
+    return "mention"
+  }
+  if (options?.replyToSubscribedThreads === true && !message.author.isBot && await thread.isSubscribed()) return "subscribed"
 }
 
 async function handleChatSdkMessages(
@@ -6808,7 +6810,7 @@ async function handleChatSdkMessages(
               : undefined)
           : undefined
         if (requestDelivery && queuedDelivery?.delivery.id === requestDelivery.delivery.id) requestDelivery.claimed = true
-        const deliveryKind = individualMessages ? await serialMessageDeliveryKind(queuedThread, queuedMessage) : await resolveDeliveryKind(queuedMessage)
+        const deliveryKind = individualMessages ? await serialMessageDeliveryKind(queuedThread, queuedMessage, options) : await resolveDeliveryKind(queuedMessage)
         if (!deliveryKind) {
           const delivery = queuedDelivery || (queuedMessage === message ? requestDelivery : undefined) || await openAgentChannelDelivery(state.state, {
             agentName: context.agentIdentity?.name || "agent",
@@ -6983,7 +6985,7 @@ async function createChannelChat(
       registration,
       thread,
       message,
-      (queuedMessage) => (thread.isDM ? "direct" : queuedMessage.isMention ? "mention" : undefined),
+      (queuedMessage) => serialMessageDeliveryKind(thread, queuedMessage, options),
       options,
       state,
       adapter,

@@ -33,6 +33,31 @@ Built-in helpers include `discord()`, `github()`, [`gitlab()` and `forgejo()`](/
 
 `webChat()` enables a generated AI SDK chat route by default. `http()` is a generic HTTP Channel and keeps its route disabled unless you pass `http({ route: true })`.
 
+## Answer replies in subscribed threads
+
+Built-in chat Channels require a mention for channel messages by default. Set
+`messages.replyToSubscribedThreads: true` on the Agent or an individual Channel
+to also answer human messages in subscribed threads:
+
+```ts
+teams({
+  messages: {
+    replyToSubscribedThreads: true,
+  },
+})
+```
+
+Mentions subscribe a conversation through the Agent's chat state. A host that
+creates bot threads must subscribe those threads through the same state store.
+This setting does not subscribe every channel conversation. It ignores
+unmentioned messages in other threads and unmentioned messages sent by other bots.
+Direct messages and mentions keep their existing behavior.
+
+Message filters receive `deliveryKind: 'subscribed'` for these replies. All
+concurrency modes use the same admission policy. The provider must deliver the
+messages first. For Teams, the Team app installation needs channel-message read
+permission and consent.
+
 ## Act on the Channel message in hooks
 
 The Channel defines the connector. The Agent reacts in its hooks. `agent:finish` and `agent:error` hooks receive `event.message`, a handle for the Channel message that started the Invocation.
