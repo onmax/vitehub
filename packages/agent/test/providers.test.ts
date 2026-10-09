@@ -17,7 +17,7 @@ import type { ConfigEnv, UserConfig } from "vite"
 import { describe, expect, it, vi } from "vitest"
 
 import { title } from "../src/capabilities.ts"
-import { http, telegram } from "../src/channels.ts"
+import { http, telegram, webChat } from "../src/channels.ts"
 import { defineAgent } from "../src/index.ts"
 import { agentChatApprovedTools } from "../src/internal/chat-approvals.ts"
 import { isRuntimeFunction, isRuntimeNumber, isRuntimeObject, isRuntimeString } from "../src/internal/runtime-value.ts"
@@ -6116,6 +6116,70 @@ describe("server helpers", () => {
     expect(run).not.toHaveBeenCalled()
     expect(adapter.postMessage).not.toHaveBeenCalled()
     expect(adapter.startTyping).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ...(["drop", "parallel", "queue", "reject", "serial", "steer"] as const).flatMap(concurrency => [
+      { concurrency, replyToSubscribedThreads: true, multipleChannels: false },
+      { concurrency, replyToSubscribedThreads: false, multipleChannels: false },
+    ]),
+    { concurrency: "serial" as const, replyToSubscribedThreads: true, multipleChannels: true },
+    { concurrency: "serial" as const, replyToSubscribedThreads: false, multipleChannels: true },
+  ])("opts in to human subscribed replies with $concurrency concurrency: $replyToSubscribedThreads, multiple Channels: $multipleChannels", async ({ concurrency, replyToSubscribedThreads, multipleChannels }) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "vitehub-subscribed-replies-"))
+    const state = createLibsqlAgentState({ url: `file:${join(stateDir, "state.sqlite")}` })
+    const adapter = createTestChatAdapter({ isDM: false })
+    const run = vi.fn(() => "accepted")
+    const deliveryKinds: AgentMessageDeliveryKind[] = []
+    const handler = createChannelWebhookRouteHandler(
+      // SAFETY: This fixture omits host-only context that these routes do not inspect.
+      defineAgent({
+        messages: {
+          concurrency,
+          state,
+          stream: false,
+          triggerHistory: "none",
+          replyToSubscribedThreads: multipleChannels ? !replyToSubscribedThreads : undefined,
+        },
+        channels: {
+          ...multipleChannels ? { web: webChat() } : {},
+          telegram: testTelegram(telegram, {
+            adapter: () => adapter as never,
+            messages: {
+              replyToSubscribedThreads,
+              filter: ({ deliveryKind }) => { deliveryKinds.push(deliveryKind); return true },
+            },
+          }),
+        },
+        driver: { run },
+      }) as never,
+    )
+    const request = (id: number, threadId: number, isMention = false, isBot = false) => new Request("https://example.com/api/_vitehub/agents/support/webhooks/telegram", {
+      body: JSON.stringify({ update_id: id, message: {
+        chat: { id: threadId, type: "group" },
+        from: { id: isBot ? 999 : 123, username: isBot ? "other-bot" : "maxi", is_bot: isBot },
+        isMention,
+        message_id: id,
+        text: "hello",
+      } }),
+      method: "POST",
+    })
+    const options = { agentName: "support" }
+    try {
+      await handler(request(2100, 789), "telegram", options)
+      expect(run).not.toHaveBeenCalled()
+      await handler(request(2101, 789, true), "telegram", options)
+      await handler(request(2102, 789), "telegram", options)
+      expect(run).toHaveBeenCalledTimes(replyToSubscribedThreads ? 2 : 1)
+      expect(deliveryKinds).toEqual(replyToSubscribedThreads ? ["mention", "subscribed"] : ["mention"])
+      await handler(request(2103, 790), "telegram", options)
+      await handler(request(2104, 789, false, true), "telegram", options)
+      expect(run).toHaveBeenCalledTimes(replyToSubscribedThreads ? 2 : 1)
+      expect(deliveryKinds).toEqual(replyToSubscribedThreads ? ["mention", "subscribed"] : ["mention"])
+    } finally {
+      await state.disconnect()
+      await rm(stateDir, { force: true, recursive: true })
+    }
   })
 
   it("settles ignored serial messages without rejecting the active request", async () => {
