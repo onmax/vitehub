@@ -91,6 +91,8 @@ describe("ask Driver", () => {
     })
     expect(() => ask.each(["a", "a"], { key: item => item, question: () => ask.if("Spam?") })).toThrow("duplicate key")
     expect(() => ask.each(["a"], { key: () => " ", question: () => ask.if("Spam?") })).toThrow("non-empty")
+    // SAFETY: Simulate a JavaScript callback returning a non-string key.
+    expect(() => ask.each(["a"], { key: () => 42 as never, question: () => ask.if("Spam?") })).toThrow("non-empty strings")
     expect(() => ask.if("Is it spam?", { threshold: Number.NaN })).toThrow("ask.if threshold must be a finite number")
     expect(() => ask.if("Is it spam?", { threshold: Number.POSITIVE_INFINITY })).toThrow("ask.if threshold must be a finite number")
   })

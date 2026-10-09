@@ -210,5 +210,6 @@ export async function askJev<const Q extends AskQuestions>(context: AskRequestCo
         : answer
     }
   }
+  // SAFETY: Each requested key has an SDK answer; choice distributions are validated and score legends restore public criteria.
   return Object.fromEntries(Object.entries(output)) as AskAnswers<Q>
 }
