@@ -422,6 +422,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
     runtime,
     reconcile,
     passes,
+    errors,
     events,
     commit,
     advanceBase: (sha: string) => { baseHead = sha },
@@ -1253,6 +1254,54 @@ describe("Babysitter preset runtime", () => {
       vi.unstubAllEnvs();
       await h.runtime.inbox.close();
     }
+  });
+
+  it("retries transient host installation failures without new PR evidence", async () => {
+    const f = await fixture(false, false, { gitWorkspace: true });
+    await writeFile(join(f.checkout, "package.json"), "{}");
+    const install = vi.spyOn(githubInstalls, "installGitHubPullRequestWorkspace")
+      .mockRejectedValueOnce(new githubInstalls.GitHubWorkspaceInstallError(new Error("Registry temporarily unavailable.")))
+      .mockResolvedValueOnce();
+    try {
+      await f.reconcile("babysitter.install.failed");
+      const waiting = await f.runtime.inbox.get("acme/app", 12);
+      expect(waiting?.status).toBe("waiting");
+      expect(waiting?.wait?.retryAt).toEqual(expect.any(Number));
+      expect(f.passes).toHaveLength(0);
+      f.errors.mockClear();
+      const now = vi.spyOn(Date, "now").mockReturnValue(waiting!.wait!.retryAt! + 1);
+      try { await f.reconcile(); }
+      finally { now.mockRestore(); }
+      expect(f.passes).toHaveLength(1);
+    } finally { install.mockRestore(); await f.runtime.inbox.close(); }
+  });
+
+  it("parks a malformed lockfile without retrying unchanged installation inputs", async () => {
+    const f = await fixture(false, false, { gitWorkspace: true });
+    await writeFile(join(f.checkout, "package.json"), "{}");
+    await writeFile(join(f.checkout, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n---\nimporters: {}\n");
+    try {
+      await f.reconcile("babysitter.install.failed");
+      const waiting = await f.runtime.inbox.get("acme/app", 12);
+      expect(waiting?.status).toBe("waiting");
+      expect(waiting?.wait).toMatchObject({ kind: "external", reason: expect.stringContaining("Source contains multiple documents") });
+      expect(waiting?.wait?.retryAt).toBeUndefined();
+      expect(f.passes).toHaveLength(0);
+      const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 600_000);
+      try { await f.reconcile("babysitter.install.failed"); }
+      finally { now.mockRestore(); }
+      expect(f.events.mock.calls.filter(([event]) => event === "babysitter.owner.started")).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
+      await f.runtime.inbox.ingest("installer-fixed", "issue_comment", {
+        action: "created", repository: { full_name: "acme/app" }, issue: { number: 12, pull_request: {} },
+        comment: { id: 99, body: "Installation inputs fixed. Please retry.", user: { login: "maintainer" } },
+      });
+      await writeFile(join(f.checkout, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
+      const install = vi.spyOn(githubInstalls, "installGitHubPullRequestWorkspace").mockResolvedValueOnce();
+      try { await f.reconcile("babysitter.install.failed"); }
+      finally { install.mockRestore(); }
+      expect(f.passes).toHaveLength(1);
+    } finally { await f.runtime.inbox.close(); }
   });
 
   it("preserves the Babysitter mention allowlist through Agent layer configuration", () => {

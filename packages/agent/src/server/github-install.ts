@@ -11,10 +11,12 @@ import { parse } from "yaml";
 
 const exec = promisify(execFile);
 const manifest = v.object({ packageManager: v.optional(v.string()) });
+const systemError = v.object({ errno: v.pipe(v.number(), v.integer(), v.maxValue(-1)) });
 const exists = async (path: string) => await access(path).then(() => true, () => false);
+const isSystemError = (error: unknown) => v.safeParse(systemError, error).success;
 
 export class GitHubWorkspaceInstallError extends Error {
-  constructor(cause: unknown) { super(`Frozen dependency installation failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
+  constructor(cause: unknown, readonly retryable = true) { super(`Frozen dependency installation failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
 }
 
 /** Trusted host hook for dependency caching; commands and inputs have already been validated. */
@@ -74,6 +76,7 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
   let args: string[] = [];
   let yarnConfig: string | undefined;
   let snapshot: Awaited<ReturnType<typeof createGitHubInstallSnapshot>> | undefined;
+  let retryable = false;
   try {
     snapshot = await createGitHubInstallSnapshot(target);
     const source = snapshot.directory;
@@ -125,6 +128,9 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
       }
     }
     else throw new Error("Frozen dependency installation requires a supported lockfile.");
+    // Input validation needs changed PR evidence. Commands can fail while the
+    // registry or host is temporarily unavailable and retain their retry path.
+    retryable = true;
     try {
       if (run) runMetadata = await run({ cwd: source, command: [command, ...args], env, fingerprint });
       else await exec(command, args, { cwd: source, env, signal, timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 });
@@ -135,18 +141,29 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
       }
       throw error;
     }
-    const current = await validateGitHubInstallInputs(target).catch(() => undefined);
+    retryable = false;
+    const current = await validateGitHubInstallInputs(target).catch(error => {
+      if (isSystemError(error)) throw error;
+      return undefined;
+    });
     if (current !== fingerprint) throw new Error("Dependency inputs changed during installation. Call refreshDependencies again before validation.");
+    retryable = true;
     await publishGitHubInstallSnapshot(snapshot, signal);
     await writeFile(record, JSON.stringify({ ...runMetadata, status: "installed", fingerprint, command: command ? [command, ...args] : undefined, at: new Date().toISOString(), scripts: runMetadata?.scripts ?? false }));
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     await writeFile(record, JSON.stringify({ status: "failed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), reason })).catch(() => undefined);
     if (signal?.aborted) throw error;
-    throw new GitHubWorkspaceInstallError(error);
+    // Filesystem errors remain recoverable even when they occur during input validation.
+    throw new GitHubWorkspaceInstallError(error, retryable || isSystemError(error));
   } finally {
-    if (yarnConfig) await rm(yarnConfig, { force: true });
-    await snapshot?.close();
+    try {
+      try { if (yarnConfig) await rm(yarnConfig, { force: true }); }
+      finally { await snapshot?.close(); }
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      throw new GitHubWorkspaceInstallError(error);
+    }
   }
 }
 
