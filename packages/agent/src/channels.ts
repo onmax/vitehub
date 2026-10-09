@@ -6,7 +6,7 @@ import type { CodeHostTarget } from "./internal/code-host-channel.ts"
 import { codeHostChannelFetch, codeHostActivityComments, codeHostDeliveryEffects, codeHostIdentity, codeHostPullRequest, codeHostPullRequestMetadata, codeHostThreadRef, codeHostChannelRequest, codeHostChannelRead, codeHostChannelWrite } from "./internal/code-host-channel.ts"
 import { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
 export { matchesGitHubPullRequestFilter } from './internal/github-pull-request-filter.ts'
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { CodeHostResponseError, codeHostErrorStatus, codeHostProvider, githubAppCredentials, readGitHubAppPrivateKey } from "./internal/code-host.ts"
 import { AgentHttpError } from "./http-error.ts"
 import { CHAT_FINISH_EXTENSION_CONTEXT_KEY } from "./chat-trigger.ts"
@@ -1959,20 +1959,23 @@ function githubAgentActivity<TRuntimeConfig extends AgentRuntimeConfig>(
         }
         return githubActivityAwait(pending, signal)
       }
-      const hostProvider = services ? await githubActivityAwait(services.provider(context, fetcher), deadline) : undefined
-      const apiBaseUrl = hostProvider?.baseUrl || options.apiBaseUrl || "https://api.github.com"
-      const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
+      const githubApiBaseUrl = options.apiBaseUrl || "https://api.github.com"
       // Token rotation must not let writes to the same comment run concurrently.
       // Reserve the target before authentication to preserve lifecycle ordering.
       // Different channel instances and credential callbacks can authenticate
       // as the same bot. Serialize the PR target before authentication; owned
       // comment lookup and run tracking still use the authenticated identity.
-      const updateKey = `${services?.kind || "github"}\0${apiBaseUrl}\0${target.repository.toLowerCase()}\0${target.issue}`
+      // Code Host base URLs can be callbacks too. Reserve before resolving them;
+      // matching targets on distinct instances conservatively share this queue.
+      const updateKey = `${services?.kind || "github"}\0${services ? "" : githubApiBaseUrl}\0${target.repository.toLowerCase()}\0${target.issue}`
       const previousUpdate = githubActivityUpdates.get(updateKey) || Promise.resolve()
       const update = previousUpdate.catch(() => {}).then(async () => {
         // Authentication and the serialized publication each get a request budget.
         deadline = githubActivityDeadline(context.abortSignal)
         deadline.throwIfAborted()
+        const hostProvider = services ? await githubActivityAwait(services.provider(context, fetcher), deadline) : undefined
+        const apiBaseUrl = hostProvider?.baseUrl || githubApiBaseUrl
+        const commentsTarget = `${apiBaseUrl}/repos/${target.repository}/issues/${target.issue}`
         const token = services ? services.kind : await githubActivityAwait(githubPullRequestMetadataToken(app, context, target.installationId, target.repository, deadline), deadline)
         if (!token) throw agentDiagnostics.AGENT_R0359({ message: "[vitehub] GitHub Agent activity requires GitHub authentication." })
         deadline = githubActivityDeadline(context.abortSignal)
@@ -2869,6 +2872,7 @@ function githubEventTriggers<TRuntimeConfig extends AgentRuntimeConfig>(
           }
           const invocation: AgentTriggerRunInvokeResult = {
             ...accepted,
+            delivery: { finishEffects: githubPullRequestCommentFinishEffects(options) },
             input: {
               ...accepted.input,
               ...pullRequestCommandInput(acceptedCommand, refreshed),
@@ -3247,8 +3251,9 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
   options: CodeHostChannelOptions<TRuntimeConfig, TData, TMethods, THistoryItem>,
 ): AgentChannelDefinitionOf<TRuntimeConfig, TKind, TData, TMethods> {
   const { activity, baseUrl: _baseUrl, token: _token, webhookSecret: _secret, statusContext, pullRequest: pullRequestInput, ...channelOptions } = options
+  const settingsKey = `vitehub:code-host:${kind}:${randomUUID()}`
   const setting = async (field: "baseUrl" | "token" | "webhookSecret", context: AgentCallbackContext<TRuntimeConfig>) =>
-    cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context))
+    await context.memo(`${settingsKey}:${field}`, async () => cleanSecret(options[field] === undefined ? await channelEnvValue(kind, field, context) : await resolveRuntimeValue(options[field], context)))
   const services: CodeHostChannelServices<TRuntimeConfig> = {
     kind,
     provider: async (context, fetcher) => await codeHostProvider({ host: kind, baseUrl: await setting("baseUrl", context), token: await setting("token", context), fetch: codeHostChannelFetch(fetcher || globalThis.fetch) }),
@@ -3331,10 +3336,10 @@ function codeHostChannel<TRuntimeConfig extends AgentRuntimeConfig, TData, TMeth
     webhooks: codeHostWebhookRegistrations(channelOptions.webhooks, {
       secretToken: secret,
       signature: {
-        async verify({ context, rawBody, request }) {
+        async verify({ context, rawBody, request, secret: verifiedSecret }) {
           if (!context) throw agentDiagnostics.AGENT_R0946({ message: "[vitehub] Code Host webhook verification requires a runtime context." })
           const provider = await services.provider(context)
-          await codeHostIngest(provider, { headers: request.headers, body: rawBody, secret: await secret(context) })
+          await codeHostIngest(provider, { headers: request.headers, body: rawBody, secret: verifiedSecret })
           return true
         },
       },
