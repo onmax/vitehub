@@ -2950,6 +2950,8 @@ function validateChannelHistoryDefinition(kind: string, history: unknown, trigge
     throw invalid("requires a Collection from defineCollection().")
   }
   if (!hasRuntimeType(history.key, "function")) throw invalid("requires key(item).")
+  if (history.thread !== undefined && !hasRuntimeType(history.thread, "function")) throw invalid("thread(item) must be a function when provided.")
+  if (history.invocationItem !== undefined && !hasRuntimeType(history.invocationItem, "function")) throw invalid("invocationItem(invocation) must be a function when provided.")
   const names = isRecord(triggers) ? Object.keys(triggers) : []
   if (history.trigger === undefined) {
     if (names.length !== 1) throw invalid(`requires trigger when the Channel has ${names.length} triggers.`)

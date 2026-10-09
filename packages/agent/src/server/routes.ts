@@ -48,6 +48,7 @@ import { agentInvokerLabel, hasResolvedAgentInvokerInput, resolveInputAgentInvok
 import { createAgentUIMessageStreamResponse } from "../stream-output.ts"
 import {
   bindAgentChannelTriggerState,
+  agentChannelOptions,
   isResolvedAgentTriggerHandledInvocation,
   resolveAgentTriggerInvocation as resolveAgentTriggerInvocationWithResolvedContext,
   resolveAgentTriggerInvocationResult,
@@ -107,6 +108,8 @@ import type {
   AgentChatStateResolver,
   AgentCapabilityDefinition,
   AgentChannelDefinition,
+  AgentChannelHistory,
+  AgentChannelHistoryQuery,
   AgentChannelDeliveryEventInput,
   AgentChannelDeliveryInspection,
   AgentChatErrorHookArgs,
@@ -200,6 +203,8 @@ export function setAgentChannelDeliveryWorkflowStateResolver(resolver: AgentChan
 
 export interface AgentChannelWebhookRouteHandler {
   (request: Request, webhook?: string, options?: AgentChannelWebhookRouteOptions): Promise<Response>
+  /** Match a declared path without reading the request body or accepting a delivery. */
+  matchesPath(request: Request, options?: AgentChannelWebhookRouteOptions): Promise<boolean>
   deliveries(request: Request, webhook?: string, options?: AgentChannelWebhookRouteOptions & { limit?: number }): Promise<AgentChannelDeliveryInspection[]>
   resume(options?: AgentChannelWebhookResumeOptions): () => Promise<void>
 }
@@ -7210,6 +7215,162 @@ async function channelHistoryMessage(
   })
 }
 
+function channelHistoryQuery(value: unknown): value is AgentChannelHistoryQuery {
+  return isRuntimeObject(value) && Object.values(value).every(entry => entry === undefined
+    || isRuntimeString(entry)
+    || (Array.isArray(entry) && entry.every(item => isRuntimeString(item))))
+}
+
+function channelHistoryInvocationText(record: { observations: readonly { name: string, attributes?: Record<string, unknown> }[] }): string | undefined {
+  const finish = record.observations.findLast(observation => observation.name === "agent.invocation.finish")
+  return isRuntimeString(finish?.attributes?.["result.text"]) ? finish.attributes["result.text"] : undefined
+}
+
+function channelHistoryInvocationDeliveries(
+  record: { observations: readonly { name: string, attributes?: Record<string, unknown> }[] },
+): Array<{ channel: string, text: string }> {
+  return record.observations.flatMap(observation => {
+    if (observation.name !== "agent.channel.delivery.effect" || observation.attributes?.["channel.effect.kind"] !== "reply") return []
+    const text = observation.attributes?.["channel.effect.content"]
+    if (!isRuntimeString(text) || !text) return []
+    const channel = isRuntimeString(observation.attributes?.["channel.effect.channel"])
+      ? observation.attributes["channel.effect.channel"]
+      : "unknown"
+    return [{ channel, text }]
+  })
+}
+
+interface ChannelHistoryInvocationEntry {
+  thread?: string
+  invocation: Record<string, unknown>
+}
+
+async function channelHistoryInvocations(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  channel: string,
+  history: AgentChannelHistory,
+  keys: ReadonlySet<string>,
+  agentName?: string,
+): Promise<Map<string, ChannelHistoryInvocationEntry[]>> {
+  const result = new Map<string, ChannelHistoryInvocationEntry[]>()
+  if (!agent.invocations || !keys.size) return result
+  let cursor: string | undefined
+  do {
+    const page = await agent.invocations.list({ ...(agentName ? { agentName } : {}), ...(cursor ? { cursor } : {}), limit: 1000 })
+    for (const summary of page.invocations) {
+      if (summary.channelId !== channel) continue
+      const annotatedKey = summary.annotations?.["vitehub.channel.key"]
+      // A declared key remains authoritative. Only legacy records use the recovery hook.
+      if (annotatedKey !== undefined ? !isRuntimeString(annotatedKey) || !keys.has(annotatedKey) : !history.invocationItem) continue
+      const record = await agent.invocations.get(summary.id)
+      if (!record) continue
+      let key = annotatedKey
+      let thread = summary.annotations?.["vitehub.channel.thread"]
+      if (annotatedKey === undefined && history.invocationItem) {
+        try {
+          const item = await history.invocationItem(record)
+          if (item === undefined) continue
+          key = history.key(item)
+          thread = history.thread?.(item)
+        }
+        catch { continue }
+      }
+      if (!isRuntimeString(key) || !key.trim() || !keys.has(key)) continue
+      const start = record.observations.find(observation => observation.name === "agent.invocation.start")
+      const dryRun = start?.attributes?.["input.hasDryRun"] === true
+      const label = isRuntimeString(record.annotations?.triggeredBy) && record.annotations.triggeredBy.trim() ? record.annotations.triggeredBy : null
+      const entries = result.get(key) || []
+      entries.push({
+        ...(isRuntimeString(thread) && thread.trim() ? { thread } : {}),
+        invocation: {
+          id: record.id,
+          status: record.status,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+          dryRun,
+          label,
+          deliveries: channelHistoryInvocationDeliveries(record),
+          ...(channelHistoryInvocationText(record) !== undefined ? { text: channelHistoryInvocationText(record) } : {}),
+        },
+      })
+      result.set(key, entries)
+    }
+    cursor = page.cursor
+  } while (cursor)
+  return result
+}
+
+async function createCollectionChannelHistoryResponse(
+  agent: AgentInput<ViteAgentRouteRuntimeContext>,
+  context: ViteAgentRouteRuntimeContext,
+  channelId: string,
+  history: AgentChannelHistory,
+  request: Request,
+): Promise<Response> {
+  const body: unknown = await request.json().catch(() => undefined)
+  if (!isRecord(body) || (body.cursor !== undefined && (!isRuntimeString(body.cursor) || !body.cursor)) || (body.threadId !== undefined && (!isRuntimeString(body.threadId) || !body.threadId.trim())) || (body.invocations !== undefined && !isRuntimeBoolean(body.invocations)) || (body.query !== undefined && !channelHistoryQuery(body.query))) {
+    return createBadRequest("Channel history export request is invalid.")
+  }
+  const rawQuery = body.query || {}
+  let query: object
+  try {
+    query = await history.collection.parseQuery(rawQuery)
+  }
+  catch (error) {
+    return createJsonErrorResponse(400, error instanceof Error ? error.message : "Channel history query is invalid.")
+  }
+  if (body.threadId && !history.thread) return createJsonErrorResponse(400, "Channel history export does not support --thread for this Channel.")
+  const threadId = isRuntimeString(body.threadId) ? body.threadId.trim() : undefined
+  const items: Array<Record<string, unknown>> = []
+  let page: { items: unknown[], nextCursor: string | null }
+  try {
+    page = await history.collection.page({ ...(isRuntimeString(body.cursor) ? { cursor: body.cursor } : {}), query, signal: request.signal })
+  }
+  catch (error) {
+    return createJsonErrorResponse(400, error instanceof Error ? error.message : "Channel history export failed.")
+  }
+  for (const item of page.items) {
+    let key = ""
+    let thread: string | undefined
+    try {
+      const value = history.key(item)
+      if (isRuntimeString(value)) key = value
+    }
+    catch {}
+    if (history.thread) {
+      try {
+        const value = history.thread(item)
+        if (isRuntimeString(value)) thread = value
+      }
+      catch {}
+    }
+    if (threadId && thread !== threadId) continue
+    items.push({ key, ...(thread !== undefined ? { thread } : {}), item })
+  }
+  if (body.invocations === true) {
+    const keys = new Set(items.flatMap(item => isRuntimeString(item.key) && item.key ? [item.key] : []))
+    const joined = await channelHistoryInvocations(agent, channelId, history, keys, routeAgentInvocationName(agent, context.agentIdentity))
+    for (const item of items) {
+      item.invocations = (isRuntimeString(item.key) ? joined.get(item.key) || [] : [])
+        .filter(entry => entry.thread === undefined || item.thread === undefined || entry.thread === item.thread)
+        .map(entry => entry.invocation)
+    }
+  }
+  const responseBody = {
+    agent: context.agentIdentity?.name || "agent",
+    channel: channelId,
+    exportedAt: new Date().toISOString(),
+    query: rawQuery,
+    items,
+    nextCursor: page.nextCursor,
+  }
+  const serialized = JSON.stringify(responseBody)
+  if (boundedUtf8ByteLength(serialized, channelHistoryArchiveMaxBytes) === undefined) {
+    return createJsonErrorResponse(400, "Channel history archive exceeds the 35 MiB response limit.")
+  }
+  return new Response(serialized, { headers: { "cache-control": "no-store", "content-type": "application/json" } })
+}
+
 async function createChannelHistoryResponse(
   agent: AgentInput<ViteAgentRouteRuntimeContext>,
   context: ViteAgentRouteRuntimeContext,
@@ -7217,6 +7378,9 @@ async function createChannelHistoryResponse(
   options: AgentChannelWebhookRouteOptions,
   request: Request,
 ): Promise<Response> {
+  const channelId = registration.channelId || registration.id || registration.provider
+  const channel = agentChannelOptions(agent)[channelId]
+  if (channel?.history) return createCollectionChannelHistoryResponse(agent, context, channelId, channel.history, request)
   // SAFETY: The surrounding route guards establish this record shape before the value crosses the internal boundary.
   const body = (await request.json().catch(() => undefined)) as { threadId?: unknown } | undefined
   if (!body || !isRuntimeString(body.threadId) || !body.threadId.trim()) {
@@ -8355,6 +8519,20 @@ export function createChannelWebhookRouteHandler(agent: AgentInput<ViteAgentRout
         webhookDeadlineAbort,
       )
     })
+  }
+  handler.matchesPath = async (request, handlerOptions = {}) => {
+    const context = createRuntimeContext(
+      request,
+      undefined,
+      await resolveRuntimeWaitUntil(handlerOptions.waitUntil),
+      handlerOptions.cloudflare,
+      handlerOptions.runtime,
+      handlerOptions.capabilities,
+      routeAgentIdentity(handlerOptions),
+    )
+    return await runWithRuntimeCloudflareEnv(context, async () =>
+      (await agentWebhookRegistrations(agent, context)).some(({ registration }) => webhookRegistrationPathMatches(request, registration)),
+    )
   }
   handler.deliveries = async (request, webhook, handlerOptions = {}) => {
     const webhookId = webhook === undefined ? fallbackWebhookFromRequest(request) : webhook

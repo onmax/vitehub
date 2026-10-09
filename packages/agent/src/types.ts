@@ -1,7 +1,7 @@
 import type { AgentActivity, Message, StreamEvent } from "./messages.ts"
 import type { AskAnswerType, AskQuestion } from "./ask.ts"
 import type { AgentRunEventPublisher, AgentRunEvents } from "./run-events.ts"
-import type { AgentInvocationAnnotationValue, AgentInvocations } from "./invocations.ts"
+import type { AgentInvocationAnnotationValue, AgentInvocationRecord, AgentInvocations } from "./invocations.ts"
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec"
 import type { AgentPublicError } from "./agent-error.ts"
 import type { JSONSchema7 } from "json-schema"
@@ -2465,6 +2465,10 @@ export interface AgentChannelHistory<TItem = unknown> {
   collection: AgentChannelHistoryCollection<TItem>
   /** Returns a stable key for an item, such as the provider message ID. Replay derives the Invocation ID from it. */
   key(item: TItem): string
+  /** Conversation that the item belongs to. Used to group exports and filter them by thread. */
+  thread?(item: TItem): string
+  /** Recover a history item from a retained Invocation without vitehub.channel.key. The journal does not retain raw trigger input or input.context. Return undefined when its identity cannot be recovered. */
+  invocationItem?(invocation: AgentInvocationRecord): MaybePromise<TItem | undefined>
   /** Channel trigger that receives each item. Optional when the Channel has exactly one trigger. */
   trigger?: string
 }
