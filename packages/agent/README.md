@@ -797,8 +797,9 @@ repository package-manager hooks, plugins, and binary delegation stay disabled.
 The package manager must name an official version, rather than a URL. Corepack
 uses the trusted npm registry and ignores checkout environment files. npm must
 be version 7 or newer. A manifest without a package-manager version uses a pinned
-default rather than an ambient executable. Installation failures are recorded in `.git/vitehub-install.json` and
-retry after five minutes. Set `install: false` for a checkout with no Node dependencies.
+default rather than an ambient executable. Installation failures are recorded in
+`.git/vitehub-install.json` and park the PR until new head or comment evidence
+wakes it. Set `install: false` for a checkout with no Node dependencies.
 Dependency manifests and lockfiles are checked for local sources that escape the checkout, including encoded paths and symlinks. Project `.npmrc` and pnpm workspace configuration accept dependency declarations, peer and hoisting settings, and build allowlists. Other settings, including filesystem locations and package-manager extensions, are rejected before host installation. Supported configuration is fingerprinted so changes require a dependency refresh. npm accepts either `package-lock.json` or `npm-shrinkwrap.json`, and the boolean lockfile-shaping settings `legacy-peer-deps` and `install-links`.
 Validation follows configured workspace patterns and referenced local packages; unrelated nested projects are excluded. pnpm workspaces without a root manifest use the pinned pnpm default. Executable fetch protocols such as Yarn `exec:`, Git dependencies that prepare remote projects, and unsupported source protocols are rejected before Corepack runs. Use registry packages or HTTPS archives instead, or set `install: false` when dependencies must be prepared in the provider sandbox.
 Local package source files, archives, and patch files contribute their contents and executable mode to the dependency fingerprint. Local package source trees require regular files and directories; installed modules and Git metadata are excluded. Host installation reads a validated snapshot inside protected Git metadata, so provider writes cannot alter package-manager configuration or dependency sources after validation. The package-manager cache has its own CommonJS scope even in an ESM checkout. The host reconciles generated dependency outputs and rejects a refresh if the live dependency inputs changed. Workspace links continue to point to the live checkout.
@@ -950,6 +951,9 @@ commit together, so restarting the same release cannot repeat the wake. Timed
 retries, check dependencies, and maintainer credential blockers keep their existing
 wake conditions. Health can reuse admission accounting for at most two minutes
 and reports its observation time; dispatch shares a fresh accounting read.
+
+Host dependency installation failures park the PR without a timer retry. Correct
+the failure, then push a new head or comment on the PR to resume.
 
 Each pass uses a disposable provider workspace with unattended edit permission.
 Native permission escalation is denied without prompting; the provider does not run
