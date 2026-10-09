@@ -55,6 +55,7 @@ const optionalPeerUsage = new Map<string, Readonly<Record<string, OptionalPeerUs
   ["vite-hub/agent/evlog/posthog", { "evlog": "both", "posthog-node": "both" }],
   ["vite-hub/agent/observability", { "evlog": "both" }],
   ["vite-hub/agent/eval", { "evalite": "both", "vitest": "both" }],
+  ["vite-hub/doctor", { "vite-doctor": "both" }],
   ["vite-hub/browser/controllers/playwright", { "playwright-core": "declaration" }],
   ["vite-hub/nuxt", { "vite": "both" }],
   ["vite-hub/source/client", { "vue": "both" }],

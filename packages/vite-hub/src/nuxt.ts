@@ -44,6 +44,7 @@ import type { HookHandler, Plugin, PluginOption, ResolvedConfig, UserConfig, Vit
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 const databaseRuntimeState = fileURLToPath(new URL("./_internal/database/runtime/state", import.meta.url))
+const doctorExtensionEntry = fileURLToPath(new URL("./doctor", import.meta.url))
 const consoleRuntimeRoot = fileURLToPath(new URL("./console/runtime", import.meta.url))
 type NuxtPage = { file: string, meta?: Record<string, unknown>, name: string, path: string }
 type ViteHubNuxtOptions = Omit<Parameters<typeof vitehub>[0], "database" | "env"> & {
@@ -747,6 +748,12 @@ type ViteHubNuxtModule = {
 
 const viteHubNuxtModule: ViteHubNuxtModule = async function viteHubNuxtModule(inlineOptions, nuxt): Promise<void> {
   if (!nuxt) return
+  // Nuxt does not run the Vite Doctor plugin, so `vite-doctor/nuxt` receives the extension through its hook.
+  if (nuxt.hook) {
+    Reflect.apply(nuxt.hook, nuxt, ["doctor:extendExtensions", (entries: string[]) => {
+      entries.push(doctorExtensionEntry)
+    }])
+  }
 
   const moduleOptions = {
     ...nuxt.options.vitehub,
