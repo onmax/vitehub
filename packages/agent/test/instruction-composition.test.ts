@@ -7,6 +7,23 @@ import {
 import { babysitterInstructions } from "../src/presets/babysitter/instructions.ts"
 
 describe("instruction composition", () => {
+  it("injects trusted custom instructions only through an authored slot", async () => {
+    await expect(composeInstructionDocument("Base", { context: { customInstructions: "Injected" } }))
+      .rejects.toThrow("requires a {{{ context.customInstructions }}} slot")
+    await expect(composeInstructionDocument("Base {{{ context.customInstructions }}}", {
+      context: { customInstructions: "Injected\n\n- Rule" },
+    })).resolves.toBe("Base Injected\n\n- Rule")
+  })
+
+  it("keeps custom instruction slots inside code literal and validates the value", async () => {
+    const document = "```\n{{{ context.customInstructions }}}\n```"
+    await expect(composeInstructionDocument(document, { context: { customInstructions: "Injected" } }))
+      .rejects.toThrow("requires a {{{ context.customInstructions }}} slot")
+    await expect(composeInstructionDocument(document)).resolves.toContain("{{{ context.customInstructions }}}")
+    await expect(composeInstructionDocument("{{{ context.customInstructions }}}", { context: { customInstructions: 42 } }))
+      .rejects.toThrow("context.customInstructions must be a string")
+  })
+
   it("renders the Babysitter wait contract without unsupported tool or JSON examples", async () => {
     const rendered = await composeInstructionDocument(babysitterInstructions.replace("{{{ instructions }}}", "Agent instructions."))
     expect(rendered).toContain('set wait.kind to "checks" and wait.headSha to the current HEAD SHA')

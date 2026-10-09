@@ -37,8 +37,21 @@ const contextConditionPathPattern = /^context(?:\.[A-Za-z_$][\w$-]*)+$/
 
 export async function composeInstructionDocument(content: string, options: ComposeInstructionDocumentOptions = {}): Promise<string> {
   const state = { context: options.context || {}, workspace: options.workspace || {} }
+  const customPattern = /\{\{\{\s*context\.customInstructions\s*\}\}\}/g
+  const customPrefix = `VITEHUBCUSTOMINSTRUCTIONS${crypto.randomUUID().replaceAll("-", "")}`
+  let customCount = 0
+  const customMasked = content.replace(customPattern, () => `${customPrefix}${customCount++}END`)
+  const { tree: customTree } = await parseInstructionTemplate(customMasked)
+  const customInCode = instructionTokensInCode(customTree.nodes, customPrefix)
+  const customInstructions = state.context.customInstructions
+  if (customInstructions !== undefined && typeof customInstructions !== "string") {
+    throw new TypeError("[vitehub] context.customInstructions must be a string.")
+  }
+  if (customInstructions && customCount === customInCode.size) {
+    throw new TypeError("[vitehub] context.customInstructions requires a {{{ context.customInstructions }}} slot outside code in the Agent instructions.")
+  }
   const coverageMarker = createInstructionCoverageMarker()
-  const marked = await markInstructionCoverage(content, coverageMarker)
+  const marked = await markInstructionCoverage(customMasked, coverageMarker)
 
   try {
     const rendered = await renderMarkdownTemplateInternal(marked, {
@@ -46,7 +59,9 @@ export async function composeInstructionDocument(content: string, options: Compo
       validateFragmentPath: path => path.startsWith("context.") || path.startsWith("workspace."),
       validateConditionPath: path => contextConditionPathPattern.test(path),
     })
-    return await stripMarkedInstructionCoverage(rendered, coverageMarker, options.coverage)
+    const stripped = await stripMarkedInstructionCoverage(rendered, coverageMarker, options.coverage)
+    return stripped.replace(new RegExp(`${customPrefix}(\\d+)END`, "g"), (_match, index: string) =>
+      customInCode.has(Number(index)) ? "{{{ context.customInstructions }}}" : customInstructions || "")
   }
   catch (error) {
     rethrowInstructionCompositionError(error)
