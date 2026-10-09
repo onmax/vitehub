@@ -581,6 +581,10 @@ export class PullRequestInbox {
       this.dirty(s, 'wait:worker-release-changed')
       await this.put(tx, s)
       await this.setMetaIn(tx, key, { revision, head: s.pr?.head?.sha })
+      // The corrected host can repair unchanged CI even when Actions reruns
+      // are forbidden. Its old model fallback must not suppress that retry.
+      await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`,
+        [this.scope, `ci-permission-fallback:v1:${s.repository}:${s.pr?.head?.sha ?? ''}`])
       if (this.activityAuthors.size) await this.enqueueStatusProjectionIn(tx, s)
       return true
     })

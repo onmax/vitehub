@@ -158,11 +158,14 @@ for (const reason of [
   'commitRepair repeatedly reports “Dependency inputs changed or installation failed” despite successful refreshDependencies and subsequent validation. Fix the host dependency-state guard, preserve the prepared repair files, and comment on this PR after correction to resume publication.',
 ]) test(`a corrected release retries the prepared merge worker blocker once: ${reason}`, async t => {
   const { inbox, claim, open } = await fixture(t)
+  const fallbackKey = `ci-permission-fallback:v1:${repository}:${head}`
+  await inbox.setMeta(fallbackKey, { consumedAt: Date.now(), evidenceKey: 'unchanged-failure' })
   const result = { text: reason, wait: { kind: 'external' as const, headSha: head, reason, evidenceKey: 'merge-metadata' } }
   await inbox.finish(claim, result)
   const recovery = createBabysitterStatusRecovery({ inbox, revision: 'merge-fix-1' })
   await recovery.recover()
   assert.equal((await inbox.get(repository, 239))?.status, 'ready')
+  assert.equal(await inbox.meta(fallbackKey), undefined, 'a corrected host release must permit a fresh repair even when CI rerun permission is unchanged')
   const [retry] = await inbox.claim(1)
   await recovery.recordWorkerBlocker(retry!.snapshot, reason)
   await inbox.finish(retry!, result)
