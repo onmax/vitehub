@@ -121,14 +121,19 @@ function collectionRouteDisabled(source: string, exportName: string, file: strin
         .map(entry => entry.trim().match(new RegExp(`^(\\w+)\\s+as\\s+${escapedExportName}$|^${escapedExportName}$`)))
         .find(Boolean)?.[1] ?? (match[1].split(",").map(entry => entry.trim()).find(entry => entry === exportName) ? exportName : undefined)
       if (!localName) continue
-      const localDeclaration = new RegExp(`(?:^|[;\\n])\\s*(?:const|let|var)\\s+${localName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
-      let declarationMatch
-      for (const candidate of masked.matchAll(localDeclaration)) {
-        if ((candidate.index ?? 0) < (match.index ?? 0)) declarationMatch = candidate
+      // The export list may appear before or after the local declaration. Include
+      // `export const` declarations as well, then bind the name to its own
+      // initializer rather than relying on statement order.
+      const localDeclaration = new RegExp(`(?:^|[;\\n])\\s*(?:export\\s+)?(?:const|let|var)\\s+${localName}(?:\\s*:\\s*[^=;]+)?\\s*=`, "g")
+      for (const declarationMatch of masked.matchAll(localDeclaration)) {
+        const initializerStart = (declarationMatch.index ?? 0) + declarationMatch[0].length
+        const statementEnd = masked.indexOf(";", initializerStart)
+        const candidateCall = calls.find(candidate => candidate.start >= initializerStart && candidate.start < (statementEnd < 0 ? source.length : statementEnd))
+        if (candidateCall) {
+          call = candidateCall
+          break
+        }
       }
-      if (!declarationMatch) continue
-      const initializerStart = (declarationMatch.index ?? 0) + declarationMatch[0].length
-      call = calls.find(candidate => candidate.start >= initializerStart && candidate.start < (masked.indexOf(";", initializerStart) < 0 ? source.length : masked.indexOf(";", initializerStart)))
       if (call) break
     }
   }
