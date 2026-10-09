@@ -11,7 +11,9 @@ import { parse } from "yaml";
 
 const exec = promisify(execFile);
 const manifest = v.object({ packageManager: v.optional(v.string()) });
+const systemError = v.object({ errno: v.pipe(v.number(), v.integer(), v.maxValue(-1)) });
 const exists = async (path: string) => await access(path).then(() => true, () => false);
+const isSystemError = (error: unknown) => v.safeParse(systemError, error).success;
 
 export class GitHubWorkspaceInstallError extends Error {
   constructor(cause: unknown, readonly retryable = true) { super(`Frozen dependency installation failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
@@ -140,7 +142,10 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
       throw error;
     }
     retryable = false;
-    const current = await validateGitHubInstallInputs(target);
+    const current = await validateGitHubInstallInputs(target).catch(error => {
+      if (isSystemError(error)) throw error;
+      return undefined;
+    });
     if (current !== fingerprint) throw new Error("Dependency inputs changed during installation. Call refreshDependencies again before validation.");
     retryable = true;
     await publishGitHubInstallSnapshot(snapshot, signal);
@@ -150,8 +155,7 @@ async function installWorkspace(target: string, signal?: AbortSignal, run?: GitH
     await writeFile(record, JSON.stringify({ status: "failed", command: command ? [command, ...args] : undefined, at: new Date().toISOString(), reason })).catch(() => undefined);
     if (signal?.aborted) throw error;
     // Filesystem errors remain recoverable even when they occur during input validation.
-    const hostError = v.safeParse(v.object({ errno: v.pipe(v.number(), v.integer(), v.maxValue(-1)) }), error).success;
-    throw new GitHubWorkspaceInstallError(error, retryable || hostError);
+    throw new GitHubWorkspaceInstallError(error, retryable || isSystemError(error));
   } finally {
     try {
       try { if (yarnConfig) await rm(yarnConfig, { force: true }); }
