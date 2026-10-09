@@ -199,3 +199,64 @@ it("moves the deleted payload aside before a post-removal writer publishes", asy
   expect(await driver.head("file.txt")).toMatchObject(expected)
   expect((await driver.list()).blobs).toEqual([expect.objectContaining(expected)])
 })
+
+it.each([false, true])("keeps concurrent deletion idempotent with replacement=%s", async (replace) => {
+  const root = await mkdtemp(join(tmpdir(), "blob-atomic-"))
+  roots.push(root)
+  const driver = createDriver({ driver: "fs", base: root })
+  const other = createDriver({ driver: "fs", base: root })
+  await driver.put("file.txt", "old", { contentType: "text/plain" })
+  let reached!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { reached = resolve })
+  const moved = new Promise<void>(resolve => { release = resolve })
+  let first = true
+  vi.mocked(rename).mockImplementation(async (from, to) => {
+    if (from !== join(root, "file.txt")) return actual.rename(from, to)
+    if (first) {
+      first = false
+      reached()
+      await moved
+      try {
+        await actual.rename(from, to)
+      }
+      catch (error) {
+        // Publish after the losing rename fails, before its error is handled.
+        if (replace) await other.put("file.txt", "new bytes", { contentType: "text/html", customMetadata: { version: "new" } })
+        throw error
+      }
+    }
+    else {
+      try {
+        await actual.rename(from, to)
+      }
+      catch (error) {
+        if (replace) await other.put("file.txt", "new bytes", { contentType: "text/html", customMetadata: { version: "new" } })
+        throw error
+      }
+    }
+  })
+  const losing = driver.delete("file.txt")
+  const result = Promise.allSettled([losing])
+  await started
+  try {
+    await other.delete("file.txt")
+  }
+  finally {
+    release()
+  }
+  expect(await result).toEqual([{ status: "fulfilled", value: undefined }])
+  expect(await readdir(join(root, ".vitehub", "blob-deletes"))).toEqual([])
+  if (replace) {
+    const blob = await driver.get("file.txt")
+    expect(await blob?.text()).toBe("new bytes")
+    expect(blob?.type).toBe("text/html")
+    const expected = { size: 9, contentType: "text/html", customMetadata: { version: "new" } }
+    expect(await driver.head("file.txt")).toMatchObject(expected)
+    expect((await driver.list()).blobs).toEqual([expect.objectContaining(expected)])
+  }
+  else {
+    expect(await driver.get("file.txt")).toBeNull()
+    expect(await readdir(join(root, ".vitehub", "blob-meta"))).toEqual([])
+  }
+})

@@ -420,7 +420,7 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
           return
         }
         if (!generation.isFile()) {
-          const error = new Error(`Blob pathname is not a file: ${pathname}`) as NodeJS.ErrnoException
+          const error: NodeJS.ErrnoException = new Error(`Blob pathname is not a file: ${pathname}`)
           error.code = "EISDIR"
           throw error
         }
@@ -432,7 +432,15 @@ export function createDriver(options: ResolvedFsBlobStoreConfig): BlobDriverAdap
         await assertNoSymlinkPath(root, staging)
         await mkdir(dirname(staging), { recursive: true })
         try {
-          await rename(path, staging)
+          try {
+            await rename(path, staging)
+          }
+          catch (error) {
+            // Another delete already moved the payload. It owns metadata
+            // cleanup; touching the pathname now could affect a replacement.
+            if (isNotFound(error)) return
+            throw error
+          }
           await removeMetadata(root, pathname, generation)
         }
         finally {
