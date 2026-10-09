@@ -732,7 +732,12 @@ export class PullRequestInbox {
       return false
     }
     const newHead = previous?.head?.sha !== pr.head?.sha
-    if (pr.state === 'closed' || newHead && !s.prospectivePush?.heads.includes(pr.head?.sha ?? '')) delete s.prospectivePush
+    if (newHead && s.prospectivePush) {
+      const position = s.prospectivePush.heads.indexOf(pr.head?.sha ?? '')
+      if (position < 0) delete s.prospectivePush
+      else s.prospectivePush.heads = s.prospectivePush.heads.slice(position)
+    }
+    if (pr.state === 'closed') delete s.prospectivePush
     // A wait on a pushed head survives that head's synchronize event.
     if (newHead && pr.head?.sha !== s.wait?.headSha || pr.state === 'closed') delete s.wait
     s.pr = { ...previous, ...pr }

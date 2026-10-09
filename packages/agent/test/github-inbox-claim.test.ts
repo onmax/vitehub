@@ -245,3 +245,36 @@ for (const change of ['lease expired', 'external head', 'claim replaced'] as con
     } finally { await inbox.close() }
   })
 }
+
+for (const evidence of ['check', 'status'] as const) {
+  test(`late ${evidence} for an abandoned candidate cannot mutate a newer synchronized claim`, async () => {
+    const inbox = await fixture()
+    const abandoned = 'a'.repeat(40), published = 'b'.repeat(40), pending = 'c'.repeat(40)
+    try {
+      const claim = (await inbox.claim(1))[0]!
+      for (const head of [abandoned, published, pending]) {
+        const current = (await inbox.get('vite-hub/vitehub', 42))!
+        assert.equal(await inbox.registerProspectivePush({ ...claim, generation: current.generation, snapshot: current }, head), true)
+      }
+      await inbox.ingest('newer-candidate-synchronized', 'pull_request', {
+        repository: { full_name: 'vite-hub/vitehub' }, action: 'synchronize',
+        pull_request: { ...claim.snapshot.pr!, head: { ...claim.snapshot.pr!.head!, sha: published } },
+      })
+      const before = (await inbox.get('vite-hub/vitehub', 42))!
+      await inbox.ingest('abandoned-candidate-ci', evidence === 'check' ? 'check_run' : 'status', {
+        repository: { full_name: 'vite-hub/vitehub' },
+        ...(evidence === 'check' ? { check_run: { id: 99, name: 'abandoned', head_sha: abandoned, status: 'completed', conclusion: 'failure', pull_requests: [{ number: 42 }] } }
+          : { sha: abandoned, context: 'abandoned', state: 'failure' }),
+      })
+      const after = (await inbox.get('vite-hub/vitehub', 42))!
+      assert.equal(after.checks['check_run:99'], undefined)
+      assert.equal(after.statuses.abandoned, undefined)
+      assert.equal(after.generation, before.generation)
+      assert.equal(after.revision, before.revision)
+      await inbox.ingest('still-pending-candidate-ci', 'status', {
+        repository: { full_name: 'vite-hub/vitehub' }, sha: pending, context: 'future', state: 'failure',
+      })
+      assert.equal((await inbox.get('vite-hub/vitehub', 42))?.statuses.future?.state, 'failure', 'a candidate registered after the synchronized head is still pending')
+    } finally { await inbox.close() }
+  })
+}
