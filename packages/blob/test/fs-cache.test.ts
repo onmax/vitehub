@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises"
+import { mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -9,13 +9,14 @@ import { createDriver } from "../src/drivers/fs.ts"
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>()
-  return { ...fs, stat: vi.fn(fs.stat), writeFile: vi.fn(fs.writeFile) }
+  return { ...fs, rename: vi.fn(fs.rename), stat: vi.fn(fs.stat), writeFile: vi.fn(fs.writeFile) }
 })
 
 const fs = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")
 const directories: string[] = []
 
 afterEach(async () => {
+  vi.mocked(rename).mockReset().mockImplementation(fs.rename)
   vi.mocked(stat).mockReset().mockImplementation(fs.stat)
   vi.mocked(writeFile).mockReset().mockImplementation(fs.writeFile)
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })))
@@ -58,9 +59,9 @@ describe("filesystem content hash snapshots", () => {
     const base = await mkdtemp(join(tmpdir(), "vitehub-blob-fs-cache-"))
     directories.push(base)
     const driver = createDriver({ base, driver: "fs" })
-    vi.mocked(writeFile).mockImplementationOnce(async (...args) => {
-      await fs.writeFile(...args)
-      await fs.writeFile(join(base, "photo"), "later")
+    vi.mocked(rename).mockImplementation(async (...args) => {
+      await fs.rename(...args)
+      if (args[1] === join(base, "photo")) await fs.writeFile(join(base, "photo"), "later")
     })
 
     const object = await driver.put("photo", "first")

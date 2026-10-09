@@ -43,6 +43,7 @@ type WorkspaceAccessRuntime = Pick<
   | "attachWorkspaceSourceRequestExecution"
   | "assertModelWorkspaceGlobPattern"
   | "createWorkspaceSourceResolutionFacade"
+  | "createWorkspaceHistoryReader"
   | "createWorkspaceTools"
   | "forwardWorkspaceMetadataView"
   | "getWorkspaceSourceRequestExecution"
@@ -986,6 +987,7 @@ function createScopedWorkspaceFacade<Name extends WorkspaceName>(
 
   const facade: ReadonlyWorkspaceFacade<Name> & Partial<WorkspaceSessionStarter> = {
     fs,
+    history: workspaceRuntime.createWorkspaceHistoryReader(workspace.history, scope.all),
     tools,
   }
   // Only a read-only metadata view crosses into the Agent package. It has no Store writes.

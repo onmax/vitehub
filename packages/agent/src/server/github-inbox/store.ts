@@ -18,6 +18,7 @@ export type Snapshot = {
   wait?: PullRequestWait
   lease: string | null; leaseUntil: number; attempts: number
   progressBudget?: ProgressBudget
+  recoveryHead?: string
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
   comments: Record<string, GitHubEvidence>; reviews: Record<string, GitHubEvidence>
   reviewComments: Record<string, GitHubEvidence>; checks: Record<string, GitHubEvidence>; statuses: Record<string, GitHubEvidence>
@@ -30,9 +31,10 @@ export interface GitHubInboxSummary {
   repository: string; number: number; head?: string; generation: number; handled: number; status: Snapshot['status']; reasons: string[]
   wait?: PullRequestWait
   dirty: boolean; attempts: number; nextAt: number; lastResult?: string; progressBudget?: ProgressBudget
+  stackBlocked?: boolean; stackParent?: { number: number; state: string }
 }
 export type Claim = { token: string; generation: number; snapshot: Snapshot }
-export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number }
+export type DirectMergeAttempt = { token: string; generation: number; revision: number; head: string; startedAt: number; asynchronous?: boolean; requestId?: string; enqueued?: boolean }
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const stamp = (value: GitHubEvidence) => Date.parse(value.updated_at ?? value.updatedAt ?? value.submitted_at ?? value.completed_at ?? value.started_at ?? value.created_at ?? '') || 0
 /** Normalize REST and discovery records once, before they enter the inbox. */
@@ -59,6 +61,7 @@ function parseSnapshot(value: unknown): Snapshot {
     ('lastResult' in input && Object.prototype.toString.call(input.lastResult) !== '[object String]')) {
     throw new TypeError('Invalid inbox snapshot')
   }
+  if (input.recoveryHead !== undefined) v.parse(v.string(), input.recoveryHead)
   if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
   if (input.wait !== undefined) parseWait(input.wait)
   if (input.progressBudget !== undefined) parseProgressBudget(input.progressBudget)
@@ -101,6 +104,7 @@ const summarySchema = v.object({
   repository: v.string(), number: v.number(), head: v.optional(v.string()), generation: v.number(), handled: v.number(),
   status: v.picklist(['ready', 'working', 'waiting', 'terminal']), reasons: v.array(v.string()), wait: v.optional(v.unknown()),
   dirty: v.boolean(), attempts: v.number(), nextAt: v.number(), lastResult: v.optional(v.string()), progressBudget: v.optional(v.unknown()),
+  stackBlocked: v.optional(v.boolean()), stackParent: v.optional(v.object({ number: v.number(), state: v.string() })),
 })
 function parseSummary(value: unknown): GitHubInboxSummary {
   const { wait, progressBudget, ...summary } = v.parse(summarySchema, value)
@@ -217,7 +221,24 @@ export class PullRequestInbox {
     const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
     return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value))))
   }
+  private compactTerminal(s: Snapshot): void {
+    if (s.status !== 'terminal') return
+    // Closed or filtered PRs can be reopened from a webhook or the open-PR
+    // sweep. Keep their identity and durable result, but discard historical
+    // feedback and CI payloads so terminal history cannot starve the scheduler.
+    s.comments = {}
+    s.reviews = {}
+    s.reviewComments = {}
+    s.checks = {}
+    s.statuses = {}
+    s.threads = []
+    delete s.ciEvidence
+    s.hydrated = false
+    s.refresh = true
+    s.feedbackRefresh = true
+  }
   private async put(tx: PullRequestInboxExecutor, s: Snapshot): Promise<void> {
+    this.compactTerminal(s)
     const head = s.pr?.head?.sha
     await tx.execute(`INSERT OR REPLACE INTO ${this.tables.pullRequests} (scope, repository, number, value, summary, status, generation, handled,
       dirty_at, next_at, lease, lease_until, waiting, progress_blocked, state, head_sha, head_ref, base_ref) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
@@ -259,7 +280,7 @@ export class PullRequestInbox {
   async setMeta(key: string, value: unknown): Promise<void> { await this.transaction(tx => this.setMetaIn(tx, key, value)) }
   private directMergeKey(repository: string, number: number): string { return `direct-merge:${repository}:${number}` }
   /** Atomically records that a claim has started an irreversible merge request. */
-  async beginDirectMerge(claim: Claim, head: string): Promise<boolean> {
+  async beginDirectMerge(claim: Claim, head: string, asynchronous = false): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
       if (!s || s.lease !== claim.token || s.generation !== claim.generation ||
@@ -267,7 +288,7 @@ export class PullRequestInbox {
       if (await this.metaIn(tx, this.directMergeKey(s.repository, s.number)) !== undefined) return false
       await this.setMetaIn(tx, this.directMergeKey(s.repository, s.number), {
         token: claim.token, generation: claim.generation, revision: claim.snapshot.revision ?? 0,
-        head, startedAt: this.clock(),
+        head, startedAt: this.clock(), ...(asynchronous ? { asynchronous } : {}),
       } satisfies DirectMergeAttempt)
       return true
     })
@@ -281,6 +302,27 @@ export class PullRequestInbox {
       !isRuntimeString(attempt.head) || !Number.isFinite(attempt.startedAt)) return undefined
     // SAFETY: the required fields were validated above before this DirectMergeAttempt assertion.
     return attempt as DirectMergeAttempt
+  }
+  /** Save the provider's request identity without releasing the merge fence. */
+  async recordDirectMergeRequest(repository: string, number: number, token: string, requestId: string): Promise<boolean> {
+    if (!/^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i.test(requestId)) throw new TypeError('Expected an asynchronous merge UUID.')
+    return await this.transaction(async tx => {
+      const key = this.directMergeKey(repository, number)
+      const attempt = await this.metaIn(tx, key)
+      if (!isRuntimeRecord(attempt) || attempt.token !== token || attempt.asynchronous !== true) return false
+      await this.setMetaIn(tx, key, { ...attempt, requestId })
+      return true
+    })
+  }
+  /** Preserve a final enqueued result, including an immediate response without a UUID. */
+  async recordDirectMergeEnqueued(repository: string, number: number, token: string): Promise<boolean> {
+    return await this.transaction(async tx => {
+      const key = this.directMergeKey(repository, number)
+      const attempt = await this.metaIn(tx, key)
+      if (!isRuntimeRecord(attempt) || attempt.token !== token || attempt.asynchronous !== true) return false
+      await this.setMetaIn(tx, key, { ...attempt, enqueued: true })
+      return true
+    })
   }
   async clearDirectMerge(repository: string, number: number, token: string): Promise<boolean> {
     return await this.transaction(async tx => {
@@ -549,25 +591,28 @@ export class PullRequestInbox {
       return await finish(numbers.size ? undefined : 'no matching PR head')
     })
   }
-  async claim(limit: number): Promise<Claim[]> {
+  async claim(limit: number, options: { only?: (snapshot: Snapshot) => boolean; skip?: (snapshot: Snapshot) => boolean; includeBlocked?: boolean } = {}): Promise<Claim[]> {
     if (!this.repositories.length || limit < 1) return []
     return await this.transaction(async tx => {
       const now = this.clock(), claims: Claim[] = [], t = this.tables
       const repositories = this.repositoryFilter()
-      // Columns select candidates; only these snapshots are parsed.
-      const candidates = await tx.execute(`SELECT repository, number, base_ref FROM ${t.pullRequests}
+      // Indexed columns select candidates; repository identity is retained in each snapshot.
+      const candidates = await tx.execute(`SELECT repository, number, base_ref, COALESCE(json_extract(value, '$.pr.base.repo.full_name'), repository) AS base_repository FROM ${t.pullRequests}
         WHERE scope=? AND ${repositories.sql} AND waiting=0 AND status<>'terminal' AND generation>handled AND next_at<=?
-          AND (lease IS NULL OR lease_until<=?) AND progress_blocked=0
-        ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now])
+          AND (lease IS NULL OR lease_until<=?) AND (progress_blocked=0 OR ?=1)
+        ORDER BY dirty_at, number`, [this.scope, ...repositories.args, now, now, options.includeBlocked ? 1 : 0])
       for (const candidate of candidates) {
         if (claims.length >= limit) break
         const repository = stringValue(candidate.repository), number = Number(candidate.number)
         // Stack children remain local; a parent merge's base push wakes them.
         if (candidate.base_ref !== null && candidate.base_ref !== undefined && (await tx.execute(`SELECT 1 FROM ${t.pullRequests}
-          WHERE scope=? AND repository=? AND number<>? AND state='open' AND head_ref=? LIMIT 1`, [this.scope, repository, number, candidate.base_ref])).length) continue
+          WHERE scope=? AND repository=? AND number<>? AND state='open' AND head_ref=?
+            AND json_extract(value, '$.pr.head.repo.full_name') = ? COLLATE NOCASE LIMIT 1`, [this.scope, repository, number, candidate.base_ref, candidate.base_repository])).length) continue
         const s = await this.getIn(tx, repository, number)
         if (!s) continue
         if (s.pr && !this.eligible(s.repository, s.pr)) continue
+        if (options.only && !options.only(s)) continue
+        if (options.skip && options.skip(s)) continue
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
@@ -666,6 +711,7 @@ export class PullRequestInbox {
         s.wait = parseWait({ ...result.wait, headSha: s.pr.head.sha })
         s.revision = (s.revision ?? 0) + 1
       }
+      delete s.recoveryHead
       const head = s.pr?.head?.sha
       this.recordProgress(s, claim, result.progress)
       s.lease = null; s.leaseUntil = 0; s.lastResult = result.text
@@ -700,12 +746,12 @@ export class PullRequestInbox {
     }
   }
   /** Waiting PRs that received events since the host last evaluated their wait. */
-  async waitsToEvaluate(includeExternal = false): Promise<Snapshot[]> {
+  async waitsToEvaluate(includeExternal = false, includeIdle = false): Promise<Snapshot[]> {
     if (!this.repositories.length) return []
     const repositories = this.repositoryFilter()
     const rows = await this.read(`SELECT value FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql}
-      AND waiting=1 AND status<>'terminal' AND lease IS NULL ${includeExternal ? '' : 'AND generation>handled'} ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
-    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && (snapshot.wait?.wake || snapshot.wait?.retryAt !== undefined))
+      AND waiting=1 AND status<>'terminal' AND lease IS NULL ${includeExternal || includeIdle ? '' : 'AND generation>handled'} ORDER BY dirty_at, number`, [this.scope, ...repositories.args])
+    return rows.map(row => parseSnapshot(JSON.parse(stringValue(row.value)))).filter(snapshot => snapshot.generation > snapshot.handled || includeExternal && (snapshot.wait?.wake || snapshot.wait?.retryAt !== undefined) || includeIdle && !snapshot.wait?.wake)
   }
   /** Records that the host evaluated a wait's new events and the wait still holds. */
   async acknowledgeWait(observed: Snapshot): Promise<boolean> {
@@ -719,13 +765,15 @@ export class PullRequestInbox {
     })
   }
   /** Re-evaluate structured evidence outside an Agent invocation before calling this method. */
-  async wake(observed: Snapshot, evidenceKey: string): Promise<boolean> {
+  async wake(observed: Snapshot, evidenceKey: string, options: { recovery?: boolean } = {}): Promise<boolean> {
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, observed.repository, observed.number)
       if (!s?.wait || s.lease || s.status === 'terminal' || s.generation !== observed.generation
         || (s.revision ?? 0) !== (observed.revision ?? 0) || s.pr?.head?.sha !== observed.pr?.head?.sha) return false
       parseWait({ ...s.wait, evidenceKey })
       if (s.wait.evidenceKey === evidenceKey) return false
+      if (options.recovery) { s.recoveryHead = s.pr?.head?.sha; s.refresh = true }
+      else delete s.recoveryHead
       delete s.wait
       this.dirty(s, 'wait:evidence-changed')
       await this.put(tx, s)
@@ -749,8 +797,16 @@ export class PullRequestInbox {
   async summary(): Promise<GitHubInboxSummary[]> {
     if (!this.repositories.length) return []
     const repositories = this.repositoryFilter()
-    const rows = await this.read(`SELECT summary FROM ${this.tables.pullRequests} WHERE scope=? AND ${repositories.sql} ORDER BY repository, number`, [this.scope, ...repositories.args])
-    return rows.map(row => parseSummary(JSON.parse(stringValue(row.summary))))
+    const rows = await this.read(`SELECT p.summary, (SELECT parent.number FROM ${this.tables.pullRequests} parent
+      WHERE parent.scope=p.scope AND parent.repository=p.repository AND parent.number<>p.number
+        AND parent.state='open' AND parent.head_ref=p.base_ref
+        AND json_extract(parent.value, '$.pr.head.repo.full_name') = COALESCE(json_extract(p.value, '$.pr.base.repo.full_name'), p.repository) COLLATE NOCASE ORDER BY parent.number LIMIT 1) AS stack_parent
+      FROM ${this.tables.pullRequests} p WHERE p.scope=? AND p.${repositories.sql} ORDER BY p.repository, p.number`, [this.scope, ...repositories.args])
+    return rows.map(row => {
+      const summary = parseSummary(JSON.parse(stringValue(row.summary)))
+      if (summary.status !== 'ready' || !summary.dirty || row.stack_parent === null || row.stack_parent === undefined) return summary
+      return { ...summary, stackBlocked: true, stackParent: { number: Number(row.stack_parent), state: 'open' } }
+    })
   }
   /** The open, unleased PR that a reconciliation probe checked longest ago, with that probe time. */
   async nextProbe(): Promise<{ repository: string; number: number; probedAt: number } | undefined> {
@@ -810,14 +866,15 @@ export class PullRequestInbox {
     }
   }
   /** Drops delivery payloads after `payloadMs` and delivery IDs after `idMs`. Recent IDs still deduplicate redeliveries. */
-  async pruneDeliveries({ payloadMs = 7 * 24 * 60 * 60_000, idMs = 30 * 24 * 60 * 60_000 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
+  async pruneDeliveries({ payloadMs = 864e5, idMs = 6048e5 }: { payloadMs?: number; idMs?: number } = {}): Promise<void> {
     const now = this.clock()
     // CI metadata and full logs share the delivery payload retention window.
     // Entries written before timestamps were introduced are expired too.
-    for (const [key, value] of await this.metaEntries('ci-evidence:v1:')) {
-      if (!isRuntimeRecord(value) || !isRuntimeNumber(value.fetchedAt) || value.fetchedAt < now - payloadMs) await this.deleteMeta(key)
-    }
+    const staleEvidence = (await this.metaEntries('ci-evidence:v1:'))
+      .filter(([, value]) => !isRuntimeRecord(value) || !isRuntimeNumber(value.fetchedAt) || value.fetchedAt < now - payloadMs)
+      .map(([key]) => key)
     await this.transaction(async tx => {
+      for (const key of staleEvidence) await tx.execute(`DELETE FROM ${this.tables.meta} WHERE scope=? AND key=?`, [this.scope, key])
       await tx.execute(`DELETE FROM ${this.tables.deliveries} WHERE scope=? AND received<?`, [this.scope, now - idMs])
       await tx.execute(`UPDATE ${this.tables.deliveries} SET payload=NULL WHERE scope=? AND received<? AND payload IS NOT NULL`, [this.scope, now - payloadMs])
     })
