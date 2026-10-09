@@ -1,6 +1,6 @@
 import * as buildRevisions from "../src/internal/build-revision.ts";
 import { createCheckWait } from "../src/presets/babysitter/wait.ts";
-import { babysitterBudgetWindows, readBabysitterAdmissionLimits, type BabysitterAdmissionResult } from "../src/presets/babysitter/admission.ts";
+import { babysitterBudgetWindows, resolveBabysitterAdmissionLimits, type BabysitterAdmissionResult } from "../src/presets/babysitter/admission.ts";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -59,7 +59,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<{ accepting: boolean; hostOnly?: boolean; reason?: string; retryAt?: number; detail?: string }>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<Pick<BabysitterAdmissionResult, "accepting" | "hostOnly" | "reason" | "retryAt" | "detail">>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -451,7 +451,7 @@ describe("Babysitter preset runtime", () => {
     const first = await fixture(false, false, { result });
     const inboxPath = join(first.checkout, "..", "inbox.sqlite");
     const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal",
-      limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test" });
+      limits: resolveBabysitterAdmissionLimits(), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test" });
     try {
       await first.reconcile();
       await first.runtime.inbox.close();
@@ -478,7 +478,7 @@ describe("Babysitter preset runtime", () => {
       expect((await first.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
       expect(first.passes).toHaveLength(1);
     } finally { await first.runtime.inbox.close(); }
-    const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test", detail: "Observe recovery with model admission paused" });
+    const admission = async (): Promise<BabysitterAdmissionResult> => ({ accepting: false, accounting: "best-effort-retained-journal", limits: resolveBabysitterAdmissionLimits(), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" }, reason: "test", detail: "Observe recovery with model admission paused" });
     const unchanged = await fixture(false, false, { inboxPath, admission });
     try {
       await unchanged.reconcile();
@@ -597,7 +597,7 @@ describe("Babysitter preset runtime", () => {
 
   it("retargets ordinary stack work while model admission is blocked", async () => {
     const parents = [{ state: "closed", merged_at: "2026-10-01T00:00:00Z", head: { ref: "feat/parent", repo: { owner: { login: "acme" } } }, base: { ref: "main" } }];
-    const f = await fixture(false, false, { base: "feat/parent", parents, admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
+    const f = await fixture(false, false, { base: "feat/parent", parents, admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: resolveBabysitterAdmissionLimits(), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {
       await f.reconcile();
       expect(f.command.mock.calls.some(([args]) => args.includes("PATCH"))).toBe(true);
@@ -638,7 +638,7 @@ describe("Babysitter preset runtime", () => {
   it.each([false, true])("rechecks dynamic host admission after dependency setup, Box=%s", async box => {
     let accepting = true;
     const retryAt = Date.now() + 300_000;
-    const admission = vi.fn(async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true, reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }));
+    const admission = vi.fn(async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true, reason: "token-budget-hourly" as const, limits: resolveBabysitterAdmissionLimits(), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }));
     const f = await fixture(false, false, { box, admission });
     const installOriginal = githubInstalls.installGitHubPullRequestWorkspace;
     const install = vi.spyOn(githubInstalls, "installGitHubPullRequestWorkspace").mockImplementationOnce(async (...args) => { await installOriginal(...args); accepting = false; });
@@ -657,7 +657,7 @@ describe("Babysitter preset runtime", () => {
   it("rechecks Box admission after run metadata preparation", async () => {
     let accepting = true;
     const retryAt = Date.now() + 300_000;
-    const admission = vi.fn(async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true, reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }));
+    const admission = vi.fn(async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true, reason: "token-budget-hourly" as const, limits: resolveBabysitterAdmissionLimits(), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }));
     const f = await fixture(false, false, { box: true, admission });
     const createOriginal = githubRuns.createGitHubPullRequestRun;
     const createRun = vi.spyOn(githubRuns, "createGitHubPullRequestRun").mockImplementationOnce(async (...args) => { const run = await createOriginal(...args); accepting = false; return run; });
@@ -674,7 +674,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("keeps a recovery claim parked when admission permits only host work", async () => {
-    const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: readBabysitterAdmissionLimits({}), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
+    const f = await fixture(false, false, { admission: async () => ({ accepting: false, accounting: "best-effort-retained-journal", hostOnly: true, reason: "token-budget-hourly", limits: resolveBabysitterAdmissionLimits(), state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } }) });
     try {
       await f.runtime.inbox.seed("acme/app", f.pr());
       const [claim] = await f.runtime.inbox.claim(1);
@@ -1140,6 +1140,9 @@ describe("Babysitter preset runtime", () => {
     expect(() => defineAgent({ extends: babysitter, options: { install: { cache: { directory: "/var/cache/vitehub", entries: 4 } } } })).not.toThrow();
     expect(() => defineAgent({ extends: babysitter, options: { install: { cache: false } } })).not.toThrow();
     expect(() => defineAgent({ extends: babysitter, options: { install: { command: "pnpm", args: ["install", 1 as unknown as string] } } })).toThrow(/install must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { admission: { inputTokens: { daily: 1e9 }, minFreeTmpMb: false, paused: false, check: () => undefined } } })).not.toThrow();
+    expect(() => defineAgent({ extends: babysitter, options: { admission: { inputTokens: { hourly: -1 } } } })).toThrow(/admission must be/);
+    expect(() => defineAgent({ extends: babysitter, options: { admission: { paused: "yes" as unknown as boolean } } })).toThrow(/admission must be/);
     expect(() => defineAgent({ extends: babysitter, options: { ignoreFeedbackAuthors: ["vercel[bot]"], noProgressBudget: false, deferWhilePending: false, install: { command: "pnpm", args: ["install"] } } })).not.toThrow();
   });
 
@@ -1819,7 +1822,7 @@ describe("Babysitter preset runtime", () => {
     let accepting = true;
     const retryAt = Date.now() + 300_000;
     const admission = async () => ({ accepting, retryAt, accounting: "best-effort-retained-journal" as const, hostOnly: true,
-      reason: "token-budget-hourly" as const, limits: readBabysitterAdmissionLimits({}),
+      reason: "token-budget-hourly" as const, limits: resolveBabysitterAdmissionLimits(),
       state: { windows: babysitterBudgetWindows(Date.now()), tmpDir: "/tmp" } });
     const f = await fixture(false, false, { box: true, admission, operationCount: 2, providerRetryDelayMs: 1 });
     f.choose("pushRepair");

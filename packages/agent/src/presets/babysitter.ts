@@ -10,12 +10,14 @@ import type { GitHubPullRequestFilter } from "../channels.ts";
 import type { BuiltInAgentDriverName } from "../types.ts";
 import { babysitterInstructions } from "./babysitter/instructions.ts";
 import { resolveBabysitterMerge, type BabysitterMerge } from "./babysitter/merge.ts";
+import { validBabysitterAdmission, type BabysitterAdmissionOptions } from "./babysitter/admission.ts";
 import { defineChannel, defineChannelTrigger } from "../channels.ts";
 import { channelEnvValue } from "../channel-env.ts";
 import { agentProcessHostIntake, withAgentProcessHost, type AgentProcessHostContribution } from "../agent-process-host.ts";
 import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts";
 
 export type { BabysitterMerge, BabysitterMergeMethod, BabysitterMergeReadinessInput, BabysitterMergeReady } from "./babysitter/merge.ts";
+export type { BabysitterAdmissionOptions, BabysitterAdmissionPause } from "./babysitter/admission.ts";
 
 export interface BabysitterOptions {
   /** Process admission policy. Concurrency remains the preset hard maximum. */
@@ -64,6 +66,12 @@ export interface BabysitterOptions {
   mentionAllowlist: string[];
   /** PRs repaired at the same time. Defaults to 1. */
   concurrency: number;
+  /**
+   * Token budgets, a free-space guard and custom checks that gate model passes. A spent limit
+   * stops model passes; direct merges and recorded waits continue. Defaults to no token limit
+   * and 4096 MiB of free temporary space.
+   */
+  admission: BabysitterAdmissionOptions;
   /** @deprecated Use `merge: "auto"`. */
   autoMerge: boolean;
 }
@@ -248,9 +256,11 @@ export const babysitter: BabysitterAgent = defineAgent({
     // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented login allowlist.
     mentionAllowlist: [] as string[],
     concurrency: 1,
+    // doctor-disable-next-line typescript/strict/require-safety-comment-for-type-assertion -- The empty default widens to the documented admission options.
+    admission: {} as BabysitterAdmissionOptions,
     autoMerge: false,
   },
-  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install, autoMerge, concurrency }) => {
+  configure: ({ driver, merge, reviewChecks, noFindingsReviews, mentionAllowlist, ignoreFeedbackAuthors, noProgressBudget, deferWhilePending, install, autoMerge, concurrency, admission }) => {
     if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
       throw new TypeError("[vitehub] Babysitter concurrency must be a positive integer.");
     }
@@ -271,6 +281,9 @@ export const babysitter: BabysitterAgent = defineAgent({
     }
     if (!validInstall(install)) {
       throw new TypeError("[vitehub] Babysitter install must be a boolean or { command, args, cache }.");
+    }
+    if (!validBabysitterAdmission(admission)) {
+      throw new TypeError("[vitehub] Babysitter admission must be { inputTokens: { hourly, daily }, minFreeTmpMb, paused, check } with non-negative integer token limits.");
     }
     // Validate merge settings when the Agent is defined, not on the first PR.
     resolveBabysitterMerge(merge, autoMerge);

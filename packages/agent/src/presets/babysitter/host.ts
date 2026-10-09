@@ -11,7 +11,7 @@ import { registerAgentProcessHostIntake, type AgentProcessHostContext, type Agen
 import { createProcessAgentHost } from "../../runtime/process-host.ts";
 import { createGitHubAppCredentials, createGitHubHost, type GitHubAppEnvironment } from "../../server/github-host.ts";
 import { createBabysitterRuntime } from "./server.ts";
-import { createBabysitterAdmission, readBabysitterAdmissionLimits } from "./admission.ts";
+import { createBabysitterAdmission, resolveBabysitterAdmissionLimits, type BabysitterAdmissionOptions } from "./admission.ts";
 
 /** Reads a plain or sealed Server Env value. */
 export function envString(value: unknown): string | undefined {
@@ -126,7 +126,7 @@ export async function sweepBabysitterWorkspaces(root = tmpdir(), startedAt = per
 /** Builds the GitHub host, process host, inbox, and reconciler for one discovered Babysitter Agent. */
 export async function createBabysitterProcessHost(context: AgentProcessHostContext): Promise<AgentProcessHostInstance> {
   // SAFETY: the Babysitter preset attaches this contribution only to its own configured definitions.
-  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; driver?: string; capacity?: import("../babysitter.ts").BabysitterOptions["capacity"] } };
+  const agent = context.agent as AgentInput & { options: { filter: unknown; concurrency: number; driver?: string; admission: BabysitterAdmissionOptions; capacity?: import("../babysitter.ts").BabysitterOptions["capacity"] } };
   const repositories = babysitterRepositories(agent.options.filter);
   await cleanupLegacyBabysitterCheckouts(context.dataDir);
   const app = await readGitHubAppEnvironment();
@@ -155,7 +155,8 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
   });
   const admission = createBabysitterAdmission({
     invocations: host.invocations,
-    limits: readBabysitterAdmissionLimits(process.env, agent.options.driver),
+    limits: resolveBabysitterAdmissionLimits(agent.options.admission),
+    check: agent.options.admission?.check,
   });
   // Workers share the assigned journal and keep provider sessions in the host directory.
   const worker = defineAgent({
@@ -229,7 +230,7 @@ export async function createBabysitterProcessHost(context: AgentProcessHostConte
         hourly: { inputTokens: guard.state.hourlyInputTokens, limit: guard.limits.hourlyInputTokens, resetsAt: guard.state.windows.hourEnd },
         daily: { inputTokens: guard.state.dailyInputTokens, limit: guard.limits.dailyInputTokens, resetsAt: guard.state.windows.dayEnd },
         tmp: { dir: guard.state.tmpDir, freeBytes: guard.state.freeTmpBytes, minFreeBytes: guard.limits.minFreeTmpBytes },
-        proxy: { provider: guard.limits.proxyProvider, maxWeeklyPercent: guard.limits.proxyMaxWeeklyPercent, ...guard.state.proxy },
+        pause: guard.state.pause,
         errors: guard.state.errors,
       } };
     },
