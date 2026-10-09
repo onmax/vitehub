@@ -1,6 +1,6 @@
 import type { AgentStateCacheMutation } from "../internal/state-lock.ts"
-import { mkdir } from "node:fs/promises"
-import { dirname } from "node:path"
+import { mkdir, realpath } from "node:fs/promises"
+import { basename, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { parseAgentStateQueueEntry } from "../internal/state-queue.ts"
@@ -919,23 +919,63 @@ function libsqlExecute(client: Pick<LibsqlAgentStateClient, "execute">): SqliteA
   return async (statement, args = []) => await client.execute({ args, sql: statement })
 }
 
+// Local libSQL clients can leave native statements busy when independent writers
+// contend. Coordinate Agent State transactions across adapters for the same database.
+const libsqlWriteTails = new Map<string | LibsqlAgentStateClient, Promise<void>>()
+
+async function serializeLibsqlWrite<T>(key: string | LibsqlAgentStateClient | undefined, run: () => Promise<T>): Promise<T> {
+  if (key === undefined) return await run()
+  const previous = libsqlWriteTails.get(key)
+  let release!: () => void
+  const tail = new Promise<void>(resolve => { release = resolve })
+  libsqlWriteTails.set(key, tail)
+  await previous
+  try {
+    return await run()
+  } finally {
+    if (libsqlWriteTails.get(key) === tail) libsqlWriteTails.delete(key)
+    release()
+  }
+}
+
+function libsqlFilePath(url: string | undefined): string | undefined {
+  if (!url || !/^file:/i.test(url)) return
+  // libSQL accepts relative file: paths, which the standard URL parser does not.
+  const path = /^file:\/\//i.test(url)
+    ? fileURLToPath(url)
+    : decodeURIComponent(url.slice(5).split(/[?#]/, 1)[0]!)
+  if (path === ":memory:" || /[?&]mode=memory(?:&|$)/.test(url)) return
+  return resolve(path)
+}
+
+function libsqlSharedMemoryKey(url: string | undefined): string | undefined {
+  if (!url || !/^file:/i.test(url)) return
+  const [path, query] = url.slice(5).split("?", 2)
+  // libSQL accepts percent-encoded paths and query parameters. SQLite uses
+  // the last cache parameter when it occurs more than once.
+  if (decodeURIComponent(path!) === ":memory:" && new URLSearchParams(query).getAll("cache").at(-1) === "shared") {
+    return "file::memory:?cache=shared"
+  }
+}
+
 export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHubSqliteAgentStateAdapter {
   if (!options.client && !options.url) {
     throw agentDiagnostics.AGENT_R0852({ message: "[vitehub] libSQL Agent State requires `url` or `client`." })
   }
   const ownsClient = !options.client
   let client: LibsqlAgentStateClient | undefined
+  let writeKey: string | LibsqlAgentStateClient | undefined
   const openClient = async () => {
     if (options.client) return options.client
-    if (options.url?.startsWith("file:")) {
-      const filePath = options.url.startsWith("file://") ? fileURLToPath(options.url) : options.url.slice("file:".length)
+    const filePath = libsqlFilePath(options.url)
+    if (filePath) {
       const directory = dirname(filePath)
       if (directory && directory !== ".") await mkdir(directory, { recursive: true })
     }
     const { createClient } = await import("@libsql/client")
     // SAFETY: The owning Agent runtime boundary establishes the asserted representation before this value is used.
     const opened = createClient({ authToken: options.authToken, url: options.url! }) as LibsqlAgentStateClient
-    if (options.url?.startsWith("file:") && !options.url.includes(":memory:") && !/[?&]mode=memory(?:&|$)/.test(options.url)) {
+    if (filePath) {
       try {
         // A retained read snapshot must not block queue and lease commits.
         // Configure only owned persistent files, leaving supplied clients and
@@ -960,32 +1000,46 @@ export function createLibsqlAgentState(options: LibsqlAgentStateOptions): ViteHu
       : options.durable === true,
     driver: {
       async connect() {
-        client ||= await openClient()
+        writeKey = options.client ?? libsqlSharedMemoryKey(options.url)
+        const path = options.client ? undefined : libsqlFilePath(options.url)
+        if (path) {
+          await mkdir(dirname(path), { recursive: true })
+          writeKey = await realpath(path).catch(async () => join(await realpath(dirname(path)), basename(path)))
+        }
+        client ||= await serializeLibsqlWrite(writeKey, openClient)
+        if (options.url === ":memory:" || /^file:/i.test(options.url || "")) writeKey ??= client
       },
       async disconnect() {
-        if (ownsClient) await client?.close?.()
+        const closing = client
         client = undefined
+        await serializeLibsqlWrite(writeKey, async () => {
+          if (ownsClient) await closing?.close?.()
+        })
       },
       async execute(statement, args) {
         if (!client) throw agentDiagnostics.AGENT_R0853({ message: "[vitehub] libSQL Agent State is not connected." })
-        return await libsqlExecute(client)(statement, args)
+        const connected = client
+        return await serializeLibsqlWrite(writeKey, async () => await libsqlExecute(connected)(statement, args))
       },
       async transaction(run) {
         if (!client) throw agentDiagnostics.AGENT_R0854({ message: "[vitehub] libSQL Agent State is not connected." })
         if (!client.transaction) {
           throw agentDiagnostics.AGENT_R0855({ message: "[vitehub] libSQL Agent State clients must support transactions." })
         }
-        const transaction = await client.transaction("write")
-        try {
-          const result = await run({ execute: libsqlExecute(transaction) })
-          await transaction.commit()
-          return result
-        } catch (error) {
-          await Promise.resolve(transaction.rollback()).catch(() => undefined)
-          throw error
-        } finally {
-          await transaction.close?.()
-        }
+        const connected = client
+        return await serializeLibsqlWrite(writeKey, async () => {
+          const transaction = await connected.transaction("write")
+          try {
+            const result = await run({ execute: libsqlExecute(transaction) })
+            await transaction.commit()
+            return result
+          } catch (error) {
+            await Promise.resolve(transaction.rollback()).catch(() => undefined)
+            throw error
+          } finally {
+            await transaction.close?.()
+          }
+        })
       },
     },
   })
