@@ -21,6 +21,7 @@ export type Snapshot = {
   recoveryHead?: string
   sourcePushHead?: string
   sourcePushHeads?: string[]
+  sourcePushOverflow?: boolean
   prospectivePush?: { token: string; heads: string[] }
   threadReopens?: Record<string, number>
   hydrated: boolean; refresh: boolean; feedbackRefresh: boolean
@@ -68,6 +69,7 @@ function parseSnapshot(value: unknown): Snapshot {
   if (input.prospectivePush !== undefined) v.parse(v.object({ token: v.string(), heads: v.array(v.pipe(v.string(), v.regex(/^[a-f\d]{40}$/i))) }), input.prospectivePush)
   if (input.threadReopens !== undefined) v.parse(v.record(v.string(), v.pipe(v.number(), v.integer(), v.minValue(0))), input.threadReopens)
   if (input.sourcePushHeads !== undefined) v.parse(v.array(v.string()), input.sourcePushHeads)
+  if (input.sourcePushOverflow !== undefined) v.parse(v.boolean(), input.sourcePushOverflow)
   if (input.sourcePushHead !== undefined) v.parse(v.string(), input.sourcePushHead)
   if (input.recoveryHead !== undefined) v.parse(v.string(), input.recoveryHead)
   if (input.ciEvidence !== undefined) v.parse(v.array(v.record(v.string(), v.unknown())), input.ciEvidence)
@@ -600,7 +602,10 @@ export class PullRequestInbox {
             s.sourcePushHead = sha ?? 'unknown'
             if (s.lease) {
               const heads = s.sourcePushHeads ??= []
-              if (!heads.includes(s.sourcePushHead) && heads.length <= 64) heads.push(heads.length < 64 ? s.sourcePushHead : 'source-push-overflow')
+              if (!heads.includes(s.sourcePushHead)) {
+                if (heads.length < 64) heads.push(s.sourcePushHead)
+                else s.sourcePushOverflow = true
+              }
             }
           }
           s.refresh = true; s.feedbackRefresh = true; changed = true
@@ -655,6 +660,7 @@ export class PullRequestInbox {
         if (options.only && !options.only(s)) continue
         if (options.skip && options.skip(s)) continue
         s.lease = randomUUID(); s.leaseUntil = now + 2 * 60 * 60_000; s.status = 'working'; s.sourcePushHeads = []
+        delete s.sourcePushOverflow
         await this.put(tx, s); claims.push({ token: s.lease, generation: s.generation, snapshot: structuredClone(s) })
       }
       return claims
@@ -693,7 +699,7 @@ export class PullRequestInbox {
     if (!/^[a-f\d]{40}$/i.test(head)) throw new TypeError('Expected an exact publication commit SHA.')
     return await this.transaction(async tx => {
       const s = await this.getIn(tx, claim.snapshot.repository, claim.snapshot.number)
-      if (!s || s.status === 'terminal' || s.lease !== claim.token || s.leaseUntil <= this.clock()
+      if (!s || s.status === 'terminal' || s.sourcePushOverflow || s.lease !== claim.token || s.leaseUntil <= this.clock()
         || s.generation !== claim.generation || (s.revision ?? 0) !== (claim.snapshot.revision ?? 0)) return false
       const heads = s.prospectivePush?.token === claim.token ? s.prospectivePush.heads : []
       if (!heads.includes(head)) {
@@ -750,7 +756,7 @@ export class PullRequestInbox {
         // Synchronize can lag several successful pushes. Accept only this pass's
         // verified publication chain, and fence a different source push even
         // while the PR snapshot still exposes its original head.
-        if (s.status === 'terminal' || !published.has(s.pr?.head?.sha)
+        if (s.status === 'terminal' || s.sourcePushOverflow || !published.has(s.pr?.head?.sha)
           || s.sourcePushHead !== claim.snapshot.sourcePushHead && !pushed.has(s.sourcePushHead ?? "")
           || s.sourcePushHeads?.some(head => !pushed.has(head))) {
           s.lease = null; s.leaseUntil = 0

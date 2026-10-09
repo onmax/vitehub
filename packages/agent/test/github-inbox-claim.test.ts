@@ -278,3 +278,25 @@ for (const evidence of ['check', 'status'] as const) {
     } finally { await inbox.close() }
   })
 }
+
+test('source push overflow fences only the current claim without fabricating a head', async () => {
+  const inbox = await fixture()
+  const heads = Array.from({ length: 65 }, (_, index) => (index + 1).toString(16).padStart(40, '0'))
+  try {
+    const claim = (await inbox.claim(1))[0]!
+    for (const head of heads) await inbox.ingest(`source-push-${head}`, 'push', {
+      repository: { full_name: 'vite-hub/vitehub' }, ref: 'refs/heads/feature', after: head,
+    })
+    const overflow = (await inbox.get('vite-hub/vitehub', 42))!
+    assert.deepEqual(overflow.sourcePushHeads, heads.slice(0, 64), 'retained publication evidence contains only observed heads')
+    const head = heads.at(-1)!
+    assert.equal(await inbox.finish(claim, { text: 'Repair pushed.',
+      wait: { kind: 'checks', headSha: head, reason: 'Waiting for CI.', evidenceKey: 'push-receipt' },
+      progress: { kind: 'verified', evidence: `push:${head}` }, verifiedPushHeads: heads,
+    }), false, 'overflowed publication custody requires a fresh claim')
+    const next = (await inbox.claim(1))[0]!
+    assert.ok(next)
+    assert.deepEqual(next.snapshot.sourcePushHeads, [])
+    assert.equal(await inbox.registerProspectivePush(next, 'f'.repeat(40)), true, 'a new claim can publish normally')
+  } finally { await inbox.close() }
+})

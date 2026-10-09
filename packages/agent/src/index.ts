@@ -1707,6 +1707,7 @@ async function applyChannelDeliveryEffectIntents<
   for (const intent of intents) {
     const handlers = active ? channelDeliveryEffectHandlers(active.channel, intent) : []
     const metadata = {
+      ...(active?.channelId ? { "channel.effect.channel": active.channelId } : {}),
       "channel.effect.intent": intent.intent,
       "channel.effect.kind": intent.kind,
       "channel.effect.supported": handlers.length > 0,

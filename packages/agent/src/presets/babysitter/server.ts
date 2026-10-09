@@ -908,7 +908,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   if ((current.threadReopens?.[id] ?? 0) !== reopens) throw new DOMException("An addressed review thread was reopened.", "AbortError");
                 }
                 const observedHead = current.pr?.head?.sha;
-                if (current.sourcePushHeads?.some(head => !verifiedPushHeads.has(head)) || current.sourcePushHead !== inboxClaim.snapshot.sourcePushHead && !verifiedPushHeads.has(current.sourcePushHead ?? "")) {
+                if (current.sourcePushOverflow || current.sourcePushHeads?.some(head => !verifiedPushHeads.has(head)) || current.sourcePushHead !== inboxClaim.snapshot.sourcePushHead && !verifiedPushHeads.has(current.sourcePushHead ?? "")) {
                   throw new DOMException("Pull request source branch changed before synchronize.", "AbortError");
                 }
                 const stopped = claimStopReason(inboxClaim, current, observedHead && pendingInboxHeads.has(observedHead) ? observedHead : pushedHead);
