@@ -482,12 +482,17 @@ describe("agent Vite plugin", () => {
     }
   })
 
-  it("keeps the Deno cron import pointed at project-owned Schedule output", async () => {
+  it.each([false, true])("keeps the Deno cron import pointed at project-owned Schedule output (explicit root: %s)", async (explicitRoot) => {
     const { hubAgent } = await import("../src/vite.ts")
-    const root = await mkdtemp(join(tmpdir(), "vitehub-agent-deno-generated-root-"))
-    const generatedRoot = join(root, ".nuxt", "vitehub")
+    const { generateProviderOutputs } = await import("../../schedule/src/internal/provider-output.ts")
+    const projectRoot = await mkdtemp(join(tmpdir(), "vitehub-agent-deno-generated-root-"))
+    const root = join(projectRoot, "app")
+    const generatedRoot = explicitRoot ? join(projectRoot, ".nuxt", "vitehub") : join(projectRoot, ".vitehub")
     try {
       await mkdir(join(root, "server", "agents"), { recursive: true })
+      await writeFile(join(projectRoot, "nuxt.config.ts"), "export default {}\n", "utf8")
+      await writeFile(join(projectRoot, "cleanup.schedule.ts"), "import { defineSchedule } from '@vite-hub/schedule'\nexport default defineSchedule({ cron: '0 0 * * *', handler: () => 'ok' })\n", "utf8")
+      const artifacts = await generateProviderOutputs({ rootDir: projectRoot, clientOutDir: "dist/client" })
       await writeFile(join(root, "server", "agents", "support.ts"), "export default {}", "utf8")
       const plugin = hubAgent({ runtime: "deno" })
       const configResolvedHook: unknown = plugin.configResolved
@@ -495,16 +500,20 @@ describe("agent Vite plugin", () => {
       const configResolved = configResolvedHook as (config: Record<string, unknown>) => Promise<void>
 
       await configResolved({
-        [VITEHUB_GENERATED_ROOT]: generatedRoot,
+        ...(explicitRoot ? { [VITEHUB_GENERATED_ROOT]: generatedRoot } : {}),
         command: "build",
         plugins: [],
         root,
       })
 
       const denoServer = await readFile(join(generatedRoot, "agent", "deno-server.ts"), "utf8")
-      expect(denoServer).toContain('await import("../../../.vitehub/schedule/deno-cron.mjs").catch')
+      const cronImport = denoServer.match(/await import\("([^"\n]+deno-cron\.mjs)"\)/)?.[1]
+      expect(cronImport).toBeDefined()
+      const cronFile = resolve(generatedRoot, "agent", cronImport!)
+      expect(cronFile).toBe(artifacts.denoCronFile)
+      await expect(readFile(cronFile, "utf8")).resolves.toContain("Deno.cron")
     } finally {
-      await rm(root, { force: true, recursive: true })
+      await rm(projectRoot, { force: true, recursive: true })
     }
   })
 
