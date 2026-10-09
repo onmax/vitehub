@@ -2,6 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import { pathToFileURL } from "node:url"
+
 import { createClient } from "@libsql/client"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -66,6 +68,117 @@ describe("SQLite Agent State Provider", () => {
   afterEach(async () => {
     vi.useRealTimers()
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })))
+  })
+
+  it("coordinates independent file adapters across URL forms and reconnects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "vitehub-state-writers-"))
+    tempDirs.push(dir)
+    const path = join(dir, "state data.db")
+    const first = createLibsqlAgentState({ url: `file:${pathToFileURL(path).pathname}?tls=0` })
+    const second = createLibsqlAgentState({ url: pathToFileURL(path).href.replace(/^file:/, "FILE:") })
+    try {
+      await first.connect()
+      await second.connect()
+      for (let round = 0; round < 2; round++) {
+        await Promise.all([first, second].map(async (state, index) => {
+          for (let n = 0; n < 3; n++) await state.set(`writer-${round}-${index}-${n}`, { n })
+        }))
+        await expect(first.get(`writer-${round}-1-2`)).resolves.toEqual({ n: 2 })
+        await expect(second.get(`writer-${round}-0-2`)).resolves.toEqual({ n: 2 })
+        await second.disconnect()
+        await second.connect()
+      }
+      await expect(first.extension("writer").transaction(async () => {
+        throw new Error("rollback probe")
+      })).rejects.toThrow("rollback probe")
+      await second.set("after-rollback", true)
+      await expect(first.get("after-rollback")).resolves.toBe(true)
+    } finally {
+      await first.disconnect()
+      await second.disconnect()
+    }
+  })
+
+  it.each(["file::memory:?cache=shared", "FILE:%3Amemory%3A?%63ache=shared", "file::memory:?cache=private&cache=shared"])("coordinates shared memory adapters using %s", async url => {
+    const first = createLibsqlAgentState({ url: "file::memory:?cache=shared" })
+    const second = createLibsqlAgentState({ url })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let enter!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    try {
+      await first.connect()
+      await second.connect()
+      await first.set("message", "before")
+      await expect(second.get("message")).resolves.toBe("before")
+      const write = first.extension("probe").transaction(async tx => {
+        await tx.execute("UPDATE vitehub_agent_state_cache SET value = ? WHERE key = ?", [JSON.stringify("after"), "message"])
+        enter()
+        await gate
+      })
+      await entered
+      let readFinished = false
+      const read = second.get("message").then(value => {
+        readFinished = true
+        return { value }
+      }, error => {
+        readFinished = true
+        return { code: error.code }
+      })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const finishedDuringTransaction = readFinished
+      release()
+      await write
+      expect(finishedDuringTransaction).toBe(false)
+      await expect(read).resolves.toEqual({ value: "after" })
+      await second.disconnect()
+      await second.connect()
+      await expect(second.get("message")).resolves.toBe("after")
+    } finally {
+      release()
+      await first.disconnect()
+      await second.disconnect()
+    }
+  })
+
+  it.each([":memory:", "file::memory:", "FILE::memory:", "file::memory:?cache=private", "file::memory:?cache=shared&cache=private"])("queues reads behind a %s transaction without blocking independent clients", async url => {
+    const state = createLibsqlAgentState({ url })
+    const independent = createLibsqlAgentState({ url })
+    await state.connect()
+    await independent.connect()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let enter!: () => void
+    const entered = new Promise<void>(resolve => { enter = resolve })
+    try {
+      await state.set("message", "before")
+      const write = state.extension("probe").transaction(async tx => {
+        await tx.execute("UPDATE vitehub_agent_state_cache SET value = ? WHERE key = ?", [JSON.stringify("after"), "message"])
+        enter()
+        await gate
+      })
+      await entered
+      let readFinished = false
+      const read = state.get("message").then(value => {
+        readFinished = true
+        return { value }
+      }, error => {
+        readFinished = true
+        return { code: error.code }
+      })
+      await independent.set("message", "independent")
+      await expect(independent.get("message")).resolves.toBe("independent")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const finishedDuringTransaction = readFinished
+      release()
+      await write
+      expect(finishedDuringTransaction).toBe(false)
+      await expect(read).resolves.toEqual({ value: "after" })
+    } finally {
+      release()
+      await state.disconnect()
+      await independent.disconnect()
+    }
   })
 
   it("declares persistence only for known durable storage or explicit custom storage", () => {
