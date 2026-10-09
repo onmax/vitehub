@@ -1885,7 +1885,7 @@ function githubActivitySessions(state: GitHubActivityCommentState): GitHubActivi
     if (!entry) continue
     const sessionUrl = entry.links.find(link => /^(?:current |view )?session$/i.test(link.label))?.url
     if (sessionUrl && sessions.some(previous => previous.links.some(link => /^(?:current |view )?session$/i.test(link.label) && link.url === sessionUrl)
-      && (!previous.agentName || !entry.agentName || previous.agentName === entry.agentName))) continue
+      && entry.agentName !== undefined && previous.agentName === entry.agentName)) continue
     sessions.push(entry)
   }
   // Preserve superseded run IDs so late lifecycle updates cannot revive old rows.

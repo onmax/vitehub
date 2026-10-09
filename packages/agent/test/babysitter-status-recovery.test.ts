@@ -512,6 +512,19 @@ test('saved PR results show one row per invocation and stop historical durations
     },
   })
   assert.equal(rows().length, 4, 'different Agents retain separate rows even with the same session link')
+  const marker = /<!-- vitehub-agent-activity:(\S+) -->/.exec(comments[0]!.body)!
+  const legacy = JSON.parse(Buffer.from(marker[1]!, 'base64url').toString())
+  legacy.history.push({ ...legacy.current, agentName: undefined, runId: 'legacy-session', summary: 'Another Agent legacy answer.' })
+  legacy.previousRunIds.push('legacy-session')
+  comments[0]!.body = comments[0]!.body.replace(marker[0], `<!-- vitehub-agent-activity:${Buffer.from(JSON.stringify(legacy)).toString('base64url')} -->`)
+  await publishAgentActivity({ ...agent, name: 'another-worker' }, {
+    channelId: 'github', target: { repository, issue: 239 }, activity: {
+      runId: 'third-invocation', status: 'completed', startedAt, updatedAt: startedAt, tasks: [],
+      links: [{ label: 'Current session', url: 'https://console.test/agents/babysitter-worker/invocations/third-invocation' }],
+    },
+  })
+  assert.equal(rows().length, 5, 'ambiguous legacy Agent identity cannot erase a session')
+  assert.match(comments[0]!.body, /Another Agent legacy answer\./)
 })
 
 test('a late timed-out writer cannot overwrite a newer result from another host', async t => {
