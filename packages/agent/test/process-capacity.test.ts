@@ -61,7 +61,11 @@ function createBuiltInSample(options: Parameters<typeof createProcessAgentCapaci
   return sample
 }
 
+const defaultReadFile = vi.mocked(readFile).getMockImplementation();
+
 beforeEach(() => {
+  if (!defaultReadFile) throw new Error("Expected default resource reader");
+  vi.mocked(readFile).mockImplementation(defaultReadFile);
   vi.clearAllMocks()
   Object.assign(resources, {
     hostAvailableMemory: 16 * GiB,
@@ -86,6 +90,76 @@ afterEach(() => {
 })
 
 describe("process Agent capacity", () => {
+  function delegatedHierarchy() {
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    const groups = new Map([
+      ["/sys/fs/cgroup/service/controller", { ...resources, memoryCurrent: GiB, memoryHigh: Infinity, memoryMax: Infinity }],
+      ["/sys/fs/cgroup/service", { ...resources, memoryCurrent: 6 * GiB, memoryHigh: 8 * GiB, memoryMax: 10 * GiB }],
+      ["/sys/fs/cgroup", { ...resources, memoryCurrent: 16 * GiB, memoryHigh: Infinity, memoryMax: Infinity }],
+    ]);
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      const value = String(path);
+      if (value === "/proc/self/cgroup") return "0::/service/controller\n";
+      const group = groups.get(value.slice(0, value.lastIndexOf("/")));
+      if (group) {
+        if (value.endsWith("/memory.current")) return String(group.memoryCurrent);
+        if (value.endsWith("/memory.high")) return Number.isFinite(group.memoryHigh) ? String(group.memoryHigh) : "max";
+        if (value.endsWith("/memory.max")) return Number.isFinite(group.memoryMax) ? String(group.memoryMax) : "max";
+        if (value.endsWith("/memory.events")) return `high ${group.memoryHighEvents}\n`;
+        if (value.endsWith("/cpu.pressure")) return pressure(group.cpuPressure);
+        if (value.endsWith("/memory.pressure")) return pressure(group.memoryPressure);
+      }
+      return original(path, options);
+    });
+    return groups;
+  }
+
+  it("bounds a delegated controller by aggregate service headroom", async () => {
+    delegatedHierarchy();
+    const sample = createBuiltInSample();
+    await expect(sample({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 1 });
+    expect(vi.mocked(readFile)).toHaveBeenCalledWith("/sys/fs/cgroup/service/memory.current", expect.any(Object));
+    expect(vi.mocked(readFile)).not.toHaveBeenCalledWith("/sys/fs/memory.current", expect.any(Object));
+  });
+
+  it("pauses for service-parent high events and pressure with a healthy controller", async () => {
+    const groups = delegatedHierarchy();
+    const parent = groups.get("/sys/fs/cgroup/service");
+    if (!parent) throw new Error("Expected service parent");
+    const sample = createBuiltInSample();
+    const context = { active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal };
+    await sample(context);
+    parent.memoryHighEvents++;
+    await expect(sample(context)).resolves.toMatchObject({ concurrency: 0, reason: "memory.high event" });
+    parent.memoryPressure = 0.06;
+    await expect(sample(context)).resolves.toMatchObject({ concurrency: 0 });
+    parent.memoryPressure = 0;
+    await expect(sample(context)).resolves.toMatchObject({ concurrency: 1 });
+  });
+
+  it("keeps service bounds when the hierarchy root has no memory limit files", async () => {
+    delegatedHierarchy();
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      if (["/sys/fs/cgroup/memory.high", "/sys/fs/cgroup/memory.max"].includes(String(path))) throw Object.assign(new Error("absent root limit"), { code: "ENOENT" });
+      return original(path, options);
+    });
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).resolves.toMatchObject({ concurrency: 1 });
+  });
+
+  it("reports an unreadable known ancestor instead of discarding cgroup limits", async () => {
+    delegatedHierarchy();
+    const original = vi.mocked(readFile).getMockImplementation();
+    if (!original) throw new Error("Expected resource reader");
+    vi.mocked(readFile).mockImplementation(async (path, options) => {
+      if (String(path) === "/sys/fs/cgroup/service/memory.current") throw Object.assign(new Error("denied"), { code: "EACCES" });
+      return original(path, options);
+    });
+    await expect(createBuiltInSample()({ active: 0, concurrency: 6, pending: 1, signal: new AbortController().signal })).rejects.toThrow("denied");
+  });
+
   it.each([true, false])("pauses for host memory pressure with cgroup available=%s", async cgroupAvailable => {
     resources.cgroupAvailable = cgroupAvailable;
     resources.availableMemory = 5 * GiB;
@@ -138,9 +212,7 @@ describe("process Agent capacity", () => {
       encoding: "utf8",
       signal: controller.signal,
     })
-    expect(vi.mocked(readFile).mock.calls.map(([, readOptions]) => readOptions)).toEqual(
-      Array.from({ length: 11 }, () => ({ encoding: "utf8", signal: controller.signal })),
-    )
+    for (const [, readOptions] of vi.mocked(readFile).mock.calls) expect(readOptions).toEqual({ encoding: "utf8", signal: controller.signal })
 
     resources.memoryHighEvents = 1
     await expect(sample(context)).resolves.toEqual({ concurrency: 0, reason: "memory.high event" })
