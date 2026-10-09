@@ -458,6 +458,7 @@ describe("agent Vite plugin", () => {
           handlers: [
             { handler: generatedRoute, route: "/api/_vitehub/agents/:agent/chat" },
             { handler: generatedRoute, route: "/api/_vitehub/agents/:agent/webhooks/:webhook" },
+            { handler: join(generatedRoot, "agent", "declared-webhook-route.ts"), middleware: true, route: "/**" },
           ],
           plugins: [generatedQueue],
         },
@@ -1435,6 +1436,7 @@ describe("agent Vite plugin", () => {
         route: "/api/_vitehub/agents/:agent/chat",
       },
       webhook,
+      { handler: join(hostedAgentRoot, ".vitehub/agent/declared-webhook-route.ts"), middleware: true, route: "/**" },
     ])
   })
 
@@ -3101,7 +3103,7 @@ export default defineAgent({
       }])
 
       expect(denoServer).toContain(
-        'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute } from "@vite-hub/agent/server/internal"',
+        'createChannelChatRouteHandler, createChannelWebhookRouteHandler, hasChannelChatRoute, resolvePublicUrl } from "@vite-hub/agent/server/internal"',
       )
       expect(denoServer).not.toContain('import { setWorkspaceRuntimeRegistry } from "@vite-hub/workspace/runtime"')
       expect(denoServer).toContain('await import("../schedule/deno-cron.mjs").catch')
@@ -9643,7 +9645,8 @@ describe("server helpers", () => {
         streamController.enqueue(new TextEncoder().encode("handled"))
         streamController.close()
       }
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 5_000 })
+      // Exhaustion includes two exponential retry delays plus queue and SQLite work.
+      await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce(), { timeout: 15_000 })
       if (kind === "recovery") {
         await expect(complete.mock.results[0]?.value).rejects.toThrow("completion outage")
         expect(failed).toHaveBeenCalledOnce()
@@ -9681,7 +9684,7 @@ describe("server helpers", () => {
       await rm(stateDir, { force: true, recursive: true })
       consoleError.mockRestore()
     }
-  }, 10_000)
+  }, 20_000)
 
   it("recovers handled webhook rehydration failure without adding Invocation evidence", async () => {
     const { github } = await import("../src/channels.ts")

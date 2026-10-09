@@ -102,6 +102,7 @@ const generatedAgentDenoServer = "agent/deno-server.ts"
 const generatedAgentDiscordGatewayRouteHandler = "agent/discord-gateway-route.ts"
 const generatedAgentDiscordGatewayPlugin = "agent/discord-gateway-plugin.ts"
 const generatedAgentWebhookRouteHandler = "agent/chat-webhook-route.ts"
+const generatedAgentDeclaredWebhookRouteHandler = "agent/declared-webhook-route.ts"
 const generatedAgentPreparationPlugin = "agent/preparation-plugin.ts"
 const generatedAgentPreparationHandler = "agent/preparation-route.ts"
 const generatedAgentWebhookQueuePlugin = "agent/webhook-queue-plugin.ts"
@@ -1913,7 +1914,7 @@ async function generateAgentDeploymentCatalog(
     "markDiscoveredAgentName",
     "resetPublicUrlAgentNames",
     channelHandlers || options.inspection ? "createAgentWebhookRequest" : undefined,
-    ...(channelHandlers ? ["createChannelChatRouteHandler", "createChannelWebhookRouteHandler", "hasChannelChatRoute"] : []),
+    ...(channelHandlers ? ["createChannelChatRouteHandler", "createChannelWebhookRouteHandler", "hasChannelChatRoute", "resolvePublicUrl"] : []),
     ...(workspaceEntries ? ["markDiscoveredWorkspaceAgentDefinitionRegistered"] : []),
   ].filter(Boolean).join(", ")
 
@@ -2126,10 +2127,33 @@ async function generateAgentWebhookRouteHandler(
       ? [`const inspectionRoutePattern = new RegExp(${JSON.stringify(routeRegexSource(options.inspectionRoute))})`]
       : []),
     "",
-    `const webhookAliases: Record<string, { agent: string, webhook: string }> = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/$/, "") || "/", target])))};`,
+    `const webhookAliases: Record<string, { agent: string, webhook: string }> = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/+$/, "") || "/", target])))};`,
+    "export const declaredWebhookHandler = defineEventHandler(async (event) => {",
+    "  const pathname = getRequestURL(event).pathname.replace(/\\/+$/, '') || '/'",
+    "  const cloudflare = cloudflareFromEvent(event)",
+    `  const optionsForAgent = (agent: string) => ({ agentIdentity: agentIdentities[agent], ${routeCapabilities.requestOption}cloudflare${runtimeRouteOption}, ${webhookStateOption}waitUntil: waitUntilFromEvent(event) })`,
+    "  const alias = webhookAliases[pathname]",
+    "  if (alias) return await webhookHandlers[alias.agent](await toRequest(event), alias.webhook, optionsForAgent(alias.agent))",
+    // Match before acquiring the body stream, so unrelated application routes can still read it.
+    "  const request = new Request(getRequestURL(event), { headers: getRequestHeaders(event), method: event.method || 'GET', signal: event.req?.signal })",
+    "  const matches: string[] = []",
+    "  for (const [agent, handler] of Object.entries(webhookHandlers)) {",
+    "    if (await handler.matchesPath(request, optionsForAgent(agent))) matches.push(agent)",
+    "  }",
+    "  if (!matches.length) return",
+    "  const scoped = matches.filter(agent => {",
+    "    const url = resolvePublicUrl({ agentName: agent })",
+    // TLS may terminate at a proxy while the application receives HTTP for the same public host.
+    "    return url && new URL(url).host === new URL(request.url).host",
+    "  })",
+    "  const agent = scoped.length === 1 ? scoped[0] : matches.length === 1 ? matches[0] : undefined",
+    "  if (!agent) throw createError({ statusCode: 409, statusMessage: 'Several Agents declare this webhook path. Configure agent.routes.aliases to select its owner.' })",
+    "  return await webhookHandlers[agent](await toRequest(event), '', optionsForAgent(agent))",
+    "})",
+    "",
     "export default defineEventHandler(async (event) => {",
     "  const pathname = getRequestURL(event).pathname",
-    "  const alias = webhookAliases[pathname.replace(/\\/$/, '') || '/']",
+    "  const alias = webhookAliases[pathname.replace(/\\/+$/, '') || '/']",
     "  const isWebhookRoute = Boolean(alias) || webhookRoutePattern.test(pathname)",
     ...(options.inspectionRoute ? ["  const isInspectionRoute = inspectionRoutePattern.test(pathname)"] : []),
     "  const agent = alias?.agent || getRouterParam(event, 'agent') || (agentNames.length === 1 ? agentNames[0] : undefined)",
@@ -2269,6 +2293,7 @@ async function writeAgentWebhookRouteHandler(
   })
   await mkdir(dirname(handlerPath), { recursive: true })
   await writeFile(handlerPath, await generateAgentWebhookRouteHandler(definitions, handlerPath, options), "utf8")
+  await writeFile(join(root, generatedAgentDeclaredWebhookRouteHandler), 'export { declaredWebhookHandler as default } from "./chat-webhook-route"\n', "utf8")
   if (options.preparation) {
     const { route: _route, ...preparation } = options.preparation
     await writeFile(join(root, "agent/preparation.ts"), [
@@ -2381,9 +2406,9 @@ async function writeAgentWebhookRouteHandler(
           ]
         : [
             `  const webhookRoutePattern = new RegExp(${JSON.stringify(routeRegexSource(options.webhookRoute))});`,
-            `  const webhookAliases = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/$/, '') || '/', target])))};`,
+            `  const webhookAliases = ${JSON.stringify(Object.fromEntries(Object.entries(options.webhookAliases || {}).map(([path, target]) => [normalizeNitroRoute(path).replace(/\/+$/, '') || '/', target])))};`,
             "  nitroApp.hooks.hook('request', event => {",
-            "    const pathname = new URL(event?.path || event?.node?.req?.url || event?.node?.req?.originalUrl || '/', 'http://vitehub.local').pathname.replace(/\\/$/, '') || '/';",
+            "    const pathname = new URL(event?.path || event?.node?.req?.url || event?.node?.req?.originalUrl || '/', 'http://vitehub.local').pathname.replace(/\\/+$/, '') || '/';",
             "    if (stop || !(webhookAliases[pathname] || webhookRoutePattern.test(pathname))) return;",
             "    waitUntil ||= waitUntilFromEvent(event)",
             "    startWebhookQueues()",
@@ -3088,6 +3113,7 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
             generatedAgentDiscordGatewayPlugin,
             generatedAgentNetlifyFunction,
             generatedAgentWebhookRouteHandler,
+            generatedAgentDeclaredWebhookRouteHandler,
             generatedAgentWebhookQueuePlugin,
           ].map(handler => join(root, handler).replace(/\\/g, "/")))
         }
@@ -3295,6 +3321,9 @@ export function hubAgent(options?: AgentModuleOptions): AgentVitePlugin {
               handler: join(generatedRoot, generatedAgentWebhookRouteHandler),
               route: normalizeNitroRoute(resolved.routes.webhooks),
             }]
+          : []),
+        ...(resolved && hasHostedAgents && !denoOutput
+          ? [{ handler: join(generatedRoot, generatedAgentDeclaredWebhookRouteHandler), middleware: true, route: "/**" }]
           : []),
         ...(processHostAgents.length
           ? [

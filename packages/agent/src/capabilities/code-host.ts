@@ -6,6 +6,7 @@ import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { defineCapability, normalizeMode } from "../capability-runtime.ts"
 import { builtInCodeHostEnv } from "../channel-env.ts"
 import { pullRequest } from "../channels.ts"
+import type { CodeHostKind } from "../channels.ts"
 import { readBuiltInEnv } from "../internal/builtin-env.ts"
 import {
   codeHostErrorStatus,
@@ -27,7 +28,7 @@ import type {
   AgentToolSet,
 } from "../types.ts"
 
-export type CodeHostKind = "github" | "gitlab" | "forgejo"
+export type { CodeHostKind }
 export type CodeHostReadOperation =
   | "read_thread"
   | "list_threads"

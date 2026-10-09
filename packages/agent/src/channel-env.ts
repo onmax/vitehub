@@ -46,6 +46,8 @@ export const builtInChannelEnv = {
     publicKey: { names: ["DISCORD_PUBLIC_KEY"], secret: true },
   },
   github: builtInCodeHostEnv.github,
+  gitlab: builtInCodeHostEnv.gitlab,
+  forgejo: builtInCodeHostEnv.forgejo,
   telegram: {
     apiBaseUrl: { names: ["TELEGRAM_API_BASE_URL"] },
     botToken: { names: ["TELEGRAM_BOT_TOKEN"], requiredUnless: ["adapter", "botToken"], secret: true },
