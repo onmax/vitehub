@@ -397,7 +397,7 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
       },
     };
   });
-  async function reconcile() {
+  async function reconcile(expectedError?: string) {
     const tracked: Promise<unknown>[] = [];
     await runtime.reconcile("test", {
       track: (value) => {
@@ -405,7 +405,9 @@ async function fixture(autoMerge = false, discovered = false, preset: { remoteBo
       },
     } as Parameters<typeof runtime.reconcile>[1]);
     await Promise.all(tracked);
-    if (!checkoutFailure || checkoutFailure.name === "AbortError" || checkoutFailure.message === "rate limited")
+    if (expectedError) {
+      expect(errors).toHaveBeenCalledExactlyOnceWith(expectedError, expect.anything(), expect.anything());
+    } else if (!checkoutFailure || checkoutFailure.name === "AbortError" || checkoutFailure.message === "rate limited")
       expect(errors.mock.calls).toEqual([]);
     else expect(errors).toHaveBeenCalledOnce();
   }
@@ -634,7 +636,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("retains permission fallback when new check evidence prevents recording the pass", async () => {
-    const f = await fixture(false, false, { actionsDenied: true, result: { waitForChecksHead: "a".repeat(40) } });
+    const f = await fixture(false, false, { actionsDenied: true, result: { disposition: "park", text: "Waiting for checks", wait: { kind: "checks", headSha: "a".repeat(40) } } });
     const key = `ci-permission-fallback:v1:acme/app:${f.pr().head.sha}`;
     const finish = f.runtime.inbox.finish.bind(f.runtime.inbox);
     let changed = false;
@@ -702,7 +704,7 @@ describe("Babysitter preset runtime", () => {
 
   it("retries a reviewed custom gate without another model pass", async () => {
     let ready = false;
-    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => ready || "approval pending" }, result: { reviewedHead: "a".repeat(40) } });
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => ready || "approval pending" }, result: { disposition: "park", text: "Reviewed", reviewedHead: "a".repeat(40) } });
     try {
       await f.reconcile();
       const waiting = await f.runtime.inbox.get("acme/app", 12);
@@ -717,7 +719,7 @@ describe("Babysitter preset runtime", () => {
   });
 
   it("does not retain a merge assessment for an external wait", async () => {
-    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => "approval pending" }, result: { reviewedHead: "a".repeat(40), wait: { kind: "external", reason: "Needs approval" } } });
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => "approval pending" }, result: { disposition: "park", text: "Reviewed", reviewedHead: "a".repeat(40), wait: { kind: "external", reason: "Needs approval" } } });
     try {
       await f.reconcile();
       expect(await f.runtime.inbox.meta("review-assessment:acme/app#12")).toBeNull();
@@ -1067,6 +1069,8 @@ describe("Babysitter preset runtime", () => {
     for (const deferWhilePending of [true, false]) {
       const f = await fixture(false, false, { options: { reviewChecks: ["review-bot"], deferWhilePending } });
       f.reportCheckRun({ id: 5, name: "review-bot", head_sha: f.pr().head.sha, status: "in_progress", conclusion: null, app: { id: 6 } });
+      f.reportCheckRun({ id: 6, name: "lint", head_sha: f.pr().head.sha, status: "completed", conclusion: "failure", app: { id: 6 } });
+      f.reportCheckRun({ id: 7, name: "lint", head_sha: f.pr().head.sha, status: "completed", conclusion: "success", app: { id: 6 } });
       try {
         await f.reconcile();
         expect(f.passes).toHaveLength(deferWhilePending ? 0 : 1);
@@ -1076,6 +1080,19 @@ describe("Babysitter preset runtime", () => {
         }
       } finally { await f.runtime.inbox.close(); }
     }
+  });
+
+  it("does not park a completed pass for a superseded pending check", async () => {
+    const f = await fixture();
+    f.reportCheckRun({ id: 6, name: "lint", head_sha: f.pr().head.sha, status: "in_progress", app: { id: 6 } });
+    f.reportCheckRun({ id: 7, name: "lint", head_sha: f.pr().head.sha, status: "completed", conclusion: "success", app: { id: 6 } });
+    try {
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      const current = await f.runtime.inbox.get("acme/app", 12);
+      expect(current?.status).toBe("ready");
+      expect(current?.wait).toBeUndefined();
+    } finally { await f.runtime.inbox.close(); }
   });
 
   it("records the feedback that a repair push answered", async () => {
@@ -1134,7 +1151,7 @@ describe("Babysitter preset runtime", () => {
     await writeFile(join(h.checkout, "package.json"), "{}");
     await writeFile(join(h.checkout, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
     try {
-      await h.reconcile();
+      await h.reconcile("babysitter.install.failed");
       expect((await readFile(join(bin, "args"), "utf8")).trim()).toBe("pnpm@10.34.6 install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --config.manage-package-manager-versions=false");
       // Failed installs retain the guarded host wait and never dispatch a worker.
       expect(h.passes).toHaveLength(0);
@@ -1251,7 +1268,7 @@ describe("Babysitter preset runtime", () => {
       await f.reconcile();
       await f.reconcile();
       expect(createProviderRuntime).not.toHaveBeenCalled();
-      expect((await f.runtime.inbox.get("acme/app", 12))?.lease).toBeNull();
+      expect(await f.runtime.inbox.get("acme/app", 12)).toBeUndefined();
       expect(skips()).toHaveLength(1);
       expect(await f.runtime.inbox.meta("admission-skipped")).toMatchObject({ reason: "tmp-space-low", detail: "100 MiB free" });
       decision = { accepting: false, reason: "token-budget-hourly", retryAt: Date.now() + 60_000 };

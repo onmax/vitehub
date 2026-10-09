@@ -107,7 +107,7 @@ export function reviewCheckRunning(s: Snapshot, policy: Pick<BabysitterWaitPolic
 }
 
 export function failureKeys(s: Snapshot): string[] {
-  return currentCheckSignals(s).filter(signal => failed.has(String(signal.conclusion ?? signal.state)))
+  return latestCheckSignals(s).filter(signal => failed.has(String(signal.conclusion ?? signal.state)))
     .map(signal => `${String(signal.id ?? signal.context)}:${String(signal.conclusion ?? signal.state)}`).sort();
 }
 
@@ -159,8 +159,8 @@ export function wakeReasons(s: Snapshot, requiredChecks: GitHubRequiredCheckStat
 }
 
 /** Infer a check wait only from pending current-head provider evidence. */
-export function hasPendingChecks(snapshot: Snapshot, policy: BabysitterWaitPolicy): boolean {
-  return currentCheckSignals(snapshot).some(signal => pending.has(String(signal.status ?? signal.state)));
+export function hasPendingChecks(snapshot: Snapshot, _policy: BabysitterWaitPolicy): boolean {
+  return latestCheckSignals(snapshot).some(signal => pending.has(String(signal.status ?? signal.state)));
 }
 
 /** The reader paginates and projects individual records from every REST page. */
