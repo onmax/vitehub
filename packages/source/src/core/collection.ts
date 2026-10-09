@@ -352,7 +352,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform: TTransform
   },
-): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object> & {
+): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
   get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
 }
 export function defineCollection<
@@ -367,7 +367,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform?: undefined
   },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object> & {
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
   get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
 }
 export function defineCollection<
@@ -381,7 +381,7 @@ export function defineCollection<
     querySchema: TQuerySchema
     transform?: undefined
   },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, StandardSchemaV1.InferInput<TQuerySchema> & object>
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
 export function defineCollection<
   TSourceItem,
   TCursorSchema extends StandardSchemaV1,
