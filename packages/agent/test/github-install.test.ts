@@ -24,6 +24,21 @@ it("installs on the host with a frozen lockfile and no host secrets or lifecycle
   expect(await readFile(join(root, ".git", "args.txt"), "utf8")).toBe("pnpm@10.34.6\ninstall\n--frozen-lockfile\n--ignore-scripts\n--ignore-pnpmfile\n--config.manage-package-manager-versions=false\n");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false });
 });
+it.each(["~1.2.1", "~2.2.10 || ^3.0.0", "~ 1.2", "~1"])("accepts the tilde dependency range %s", async range => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { example: range } }));
+  await writeFile(join(root, "pnpm-lock.yaml"), `lockfileVersion: '9.0'\npackages:\n  example@1.2.1:\n    peerDependencies:\n      peer: '${range}'\n`);
+  await expect(installGitHubPullRequestWorkspace(root)).resolves.toBeUndefined();
+  await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+});
+
+it.each(["~/private", "~user/private", "~"])("rejects the home dependency path %s before execution", async path => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { example: path } }));
+  await expect(installGitHubPullRequestWorkspace(root)).rejects.toThrow(/Host-local/);
+  await expect(readFile(join(root, ".git", "args.txt"))).rejects.toThrow();
+});
+
 it("reports the trusted host Corepack prerequisite when Node does not provide it", async () => {
   const root = await fixture();
   vi.stubEnv("PATH", join(root, "missing-host-tools"));
