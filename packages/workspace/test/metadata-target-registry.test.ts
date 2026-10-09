@@ -87,7 +87,7 @@ describe("Workspace metadata target", () => {
     const writable: WritableWorkspaceFacade = useWorkspace("support", { mode: "write" })
     // A new facade, as the Agent access capability creates one.
     const readonly = useWorkspace("support")
-    const target: ReadonlyWorkspaceFacade = { fs: readonly.fs, tools: readonly.tools }
+    const target: ReadonlyWorkspaceFacade = { fs: readonly.fs, tools: readonly.tools, history: readonly.history }
     forwardWorkspaceMetadataView(writable, target, entries => entries.filter(entry => entry.path.startsWith("docs")))
 
     const view = await resolveWorkspaceMetadataTarget(target)
@@ -101,7 +101,7 @@ describe("Workspace metadata target", () => {
     expectNoGlobalCarrier(target)
 
     // A source without a target gives nothing.
-    const empty: ReadonlyWorkspaceFacade = { fs: { ...readonly.fs }, tools: readonly.tools }
+    const empty: ReadonlyWorkspaceFacade = { fs: { ...readonly.fs }, tools: readonly.tools, history: readonly.history }
     forwardWorkspaceMetadataView({}, empty)
     await expect(resolveWorkspaceMetadataTarget(empty)).resolves.toBeUndefined()
   })
