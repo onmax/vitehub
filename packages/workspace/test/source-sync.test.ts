@@ -339,6 +339,43 @@ describe("Workspace Source Sync", () => {
     expect(readWorkspaceSourceSyncState(await store.getMeta!(metaKey))?.paths).toEqual({})
   })
 
+  it.each([false, true].flatMap(reverse => [false, true].flatMap(releaseFirstWriter => [false, true].map(edited => ({ reverse, releaseFirstWriter, edited })))))(
+    "uses the latest write for shared cleanup: reverse=$reverse, firstWriterReleases=$releaseFirstWriter, edited=$edited",
+    async ({ reverse, releaseFirstWriter, edited }) => {
+      const store = workspaceStoreWithoutFileMetadata(createMemoryWorkspaceStore())
+      const firstMount = reverse ? "docs" : ""
+      const secondMount = reverse ? "" : "docs"
+      const firstItems = new Map([[firstMount ? "a.md" : "docs/a.md", "original"]])
+      const secondItems = new Map([[secondMount ? "a.md" : "docs/a.md", "updated"]])
+      const create = async (mount: string, items: Map<string, string>) => {
+        registerWorkspace("historical-claim", defineWorkspace({
+          store,
+          sources: { docs: {
+            mount: { path: mount },
+            sync: { stale: "remove" },
+            async getKeys() { return [...items.keys()] },
+            async getItem(key: string) { return { key, content: items.get(key)! } },
+          } },
+        }))
+        return await useRegisteredWorkspace("historical-claim")
+      }
+      expect((await (await create(firstMount, firstItems)).sync({ sources: ["docs"] })).status).toBe("ready")
+      expect((await (await create(secondMount, secondItems)).sync({ sources: ["docs"] })).status).toBe("ready")
+      if (edited) await store.writeFile("docs/a.md", { path: "docs/a.md", content: "original" })
+      const releases = releaseFirstWriter
+        ? [[firstMount, firstItems], [secondMount, secondItems]] as const
+        : [[secondMount, secondItems], [firstMount, firstItems]] as const
+      for (const [index, [mount, items]] of releases.entries()) {
+        items.clear()
+        const result = await (await create(mount, items)).sync({ sources: ["docs"] })
+        expect(result.status).toBe("ready")
+        expect(result.sources[0]?.counts.removed).toBe(index === 1 && !edited ? 1 : 0)
+        if (index === 0 || edited) expect((await store.readFile("docs/a.md"))?.content).toBe(edited ? "original" : "updated")
+        else expect(await store.readFile("docs/a.md")).toBeUndefined()
+      }
+    },
+  )
+
   it.each(["archive", ""])("retains legacy ownership when a Source moves to mount %j", async (mountPath) => {
     const store = createMemoryWorkspaceStore()
     const items = new Map([["file.md", "# File\n"]])

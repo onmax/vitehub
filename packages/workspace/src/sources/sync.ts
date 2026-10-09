@@ -226,15 +226,12 @@ async function applySourceSyncPlan(store: WorkspaceStore, plan: SourceSyncPlan) 
     const retained = current?.paths[path] ? sourceSyncPathClaims(current, path).filter(claim => claim.mountPath !== plan.source.mountPath).map(claim => ({ ...claim })) : []
     const next = plan.nextState.paths[path]
     if (next) retained.push(next)
-    else if (current && retained.length > 0 && sourceMountOwnsPath(plan.source, path)) {
-      const departing = sourceSyncPathClaims(current, path).find(claim => claim.mountPath === plan.source.mountPath)
-      // Transfer cleanup authority only for bytes the departing mount still owns.
-      // Never adopt a user edit as Source-owned content.
-      if (departing && await shouldRemoveStalePath(sourceStore, path, departing)) {
-        for (const claim of retained) claim.digest = departing.digest
-      }
-    }
     if (retained.length === 0) continue
+    // Claims share cleanup authority for the latest Source-written bytes, not
+    // their historical content. Releasing a claim must never adopt user edits,
+    // even when those edits happen to match an older claim's digest.
+    const digest = next?.digest ?? current!.paths[path]!.digest
+    for (const claim of retained) claim.digest = digest
     // Keep the path index for readers that only need to know whether a path is owned.
     paths[path] = retained[retained.length - 1]!
     if (retained.length > 1) claims[path] = retained.sort((left, right) => left.mountPath!.localeCompare(right.mountPath!))
