@@ -14,6 +14,10 @@ import type { SQL } from "drizzle-orm"
 import type { AnySQLiteColumn, SQLiteTable } from "drizzle-orm/sqlite-core"
 import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
+type ProviderCollectionLoader<TSourceItem, TQuery extends object> = (
+  options: { cursor?: string; limit: number; query: TQuery; signal?: AbortSignal },
+) => Promise<{ items: readonly TSourceItem[]; nextCursor: string | null }>
+
 export * from "@vite-hub/source"
 
 export interface CollectionSource<
@@ -23,10 +27,12 @@ export interface CollectionSource<
   TCursorOutput extends CollectionCursorValue = TCursorInput,
   TQueryInput extends object = TQuery,
 > {
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
   cursor(item: NoInfer<TSourceItem>): Readonly<TCursorInput>
   cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
   defaultLimit?: number
-  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput>
+  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput> | ProviderCollectionLoader<TSourceItem, TQuery>
+  pagination?: "provider"
   maxLimit?: number
   querySchema?: StandardSchemaV1<TQueryInput, TQuery>
 }
@@ -215,7 +221,7 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
     cursor: row => columns.map((column, index) => driverValue(column, row[keys[index]!])),
     cursorSchema: keysetCursorSchema(columns),
     defaultLimit: options.defaultLimit,
-    async load({ cursor, limit, query, signal }) {
+    async load({ cursor, limit, query, signal }: { cursor?: KeysetCursor; limit: number; query: any; signal?: AbortSignal }) {
       signal?.throwIfAborted()
       // SAFETY: The where hook contract returns a Drizzle SQL expression when it returns a value.
       const filter = options.where?.({ query, table: options.table }) as SQL | undefined
@@ -246,11 +252,13 @@ type SourceQueryInput<TSource extends AnyCollectionSource> =
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
     authorize?: AccessAuthorizeOption
+    route?: false
     source: TSource
     transform: TTransform
   }): Collection<Awaited<ReturnType<TTransform>>, SourceQuery<TSource>, SourceQueryInput<TSource>>
   <TSource extends AnyCollectionSource>(options: {
     authorize?: AccessAuthorizeOption
+    route?: false
     source: TSource
     transform?: undefined
   }): Collection<SourceItem<TSource>, SourceQuery<TSource>, SourceQueryInput<TSource>>
@@ -259,16 +267,19 @@ interface DefineSourceCollection {
 const defineCollectionImplementation = (
   input:
     | Parameters<typeof defineCoreCollection>[0]
-    | { authorize?: AccessAuthorizeOption; source: AnyCollectionSource; transform?: (item: any) => unknown },
+    | { authorize?: AccessAuthorizeOption; route?: false; source: AnyCollectionSource; transform?: (item: any) => unknown },
   options?: Parameters<typeof defineCoreCollection>[1],
 ) => {
   const core: unknown = defineCoreCollection
   // SAFETY: This adapter forwards one of the public defineCollection overload argument sets.
   const callCore = core as (...args: unknown[]) => unknown
   if (input instanceof Function) return callCore(input, options)
-  const { authorize, source, transform } = input
+  const { authorize, route, source, transform } = input
   return callCore(source.load, {
     authorize,
+    route,
+    get: source.get,
+    pagination: source.pagination,
     cursor: source.cursor,
     cursorSchema: source.cursorSchema,
     defaultLimit: source.defaultLimit,
