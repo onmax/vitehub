@@ -14,6 +14,7 @@ import { hasRuntimeType, isRuntimeRecord } from "../internal/runtime-type.ts"
 import { CodeHostResponseError, codeHostErrorStatus, codeHostProvider, githubAppCredentials } from "../internal/code-host.ts"
 import { agentDiagnostics } from "../agent-diagnostics.ts"
 import { prepareGitHubPullRequestWorkspace } from "./github-checkout.ts"
+import { commitGitHubPullRequestWorkspace, type GitHubRepairCommit } from "./github-repair.ts"
 
 const exec = promisify(execFile)
 const GITHUB_RATE_LIMIT_FALLBACK_MS = 5 * 60_000
@@ -61,7 +62,9 @@ export interface GitHubHostPullRequest {
 
 export interface GitHubHostCheckout extends GitHubHostAccess {
   path: string
-  prepareWorkspace(target: string): Promise<void>
+  /** Restore source instruction files only before the provider injects its instructions. */
+  prepareWorkspace(target: string, options?: { restoreInstructions?: boolean }): Promise<void>
+  commitRepair(target: string, input: GitHubRepairCommit, options?: { verifyDependencies?: boolean }): Promise<string>
   push(target?: string, options?: { signal?: AbortSignal, beforePush?: () => void | Promise<void> }): Promise<string>
   signal: AbortSignal
 }
@@ -713,9 +716,10 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
                 process.stdout.write("cleaned")
               }
             `, String(checkoutIdentity.dev), String(checkoutIdentity.ino)], { cwd: candidate, maxBuffer })
-            // Retain the empty inode. Node has no inode-conditional rmdir;
-            // removing its pathname could delete an empty replacement.
-            if (result.stdout === "cleaned") return
+            if (result.stdout === "cleaned") {
+              // Keep the empty inode: pathname removal could delete a replacement.
+              return
+            }
           }
           catch (error) {
             // A move before cwd resolution needs another discovery pass.
@@ -767,8 +771,9 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
       const fetched = (await exec("git", ["-C", checkout, "rev-parse", "HEAD"], commandOptions)).stdout.trim()
       if (fetched !== pullRequest.headSha) throw agentDiagnostics.AGENT_R0767({ message: `Pull request head changed from ${pullRequest.headSha} to ${fetched}.` })
       operation.signal.throwIfAborted()
-      const prepareWorkspace = async (target: string) => await prepareGitHubPullRequestWorkspace(checkout, target, { signal: operation.signal })
+      const prepareWorkspace = async (target: string, options: { restoreInstructions?: boolean } = {}) => await prepareGitHubPullRequestWorkspace(checkout, target, { ...options, signal: operation.signal })
       let pushHead = pullRequest.headSha
+      const commitRepair = async (target: string, input: GitHubRepairCommit, commitOptions?: { verifyDependencies?: boolean }) => await commitGitHubPullRequestWorkspace(target, input, { expectedHead: pushHead, signal: operation.signal, identity: env, verifyDependencies: commitOptions?.verifyDependencies })
       const push = async (target: string = checkout, options: { signal?: AbortSignal, beforePush?: () => void | Promise<void> } = {}) => {
         const signal = options.signal ? AbortSignal.any([operation.signal, options.signal]) : operation.signal
         signal.throwIfAborted()
@@ -814,7 +819,7 @@ export function createGitHubHost(options: GitHubHostOptions): GitHubHost {
         pushHead = head
         return head
       }
-      return await checkoutScope.run({ ...baseAuth, path: checkout }, () => run({ ...baseAuth, path: checkout, prepareWorkspace, push, signal: operation.signal }))
+      return await checkoutScope.run({ ...baseAuth, path: checkout }, () => run({ ...baseAuth, path: checkout, prepareWorkspace, commitRepair, push, signal: operation.signal }))
     }
     finally {
       operation.close()

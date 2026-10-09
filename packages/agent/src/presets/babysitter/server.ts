@@ -1,6 +1,11 @@
+import { GitHubDependencyConflictError } from "../../server/github-install-inputs.ts";
+import * as v from "valibot";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
+import { readAsyncMerge, requestAsyncMerge } from "./async-merge.ts";
+import { prepareGitHubRepairBase } from "../../server/github-repair.ts";
+import { assertGitHubDependenciesCurrent, GitHubWorkspaceInstallError, installGitHubPullRequestWorkspace } from "../../server/github-install.ts";
 import { resolvePublicUrl, resolveRuntimeValue } from "@vite-hub/runtime";
 import { hasRuntimeType, isRuntimeRecord } from "../../internal/runtime-type.ts";
 import { resolveRegisteredWorkspaceDefinition } from "@vite-hub/workspace";
@@ -35,12 +40,16 @@ import { babysitterPassResultSchema } from "../babysitter.ts";
 import type { BabysitterAgent, BabysitterPassResult } from "../babysitter.ts";
 import { asMetadataTarget, copyDefinitionDecorations, getAgentLayerOptions } from "../../agent-layers.ts";
 import { importBoxCommit } from "./box-commit.ts";
+import { createProviderHeadReader } from "./checkout-watch.ts";
+import { importBoxRepairFiles, importBoxRepairWorkspace, publishBoxDependencies } from "./box-repair.ts";
 import { activeProviderBox } from "../../internal/provider-box.ts";
 import { repairCapability, repairEnvironment } from "./repair.ts";
 import { createGitHubRequiredCheckPolicyReader, evaluateGitHubRequiredChecks } from "../../server/github-required-checks.ts";
 import { directMergeReadiness, liveMergeReadiness, resolveBabysitterMerge, snapshotCheckEvidence, mergeReviewEvidenceKey } from "./merge.ts";
 import { checksDependencyEvidence, createCheckWait, hasPendingChecks, wakeReasons, type BabysitterWaitPolicy } from "./wait.ts";
+import { hasFailedActions, rerunFailedActions } from "./ci-recovery.ts";
 import { nonDefaultBase, stackRetargetBase, directMergeBranchSafety } from "./stack.ts";
+import { babysitterModelAdmission, type BabysitterAdmissionResult } from "./admission.ts";
 
 export interface BabysitterRuntimeOptions {
   agent: AgentInput;
@@ -66,6 +75,7 @@ export interface BabysitterRuntimeOptions {
   postPushGraceMs?: number;
   /** Delay between provider rate-limit retries. Defaults to 10 seconds. */
   providerRetryDelayMs?: number;
+  admission?: () => Promise<BabysitterAdmissionResult>;
 }
 
 /** Bound policy hooks inside an owner slot, never in the scheduler wait scan. */
@@ -193,19 +203,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const check = createClaimStopCheck(
       claim,
       () => pullRequestInbox.get(claim.snapshot.repository, claim.snapshot.number),
-      async () => {
-        const verifiedPush = pushedHead();
-        if (verifiedPush) return verifiedPush;
-        const cwd = providerDirectory();
-        if (!cwd) return undefined;
-        const result = await execFileAsync("git", ["rev-parse", "--verify", "HEAD"], {
-          cwd,
-          encoding: "utf8",
-          timeout: 3000,
-          maxBuffer: 1024,
-        });
-        return result.stdout.trim();
-      },
+      createProviderHeadReader(providerDirectory, pushedHead),
     );
     const poll = async () => {
       if (stopped || polling || controller.signal.aborted) return;
@@ -263,6 +261,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     const base = snapshot.pr?.base?.ref;
     if (!base) return "not-ready";
     const pending = await pullRequestInbox.directMergeAttempt(repository, number);
+    const parkMerge = async (reason: string) => {
+      await pullRequestInbox.finish(claim, { text: reason, wait: { ...createCheckWait(snapshot, waitPolicy), kind: "external", reason, retryAt: Date.now() + 30_000 } });
+      return "blocked" as const;
+    };
     if (pending) {
       try {
         const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
@@ -270,18 +272,74 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         const mergedAt = isRuntimeRecord(live) && hasRuntimeType(live.merged_at, "string") ? live.merged_at : undefined;
         if (state?.toLowerCase() !== "open" && mergedAt) {
           await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
-          await pullRequestInbox.finish(claim, { text: "Direct merge outcome reconciled: GitHub no longer reports the pull request as open.", terminal: true });
+          await pullRequestInbox.finish(claim, { text: "Direct merge outcome reconciled: GitHub reports the pull request merged.", terminal: true });
+          schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: pending.head, avoided_invocation: true });
           return "merged";
         }
-        // A confirmed open PR means GitHub did not accept this request. Clear the
-        // fence only after the provider read has established that it is safe to retry.
-        await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
-        await pullRequestInbox.finish(claim, { text: "Direct merge outcome reconciled as not merged; retrying the verified pull request.", retry: true });
+        const reconcileEnqueued = async (): Promise<"merged" | "blocked"> => {
+          const [repositoryOwner, name] = repository.split("/");
+          const response = await readGraphql(repository, 1, signal)(`query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){state headRefOid mergeQueueEntry{id}}}}`, { owner: repositoryOwner, name, number });
+          const queued = v.parse(v.object({ data: v.object({ repository: v.object({ pullRequest: v.object({
+            state: v.string(), headRefOid: v.string(), mergeQueueEntry: v.nullable(v.object({ id: v.string() })),
+          }) }) }) }), response).data.repository.pullRequest;
+          // Neither queue absence nor a timeline removal identifies this accepted
+          // request. beforeCommit may be a synthetic merge-group commit, and event
+          // timestamps cannot establish request ownership. Keep the fence.
+          const terminal = queued.state === "MERGED" || queued.state === "CLOSED";
+          const headChanged = /^[a-f\d]{40}$/i.test(queued.headRefOid) && queued.headRefOid !== pending.head;
+          if (!terminal && !headChanged) return await parkMerge("Waiting for a definitive GitHub merge queue outcome.");
+          await pullRequestInbox.hydrate(claim, { refresh: true });
+          await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+          await pullRequestInbox.finish(claim, { text: `Enqueued merge reconciled: ${terminal ? queued.state.toLowerCase() : "expected head changed"}.`, terminal, retry: !terminal });
+          if (queued.state === "MERGED") schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: pending.head, avoided_invocation: true });
+          return queued.state === "MERGED" ? "merged" : "blocked";
+        };
+        if (pending.enqueued) return await reconcileEnqueued();
+        if (pending.requestId) {
+          const result = await readAsyncMerge(github, repository, number, pending.requestId, signal).catch(async (error: unknown) => {
+            if (!(error instanceof Error) || !/HTTP 404/.test(error.message)) throw error;
+            // Result UUIDs expire after 24 hours. A successful live PR read above
+            // proves this repository is accessible; an expired UUID must not
+            // strand a closed PR or bypass the current head's normal merge gates.
+            const liveHead = isRuntimeRecord(live) && isRuntimeRecord(live.head) ? live.head.sha : undefined;
+            if ((state?.toLowerCase() !== "open" && state?.toLowerCase() !== "closed") || !hasRuntimeType(liveHead, "string") || !/^[a-f\d]{40}$/i.test(liveHead)) throw error;
+            await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+            await pullRequestInbox.finish(claim, { text: `Expired GitHub merge result reconciled at head ${liveHead}; rechecking normal gates.`, retry: state.toLowerCase() === "open", terminal: state.toLowerCase() === "closed" });
+            return undefined;
+          });
+          if (!result) return "blocked";
+          if (result.status === "pending") return await parkMerge(`Waiting for GitHub merge request ${pending.requestId}.`);
+          if (result.status === "enqueued") {
+            if (!await pullRequestInbox.recordDirectMergeEnqueued(repository, number, pending.token)) throw new Error("Merge attempt changed before its enqueued result could be recorded.");
+            return await reconcileEnqueued();
+          }
+          await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+          const merged = result.status === "merged";
+          await pullRequestInbox.finish(claim, { text: merged ? "Asynchronous merge confirmed by GitHub." : `GitHub merge failed: ${result.details.message}`, terminal: merged, retry: !merged });
+          if (merged) schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: pending.head, avoided_invocation: true });
+          return merged ? "merged" : "blocked";
+        }
+        // A legacy synchronous attempt can be reconciled from live PR state.
+        // An asynchronous request without a saved UUID may still be running.
+        // Re-admit it through every gate below, then let GitHub serialize the
+        // duplicate request and return its UUID. Never clear it just for being open.
+        if (!pending.asynchronous || state?.toLowerCase() !== "open") {
+          await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+          await pullRequestInbox.finish(claim, { text: "Direct merge outcome reconciled as not merged; retrying the verified pull request.", retry: state?.toLowerCase() === "open", terminal: state?.toLowerCase() === "closed" });
+          return "blocked";
+        }
+        const liveHead = isRuntimeRecord(live) && isRuntimeRecord(live.head) ? live.head.sha : undefined;
+        if (hasRuntimeType(liveHead, "string") && /^[a-f\d]{40}$/i.test(liveHead) && liveHead !== pending.head) {
+          // GitHub's expected-head fence prevents the old request from merging
+          // this new head. Admit the new head through every normal gate again.
+          await pullRequestInbox.clearDirectMerge(repository, number, pending.token);
+          await pullRequestInbox.finish(claim, { text: "Unconfirmed merge head changed; retrying current GitHub state.", retry: true });
+          return "blocked";
+        }
       } catch (error) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: `merge outcome unknown: ${(error instanceof Error ? error.message : String(error)).slice(0, 160)}` });
-        await pullRequestInbox.release(claim);
+        return await parkMerge("GitHub merge outcome could not be reconciled; retrying the provider read.");
       }
-      return "blocked";
     }
     if (signal.aborted) return "blocked";
     const policy = await requiredChecks.read(repository, base);
@@ -297,22 +355,23 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     }
     if (!decision.ready) {
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: decision.reason });
-      return "not-ready";
+      return pending?.asynchronous ? await parkMerge(`Unconfirmed merge is waiting for ${decision.reason}.`) : "not-ready";
     }
     let mergeStarted = false;
+    const mergeToken = pending?.token ?? claim.token;
     try {
       const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", signal);
       const current = liveMergeReadiness(live, decision.head);
       if (!current.ready) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: current.reason });
-        return "not-ready";
+        return pending?.asynchronous ? await parkMerge(`Unconfirmed merge is waiting for ${current.reason}.`) : "not-ready";
       }
       const [repositorySettings] = await readRest(`repos/${repository}`, ".", signal);
       const children = await readRest(`repos/${repository}/pulls?state=open&base=${encodeURIComponent(snapshot.pr?.head?.ref ?? "")}&per_page=100`, ".[]", signal);
       const branchSafety = directMergeBranchSafety(repositorySettings, live, children);
       if (branchSafety !== true) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: branchSafety });
-        return "not-ready";
+        return pending?.asynchronous ? await parkMerge(`Unconfirmed merge is waiting for ${branchSafety}.`) : "not-ready";
       }
       // Revalidate the durable lease and revision after the live provider read and
       // immediately before the irreversible merge request. A webhook or another
@@ -322,29 +381,30 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         return "not-ready";
       }
       signal.throwIfAborted();
-      if (!(await pullRequestInbox.beginDirectMerge(claim, decision.head))) {
+      if (!pending && !(await pullRequestInbox.beginDirectMerge(claim, decision.head, true))) {
         schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "merge attempt already in flight or claim changed" });
         return "blocked";
       }
       mergeStarted = true;
-      // GitHub rejects the merge when the head no longer matches sha.
-      const result = await github.command(["api", "-X", "PUT", `repos/${repository}/pulls/${number}/merge`, "-f", `merge_method=${merge.method}`, "-f", `sha=${decision.head}`], { repository, timeout: 60_000, signal });
-      let response: unknown;
-      try {
-        response = JSON.parse(result.stdout);
-      } catch {
-        response = undefined;
+      const response = await requestAsyncMerge(github, repository, number, decision.head, merge.method, signal);
+      if (response.status === "pending") {
+        if (!await pullRequestInbox.recordDirectMergeRequest(repository, number, mergeToken, response.details.uuid)) throw new Error("Merge attempt changed before its UUID could be recorded.");
+        return await parkMerge(`Waiting for GitHub merge request ${response.details.uuid}.`);
       }
-      if (!isRuntimeRecord(response) || response.merged !== true) {
-        schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: "GitHub did not confirm the pull request was merged" });
-        return "blocked";
+      if (response.status !== "merged") {
+        if (response.status === "enqueued" && !await pullRequestInbox.recordDirectMergeEnqueued(repository, number, mergeToken)) throw new Error("Merge attempt changed before its enqueued result could be recorded.");
+        if (response.status === "failed") await pullRequestInbox.clearDirectMerge(repository, number, mergeToken);
+        return await parkMerge(response.status === "failed" ? `GitHub merge failed: ${response.details.message}` : "GitHub enqueued the pull request; waiting for its merge webhook.");
       }
     } catch (error) {
-      if (!mergeStarted) await pullRequestInbox.release(claim);
       schedulerEvent("babysitter.direct_merge.skipped", { ...owner, reason: (error instanceof Error ? error.message : String(error)).slice(0, 200) });
-      return "blocked";
+      // Definite HTTP rejections did not enqueue a merge. Keep the fence for
+      // timeouts and transport failures, which may have delivered the request.
+      const rejectedStatus = Number(String(error).match(/\bHTTP[ :]+(4\d\d)\b/)?.[1]);
+      if (mergeStarted && rejectedStatus && rejectedStatus !== 409) await pullRequestInbox.clearDirectMerge(repository, number, mergeToken);
+      return await parkMerge(`GitHub merge request failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`);
     }
-    await pullRequestInbox.clearDirectMerge(repository, number, claim.token);
+    await pullRequestInbox.clearDirectMerge(repository, number, mergeToken);
     await pullRequestInbox.finish(claim, { text: `Merged ${decision.head} directly: required checks passed and review threads were resolved.`, terminal: true });
     schedulerEvent("babysitter.owner.merged", { ...owner, head_sha: decision.head, avoided_invocation: true });
     return "merged";
@@ -353,7 +413,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   const postPushGraceMs = options.postPushGraceMs ?? 3 * 60_000;
 
   async function parkOnPushedHead(claim: Claim, text: string, head: string) {
-    await pullRequestInbox.finish(claim, { text, progress: { kind: "verified", evidence: `push:${head}` },
+    return await pullRequestInbox.finish(claim, { text, progress: { kind: "verified", evidence: `push:${head}` },
       wait: { ...createCheckWait(claim.snapshot, waitPolicy), headSha: head } });
   }
 
@@ -399,6 +459,20 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     return { ...createCheckWait(observed, waitPolicy), kind: "external" as const, reason, wake };
   }
 
+  async function recoverFailedCiWaits() {
+    for (const snapshot of await pullRequestInbox.waitsToEvaluate(false, true)) {
+      if (snapshot.generation > snapshot.handled || !hasFailedActions(snapshot)) continue;
+      const head = snapshot.pr?.head?.sha;
+      if (!head) continue;
+      const recoveryKey = `ci-recovery-next:${snapshot.repository}#${snapshot.number}:${head}`;
+      if ((await pullRequestInbox.metaNumber(recoveryKey) ?? 0) > Date.now()) continue;
+      await pullRequestInbox.setMeta(recoveryKey, Date.now() + 10 * 60_000);
+      if (await pullRequestInbox.wake(snapshot, `ci-recovery:${head}`, { recovery: true })) {
+        schedulerEvent("babysitter.ci.recovery.woken", { repository: snapshot.repository, pull_request: snapshot.number, head_sha: head });
+      }
+    }
+  }
+
   /** Wakes a parked PR only when its new events need a model pass or a direct merge. */
   async function evaluateWaits() {
     for (const snapshot of await pullRequestInbox.waitsToEvaluate(true)) {
@@ -426,18 +500,36 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   }
 
   /** Moves a stacked PR to the default branch after its parent merged there. */
-  async function retargetMergedStackBase(snapshot: Snapshot): Promise<{ from: string; to: string } | { parent: number } | undefined> {
+  async function retargetMergedStackBase(claim: Claim, signal: AbortSignal): Promise<{ from: string; to: string } | { parent: number } | undefined> {
+    const snapshot = claim.snapshot;
     const pr = snapshot.pr;
     const target = pr && nonDefaultBase(pr);
     if (!pr || !target) return undefined;
     const { base, owner } = target;
-    const parents = await readRest(`repos/${snapshot.repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${base}`)}&per_page=10`);
+    const parents = await readRest(`repos/${snapshot.repository}/pulls?state=all&head=${encodeURIComponent(`${owner}:${base}`)}&per_page=10`, undefined, signal);
     const to = stackRetargetBase(pr, parents);
     if (!to) {
       const parent = parents.find(value => isRuntimeRecord(value) && String(value.state).toLowerCase() === "open" && Number.isSafeInteger(value.number));
       return isRuntimeRecord(parent) && hasRuntimeType(parent.number, "number") ? { parent: parent.number } : undefined;
     }
-    await github.command(["api", "-X", "PATCH", `repos/${snapshot.repository}/pulls/${snapshot.number}`, "-f", `base=${to}`], { repository: snapshot.repository, timeout: 60_000 });
+    const [live] = await readRest(`repos/${snapshot.repository}/pulls/${snapshot.number}`, ".", signal);
+    if (!isRuntimeRecord(live) || String(live.state).toLowerCase() !== "open"
+      || !isRuntimeRecord(live.base) || live.base.ref !== base
+      || !isRuntimeRecord(live.head) || live.head.sha !== pr.head?.sha
+      || !await pullRequestInbox.isClaimCurrent(claim)) {
+      await pullRequestInbox.hydrate(claim, { refresh: true });
+      throw new DOMException("Stack child changed before retargeting.", "AbortError");
+    }
+    signal.throwIfAborted();
+    try {
+      await github.command(["api", "-X", "PATCH", `repos/${snapshot.repository}/pulls/${snapshot.number}`, "-f", `base=${to}`], { repository: snapshot.repository, timeout: 60_000, signal });
+    } catch (error) {
+      // A stale stack snapshot can race a webhook or another worker. GitHub
+      // may reject a redundant retarget even though the desired base is live.
+      const [current] = await readRest(`repos/${snapshot.repository}/pulls/${snapshot.number}`, ".", signal);
+      const currentBase = isRuntimeRecord(current) && isRuntimeRecord(current.base) ? current.base.ref : undefined;
+      if (currentBase !== to) throw error;
+    }
     return { from: base, to };
   }
 
@@ -458,9 +550,24 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     };
     const { publicUrl, repositories } = options;
     if (!isAccepting()) return;
+    let modelAdmission = true;
+    let modelRetryAt: number | undefined;
+    if (options.admission) {
+      const admission = await options.admission();
+      if (!admission.accepting) {
+        modelAdmission = false;
+        modelRetryAt = admission.retryAt ?? Date.now() + 60_000;
+        // SAFETY: This metadata key is only written by this admission branch with the fields below; absent or unrelated values are ignored.
+        const previous = await pullRequestInbox.meta("admission-skipped") as { reason?: string; at?: number } | undefined;
+        if (previous?.reason !== admission.reason || Date.now() - (previous?.at ?? 0) >= 900_000) {
+          const skipped = { at: Date.now(), reason: admission.reason, detail: admission.detail, retryAt: admission.retryAt, active_owners: active.size };
+          await pullRequestInbox.setMeta("admission-skipped", skipped);
+          schedulerEvent("babysitter.admission.skipped", { trigger: reason, ...skipped });
+        }
+        if (!admission.hostOnly) return;
+      }
+    }
     const ownerLimit = options.concurrency;
-    // A provider that keeps rate-limiting would fail every claim. Park admission until the block ends.
-    if (((await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0) > Date.now()) return;
     // Event-scoped filters cannot be established from the pull-request REST
     // listing alone.  Seeding those entries would admit PRs that have never
     // produced an allowed event (for example, `action: synchronize`).
@@ -516,6 +623,10 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // Recover leases that expired while the host was stopped before claiming work.
     await pullRequestInbox.recoverLeases();
     try {
+      if ((await pullRequestInbox.metaNumber("idle-wait-sweep-next") ?? 0) <= Date.now()) {
+        await pullRequestInbox.setMeta("idle-wait-sweep-next", Date.now() + 10 * 60_000);
+        await recoverFailedCiWaits();
+      }
       await evaluateWaits();
     } catch (error) {
       schedulerError("babysitter.wait.evaluate.failed", error);
@@ -529,7 +640,14 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
     // The durable inbox is the sole eligibility checkpoint. A second work
     // tracker checkpoint used to swallow new webhook generations and leak
     // their leases for two hours.
-    const jobs = await pullRequestInbox.claim(Math.max(0, ownerLimit - active.size));
+    const remainingCapacity = Math.max(0, ownerLimit - active.size);
+    const lane = await pullRequestInbox.claim(Math.min(5, remainingCapacity), {
+      only: snapshot => Boolean(snapshot.recoveryHead && snapshot.recoveryHead === snapshot.pr?.head?.sha),
+      includeBlocked: true,
+    });
+    // Admission limits model dispatch. Merges and stack retargets remain host work.
+    const regular = await pullRequestInbox.claim(Math.max(0, remainingCapacity - lane.length));
+    const jobs = [...lane, ...regular];
     if (!jobs.length) return; // tracking an already-resolved batch creates wake loops
     for (const claim of jobs) active.add(`${claim.snapshot.repository}#${claim.snapshot.number}`);
     schedulerEvent("babysitter.queue.selected", {
@@ -568,6 +686,30 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
           passController.signal,
         ]);
         let providerDirectory: string | undefined;
+        let modelWorkParked = false;
+        const parkBlockedModelWork = async () => {
+          const currentAdmission = await options.admission?.();
+          const retryAt = currentAdmission && !currentAdmission.accepting
+            ? currentAdmission.retryAt ?? Date.now() + 60_000 : modelRetryAt;
+          const providerBlockedUntil = (await pullRequestInbox.metaNumber("provider-quota-blocked-until")) ?? 0;
+          const providerBlocked = providerBlockedUntil > Date.now();
+          const admitted = (currentAdmission?.accepting ?? modelAdmission) && !providerBlocked;
+          if (babysitterModelAdmission(admitted, inboxClaim.snapshot)) return false;
+          modelWorkParked = true;
+          outcome = "waiting";
+          await pullRequestInbox.finish(inboxClaim, {
+            text: providerBlocked
+              ? `CI reconciliation completed; provider quota cooldown ends at ${new Date(providerBlockedUntil).toISOString()}.`
+              : admitted
+                ? "CI reconciliation completed; the same-head repair budget is exhausted."
+                : "CI reconciliation completed; model work is waiting for host admission.",
+            ...(pushedHead ? { progress: { kind: "verified" as const, evidence: `push:${pushedHead}` } } : {}),
+            wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy),
+              ...(pushedHead ? { headSha: pushedHead } : {}),
+              retryAt: admitted ? undefined : Math.max(retryAt ?? 0, providerBlocked ? providerBlockedUntil : 0) },
+          });
+          return true;
+        };
         const preparedDirectories = new Set<string>();
         const stopPullRequestWatch = cancelWhenPullRequestStops(
           inboxClaim,
@@ -597,7 +739,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             });
             return;
           }
-          const retargeted = await retargetMergedStackBase(inboxClaim.snapshot);
+          const retargeted = await retargetMergedStackBase(inboxClaim, passSignal);
           if (retargeted && "parent" in retargeted) {
             await pullRequestInbox.finish(inboxClaim, { text: `Waiting for open parent PR #${retargeted.parent} before repairing its child.`,
               wait: await externalWait(inboxClaim.snapshot, { kind: "pull-request", repository, number: retargeted.parent }, "stack-parent") });
@@ -641,6 +783,60 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             readJson: (path, projection) => readRest(path, projection, passSignal),
             readLog: async (path, repository) => (await github.command(["api", path], { repository, timeout: 60_000, signal: passSignal })).stdout,
           }))) { await pullRequestInbox.release(inboxClaim); return; }
+          const ciRecovery = await rerunFailedActions(
+            pullRequestInbox,
+            inboxClaim,
+            (args, request) => github.command(args, { ...request, signal: passSignal }),
+          );
+          if (inboxClaim.snapshot.recoveryHead && inboxClaim.snapshot.recoveryHead === inboxClaim.snapshot.pr?.head?.sha && !hasFailedActions(inboxClaim.snapshot)) {
+            outcome = "waiting";
+            const wait = createCheckWait(inboxClaim.snapshot, waitPolicy);
+            if (merge.mode === "direct") wait.retryAt = Date.now() + 120_000;
+            await pullRequestInbox.finish(inboxClaim, { text: "Recovered CI is healthy; waiting for merge gate evaluation.", wait });
+            return;
+          }
+          if (ciRecovery?.state === "rerun") {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: `Automatically reran failed GitHub Actions run${ciRecovery.runs.length === 1 ? "" : "s"} ${ciRecovery.runs.map(run => run.runId).join(", ")}; waiting for the new check result.`,
+              wait: createCheckWait(inboxClaim.snapshot, waitPolicy),
+            });
+            schedulerEvent("babysitter.ci.rerun", { ...owner, runs: ciRecovery.runs.map(run => run.runId) });
+            return;
+          }
+          const permissionFallback = await pullRequestInbox.meta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`);
+          const fallbackEvidenceKey = mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy);
+          if (ciRecovery?.state === "blocked" && (!ciRecovery.permission || isRuntimeRecord(permissionFallback) && permissionFallback.consumedAt && permissionFallback.evidenceKey === fallbackEvidenceKey)) {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: `Automatic GitHub Actions rerun is blocked: ${ciRecovery.reason}`,
+              wait: ciRecovery.permission
+                ? { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason: ciRecovery.reason }
+                : { ...createCheckWait(inboxClaim.snapshot, waitPolicy), retryAt: Date.now() + 120_000 },
+            });
+            schedulerEvent("babysitter.ci.rerun.blocked", { ...owner, reason: ciRecovery.reason });
+            return;
+          }
+          if (ciRecovery?.state === "waiting") {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, {
+              text: `Automatic GitHub Actions rerun already attempted; waiting for the new check result${ciRecovery.reason ? `: ${ciRecovery.reason}` : "."}`,
+              wait: createCheckWait(inboxClaim.snapshot, waitPolicy),
+            });
+            schedulerEvent("babysitter.ci.rerun.waiting", { ...owner, reason: ciRecovery.reason });
+            return;
+          }
+          if (inboxClaim.snapshot.pr?.mergeable === null || inboxClaim.snapshot.pr?.mergeable_state === "unknown") {
+            const reason = "GitHub is still calculating mergeability for this PR head.";
+            await pullRequestInbox.finish(inboxClaim, { text: reason,
+              wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason, retryAt: Date.now() + 30_000 } });
+            schedulerEvent("babysitter.mergeability.waiting", { ...owner, head_sha: inboxClaim.snapshot.pr?.head?.sha });
+            return;
+          }
+          if (await parkBlockedModelWork()) return;
+          if (ciRecovery?.state === "blocked" && ciRecovery.permission) {
+            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { pendingAt: Date.now() });
+          }
           const pullRequest = snapshotPullRequest(inboxClaim.snapshot);
           const webhookSnapshot = inboxClaim.snapshot;
           await github.withPullRequestCheckout(
@@ -686,6 +882,43 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   throw new DOMException("Pull request evidence changed.", "AbortError");
                 }
               };
+              let preparedMergeBase: string | undefined;
+              const readRepairBase = async () => {
+                // PR snapshots can retain an older base after its branch moves.
+                // Conflict preparation must merge the current target branch.
+                const [ref] = await readRest(`repos/${repository}/git/ref/heads/${encodeURIComponent(pullRequest.baseRefName)}`, ".", abortSignal);
+                if (!isRuntimeRecord(ref) || ref.ref !== `refs/heads/${pullRequest.baseRefName}` || !isRuntimeRecord(ref.object)
+                  || ref.object.type !== "commit" || !hasRuntimeType(ref.object.sha, "string") || !/^[a-f\d]{40}$/i.test(ref.object.sha)) {
+                  throw new Error("Conflict repair requires the exact live base branch commit.");
+                }
+                return ref.object.sha;
+              };
+              const assertRepairBase = async () => {
+                if (!preparedMergeBase) return;
+                const [live] = await readRest(`repos/${repository}/pulls/${number}`, ".", abortSignal);
+                if (!isRuntimeRecord(live) || !isRuntimeRecord(live.base) || live.base.ref !== pullRequest.baseRefName || await readRepairBase() !== preparedMergeBase) {
+                  await pullRequestInbox.hydrate(inboxClaim, { refresh: true });
+                  const changed = new DOMException("Pull request base changed; retry the conflict repair against current GitHub state.", "AbortError");
+                  passController.abort(changed);
+                  throw changed;
+                }
+              };
+              const prepareRepairWorkspace = async (directory: string) => {
+                if (!preparedDirectories.has(directory)) {
+                  if (directory !== checkout) await prepared.prepareWorkspace(directory, { restoreInstructions: true });
+                  if (webhookSnapshot.pr?.mergeable === false || webhookSnapshot.pr?.mergeable_state === "dirty") {
+                    const base = await readRepairBase();
+                    await prepareGitHubRepairBase(directory, { expectedHead: pullRequest.headRefOid, base, signal: abortSignal, fetch: { url: `https://github.com/${repository}.git`, env: prepared.env } });
+                    preparedMergeBase = base;
+                  }
+                  if (presetOptions.install !== false) {
+                    // Dependency conflicts must be resolved before the explicit refresh tool can install.
+                    try { await installGitHubPullRequestWorkspace(directory, abortSignal); }
+                    catch (error) { if (!preparedMergeBase || abortSignal.aborted || !(error instanceof GitHubWorkspaceInstallError) || !(error.cause instanceof GitHubDependencyConflictError)) throw error; }
+                  }
+                  preparedDirectories.add(directory);
+                }
+              };
               const operationHost: Pick<GitHubHost, "command" | "ensureGraphQLBudget"> = {
                 command: async (args, request) => {
                   await assertLease();
@@ -700,14 +933,36 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 repository,
                 number,
                 expectedHeadOid: pullRequest.headRefOid,
-                expectedBaseOid: pullRequest.baseRefOid,
+                // Launch preparation may replace the stale snapshot base before the tools run.
+                get expectedBaseOid() { return preparedMergeBase ?? pullRequest.baseRefOid; },
+                mentionAllowlist: presetOptions.mentionAllowlist,
+                restrictCommentMentions: true,
+                // Mark every repair comment, including mentions, so its webhook cannot revoke this pass.
+                commentPrefix: "<!-- vitehub-babysitter-repair:repair -->\n",
                 signal: abortSignal,
                 autoMerge: merge.mode === "auto",
                 eligible: (current) =>
                   pullRequestInbox.eligible(repository, normalizePullRequest(current)),
+                refreshDependencies: async () => {
+                  if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
+                  await assertLease();
+                  await assertRepairBase();
+                  if (presetOptions.install !== false) await installGitHubPullRequestWorkspace(providerDirectory, abortSignal);
+                  await assertLease();
+                },
+                commitRepair: async (input) => {
+                  if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
+                  await assertLease();
+                  await assertRepairBase();
+                  if (presetOptions.install !== false) await assertGitHubDependenciesCurrent(providerDirectory);
+                  const head = await prepared.commitRepair(providerDirectory, input, { verifyDependencies: presetOptions.install !== false });
+                  await assertLease();
+                  return head;
+                },
                 push: async () => {
                   if (!providerDirectory) throw new Error("The repair workspace is not prepared.");
                   await assertLease();
+                  await assertRepairBase();
                   const renew = setInterval(() => {
                     void pullRequestInbox.renew(inboxClaim, Date.now() + 2 * 60 * 60_000)
                       .then((renewed) => { if (!renewed) passController.abort(); }, () => passController.abort());
@@ -769,12 +1024,34 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                 return [name, sanitized];
               }));
               const baseCapabilities = workerSettings.capabilities;
-              const repair = repairCapability(operations, merge.mode === "auto", async (context) => {
+              const repair = repairCapability(operations, merge.mode === "auto", presetOptions.mentionAllowlist, async (context) => {
                 if (!workerSettings.box) return;
                 const session = activeProviderBox(context);
                 if (!session) throw new Error("The repair Box is not prepared.");
                 await assertLease();
                 if (!session.localWorkspace) await importBoxCommit(session.session, checkout, pullRequest.headRefOid, abortSignal);
+              }, {
+                beforeRepair: async (context, paths) => {
+                  if (!workerSettings.box) return;
+                  await assertLease();
+                  await assertRepairBase();
+                  const box = activeProviderBox(context);
+                  if (!box) throw new Error("The repair Box is not prepared.");
+                  if (!box.localWorkspace) {
+                    await importBoxCommit(box.session, checkout, pullRequest.headRefOid, abortSignal);
+                    if (paths) await importBoxRepairFiles(box.session, checkout, paths, abortSignal);
+                    else await importBoxRepairWorkspace(box.session, checkout, abortSignal);
+                  }
+                  await assertLease();
+                },
+                afterRefresh: async context => {
+                  if (!workerSettings.box || presetOptions.install === false) return;
+                  await assertLease();
+                  const box = activeProviderBox(context);
+                  if (!box) throw new Error("The repair Box is not prepared.");
+                  if (!box.localWorkspace) await publishBoxDependencies(box.session, checkout, abortSignal);
+                  await assertLease();
+                },
               });
               // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Capability inputs accept either a static list or resolver function at this runtime boundary.
               const workerCapabilities = typeof baseCapabilities === "function"
@@ -838,25 +1115,32 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
                   },
                   ...(workerSettings.box ? undefined : { launch: async (context: AgentProviderLaunchContext) => {
                     if (context.purpose !== "inspection") {
-                      if (!preparedDirectories.has(context.cwd)) {
-                        await prepared.prepareWorkspace(context.cwd);
-                        preparedDirectories.add(context.cwd);
-                      }
+                      await prepareRepairWorkspace(context.cwd);
                       providerDirectory = context.cwd;
                     }
-                    return workerDriver.launch
+                    const launch = workerDriver.launch
                       ? await resolveRuntimeValue(workerDriver.launch, context)
                       : { command: context.command };
+                    // Workspace setup and a custom launch can outlive another
+                    // owner's quota failure. Recheck before starting the provider.
+                    if (await parkBlockedModelWork()) throw new DOMException("Provider dispatch is waiting for admission.", "AbortError");
+                    return launch;
                   } }),
                 },
               };
+              if (workerSettings.box) {
+                // Box runtimes copy the host cwd when they open. Prepare the
+                // exact merge and installed graph before that copy is taken.
+                await prepareRepairWorkspace(checkout);
+                if (await parkBlockedModelWork()) throw new DOMException("Provider dispatch is waiting for admission.", "AbortError");
+              }
               const agent = workerSettings.box
                 ? defineAgent({ ...workerOptions, box: { ...workerSettings.box, checkout: undefined, cwd: checkout, requires: [...(workerSettings.box.requires ?? []), "git"] } })
                 : defineAgent({ ...workerOptions, workspace: {
                     ...baseWorkspace,
                     commit: false,
                     mode: "write",
-                    store: { provider: "local", root: checkout },
+                    store: { provider: "local", root: checkout, locks: "process" },
                   } });
               const prompt = `Repair PR #${number} in ${repository}. Expected HEAD ${pullRequest.headRefOid}, source branch ${pullRequest.headRefName}, source repository ${pullRequest.headRepository?.nameWithOwner ?? "unavailable"}. ${pullRequest.url}`;
               const snapshotContext = snapshotPrompt(webhookSnapshot);
@@ -877,21 +1161,26 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
               // provider session to this pass so a new checkout never
               // resumes a Codex process whose temporary cwd was deleted.
               githubRun.threadId = `${githubRun.threadId}:${runId}`;
-              const result = await runWithProviderRetry(() => runAgent(
-                agent,
-                {
-                  runtime: "vite",
-                  run: githubRun,
-                  memo: (_key, create) => create(),
-                  waitUntil: () => {},
-                },
-                {
-                  abortSignal,
-                  context,
-                  messages: [createMessage({ role: "user", text: userMessage })],
-                },
-                { schedule: { ...schedule, runId }, output: "drained" },
-              ), abortSignal);
+              const result = await runWithProviderRetry(async () => {
+                // Run metadata and retry backoff can outlive a sibling admission
+                // block. Check each Box dispatch immediately before runAgent.
+                if (workerSettings.box && await parkBlockedModelWork()) throw new DOMException("Provider dispatch is waiting for admission.", "AbortError");
+                return await runAgent(
+                  agent,
+                  {
+                    runtime: "vite",
+                    run: githubRun,
+                    memo: (_key, create) => create(),
+                    waitUntil: () => {},
+                  },
+                  {
+                    abortSignal,
+                    context,
+                    messages: [createMessage({ role: "user", text: userMessage })],
+                  },
+                  { schedule: { ...schedule, runId }, output: "drained" },
+                );
+              }, abortSignal);
               const validated = babysitterPassResultSchema["~standard"].validate(result);
               if ("issues" in validated)
                 throw new Error("Babysitter returned an invalid pass result.");
@@ -902,37 +1191,50 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
             { signal: passSignal, timeout: 60 * 60 * 1000 },
           );
 
+          if (modelWorkParked) return;
+
           const current = await pullRequestInbox.get(repository, number);
           const assessed = passResult?.wait?.kind !== "external" && !pushedHead && disposition === "park" && passResult?.reviewedHead === pullRequest.headRefOid
             && current?.pr?.head?.sha === pullRequest.headRefOid && await pullRequestInbox.isClaimCurrent(inboxClaim);
           if (assessed) await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, { head: pullRequest.headRefOid, evidenceKey: mergeReviewEvidenceKey(inboxClaim.snapshot, waitPolicy) });
+          let recorded = false;
           const terminal = current?.status === "terminal";
           if (terminal) {
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, terminal: true });
           } else if (pushedHead) {
             outcome = "waiting";
-            await parkOnPushedHead(inboxClaim, resultText, pushedHead);
+            recorded = await parkOnPushedHead(inboxClaim, resultText, pushedHead);
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && passResult?.wait?.kind === "external") {
             outcome = "waiting";
             await pullRequestInbox.setMeta(`review-assessment:${repository}#${number}`, null);
-            await pullRequestInbox.finish(inboxClaim, { text: resultText,
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText,
               wait: await externalWait(inboxClaim.snapshot, passResult.wait.wake, passResult.wait.reason) });
           } else if (disposition === "park" && current?.pr?.head?.sha === pullRequest.headRefOid && (passResult?.wait?.kind === "checks" && passResult.wait.headSha === pullRequest.headRefOid
             || passResult?.waitForChecksHead === pullRequest.headRefOid || hasPendingChecks(inboxClaim.snapshot, waitPolicy))) {
             // A reproduced external gate waits on this head until its evidence changes.
             outcome = "waiting";
             // Evidence that changed during the pass makes this wait stale, and the PR stays claimable.
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, progress: { kind: "no-progress" },
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, progress: { kind: "no-progress" },
               wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else if (assessed) {
             outcome = "waiting";
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), ...(assessed && merge.mode === "direct" ? { retryAt: Date.now() + 120_000 } : {}) } });
           } else {
             // A park that names no external gate still consumed a pass without progress.
             outcome = "retry";
-            await pullRequestInbox.finish(inboxClaim, { text: resultText, retry: true, progress: { kind: "no-progress" } });
+            recorded = await pullRequestInbox.finish(inboxClaim, { text: resultText, retry: true, progress: { kind: "no-progress" } });
+          }
+          if (recorded && ciRecovery?.state === "blocked" && ciRecovery.permission) {
+            await pullRequestInbox.setMeta(`ci-permission-fallback:v1:${inboxClaim.snapshot.repository}:${inboxClaim.snapshot.pr?.head?.sha ?? ""}`, { consumedAt: Date.now(), evidenceKey: fallbackEvidenceKey });
           }
         } catch (error) {
+          if (modelWorkParked) return;
+          if (error instanceof GitHubWorkspaceInstallError) {
+            outcome = "waiting";
+            await pullRequestInbox.finish(inboxClaim, { text: error.message, wait: { ...createCheckWait(inboxClaim.snapshot, waitPolicy), kind: "external", reason: error.message, retryAt: Date.now() + 300_000 } });
+            schedulerError("babysitter.install.failed", error, owner);
+            return;
+          }
           if (pushedHead && (await pullRequestInbox.get(repository, number))?.status !== "terminal") {
             // The repair reached GitHub. Its checks and reviews resume the PR.
             outcome = "waiting";
@@ -975,13 +1277,21 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
         } finally {
           clearTimeout(pushedAt);
           stopPullRequestWatch();
-          schedulerEvent("babysitter.owner.finished", {
-            durationMs: Date.now() - startedAt,
-            outcome,
-            ...owner,
-          });
-          active.delete(`${repository}#${number}`);
-          options.wake?.();
+          // A rejected or ambiguous host merge retains its durable attempt
+          // fence, but a finished owner must never retain a queue lease.
+          // Normal finish/release paths have already cleared this token.
+          try {
+            await pullRequestInbox.release(inboxClaim);
+          } finally {
+            // State-store cleanup and event callbacks cannot retain process capacity.
+            active.delete(`${repository}#${number}`);
+            schedulerEvent("babysitter.owner.finished", {
+              durationMs: Date.now() - startedAt,
+              outcome,
+              ...owner,
+            });
+            options.wake?.();
+          }
         }
       }),
     )

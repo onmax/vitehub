@@ -18,8 +18,9 @@ import { useRegisteredWorkspace } from "./registry.ts"
 import { createWorkspace } from "./workspace.ts"
 import { attachWorkspaceSourceRequestExecution, getWorkspaceSourceRequestExecution } from "../sources/request-execution.ts"
 import { forwardWorkspaceStoreTarget, workspaceStoreTarget, type WorkspaceStoreTargetCarrier } from "../storage/target.ts"
+import { assertPublicWorkspaceMetaKey } from "../storage/metadata-keys.ts"
 import { setWorkspaceRawWriteTarget } from "../storage/raw-write-target.ts"
-import { forwardWorkspaceMetadataTarget, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
+import { forwardWorkspaceMetadataTarget, resolveWorkspaceMetadataTarget, workspaceInternalMetadataCapability, workspaceMetadataTarget, type WorkspaceMetadataTargetCarrier } from "../storage/metadata-target.ts"
 import { createHostedWorkspaceSession } from "../session/host.ts"
 
 import type { Tool, ToolSet } from "ai"
@@ -200,7 +201,7 @@ export interface WritableWorkspaceFacade<Name extends WorkspaceName = WorkspaceN
   getMeta?(key: string): Promise<unknown>
   materializeSources(options?: WorkspaceMaterializeSourcesOptions): Promise<WorkspaceMaterializeSourcesResult>
   publish(options?: WorkspacePublishOptions): Promise<void>
-  setMeta?(key: string, value: unknown): Promise<void>
+  setMeta?(key: string, value: unknown, capability?: symbol): Promise<void>
   snapshot(options?: SnapshotOptions): Promise<WorkspaceSnapshot>
   startSession(options?: WorkspaceSessionOptions): Promise<WorkspaceSession>
   sync(options: WorkspaceSyncOptions): Promise<WorkspaceSourceSyncResult>
@@ -391,8 +392,8 @@ function createLazyWorkspace(name: WorkspaceName, definition?: WorkspaceDefiniti
     async getMeta(key) {
       return await (await resolveWorkspace()).getMeta?.(key)
     },
-    async setMeta(key, value) {
-      await (await resolveWorkspace()).setMeta?.(key, value)
+    async setMeta(key, value, capability?: typeof workspaceInternalMetadataCapability) {
+      await (await resolveWorkspace()).setMeta?.(capability === workspaceInternalMetadataCapability ? key : assertPublicWorkspaceMetaKey(key), value, capability)
     },
     async startSession(options) {
       return await (await resolveSyncedWorkspace()).startSession(options)
@@ -649,7 +650,7 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
     tools.none = emptyTools
     // SAFETY: The writable facade delegates all operations to the lazy Workspace and carries its Store accessor.
     const facade = {
-      [workspaceMetadataTarget]: async () => await (workspace as WorkspaceMetadataTargetCarrier)[workspaceMetadataTarget]?.(),
+      [workspaceMetadataTarget]: async () => await resolveWorkspaceMetadataTarget(workspace),
       [workspaceStoreTarget]: async () => {
         return await (workspace as Workspace & WorkspaceStoreTargetCarrier)[workspaceStoreTarget]?.()
       },
@@ -664,12 +665,13 @@ export function useWorkspace<Name extends WorkspaceName>(name: Name, options?: U
       getMeta: async key => await workspace.getMeta?.(key),
       materializeSources: async options => await materializeWorkspaceSources(workspace, options),
       publish: async options => await workspace.publish(options),
-      setMeta: async (key, value) => await workspace.setMeta?.(key, value),
+      setMeta: async (key, value, capability?: typeof workspaceInternalMetadataCapability) => await workspace.setMeta?.(key, value, capability),
       snapshot: async options => await workspace.snapshot(options),
       startSession: async options => await workspace.startSession(options),
       sync: async options => await workspace.sync(options),
       tools,
     } as WritableWorkspaceFacade<Name> & WorkspaceStoreTargetCarrier
+    forwardWorkspaceMetadataTarget(workspace, facade)
     setWorkspaceRawWriteTarget(facade, facade.fs)
     return facade
   }

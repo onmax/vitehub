@@ -33,6 +33,10 @@ export default defineConfig({
         replacement: resolve(workspaceRoot, "packages/ui/styles.css"),
       },
       {
+        find: /^@vite-hub\/ui\/primitive-rail$/,
+        replacement: resolve(workspaceRoot, "packages/ui/src/primitive-rail.ts"),
+      },
+      {
         find: /^@vite-hub\/ui$/,
         replacement: resolve(workspaceRoot, "packages/ui/src/index.ts"),
       },

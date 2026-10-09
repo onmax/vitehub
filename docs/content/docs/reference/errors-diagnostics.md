@@ -100,6 +100,10 @@ Replace native `TypeError` and `RangeError` checks for ViteHub-owned defects wit
 | `AGENT_CAPABILITY_DYNAMIC_UNSUPPORTED` | `AGENT_C0010` |
 | `AGENT_TOOL_POLICY_RETRYABLE` | `AGENT_R0003` |
 
+Code Host uses `AGENT_C0011` for invalid options. Diagnostics `AGENT_R0941` through `AGENT_R0945` cover credentials, repository access, context, requests and tool input. See [Code Host diagnostics](/docs/agents/capabilities/code-host#diagnostics).
+
+The `gitlab()` and `forgejo()` Channels use `AGENT_R0946` for a missing webhook secret, failed host requests, and activity errors. See [Code Host Channels](/docs/agents/code-host-channels#limits).
+
 ## Agent public errors
 
 Agent routes and hooks expose a sanitized `AgentPublicError` beside the original

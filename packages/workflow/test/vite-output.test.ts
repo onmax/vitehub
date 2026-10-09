@@ -1445,6 +1445,7 @@ describe("Vite workflow provider outputs", () => {
 
     await execFileAsync("vp", ["build"], {
       cwd: rootDir,
+      timeout: buildOutputTestTimeout,
       env: { ...process.env, VITEHUB_VITE_MODE: "workflow" },
     })
 
@@ -1465,6 +1466,7 @@ describe("Vite workflow provider outputs", () => {
 
     await execFileAsync("vp", ["build"], {
       cwd: rootDir,
+      timeout: buildOutputTestTimeout,
       env: { ...process.env, VITEHUB_VITE_MODE: "workflow" },
     })
 
@@ -1483,6 +1485,7 @@ describe("Vite workflow provider outputs", () => {
 
     await execFileAsync("vp", ["build"], {
       cwd: rootDir,
+      timeout: buildOutputTestTimeout,
       env: { ...process.env, VITEHUB_VITE_MODE: "workflow" },
     })
 
@@ -1501,6 +1504,7 @@ describe("Vite workflow provider outputs", () => {
 
     await execFileAsync("vp", ["build"], {
       cwd: rootDir,
+      timeout: buildOutputTestTimeout,
       env: { ...process.env, VITEHUB_VITE_MODE: "workflow" },
     })
 

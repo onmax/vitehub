@@ -79,6 +79,8 @@ import { provideBrowserRuntimeEnvironment } from "../src/internal/browser-runtim
 import { createMemoryAgentInvocationStore, defineAgentInvocations } from "../src/server.ts"
 import { finalizeUiMessageStreamOutput } from "../src/stream-output.ts"
 import { applyAgentToolPolicies, withAgentToolStepReporting, withJsonCompatibleToolOutputs } from "../src/tool-runtime.ts"
+import { prepareGitHubPullRequestWorkspace } from "../src/server/github-checkout.ts"
+import { commitGitHubPullRequestWorkspace, prepareGitHubRepairBase } from "../src/server/github-repair.ts"
 
 function event(type: string, threadId: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return { payload, threadId, type, ...extra }
@@ -2466,6 +2468,23 @@ cli_auth_credentials_store = "keyring"
     else expect(session).not.toHaveProperty("approvalPolicy")
   })
 
+  it("preauthorizes only assigned host tools for unattended Codex edits", async () => {
+    const threadId = "thread-unattended-host-tools";
+    const provider = runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })]);
+    // SAFETY: This fixture uses the same host tool contract as an Agent Capability.
+    await createProviderAgentAdapter({ provider: "codex", permissions: "allow-edits-unattended" }).generate(context(threadId, {
+      tools: { pushRepair: { inputSchema: { type: "object", properties: {} }, execute: async () => ({ pushed: true }) } },
+    }) as never);
+    const args = String(createProviderRuntime.mock.lastCall?.[0].settings?.launchArgs);
+    expect(args).toContain('mcp_servers.t3-code.tools={"pushRepair"={approval_mode="approve"}}');
+    expect(args).toContain('bearer_token_env_var="T3_MCP_BEARER_TOKEN"');
+    expect(args).toContain('shell_environment_policy.set.T3_MCP_BEARER_TOKEN=""');
+    expect(args).not.toContain("shell_environment_policy.exclude=");
+    expect(createProviderRuntime.mock.lastCall?.[0].environment?.T3_MCP_BEARER_TOKEN).toEqual(expect.any(String));
+    expect(args).not.toContain("default_tools_approval_mode");
+    expect(provider.startSession).toHaveBeenCalledWith(expect.objectContaining({ runtimeMode: "auto-accept-edits", approvalPolicy: "never", mcp: undefined }));
+  });
+
   it("keeps provider session state for the lifetime of an Agent Definition", async () => {
     const agent = defineAgent({ driver: "codex", runtime: false })
 
@@ -2707,6 +2726,79 @@ cli_auth_credentials_store = "keyring"
     if (!isRuntimeRecord(result.usageRecord) || !Array.isArray(result.usageRecord.calls) || !isRuntimeRecord(result.usageRecord.calls[0])) throw new Error("Expected provider usage calls")
     expect(result.usageRecord.calls).toHaveLength(1)
     expect(result.usageRecord.calls[0].usage).toBeUndefined()
+  })
+
+  it.each(["codex", "claude-code"] as const)("uses authoritative terminal turn usage from %s after itemless snapshots", async provider => {
+    const threadId = `thread-terminal-usage-${provider}`
+    const tokenUsage = { usageStatus: "complete", usageScope: "main_agent", hasSubagents: true, inputTokens: 9, cachedInputTokens: 3, cacheCreationTokens: 1, outputTokens: 3, reasoningTokens: 1 }
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 4, outputTokens: 1 } }),
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 5, outputTokens: 2 } }),
+      event("turn.completed", threadId, { state: "completed", tokenUsage }, { turnId: "turn-1" }),
+    ])
+    const result = await createProviderAgentAdapter({ model: "test-model", provider }).generate(context(threadId) as never)
+    if (!isRuntimeRecord(result)) throw new Error("Expected provider result")
+    expect(result.usageRecord).toMatchObject({
+      model: "test-model",
+      provider,
+      raw: tokenUsage,
+      usage: {
+        inputTokens: 9, outputTokens: 3, totalTokens: 12,
+        inputTokenDetails: { cacheReadTokens: 3, cacheWriteTokens: 1 },
+        outputTokenDetails: { reasoningTokens: 1 },
+        details: { usageStatus: "complete", usageScope: "main_agent", hasSubagents: true },
+      },
+    })
+  })
+
+  it.each(["failed", "aborted"] as const)("emits partial terminal usage before a %s turn error", async terminal => {
+    const threadId = `thread-terminal-partial-${terminal}`
+    const tokenUsage = { usageStatus: "partial", usageScope: "main_agent", hasSubagents: false, inputTokens: 7, cachedInputTokens: 2, outputTokens: 3, reasoningTokens: 1 }
+    runtime(threadId, [event(terminal === "failed" ? "turn.completed" : "turn.aborted", threadId,
+      terminal === "failed" ? { state: "failed", errorMessage: "terminal failure", tokenUsage } : { reason: "terminal interruption", tokenUsage }, { turnId: "turn-1" })])
+    const events: StreamEvent[] = []
+    const read = async () => {
+      // SAFETY: The provider adapter's stream returns normalized Agent stream events.
+      const output = await createProviderAgentAdapter({ provider: "codex" }).stream!(context(threadId) as never) as AsyncIterable<StreamEvent>
+      for await (const value of output) events.push(value)
+    }
+    await expect(read()).rejects.toThrow(/terminal failure|terminal interruption/)
+    expect(events.find(value => value.type === "usage")).toMatchObject({ usageRecord: { raw: tokenUsage,
+      usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10, details: { usageStatus: "partial", usageScope: "main_agent" } } } })
+  })
+
+  it("emits terminal usage before propagating external cancellation", async () => {
+    const threadId = "thread-external-abort-usage"
+    const controller = new AbortController()
+    const failure = new Error("external cancellation")
+    const tokenUsage = { usageStatus: "partial", usageScope: "main_agent", hasSubagents: false, inputTokens: 7, outputTokens: 3 }
+    runtime(threadId, [event("turn.aborted", threadId, {
+      get reason() { controller.abort(failure); return "cancelled" },
+      tokenUsage,
+    }, { turnId: "turn-1" })])
+    const events: StreamEvent[] = []
+    const read = async () => {
+      // SAFETY: The provider adapter stream returns normalized Agent events.
+      const output = await createProviderAgentAdapter({ provider: "codex" }).stream!(context(threadId, {
+        input: { abortSignal: controller.signal, prompt: "hello" },
+      }) as never) as AsyncIterable<StreamEvent>
+      for await (const value of output) events.push(value)
+    }
+    await expect(read()).rejects.toBe(failure)
+    expect(events.filter(value => value.type === "usage")).toMatchObject([
+      { usageRecord: { usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 } } },
+    ])
+  })
+
+  it("retains measured snapshots when terminal usage is unavailable", async () => {
+    const threadId = "thread-terminal-unavailable"
+    runtime(threadId, [
+      event("thread.token-usage.updated", threadId, { usage: { inputTokens: 4, outputTokens: 1, totalProcessedTokens: 5 } }),
+      event("turn.completed", threadId, { state: "completed", tokenUsage: { usageStatus: "unavailable", usageScope: "main_agent", hasSubagents: false } }, { turnId: "turn-1" }),
+    ])
+    const result = await createProviderAgentAdapter({ provider: "codex" }).generate(context(threadId) as never)
+    if (!isRuntimeRecord(result)) throw new Error("Expected provider result")
+    expect(result.usageRecord).toMatchObject({ usage: { inputTokens: 4, outputTokens: 1, totalTokens: 5 } })
   })
 
   it("keeps accumulated usage unknown when a distinct response lacks its partition", async () => {
@@ -4499,6 +4591,184 @@ cli_auth_credentials_store = "keyring"
 
     await createProviderAgentAdapter({ provider: "codex" }).generate(runContext as never)
     expect(session.exec).toHaveBeenCalledWith("agent-browser", [], expect.objectContaining({ env: expect.objectContaining({ AGENT_BROWSER_SESSION: "managed", AGENT_BROWSER_SOCKET_DIR: "/managed/socket", VITEHUB_BROWSER_ACTIVE: "1", PATH: "/managed/bin:/caller/bin", LD_LIBRARY_PATH: "/managed/lib:/caller/lib" }) }))
+  })
+
+  it.each([
+    { provider: "codex" as const, merge: false },
+    { provider: "codex" as const, merge: true },
+    { provider: "claude-code" as const, merge: false },
+    { provider: "claude-code" as const, merge: true },
+  ])("preserves a $provider checkout restored by launch in an owned Workspace, merge=$merge", async ({ provider, merge }) => {
+    const source = await mkdtemp(join(tmpdir(), "vitehub-launch-checkout-"))
+    let root = ""
+    const git = (cwd: string, ...args: string[]) => {
+      const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout.trim()
+    }
+    try {
+      git(source, "init", "-q", "-b", "main")
+      git(source, "config", "user.name", "Test")
+      git(source, "config", "user.email", "test@localhost")
+      git(source, "remote", "add", "origin", "https://github.com/acme/portal.git")
+      await writeFile(join(source, "AGENTS.md"), "native instructions")
+      await writeFile(join(source, "CLAUDE.md"), "native Claude instructions")
+      await writeFile(join(source, "file.txt"), "original\n")
+      git(source, "add", "-A")
+      git(source, "commit", "-qm", "initial")
+      git(source, "branch", "feature")
+      await writeFile(join(source, "file.txt"), "base edit\n")
+      git(source, "add", "-A")
+      git(source, "commit", "-qm", "base change")
+      const base = git(source, "rev-parse", "HEAD")
+      git(source, "checkout", "-q", "feature")
+      await writeFile(join(source, "file.txt"), "PR edit\n")
+      git(source, "add", "-A")
+      git(source, "commit", "-qm", "PR change")
+      const expectedHead = git(source, "rev-parse", "HEAD")
+      const session = {
+        close: vi.fn(async () => undefined),
+        commit: vi.fn(async () => undefined),
+        diff: vi.fn(async () => ({ entries: [] })),
+        exec: vi.fn(async (command: string, args: string[] = []) => {
+          const result = spawnSync(command, args, { cwd: root, encoding: "utf8" })
+          return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+        }),
+        readFile: vi.fn(async () => new Uint8Array()),
+      }
+      const workspace = {
+        fs: {},
+        tools: {},
+        startSession: vi.fn(async ({ target }: { target: string }) => {
+          root = target
+          await writeFile(join(root, "file.txt"), "PR edit\n")
+          return session
+        }),
+      }
+      const threadId = `thread-launch-checkout-${provider}-${merge}`
+      runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+        async onSendTurn() {
+          await writeFile(join(root, "file.txt"), "repaired\n")
+          const repairedHead = await commitGitHubPullRequestWorkspace(root, { message: "repair", paths: ["file.txt"] }, { expectedHead })
+          expect(git(root, "rev-parse", `${repairedHead}^1`)).toBe(expectedHead)
+          if (merge) expect(git(root, "rev-parse", `${repairedHead}^2`)).toBe(base)
+          expect(git(root, "log", "--format=%s")).not.toContain("vitehub provider baseline")
+          expect(git(root, "show", "HEAD:AGENTS.md")).toBe("native instructions")
+          expect(git(root, "show", "HEAD:CLAUDE.md")).toBe("native Claude instructions")
+          expect(git(root, "ls-tree", "-r", "--name-only", "HEAD")).not.toContain("vitehub-system-prompt")
+          expect(git(root, "show", "HEAD:file.txt")).toBe("repaired")
+        },
+      })
+      await createProviderAgentAdapter({
+        instructions: "generated repair instructions",
+        launch: async ({ command, cwd }) => {
+          expect(cwd).toBe(root)
+          await prepareGitHubPullRequestWorkspace(source, root, { restoreInstructions: true })
+          if (merge) await prepareGitHubRepairBase(root, { expectedHead, base })
+          return { command }
+        },
+        provider,
+      }).generate(context(threadId, { workspace, workspaceDefinition: { mode: "write", name: "repair" }, workspaceMode: "write" }) as never)
+      expect(session.exec.mock.calls.some(([command, args = []]) => command === "git" && args.includes("vitehub provider baseline"))).toBe(false)
+    }
+    finally {
+      await rm(source, { recursive: true, force: true })
+    }
+  })
+
+  it.each(["codex", "claude-code"] as const)("baselines an ordinary committed root created by a custom $provider launch", async provider => {
+    let root = ""
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout.trim()
+    }
+    const session = {
+      close: vi.fn(async () => undefined), commit: vi.fn(async () => undefined),
+      diff: vi.fn(async () => ({ entries: [] })), readFile: vi.fn(async () => new Uint8Array()),
+      exec: vi.fn(async (command: string, args: string[] = []) => {
+        const result = spawnSync(command, args, { cwd: root, encoding: "utf8" })
+        return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout }
+      }),
+    }
+    const workspace = { fs: {}, tools: {}, startSession: vi.fn(async ({ target }: { target: string }) => {
+      root = target
+      await writeFile(join(root, "source.txt"), "plain Workspace source")
+      return session
+    }) }
+    const threadId = `thread-custom-launch-baseline-${provider}`
+    runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+      async onSendTurn() {
+        expect(git("log", "-1", "--format=%s")).toBe("vitehub provider baseline")
+        expect(git("rev-list", "--count", "HEAD")).toBe("2")
+      },
+    })
+    await createProviderAgentAdapter({ provider, instructions: "generated instructions", launch: ({ command }) => {
+      git("config", "user.name", "Test")
+      git("config", "user.email", "test@localhost")
+      git("add", "-A")
+      git("commit", "-qm", "custom launcher history")
+      return { command }
+    } }).generate(context(threadId, { workspace, workspaceDefinition: { name: "ordinary", mode: "write" }, workspaceMode: "write" }) as never)
+  })
+
+  it.each(["codex", "claude-code"] as const)("prepares the %s checkout merge before injecting instructions", async provider => {
+    const root = await mkdtemp(join(tmpdir(), "vitehub-instruction-merge-"))
+    const threadId = `thread-instruction-merge-${provider}`
+    const git = (...args: string[]) => {
+      const result = spawnSync("git", ["-C", root, ...args], { encoding: "utf8" })
+      if (result.status !== 0) throw new Error(result.stderr)
+      return result.stdout
+    }
+    try {
+      git("init", "-q", "-b", "target")
+      git("config", "user.name", "Test")
+      git("config", "user.email", "test@localhost")
+      await writeFile(join(root, "AGENTS.md"), "original instructions")
+      await writeFile(join(root, "CLAUDE.md"), "original Claude instructions")
+      git("add", "-A")
+      git("commit", "-qm", "initial")
+      git("branch", "feature")
+      await writeFile(join(root, "AGENTS.md"), "updated source instructions")
+      await writeFile(join(root, "CLAUDE.md"), "updated source Claude instructions")
+      git("add", "-A")
+      git("commit", "-qm", "update target instructions")
+      git("checkout", "-q", "feature")
+      await writeFile(join(root, "feature.txt"), "feature")
+      git("add", "-A")
+      git("commit", "-qm", "feature")
+      const originalFlags = git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")
+      runtime(threadId, [event("turn.completed", threadId, { state: "completed" }, { turnId: "turn-1" })], {
+        async onSendTurn() {
+          expect(git("rev-parse", "MERGE_HEAD").trim()).toBe(git("rev-parse", "target").trim())
+          expect(git("show", ":AGENTS.md")).toBe("updated source instructions")
+          expect(git("show", ":CLAUDE.md")).toBe("updated source Claude instructions")
+          const promptPath = provider === "codex" ? "AGENTS.md" : ".claude/vitehub-system-prompt.md"
+          expect(await readFile(join(root, promptPath), "utf8")).toBe("generated repair instructions")
+          await writeFile(join(root, "repair.txt"), "repair")
+          git("add", "-A")
+          git("commit", "-qm", "finish repair merge")
+          expect(git("show", "HEAD:AGENTS.md")).toBe("updated source instructions")
+          expect(git("show", "HEAD:CLAUDE.md")).toBe("updated source Claude instructions")
+        },
+      })
+      await createProviderAgentAdapter({
+        cwd: root,
+        instructions: "generated repair instructions",
+        launch: ({ command }) => {
+          git("merge", "--no-commit", "--no-ff", "target")
+          return { command }
+        },
+        provider,
+      }).generate(context(threadId) as never)
+      expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe("updated source instructions")
+      expect(await readFile(join(root, "CLAUDE.md"), "utf8")).toBe("updated source Claude instructions")
+      expect(git("ls-files", "-v", "--", "AGENTS.md", "CLAUDE.md")).toBe(originalFlags)
+      expect(git("status", "--porcelain")).toBe("")
+    }
+    finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it.each(["codex", "claude-code"] as const)("keeps %s generated root checkout files out of Agent commits", async (provider) => {
