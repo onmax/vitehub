@@ -29,14 +29,14 @@ const primitiveSidebarGroupOrder: Array<string | null> = [
   "Deploy and operate",
 ];
 
-const primitiveLaneGroups: Record<string, string> = {
+const primitiveLaneGroups = new Map(Object.entries({
   Tutorial: "Learn",
   Concepts: "Learn",
   Guides: "Build",
   Reference: "Build",
   Deploy: "Deploy and operate",
   Operate: "Deploy and operate",
-};
+}));
 
 /** Platform topics are reached from Get started and the catalog, instead of adding rail entries. */
 export function getDocsRailCatalog(sections: DocsSection[]) {
@@ -116,7 +116,7 @@ export function getDocsSidebarGroups(section: DocsSection): DocsSidebarGroup[] {
     if (page.navigation === false) continue;
     const lane = primitivePageLane(section, page);
     const label = primitiveCategories.has(section.category || "") && lane
-      ? primitiveLaneGroups[lane] || lane
+      ? primitiveLaneGroups.get(lane) || lane
       : lane;
     groups.set(label, [...(groups.get(label) || []), page]);
   }

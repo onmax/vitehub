@@ -21,7 +21,7 @@ const props = withDefaults(
 );
 
 // Fixed panels keep their own viewport size. Small controls need much less space.
-const previewHeights: Record<string, number> = {
+const previewHeights = new Map(Object.entries({
   CapabilityInspectorExample: 24,
   CapabilityInspectorFallbackExample: 20,
   ChatAppBlock: 36,
@@ -66,8 +66,8 @@ const previewHeights: Record<string, number> = {
   ToolListExample: 20,
   TraceExample: 18,
   TraceFailedExample: 18,
-};
-const previewHeight = computed(() => props.height ?? previewHeights[props.name] ?? 8);
+}));
+const previewHeight = computed(() => props.height ?? previewHeights.get(props.name) ?? 8);
 
 const exampleModules = import.meta.glob("./examples/*.vue");
 // SAFETY: Vite's raw eager glob returns each matching file's default export as a string.

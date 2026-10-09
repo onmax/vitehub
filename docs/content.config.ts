@@ -27,6 +27,8 @@ const pageSchema = z.object({
     to: z.string(),
     target: z.string().optional(),
   })).optional(),
+  modifiedAt: z.string().optional(),
+  sitemap: z.boolean().optional(),
 });
 
 // Nuxt Content reads collections at config parse time, before the module setup runs.

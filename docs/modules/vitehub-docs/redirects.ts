@@ -82,7 +82,7 @@ const agentCapabilities = {
   "web-search": "web-search",
 } satisfies Record<string, string>;
 
-const movedLearningPages: Record<string, string> = {
+const movedLearningPages = new Map(Object.entries({
   "/docs/getting-started/built-for-vue": "/docs/ui/built-for-vue",
   "/docs/frameworks-hosts/migrate-from-nuxthub": "/docs/getting-started/migrate-from-nuxthub",
   "/docs/getting-started/concepts/workspace-and-sources": "/docs/workspace/concepts",
@@ -92,7 +92,7 @@ const movedLearningPages: Record<string, string> = {
   "/docs/getting-started/concepts/runtime-helpers-and-stable-imports": "/docs/reference/runtime-helpers",
   "/docs/getting-started/concepts/definitions-and-discovery": "/docs/development/definition-discovery",
   "/docs/getting-started/concepts/vite-integrations-and-provider-output": "/docs/development/integrations-and-output",
-};
+}));
 
 export const docsPageRedirects = {
   "/blog/agents": "/docs/getting-started/first-agent",
@@ -115,8 +115,8 @@ export const docsPageRedirects = {
   ...Object.fromEntries(movedServerPrimitives.map(id => [`/docs/server-primitives/${id}`, `/docs/${id}`])),
   ...Object.fromEntries(Object.entries(primitiveCapabilities).map(([id, section]) => [`/docs/capabilities/${id}`, `/docs/${section}/agent-capability`])),
   ...Object.fromEntries(Object.entries(agentCapabilities).map(([id, page]) => [`/docs/capabilities/${id}`, `/docs/agents/capabilities/${page}`])),
-  ...Object.fromEntries(Object.entries(startGroups).flatMap(([dir, pages]) => pages.map(page => [`/docs/${dir}/${page}`, movedLearningPages[`/docs/getting-started/${dir}/${page}`] || `/docs/getting-started/${dir}/${page}`]))),
-  ...movedLearningPages,
+  ...Object.fromEntries(Object.entries(startGroups).flatMap(([dir, pages]) => pages.map(page => [`/docs/${dir}/${page}`, movedLearningPages.get(`/docs/getting-started/${dir}/${page}`) || `/docs/getting-started/${dir}/${page}`]))),
+  ...Object.fromEntries(movedLearningPages),
 } satisfies Record<string, string>;
 
 /** Fragments that moved with the Blob page split. The old overview redirect keeps the hash. */
