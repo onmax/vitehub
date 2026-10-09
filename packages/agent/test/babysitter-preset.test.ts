@@ -59,7 +59,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
-async function fixture(autoMerge = false, discovered = false, preset: { operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<Pick<BabysitterAdmissionResult, "accepting" | "hostOnly" | "reason" | "retryAt" | "detail">>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
+async function fixture(autoMerge = false, discovered = false, preset: { resolveAfterPush?: string; operationInputs?: Record<string, unknown>[]; expectedOperationErrorAt?: number; operationCount?: number; inboxPath?: string; activityBarrier?: Promise<void>; allowOperationAfterAdmission?: boolean; remoteBox?: boolean; boxCheckout?: boolean; box?: boolean; actionsDenied?: boolean; admission?: () => Promise<Pick<BabysitterAdmissionResult, "accepting" | "hostOnly" | "reason" | "retryAt" | "detail">>; agentName?: string; result?: Record<string, unknown>; merge?: unknown; driver?: string; mergeableState?: string; baseBranchHead?: string; base?: string; parents?: unknown[]; postPushGraceMs?: number; providerRetryDelayMs?: number; mentionAllowlist?: string[]; options?: Record<string, unknown>; driverEnv?: Record<string, string>; gitWorkspace?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "vitehub-babysitter-preset-"));
   roots.push(root);
   const checkout = join(root, "checkout");
@@ -371,6 +371,11 @@ async function fixture(autoMerge = false, discovered = false, preset: { operatio
               if (preset.expectedOperationErrorAt === count || onAdmission && !preset.allowOperationAfterAdmission) expect(result.isError, JSON.stringify(result)).toBe(true);
               else if (!checkoutController.signal.aborted) expect(result.isError, JSON.stringify(result)).not.toBe(true);
             }
+          }
+          if (preset.resolveAfterPush) {
+            await runtime.inbox.ingest("push-before-resolution", "pull_request", { repository: { full_name: "acme/app" }, action: "synchronize", pull_request: pr() });
+            const result = await client.callTool({ name: "resolveReviewThread", arguments: { id: preset.resolveAfterPush } });
+            expect(result.isError, JSON.stringify(result)).not.toBe(true);
           }
         } finally {
           await client.close();
@@ -837,6 +842,62 @@ describe("Babysitter preset runtime", () => {
       expect(f.passes).toHaveLength(1);
       expect((await f.runtime.inbox.get("acme/app", 12))?.status).toBe("waiting");
       expect(f.command.mock.calls.some(([args]) => args.includes("PUT"))).toBe(false);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it.each(["read", "metadata"])("preserves a pushed external blocker when dependency %s fails", async failure => {
+    const wake = { kind: "checks", repository: "acme/app", headSha: "e".repeat(40) };
+    const reason = "Dependency release required.";
+    const f = await fixture(false, false, { merge: { strategy: "direct", ready: () => "repair pending" },
+      result: { disposition: "park", text: reason, wait: { kind: "external", reason, wake } } });
+    f.choose("pushRepair");
+    f.onRepair(async () => {
+      await f.runtime.inbox.setMeta("review-assessment:acme/app#12", { version: 2, feedback: [] });
+    });
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      if (failure === "read" && args.join(" ").includes(`/commits/${wake.headSha}/`)) throw new Error("Dependency read unavailable");
+      return await command(args, request);
+    });
+    const setMeta = f.runtime.inbox.setMeta.bind(f.runtime.inbox);
+    vi.spyOn(f.runtime.inbox, "setMeta").mockImplementation(async (key, value) => {
+      if (failure === "metadata" && key === "dependency:acme/app#12") throw new Error("Dependency metadata unavailable");
+      return await setMeta(key, value);
+    });
+    try {
+      await f.reconcile();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait).toMatchObject({ kind: "external", headSha: f.pr().head.sha, reason, wake });
+      expect(await f.runtime.inbox.meta("review-assessment:acme/app#12")).toBeNull();
+      expect(f.events.mock.calls.some(([name]) => name === "babysitter.external_wait.setup_failed")).toBe(true);
+    } finally { await f.runtime.inbox.close(); }
+  });
+
+  it("uses resolved thread evidence for a pushed external wait", async () => {
+    const f = await fixture(false, false, { resolveAfterPush: "PRRT_1",
+      result: { disposition: "park", text: "Release pending", wait: { kind: "external", reason: "Release pending" } } });
+    f.choose("pushRepair");
+    let resolved = false;
+    const command = f.command.getMockImplementation()!;
+    f.command.mockImplementation(async (args, request) => {
+      const query = args.join(" ");
+      if (query.includes("reviewThreads")) return { stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: {
+        nodes: [{ id: "PRRT_1", isResolved: resolved, comments: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } } }), stderr: "" };
+      if (query.includes("node(id:")) return { stdout: JSON.stringify({ data: { node: { pullRequest: { id: "PR_12" }, isResolved: resolved } } }), stderr: "" };
+      if (query.includes("resolveReviewThread(input:")) {
+        resolved = true;
+        return { stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: "PRRT_1" } } } }), stderr: "" };
+      }
+      return await command(args, request);
+    });
+    try {
+      await f.reconcile();
+      expect((await f.runtime.inbox.get("acme/app", 12))?.threads[0]?.isResolved).toBe(true);
+      await f.runtime.inbox.ingest("resolved-push", "pull_request", { repository: { full_name: "acme/app" }, action: "synchronize", pull_request: f.pr() });
+      await f.reconcile();
+      expect(f.passes).toHaveLength(1);
+      expect((await f.runtime.inbox.get("acme/app", 12))?.wait?.kind).toBe("external");
     } finally { await f.runtime.inbox.close(); }
   });
 
