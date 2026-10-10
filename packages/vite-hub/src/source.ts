@@ -248,7 +248,9 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
   }
 }
 
-type AnyCollectionSource = CollectionSource<unknown, object, CollectionCursorValue, CollectionCursorValue, object> | ProviderCollectionSource<unknown, object, object>
+type AnyCollectionSource =
+  | { load: (...args: never[]) => unknown; cursor: (item: never) => CollectionCursorValue; cursorSchema: StandardSchemaV1<CollectionCursorValue, CollectionCursorValue>; pagination?: never; querySchema?: StandardSchemaV1<object, object>; get?: CollectionSource<never, never, never>["get"]; defaultLimit?: number; maxLimit?: number }
+  | { load: (...args: never[]) => unknown; pagination: "provider"; querySchema?: StandardSchemaV1<object, object>; get?: ProviderCollectionSource<never, never>["get"]; defaultLimit?: number; maxLimit?: number }
 type SourceItem<TSource extends AnyCollectionSource> =
   TSource extends CollectionSource<infer TItem, object, CollectionCursorValue, CollectionCursorValue, object> ? TItem :
     TSource extends ProviderCollectionSource<infer TItem, object, object> ? TItem : never

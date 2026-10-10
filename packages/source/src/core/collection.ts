@@ -463,7 +463,7 @@ export function defineCollection<
   async function page(request: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>> {
     request.signal?.throwIfAborted()
     const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
-    if (provider && request.cursor !== undefined && (!request.cursor || typeof request.cursor !== "string")) throw new CollectionCursorError()
+    if (provider && request.cursor !== undefined && typeof request.cursor !== "string") throw new CollectionCursorError()
     let pageItems: readonly TSourceItem[]
     let nextCursor: string | null
     if (provider) {
@@ -474,7 +474,7 @@ export function defineCollection<
         signal: request.signal,
       })
       request.signal?.throwIfAborted()
-      if (!result || Array.isArray(result) || !Array.isArray(result.items) || !(result.nextCursor === null || (typeof result.nextCursor === "string" && result.nextCursor.length > 0))) {
+      if (!result || Array.isArray(result) || !Array.isArray(result.items) || !(result.nextCursor === null || typeof result.nextCursor === "string")) {
         throw new TypeError("[vitehub] Provider Collection load() must return { items, nextCursor: string | null }.")
       }
       if (result.items.length > limit) throw new TypeError("[vitehub] Provider Collection returned more items than its requested limit.")
@@ -522,7 +522,7 @@ export function defineCollection<
         do {
           options.signal?.throwIfAborted()
           const result = await page({ ...options, cursor, query: parsed })
-          items.push(...result.items.map(project))
+          for (const item of result.items) items.push(project(item))
           cursor = result.nextCursor ?? undefined
           if (cursor !== undefined) {
             if (cursors.has(cursor)) throw new CollectionCursorError("[vitehub] Collection loader repeated a pagination cursor.")
