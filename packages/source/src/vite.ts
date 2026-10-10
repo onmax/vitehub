@@ -380,6 +380,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   indexWrites(parsed.program as AstNode)
   let readPosition = Infinity
   const activeFunctions = new Set<AstNode>()
+  const executedFunctions = new Set<AstNode>()
   const parameterValues = new Map<Binding, AstNode | undefined>()
   let exported = moduleScope.bindings.get(exportName)
   for (const statement of parsed.program.body) {
@@ -434,11 +435,15 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     return node ?? undefined
   }
   const writeState = (write: Write): "skip" | "known" | "unknown" => {
-    if ((write.node.start ?? Infinity) >= readPosition || (write.fn && !activeFunctions.has(write.fn))) return "skip"
+    // A completed helper may have used parameters or closed-over state that is
+    // no longer available here. Its writes must not establish a public route.
+    if (write.fn && !activeFunctions.has(write.fn)) return executedFunctions.has(write.fn) ? "unknown" : "skip"
+    if ((write.node.start ?? Infinity) >= readPosition) return "skip"
     const previousPosition = readPosition
     readPosition = write.node.start ?? readPosition
     let state: "known" | "unknown" = "known"
     for (const guard of write.guards) {
+      readPosition = guard.test?.start ?? write.node.start ?? readPosition
       const test = unwrap(guard.test)
       if (test?.type !== "Literal") state = "unknown"
       else if (Boolean(test.value) !== guard.truthy) {
@@ -535,9 +540,11 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         const argument = args[index]
         const value = unwrap(argument)
         if (argument && !(value?.type === "Literal" && value.value === undefined && param.type === "AssignmentPattern")) parameterValues.set(binding, argument)
-        else parameterValues.delete(binding)
+        else if (param.type === "AssignmentPattern") parameterValues.delete(binding)
+        else parameterValues.set(binding, { type: "Literal", value: undefined })
       }
       activeFunctions.add(fn)
+      executedFunctions.add(fn)
       const result = findRoute(Array.isArray(fn.body) ? undefined : fn.body, next)
       activeFunctions.delete(fn)
       parameterValues.clear()
@@ -547,6 +554,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (value.type === "BlockStatement") {
       for (const statement of Array.isArray(value.body) ? value.body : []) {
         if (statement.type === "ReturnStatement") return findRoute(statement.argument ?? statement.expression, next)
+        if (statement.type === "ExpressionStatement" && statement.expression) findRoute(statement.expression, next)
+        if (statement.type === "VariableDeclaration") {
+          for (const declaration of statement.declarations ?? []) if (declaration.init) findRoute(declaration.init, next)
+        }
         // Conditional control flow is not equivalent to the first syntactic return.
         if (["IfStatement", "SwitchStatement", "TryStatement", "ForStatement", "WhileStatement"].includes(statement.type ?? "")) return undefined
       }

@@ -7,6 +7,7 @@ import { expect, it } from "vitest"
 import { prepareSourceGeneration } from "../src/vite.ts"
 
 it.each([
+  "function make(route?: false) { return defineCollection(load, { route }) }; export const articles = make()",
   "const options = {}; function unused() { options.route = false }; export const articles = defineCollection(load, options)",
   "let route = undefined; function unused() { route = false }; export const articles = defineCollection(load, { route })",
   "const options = {}; if (false) options.route = false; export const articles = defineCollection(load, options)",
@@ -70,6 +71,8 @@ it.each([
   "const $articles = ((defineCollection(load, { route: false }))); export { $articles as articles }",
   "export { articles }; const articles: Collection<Row> = defineCollection(load, { route: false })",
   "export const articles =\n defineCollection(load, { route: false })",
+  "function make() { function setRoute() { options.route = false }; setRoute(); return defineCollection(load, options) }; const options = {}; export const articles = make()",
+  "let enabled = true; const options = {}; if (enabled) { enabled = false; options.route = false }; export const articles = defineCollection(load, options)",
 ])("preserves nested and indirect route opt-outs in %s", async (source) => {
   const projectRoot = await mkdtemp(join(tmpdir(), "source-routes-"))
   try {

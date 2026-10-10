@@ -189,6 +189,7 @@ export interface ProviderCollectionOptions<TSourceItem> {
   maxLimit?: number
   get?: (key: string, options: CollectionReadOptions) => Promise<TSourceItem | null | undefined>
   querySchema?: StandardSchemaV1<unknown, object>
+  transform?: CollectionTransform<TSourceItem>
 }
 
 export type ProviderCollectionLoader<TSourceItem, TQuery extends object> = (

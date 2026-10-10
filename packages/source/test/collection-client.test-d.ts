@@ -5,12 +5,21 @@ import { defineCollection } from "../src/index.ts"
 import { useCollection } from "../src/client.ts"
 
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { CollectionQuery, CollectionRequestQuery } from "../src/index.ts"
+import type { CollectionQuery, CollectionRequestQuery, ProviderCollectionOptions } from "../src/index.ts"
 
 interface Article {
   id: number
   title: string
 }
+
+const providerOptions: ProviderCollectionOptions<Article> = {
+  pagination: "provider",
+  transform: (article) => {
+    expectTypeOf(article).toEqualTypeOf<Article>()
+    return article.title
+  },
+}
+expectTypeOf(providerOptions.transform).toEqualTypeOf<((article: Article) => unknown) | undefined>()
 
 type JSONValueRow = {
   array: Array<number | undefined | (() => void) | symbol>
