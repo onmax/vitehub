@@ -264,7 +264,7 @@ type AnyCollectionSource =
   | { load: (...args: never[]) => Promise<{ items: readonly unknown[]; nextCursor: string | null }>; pagination: "provider"; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
 type SourceItem<TSource extends AnyCollectionSource> =
   TSource extends { pagination: "provider"; load: (...args: never[]) => Promise<{ items: readonly (infer TItem)[] }> } ? TItem :
-    TSource extends { cursor: (item: infer TItem) => CollectionCursorValue } ? TItem : never
+    TSource extends { load: (...args: never[]) => Promise<readonly (infer TItem)[]> } ? TItem : never
 type SourceQuery<TSource extends AnyCollectionSource> =
   TSource extends { load: (options: infer TOptions) => unknown }
     ? TOptions extends { query: infer TQuery extends object } ? TQuery : never
@@ -275,19 +275,22 @@ type SourceQueryInput<TSource extends AnyCollectionSource> =
 // Infer the loader first, then check that schema output is safe to pass to it.
 type SourceSchemaConstraint<TSource extends AnyCollectionSource> = {
   querySchema?: StandardSchemaV1<unknown, SourceQuery<TSource>>
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<SourceItem<TSource> | null | undefined>
 }
+type SourceCursorConstraint<TSource extends AnyCollectionSource> =
+  TSource extends { pagination: "provider" } ? unknown : { cursor: (item: SourceItem<TSource>) => CollectionCursorValue }
 
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
     authorize?: AccessAuthorizeOption
     route?: false
-    source: TSource & SourceSchemaConstraint<NoInfer<TSource>>
+    source: TSource & SourceSchemaConstraint<NoInfer<TSource>> & SourceCursorConstraint<NoInfer<TSource>>
     transform: TTransform
   }): Collection<Awaited<ReturnType<TTransform>>, SourceQuery<TSource>, SourceQueryInput<TSource>>
   <TSource extends AnyCollectionSource>(options: {
     authorize?: AccessAuthorizeOption
     route?: false
-    source: TSource & SourceSchemaConstraint<NoInfer<TSource>>
+    source: TSource & SourceSchemaConstraint<NoInfer<TSource>> & SourceCursorConstraint<NoInfer<TSource>>
     transform?: undefined
   }): Collection<SourceItem<TSource>, SourceQuery<TSource>, SourceQueryInput<TSource>>
 }

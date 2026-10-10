@@ -10,6 +10,23 @@ type QueryInput = { tenant: string; count: string }
 
 const querySchema = v.object({ tenant: v.string(), count: v.pipe(v.string(), v.transform(Number)) })
 
+it("links cursor and get adapters to the loader item", () => {
+  const source = {
+    load: async () => [{ id: "one", count: 1 }],
+    cursor: (row: { slug: string }) => row.slug,
+    cursorSchema: v.string(),
+  }
+  // @ts-expect-error The cursor must accept the rows returned by load.
+  defineCollection({ source })
+  // @ts-expect-error Transforms cannot conceal an incompatible cursor.
+  defineCollection({ source, transform: (row: Row) => row.id })
+  const valid = { ...source, cursor: (row: { id: string }) => row.id }
+  expectTypeOf(defineCollection({ source: valid }).all).returns.toEqualTypeOf<Promise<Row[]>>()
+  const invalidGet = { ...valid, get: async () => ({ slug: "one" }) }
+  // @ts-expect-error Direct reads must return the loader's item shape.
+  defineCollection({ source: invalidGet })
+})
+
 it("preserves provider schemas, required query fields, and get-capable sources", async () => {
   const load = vi.fn(async ({ query }: { query: Query }) => ({
     items: [{ id: query.tenant, count: query.count }], nextCursor: null,

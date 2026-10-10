@@ -7,6 +7,11 @@ import { expect, it } from "vitest"
 import { prepareSourceGeneration } from "../src/vite.ts"
 
 it.each([
+  "const options = {}; function unused() { options.route = false }; export const articles = defineCollection(load, options)",
+  "let route = undefined; function unused() { route = false }; export const articles = defineCollection(load, { route })",
+  "const options = {}; if (false) options.route = false; export const articles = defineCollection(load, options)",
+  "const options = { route: false }; if (true) options.route = undefined; export const articles = defineCollection(load, options)",
+  "function make(options = { route: false }) { return defineCollection(load, options) }; export const articles = make({})",
   "const options: { route?: false } = { route: false }; options.route = undefined; export const articles = defineCollection(load, options)",
   "const { route } = { route: undefined }; export const articles = defineCollection(load, { route })",
   "const usePrivate = false; export const articles = usePrivate ? defineCollection(load, { route: false }) : defineCollection(load, {})",
@@ -40,6 +45,13 @@ it.each([
 })
 
 it.each([
+  "import { defineCollection as makeCollection } from 'vite-hub/source'; export const articles = makeCollection(load, { route: false })",
+  "import * as source from '@vite-hub/source'; export const articles = source.defineCollection(load, { route: false })",
+  "function make(options = { route: false }) { return defineCollection(load, options) }; export const articles = make()",
+  "function make(options = { route: false }) { return defineCollection(load, options) }; export const articles = make(undefined)",
+  "const hidden = { route: false }; if (false) hidden.route = undefined; export const articles = defineCollection(load, hidden)",
+  "const hidden = { route: false }; function unused() { hidden.route = undefined }; export const articles = defineCollection(load, hidden)",
+  "const hidden = { route: false }; if (dynamic) hidden.route = undefined; export const articles = defineCollection(load, hidden)",
   "let route = true; route = false; export const articles = defineCollection(load, { route })",
   "var route = true; route = false; export const articles = defineCollection(load, { route })",
   "const { route } = { route: false }; export const articles = defineCollection(load, { route })",
