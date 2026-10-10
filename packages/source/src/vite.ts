@@ -382,6 +382,26 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const activeFunctions = new Set<AstNode>()
   const executedFunctions = new Set<AstNode>()
   const parameterValues = new Map<Binding, AstNode | undefined>()
+  const snapshotExecution = (): {
+    activeFunctions: Set<AstNode>
+    executedFunctions: Set<AstNode>
+    parameterValues: Map<Binding, AstNode | undefined>
+    readPosition: number
+  } => ({
+    activeFunctions: new Set(activeFunctions),
+    executedFunctions: new Set(executedFunctions),
+    parameterValues: new Map(parameterValues),
+    readPosition,
+  })
+  const restoreExecution = (snapshot: ReturnType<typeof snapshotExecution>): void => {
+    activeFunctions.clear()
+    for (const fn of snapshot.activeFunctions) activeFunctions.add(fn)
+    executedFunctions.clear()
+    for (const fn of snapshot.executedFunctions) executedFunctions.add(fn)
+    parameterValues.clear()
+    for (const [binding, value] of snapshot.parameterValues) parameterValues.set(binding, value)
+    readPosition = snapshot.readPosition
+  }
   let exported = moduleScope.bindings.get(exportName)
   for (const statement of parsed.program.body) {
     if (statement.type !== "ImportDeclaration") continue
@@ -526,8 +546,15 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (value.type === "ConditionalExpression") {
       const test = unwrap(value.test)
       if (test?.type === "Literal") return findRoute(test.value ? value.consequent : value.alternate, next)
+      // An unresolved conditional executes only one branch at runtime. Keep
+      // helper activation, parameter bindings, and writes from either branch
+      // isolated so a helper visited in the consequent cannot affect the
+      // alternate (or subsequent route inspection).
+      const branchSnapshot = snapshotExecution()
       const consequent = findRoute(value.consequent, new Set(next))
+      restoreExecution(branchSnapshot)
       const alternate = findRoute(value.alternate, new Set(next))
+      restoreExecution(branchSnapshot)
       return consequent !== undefined && consequent === alternate ? consequent : undefined
     }
     if (value.type === "CallExpression") {
