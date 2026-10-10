@@ -416,6 +416,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       seen.add(declaration)
       return unwrap(init, seen)
     }
+    if (node?.type === "UnaryExpression" && node.operator === "!") {
+      const value = unwrap(node.argument, new Set(seen))
+      return value?.type === "Literal" ? { type: "Literal", value: !Boolean(value.value) } : node
+    }
     if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression, seen)
     if (node?.type === "MemberExpression") {
       const object = unwrap(node.object, seen)
@@ -437,7 +441,12 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const writeState = (write: Write): "skip" | "known" | "unknown" => {
     // A completed helper may have used parameters or closed-over state that is
     // no longer available here. Its writes must not establish a public route.
-    if (write.fn && !activeFunctions.has(write.fn)) return executedFunctions.has(write.fn) ? "unknown" : "skip"
+    if (write.fn && !activeFunctions.has(write.fn)) {
+      if (!executedFunctions.has(write.fn)) return "skip"
+      const right = write.node.right
+      if (right?.type === "Literal" && (right.value === undefined || typeof right.value === "boolean")) return "known"
+      return "unknown"
+    }
     if ((write.node.start ?? Infinity) >= readPosition) return "skip"
     const previousPosition = readPosition
     readPosition = write.node.start ?? readPosition
@@ -516,8 +525,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     const next = new Set(active).add(value)
     if (value.type === "ConditionalExpression") {
       const test = unwrap(value.test)
-      if (test?.type !== "Literal") return undefined
-      return findRoute(test.value ? value.consequent : value.alternate, next)
+      if (test?.type === "Literal") return findRoute(test.value ? value.consequent : value.alternate, next)
+      const consequent = findRoute(value.consequent, new Set(next))
+      const alternate = findRoute(value.alternate, new Set(next))
+      return consequent !== undefined && consequent === alternate ? consequent : undefined
     }
     if (value.type === "CallExpression") {
       const args = value.arguments ?? []
