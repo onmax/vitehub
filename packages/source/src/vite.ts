@@ -464,7 +464,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (write.fn && !activeFunctions.has(write.fn)) {
       if (!executedFunctions.has(write.fn)) return "skip"
       const right = write.node.right
-      if (right?.type === "Literal" && (right.value === undefined || typeof right.value === "boolean")) return "known"
+      if (right?.type === "Literal" && (right.value === undefined || right.value === true || right.value === false)) return "known"
       return "unknown"
     }
     if ((write.node.start ?? Infinity) >= readPosition) return "skip"
@@ -522,7 +522,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     for (const property of object.properties ?? []) {
       if (property.type === "SpreadElement") {
         const spreadRoute = staticObjectRoute(property.argument, new Set(seen))
+        // An unresolved spread may overwrite route at runtime. Keep the
+        // route decision conservative unless a later explicit property wins.
         if (spreadRoute?.present) route = spreadRoute
+        else route = { present: true, value: false }
         continue
       }
       const keyName = property.computed ? staticString(property.key) : property.key?.name ?? property.key?.value
@@ -552,9 +555,16 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       // alternate (or subsequent route inspection).
       const branchSnapshot = snapshotExecution()
       const consequent = findRoute(value.consequent, new Set(next))
+      const consequentState = snapshotExecution()
       restoreExecution(branchSnapshot)
       const alternate = findRoute(value.alternate, new Set(next))
+      const alternateState = snapshotExecution()
       restoreExecution(branchSnapshot)
+      // Effects that occur in both branches are guaranteed at runtime and
+      // must remain visible to route inspection after the conditional.
+      for (const fn of consequentState.executedFunctions) {
+        if (alternateState.executedFunctions.has(fn)) executedFunctions.add(fn)
+      }
       return consequent !== undefined && consequent === alternate ? consequent : undefined
     }
     if (value.type === "CallExpression") {
