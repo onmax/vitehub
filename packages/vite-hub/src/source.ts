@@ -249,17 +249,17 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
 }
 
 type AnyCollectionSource =
-  | { load: (...args: never[]) => unknown; cursor: (item: never) => CollectionCursorValue; cursorSchema: StandardSchemaV1<CollectionCursorValue, CollectionCursorValue>; pagination?: never; querySchema?: StandardSchemaV1<object, object>; get?: CollectionSource<never, never, never>["get"]; defaultLimit?: number; maxLimit?: number }
-  | { load: (...args: never[]) => unknown; pagination: "provider"; querySchema?: StandardSchemaV1<object, object>; get?: ProviderCollectionSource<never, never>["get"]; defaultLimit?: number; maxLimit?: number }
+  | { load: (...args: never[]) => unknown; cursor: (item: never) => CollectionCursorValue; cursorSchema: StandardSchemaV1<CollectionCursorValue, CollectionCursorValue>; pagination?: never; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
+  | { load: (...args: never[]) => unknown; pagination: "provider"; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
 type SourceItem<TSource extends AnyCollectionSource> =
-  TSource extends CollectionSource<infer TItem, object, CollectionCursorValue, CollectionCursorValue, object> ? TItem :
-    TSource extends ProviderCollectionSource<infer TItem, object, object> ? TItem : never
+  TSource extends { pagination: "provider"; load: (...args: never[]) => Promise<{ items: readonly (infer TItem)[] }> } ? TItem :
+    TSource extends { cursor: (item: infer TItem) => CollectionCursorValue } ? TItem : never
 type SourceQuery<TSource extends AnyCollectionSource> =
-  TSource extends CollectionSource<unknown, infer TQuery, CollectionCursorValue, CollectionCursorValue, object> ? TQuery :
-    TSource extends ProviderCollectionSource<unknown, infer TQuery, object> ? TQuery : never
+  TSource extends { load: (options: infer TOptions) => unknown }
+    ? TOptions extends { query: infer TQuery extends object } ? TQuery : never
+    : never
 type SourceQueryInput<TSource extends AnyCollectionSource> =
-  TSource extends CollectionSource<unknown, object, CollectionCursorValue, CollectionCursorValue, infer TQueryInput> ? TQueryInput :
-    TSource extends ProviderCollectionSource<unknown, object, infer TQueryInput> ? TQueryInput : never
+  TSource extends { querySchema?: StandardSchemaV1<infer TQueryInput extends object, object> } ? TQueryInput : SourceQuery<TSource>
 
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
