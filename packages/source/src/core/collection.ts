@@ -150,7 +150,9 @@ export type CollectionClientItem<TCollection extends AnyCollection> = JSONSerial
 
 export type CollectionQuery<TCollection extends AnyCollection> =
   TCollection extends { readonly [collectionQueryInput]?: infer TQueryInput }
-    ? CollectionQueryInput<NonNullable<TQueryInput>> extends infer T
+    ? (string extends keyof NonNullable<TQueryInput>
+      ? NonNullable<TQueryInput> extends CollectionRequestQuery ? NonNullable<TQueryInput> : never
+      : CollectionQueryInput<NonNullable<TQueryInput>>) extends infer T
       ? T extends object ? { [TKey in keyof T]: T[TKey] } : T
       : never
     : never

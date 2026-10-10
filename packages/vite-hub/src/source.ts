@@ -272,17 +272,22 @@ type SourceQuery<TSource extends AnyCollectionSource> =
 type SourceQueryInput<TSource extends AnyCollectionSource> =
   TSource extends { querySchema?: StandardSchemaV1<infer TQueryInput extends object, object> } ? TQueryInput : SourceQuery<TSource>
 
+// Infer the loader first, then check that schema output is safe to pass to it.
+type SourceSchemaConstraint<TSource extends AnyCollectionSource> = {
+  querySchema?: StandardSchemaV1<unknown, SourceQuery<TSource>>
+}
+
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
     authorize?: AccessAuthorizeOption
     route?: false
-    source: TSource
+    source: TSource & SourceSchemaConstraint<NoInfer<TSource>>
     transform: TTransform
   }): Collection<Awaited<ReturnType<TTransform>>, SourceQuery<TSource>, SourceQueryInput<TSource>>
   <TSource extends AnyCollectionSource>(options: {
     authorize?: AccessAuthorizeOption
     route?: false
-    source: TSource
+    source: TSource & SourceSchemaConstraint<NoInfer<TSource>>
     transform?: undefined
   }): Collection<SourceItem<TSource>, SourceQuery<TSource>, SourceQueryInput<TSource>>
 }

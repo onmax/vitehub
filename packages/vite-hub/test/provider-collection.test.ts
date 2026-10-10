@@ -83,3 +83,15 @@ it("appends large provider pages without argument spreading", async () => {
   } })
   await expect(collection.all({ limit: items.length })).resolves.toEqual(items)
 })
+
+it("rejects source schemas whose output is incompatible with the loader query", () => {
+  const load = async ({ query }: { query: { tenant: string } }) => [{ id: query.tenant, count: 1 }]
+  const cursorSource = { load, cursor: (row: Row) => row.id, cursorSchema: v.string(), querySchema: v.object({ account: v.number() }) }
+  // @ts-expect-error Schema output must satisfy the loader's query contract.
+  defineCollection({ source: cursorSource })
+  const providerSource = { pagination: "provider" as const, load: async (options: { query: { tenant: string } }) => ({ items: await load(options), nextCursor: null }), querySchema: cursorSource.querySchema }
+  // @ts-expect-error Schema output must satisfy the provider loader's query contract.
+  defineCollection({ source: providerSource })
+  // @ts-expect-error Transformed sources enforce the same schema relationship.
+  defineCollection({ source: providerSource, transform: (row: Row) => row.id })
+})

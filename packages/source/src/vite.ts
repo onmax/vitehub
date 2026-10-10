@@ -250,6 +250,12 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   if (parsed.errors.length) throw new TypeError(`[vitehub] Cannot parse Collection ${file}: ${parsed.errors[0]!.message}`)
   type AstNode = {
     type?: string
+    start?: number
+    object?: AstNode
+    property?: AstNode
+    test?: AstNode
+    consequent?: AstNode
+    alternate?: AstNode
     name?: string
     value?: unknown
     expression?: AstNode | null
@@ -275,19 +281,21 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     right?: AstNode
     body?: AstNode | AstNode[] | null
   }
-  type Binding = { init?: AstNode | null }
+  type Binding = { init?: AstNode | null; writes?: AstNode[] }
   type Scope = { bindings: Map<string, Binding>, parent?: Scope }
   const moduleScope: Scope = { bindings: new Map() }
   const scopes = new WeakMap<AstNode, Scope>()
-  const bindPattern = (node: AstNode | null | undefined, scope: Scope): void => {
+  const bindPattern = (node: AstNode | null | undefined, scope: Scope, init?: AstNode | null): void => {
     if (!node) return
-    if (node.type === "Identifier" && node.name) scope.bindings.set(node.name, {})
+    if (node.type === "Identifier" && node.name) scope.bindings.set(node.name, { init })
     else if (node.type === "RestElement") bindPattern(node.argument, scope)
     else if (node.type === "AssignmentPattern") bindPattern(node.left, scope)
     else if (node.type === "ArrayPattern") for (const element of node.elements ?? []) bindPattern(element, scope)
     else if (node.type === "ObjectPattern") for (const property of node.properties ?? []) {
+      const member: AstNode = { type: "MemberExpression", object: init ?? undefined, property: property.key, computed: property.computed }
+      scopes.set(member, scope)
       // SAFETY: Object-pattern properties hold another binding pattern in value.
-      bindPattern(property.type === "RestElement" ? property.argument : property.value as AstNode, scope)
+      bindPattern(property.type === "RestElement" ? property.argument : property.value as AstNode, scope, property.type === "RestElement" ? undefined : member)
     }
   }
   const indexScopes = (node: AstNode, parent: Scope, functionScope: Scope): void => {
@@ -306,8 +314,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (node.type === "CatchClause") bindPattern(node.param, scope)
     if (node.type === "VariableDeclaration") for (const item of node.declarations ?? []) {
       const target = node.kind === "var" ? functionScope : scope
-      bindPattern(item.id, target)
-      if (item.id?.name && node.kind === "const") target.bindings.set(item.id.name, { init: item.init })
+      bindPattern(item.id, target, item.init)
     }
     for (const child of Object.values(node)) {
       if (Array.isArray(child)) {
@@ -331,6 +338,30 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     }
     return undefined
   }
+  const indexWrites = (node: AstNode): void => {
+    if (node.type === "AssignmentExpression") {
+      const target = node.left?.type === "MemberExpression" ? node.left.object : node.left
+      const binding = target?.type === "Identifier" ? bindingFor(target) : undefined
+      if (binding) (binding.writes ??= []).push(node)
+    }
+    for (const child of Object.values(node)) {
+      if (Array.isArray(child)) {
+        for (const item of child) if (item) {
+          // SAFETY: Parser-owned AST arrays contain child nodes.
+          indexWrites(item as AstNode)
+        }
+      }
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Only traverse parser-owned child objects.
+      else if (child && typeof child === "object") {
+        // SAFETY: Parser-owned AST children expose optional common node fields.
+        indexWrites(child as AstNode)
+      }
+    }
+  }
+  // SAFETY: The parser owns the AST traversed to index writes.
+  indexWrites(parsed.program as AstNode)
+  let readPosition = Infinity
+  const parameterValues = new Map<Binding, AstNode | undefined>()
   let exported = moduleScope.bindings.get(exportName)
   for (const statement of parsed.program.body) {
     if (statement.type === "ExportNamedDeclaration") for (const specifier of statement.specifiers) {
@@ -342,12 +373,32 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const unwrap = (node: AstNode | null | undefined, seen = new Set<Binding>()): AstNode | undefined => {
     if (node?.type === "Identifier" && node.name !== undefined) {
       const declaration = bindingFor(node)
-      if (!declaration?.init) return undefined
+      if (!declaration) return node.name === "undefined" ? { type: "Literal", value: undefined } : undefined
+      let init = parameterValues.has(declaration) ? parameterValues.get(declaration) : declaration.init
+      for (const write of declaration.writes ?? []) {
+        if (write.left?.type === "Identifier" && (write.start ?? Infinity) < readPosition) init = write.operator === "=" ? write.right : undefined
+      }
+      if (!init) return undefined
       if (seen.has(declaration)) throw new TypeError(`[vitehub] Circular Collection options in ${file}.`)
       seen.add(declaration)
-      return unwrap(declaration.init, seen)
+      return unwrap(init, seen)
     }
     if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression, seen)
+    if (node?.type === "MemberExpression") {
+      const object = unwrap(node.object, seen)
+      const key = node.computed ? staticString(node.property) : node.property?.name
+      if (object?.type !== "ObjectExpression" || key === undefined) return undefined
+      let result: AstNode | undefined = { type: "Literal", value: undefined }
+      for (const property of object.properties ?? []) {
+        if (property.type === "SpreadElement") return undefined
+        const name = property.computed ? staticString(property.key) : property.key?.name ?? property.key?.value
+        if (name === key) {
+          // SAFETY: ESTree object property values are expression nodes.
+          result = unwrap(property.value as AstNode, new Set(seen))
+        }
+      }
+      return result
+    }
     return node ?? undefined
   }
   const staticString = (node: AstNode | null | undefined, seen = new Set<Binding>()): string | undefined => {
@@ -379,7 +430,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   type RouteState = { present: boolean, value?: boolean }
   const routeValue = (value: AstNode | undefined): RouteState => {
     if (value?.type === "Literal" && (value.value === true || value.value === false)) return { present: true, value: value.value }
-    return { present: true }
+    // An explicitly configured but unresolved route might be false. Do not expose it.
+    return { present: true, value: value?.type === "Literal" ? true : false }
   }
   const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<Binding>()): RouteState | undefined => {
     const object = unwrap(node, seen)
@@ -397,65 +449,54 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       const value = unwrap(property.value as AstNode | null | undefined)
       route = routeValue(value)
     }
+    if (node?.type === "Identifier") for (const write of bindingFor(node)?.writes ?? []) {
+      if (write.left?.type !== "MemberExpression" || (write.start ?? Infinity) >= readPosition) continue
+      const key = write.left.computed ? staticString(write.left.property) : write.left.property?.name
+      if (key === "route") route = routeValue(write.operator === "=" ? unwrap(write.right) : undefined)
+    }
     return route
   }
-  const findOptions = (node: AstNode | AstNode[] | null | undefined): AstNode | undefined => {
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        const nested = findOptions(child)
-        if (nested) return nested
-      }
-      return undefined
-    }
+  const findRoute = (node: AstNode | null | undefined, active = new Set<AstNode>()): boolean | undefined => {
     const value = unwrap(node)
-    if (!value) return undefined
+    if (!value || active.has(value)) return undefined
+    const next = new Set(active).add(value)
+    if (value.type === "ConditionalExpression") {
+      const test = unwrap(value.test)
+      if (test?.type !== "Literal") return undefined
+      return findRoute(test.value ? value.consequent : value.alternate, next)
+    }
     if (value.type === "CallExpression") {
       const args = value.arguments ?? []
       const callee = value.callee ?? value.expression
-      if (callee?.type === "Identifier" && callee.name === "defineCollection") return unwrap(args.length > 1 ? args[1] : args[0])
-      const nested = findOptions(value.body)
-      if (nested) return nested
-      for (const argument of value.arguments ?? []) {
-        const nestedArgument = findOptions(argument)
-        if (nestedArgument) return nestedArgument
+      if (callee?.type === "Identifier" && callee.name === "defineCollection") {
+        const previousPosition = readPosition
+        readPosition = value.start ?? readPosition
+        const route = staticObjectRoute(args.length > 1 ? args[1] : args[0])
+        readPosition = previousPosition
+        return route?.value !== false
       }
+      const fn = unwrap(callee)
+      if (!fn || !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(fn.type ?? "")) return undefined
+      const previousValues = new Map(parameterValues)
+      for (const [index, param] of (fn.params ?? []).entries()) {
+        const binding = bindingFor(param)
+        if (binding) parameterValues.set(binding, args[index] ?? { type: "Literal", value: undefined })
+      }
+      const result = findRoute(Array.isArray(fn.body) ? undefined : fn.body, next)
+      parameterValues.clear()
+      for (const [binding, argument] of previousValues) parameterValues.set(binding, argument)
+      return result
     }
     if (value.type === "BlockStatement") {
       for (const statement of Array.isArray(value.body) ? value.body : []) {
-        const nested = findOptions(statement)
-        if (nested) return nested
-      }
-    }
-    if (value.type === "ReturnStatement") return findOptions(value.expression ?? value.argument)
-    if (value.type === "ArrowFunctionExpression" || value.type === "FunctionExpression" || value.type === "FunctionDeclaration") return findOptions(value.body)
-    for (const child of Object.values(value)) {
-      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- AST traversal follows only node objects, never literal scalar values.
-      if (child && typeof child === "object") {
-        // SAFETY: The parser owns this object; findOptions reads only optional common node fields.
-        const nested = findOptions(child as AstNode)
-        if (nested) return nested
+        if (statement.type === "ReturnStatement") return findRoute(statement.argument ?? statement.expression, next)
+        // Conditional control flow is not equivalent to the first syntactic return.
+        if (["IfStatement", "SwitchStatement", "TryStatement", "ForStatement", "WhileStatement"].includes(statement.type ?? "")) return undefined
       }
     }
     return undefined
   }
-  const options = findOptions(exported?.init)
-  if (options?.type !== "ObjectExpression") return true
-  let route: RouteState = { present: false }
-  for (const property of options.properties ?? []) {
-    if (property.type === "SpreadElement") {
-      const spreadRoute = staticObjectRoute(property.argument)
-      if (spreadRoute?.present) route = spreadRoute
-      continue
-    }
-    const key = property.key
-    const keyName = property.computed ? staticString(key) : key?.name ?? key?.value
-    if (keyName === "route") {
-      // SAFETY: ESTree property values are expression nodes; this narrow view only reads their common shape.
-      const value = unwrap(property.value as AstNode | null | undefined)
-      route = routeValue(value)
-    }
-  }
-  return route.value !== false
+  return findRoute(exported?.init) ?? true
 }
 
 async function discoverCollections(options: SourceGenerationOptions): Promise<DiscoveredCollection[]> {
