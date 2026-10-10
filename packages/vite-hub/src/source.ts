@@ -28,6 +28,8 @@ export interface CollectionSource<
   defaultLimit?: number
   load: CollectionLoader<TSourceItem, TQuery, TCursorOutput>
   maxLimit?: number
+  pagination?: "provider"
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
   querySchema?: StandardSchemaV1<TQueryInput, TQuery>
 }
 
@@ -269,6 +271,15 @@ const defineCollectionImplementation = (
   const callCore = core as (...args: unknown[]) => unknown
   if (input instanceof Function) return callCore(input, options)
   const { authorize, route, source, transform } = input
+  if (source.pagination === "provider") return callCore(source.load, {
+    authorize,
+    route,
+    pagination: "provider",
+    defaultLimit: source.defaultLimit,
+    maxLimit: source.maxLimit,
+    get: source.get,
+    transform,
+  })
   return callCore(source.load, {
     authorize,
     route,
@@ -276,6 +287,7 @@ const defineCollectionImplementation = (
     cursorSchema: source.cursorSchema,
     defaultLimit: source.defaultLimit,
     maxLimit: source.maxLimit,
+    get: source.get,
     querySchema: source.querySchema,
     transform,
   })

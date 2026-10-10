@@ -253,6 +253,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     name?: string
     value?: unknown
     expression?: AstNode | null
+    callee?: AstNode | null
     argument?: AstNode | null
     arguments?: AstNode[]
     properties?: AstNode[]
@@ -268,6 +269,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     operator?: string
     left?: AstNode
     right?: AstNode
+    body?: AstNode | AstNode[] | null
   }
   const declarations = new Map<string, AstNode>()
   for (const statement of parsed.program.body) {
@@ -342,10 +344,37 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     }
     return route
   }
-  const definition = unwrap(declarations.get(exportName))
-  if (definition?.type !== "CallExpression") return true
-  const args = definition.arguments ?? []
-  const options = unwrap(args.length > 1 ? args[1] : args[0])
+  const findOptions = (node: AstNode | null | undefined): AstNode | undefined => {
+    const value = unwrap(node)
+    if (!value) return undefined
+    if (value.type === "CallExpression") {
+      const args = value.arguments ?? []
+      const callee = value.callee ?? value.expression
+      if (callee?.type === "Identifier" && callee.name === "defineCollection") return unwrap(args.length > 1 ? args[1] : args[0])
+      const nested = findOptions(value.body)
+      if (nested) return nested
+      for (const argument of value.arguments ?? []) {
+        const nestedArgument = findOptions(argument)
+        if (nestedArgument) return nestedArgument
+      }
+    }
+    if (value.type === "BlockStatement") {
+      for (const statement of Array.isArray(value.body) ? value.body : []) {
+        const nested = findOptions(statement)
+        if (nested) return nested
+      }
+    }
+    if (value.type === "ReturnStatement") return findOptions(value.expression ?? value.argument)
+    if (value.type === "ArrowFunctionExpression" || value.type === "FunctionExpression") return findOptions(value.body)
+    for (const child of Object.values(value)) {
+      if (child && typeof child === "object") {
+        const nested = findOptions(child as AstNode)
+        if (nested) return nested
+      }
+    }
+    return undefined
+  }
+  const options = findOptions(declarations.get(exportName))
   if (options?.type !== "ObjectExpression") return true
   let route: RouteState = { present: false }
   for (const property of options.properties ?? []) {
