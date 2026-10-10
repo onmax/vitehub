@@ -381,6 +381,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   let readPosition = Infinity
   const activeFunctions = new Set<AstNode>()
   const executedFunctions = new Set<AstNode>()
+  // If unresolved branches execute different helpers, their equivalent
+  // option mutations cannot be matched by function identity.  Keep route
+  // discovery fail-closed for the next Collection inspection in that case.
+  let uncertainConditionalEffects = false
   const parameterValues = new Map<Binding, AstNode | undefined>()
   const snapshotExecution = (): {
     activeFunctions: Set<AstNode>
@@ -562,6 +566,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       restoreExecution(branchSnapshot)
       // Effects that occur in both branches are guaranteed at runtime and
       // must remain visible to route inspection after the conditional.
+      if (consequentState.executedFunctions.size !== alternateState.executedFunctions.size ||
+        [...consequentState.executedFunctions].some(fn => !alternateState.executedFunctions.has(fn))) {
+        uncertainConditionalEffects = true
+      }
       for (const fn of consequentState.executedFunctions) {
         if (alternateState.executedFunctions.has(fn)) executedFunctions.add(fn)
       }
@@ -577,7 +585,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         readPosition = value.start ?? readPosition
         const route = staticObjectRoute(args.length > 1 ? args[1] : args[0])
         readPosition = previousPosition
-        return route?.value !== false
+        // Different branch helpers may perform the same route mutation while
+        // remaining distinct AST nodes.  Avoid exposing a route when that
+        // effect cannot be represented precisely.
+        return uncertainConditionalEffects ? false : route?.value !== false
       }
       const fn = unwrap(callee)
       if (!fn || !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(fn.type ?? "")) return undefined
