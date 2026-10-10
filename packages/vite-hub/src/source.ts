@@ -28,7 +28,18 @@ export interface CollectionSource<
   defaultLimit?: number
   load: CollectionLoader<TSourceItem, TQuery, TCursorOutput>
   maxLimit?: number
-  pagination?: "provider"
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
+  querySchema?: StandardSchemaV1<TQueryInput, TQuery>
+}
+
+export interface ProviderCollectionSource<TSourceItem, TQuery extends object, TQueryInput extends object = TQuery> {
+  pagination: "provider"
+  defaultLimit?: number
+  maxLimit?: number
+  load: (options: { cursor?: string; limit: number; query: TQuery; signal?: AbortSignal }) => Promise<{
+    items: readonly TSourceItem[]
+    nextCursor: string | null
+  }>
   get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
   querySchema?: StandardSchemaV1<TQueryInput, TQuery>
 }
@@ -237,13 +248,16 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
   }
 }
 
-type AnyCollectionSource = CollectionSource<any, any, any, any, any>
+type AnyCollectionSource = CollectionSource<unknown, object, CollectionCursorValue, CollectionCursorValue, object> | ProviderCollectionSource<unknown, object, object>
 type SourceItem<TSource extends AnyCollectionSource> =
-  TSource extends CollectionSource<infer TItem, any, any, any, any> ? TItem : never
+  TSource extends CollectionSource<infer TItem, object, CollectionCursorValue, CollectionCursorValue, object> ? TItem :
+    TSource extends ProviderCollectionSource<infer TItem, object, object> ? TItem : never
 type SourceQuery<TSource extends AnyCollectionSource> =
-  TSource extends CollectionSource<any, infer TQuery, any, any, any> ? TQuery : never
+  TSource extends CollectionSource<unknown, infer TQuery, CollectionCursorValue, CollectionCursorValue, object> ? TQuery :
+    TSource extends ProviderCollectionSource<unknown, infer TQuery, object> ? TQuery : never
 type SourceQueryInput<TSource extends AnyCollectionSource> =
-  TSource extends CollectionSource<any, any, any, any, infer TQueryInput> ? TQueryInput : never
+  TSource extends CollectionSource<unknown, object, CollectionCursorValue, CollectionCursorValue, infer TQueryInput> ? TQueryInput :
+    TSource extends ProviderCollectionSource<unknown, object, infer TQueryInput> ? TQueryInput : never
 
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
@@ -263,7 +277,7 @@ interface DefineSourceCollection {
 const defineCollectionImplementation = (
   input:
     | Parameters<typeof defineCoreCollection>[0]
-    | { authorize?: AccessAuthorizeOption; route?: false; source: AnyCollectionSource; transform?: (item: any) => unknown },
+    | { authorize?: AccessAuthorizeOption; route?: false; source: AnyCollectionSource; transform?: (item: unknown) => unknown },
   options?: Parameters<typeof defineCoreCollection>[1],
 ) => {
   const core: unknown = defineCoreCollection
@@ -278,6 +292,7 @@ const defineCollectionImplementation = (
     defaultLimit: source.defaultLimit,
     maxLimit: source.maxLimit,
     get: source.get,
+    querySchema: source.querySchema,
     transform,
   })
   return callCore(source.load, {

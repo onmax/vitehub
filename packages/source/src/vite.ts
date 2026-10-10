@@ -344,7 +344,14 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     }
     return route
   }
-  const findOptions = (node: AstNode | null | undefined): AstNode | undefined => {
+  const findOptions = (node: AstNode | AstNode[] | null | undefined): AstNode | undefined => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const nested = findOptions(child)
+        if (nested) return nested
+      }
+      return undefined
+    }
     const value = unwrap(node)
     if (!value) return undefined
     if (value.type === "CallExpression") {
