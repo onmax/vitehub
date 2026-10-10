@@ -260,6 +260,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     key?: AstNode
     computed?: boolean
     declarations?: AstNode[]
+    init?: AstNode | null
+    kind?: string
+    params?: AstNode[]
+    param?: AstNode | null
     id?: AstNode
     local?: AstNode
     exported?: AstNode
@@ -271,31 +275,82 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     right?: AstNode
     body?: AstNode | AstNode[] | null
   }
-  const declarations = new Map<string, AstNode>()
-  for (const statement of parsed.program.body) {
-    const declaration = statement.type === "ExportNamedDeclaration" ? statement.declaration : statement
-    if (declaration?.type === "VariableDeclaration") for (const item of declaration.declarations) {
-      if (item.id.type === "Identifier") declarations.set(item.id.name, item.init as unknown as AstNode)
+  type Binding = { init?: AstNode | null }
+  type Scope = { bindings: Map<string, Binding>, parent?: Scope }
+  const moduleScope: Scope = { bindings: new Map() }
+  const scopes = new WeakMap<AstNode, Scope>()
+  const bindPattern = (node: AstNode | null | undefined, scope: Scope): void => {
+    if (!node) return
+    if (node.type === "Identifier" && node.name) scope.bindings.set(node.name, {})
+    else if (node.type === "RestElement") bindPattern(node.argument, scope)
+    else if (node.type === "AssignmentPattern") bindPattern(node.left, scope)
+    else if (node.type === "ArrayPattern") for (const element of node.elements ?? []) bindPattern(element, scope)
+    else if (node.type === "ObjectPattern") for (const property of node.properties ?? []) {
+      // SAFETY: Object-pattern properties hold another binding pattern in value.
+      bindPattern(property.type === "RestElement" ? property.argument : property.value as AstNode, scope)
     }
   }
-  for (const statement of parsed.program.body) {
-    if (statement.type === "ExportNamedDeclaration") for (const specifier of statement.specifiers) {
-      if (specifier.type === "ExportSpecifier" && specifier.exported.type === "Identifier" && specifier.local.type === "Identifier") {
-        const value = declarations.get(specifier.local.name)
-        if (value) declarations.set(specifier.exported.name, value)
+  const indexScopes = (node: AstNode, parent: Scope, functionScope: Scope): void => {
+    const isFunction = ["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type ?? "")
+    if ((node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") && node.id?.name) {
+      parent.bindings.set(node.id.name, { init: node.type === "FunctionDeclaration" ? node : undefined })
+    }
+    const createsScope = isFunction || ["BlockStatement", "CatchClause", "ForStatement", "ForInStatement", "ForOfStatement", "SwitchStatement"].includes(node.type ?? "")
+    const scope: Scope = createsScope ? { bindings: new Map(), parent } : parent
+    const nextFunctionScope = isFunction ? scope : functionScope
+    scopes.set(node, scope)
+    if (isFunction) {
+      for (const param of node.params ?? []) bindPattern(param, scope)
+      if (node.type === "FunctionExpression") bindPattern(node.id, scope)
+    }
+    if (node.type === "CatchClause") bindPattern(node.param, scope)
+    if (node.type === "VariableDeclaration") for (const item of node.declarations ?? []) {
+      const target = node.kind === "var" ? functionScope : scope
+      bindPattern(item.id, target)
+      if (item.id?.name && node.kind === "const") target.bindings.set(item.id.name, { init: item.init })
+    }
+    for (const child of Object.values(node)) {
+      if (Array.isArray(child)) {
+        for (const item of child) if (item) {
+          // SAFETY: Parser-owned AST arrays contain child nodes (or null array holes).
+          indexScopes(item as AstNode, scope, nextFunctionScope)
+        }
+      }
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- AST child traversal excludes scalar metadata from parser-owned nodes.
+      else if (child && typeof child === "object") {
+        // SAFETY: Traversal reads only optional AST fields from parser-owned child objects.
+        indexScopes(child as AstNode, scope, nextFunctionScope)
       }
     }
   }
-  const unwrap = (node: AstNode | null | undefined, seen = new Set<string>()): AstNode | undefined => {
-    if (node?.type === "Identifier" && typeof node.name === "string" && declarations.has(node.name)) {
-      if (seen.has(node.name)) throw new TypeError(`[vitehub] Circular Collection options in ${file}.`)
-      seen.add(node.name)
-      return unwrap(declarations.get(node.name), seen)
+  // SAFETY: The parser's AST nodes expose the expression and binding fields inspected above.
+  indexScopes(parsed.program as AstNode, moduleScope, moduleScope)
+  const bindingFor = (node: AstNode): Binding | undefined => {
+    for (let scope = scopes.get(node); scope; scope = scope.parent) {
+      if (node.name && scope.bindings.has(node.name)) return scope.bindings.get(node.name)
+    }
+    return undefined
+  }
+  let exported = moduleScope.bindings.get(exportName)
+  for (const statement of parsed.program.body) {
+    if (statement.type === "ExportNamedDeclaration") for (const specifier of statement.specifiers) {
+      if (specifier.type === "ExportSpecifier" && specifier.exported.type === "Identifier" && specifier.exported.name === exportName && specifier.local.type === "Identifier") {
+        exported = moduleScope.bindings.get(specifier.local.name)
+      }
+    }
+  }
+  const unwrap = (node: AstNode | null | undefined, seen = new Set<Binding>()): AstNode | undefined => {
+    if (node?.type === "Identifier" && node.name !== undefined) {
+      const declaration = bindingFor(node)
+      if (!declaration?.init) return undefined
+      if (seen.has(declaration)) throw new TypeError(`[vitehub] Circular Collection options in ${file}.`)
+      seen.add(declaration)
+      return unwrap(declaration.init, seen)
     }
     if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression, seen)
     return node ?? undefined
   }
-  const staticString = (node: AstNode | null | undefined, seen = new Set<string>()): string | undefined => {
+  const staticString = (node: AstNode | null | undefined, seen = new Set<Binding>()): string | undefined => {
     const value = unwrap(node, seen)
     if (!value) return undefined
     if (value.type === "Literal" && String(value.value) === value.value) return value.value
@@ -307,7 +362,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       for (let index = 0; index < quasis.length; index++) {
         result += quasis[index]?.value?.cooked ?? quasis[index]?.value?.raw ?? ""
         if (index < expressions.length) {
-          const expression = staticString(expressions[index], seen)
+          const expression = staticString(expressions[index], new Set(seen))
           if (expression === undefined) return undefined
           result += expression
         }
@@ -326,7 +381,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (value?.type === "Literal" && (value.value === true || value.value === false)) return { present: true, value: value.value }
     return { present: true }
   }
-  const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<string>()): RouteState | undefined => {
+  const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<Binding>()): RouteState | undefined => {
     const object = unwrap(node, seen)
     if (object?.type !== "ObjectExpression") return undefined
     let route: RouteState = { present: false }
@@ -372,16 +427,18 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       }
     }
     if (value.type === "ReturnStatement") return findOptions(value.expression ?? value.argument)
-    if (value.type === "ArrowFunctionExpression" || value.type === "FunctionExpression") return findOptions(value.body)
+    if (value.type === "ArrowFunctionExpression" || value.type === "FunctionExpression" || value.type === "FunctionDeclaration") return findOptions(value.body)
     for (const child of Object.values(value)) {
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- AST traversal follows only node objects, never literal scalar values.
       if (child && typeof child === "object") {
+        // SAFETY: The parser owns this object; findOptions reads only optional common node fields.
         const nested = findOptions(child as AstNode)
         if (nested) return nested
       }
     }
     return undefined
   }
-  const options = findOptions(declarations.get(exportName))
+  const options = findOptions(exported?.init)
   if (options?.type !== "ObjectExpression") return true
   let route: RouteState = { present: false }
   for (const property of options.properties ?? []) {

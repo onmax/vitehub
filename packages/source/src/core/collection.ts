@@ -431,7 +431,7 @@ export function defineCollection<
     | ((options: CollectionLoadOptions<TQuery, string>) => Promise<{ items: readonly TSourceItem[]; nextCursor: string | null }>),
   definition: (CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> | ProviderCollectionOptions<TSourceItem>) & {
     cursorSchema?: StandardSchemaV1
-    querySchema?: StandardSchemaV1<unknown, TQuery>
+    querySchema?: StandardSchemaV1<TQueryInput, TQuery>
     transform?: (item: NoInfer<TSourceItem>) => Promise<TItem> | TItem
   },
 ): Collection<TItem, TQuery, TQueryInput> {
@@ -443,6 +443,7 @@ export function defineCollection<
     throw sourceErrorDiagnostics.SOURCE_R0008({ message: "[vitehub] Collection defaultLimit cannot exceed maxLimit." })
   }
   const provider = "pagination" in definition && definition.pagination === "provider"
+  // SAFETY: Cursor overloads supply cursor metadata; only the non-provider branch uses this view.
   const cursorDefinition = definition as CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> & {
     cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
   }
@@ -455,18 +456,22 @@ export function defineCollection<
   if (definition.route !== undefined && definition.route !== false) throw new TypeError("[vitehub] Collection route must be false or omitted.")
 
   async function parseQuery(input: TQueryInput | CollectionRequestQuery): Promise<TQuery> {
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This is the query boundary: reject null, primitives, and arrays before schema validation.
     if (input === null || typeof input !== "object" || Array.isArray(input)) throw new TypeError("[vitehub] Collection query must be an object.")
     if (definition.querySchema) return await parseCollectionSchema(definition.querySchema, input)
+    // SAFETY: Without a schema, overloads use the untransformed request-query contract.
     return input as TQuery
   }
 
   async function page(request: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>> {
     request.signal?.throwIfAborted()
     const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
+    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Opaque provider cursors accept every string, including the empty string.
     if (provider && request.cursor !== undefined && typeof request.cursor !== "string") throw new CollectionCursorError()
     let pageItems: readonly TSourceItem[]
     let nextCursor: string | null
     if (provider) {
+      // SAFETY: The provider discriminant selects the matching loader overload.
       const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({
         cursor: request.cursor,
         limit,
@@ -474,6 +479,7 @@ export function defineCollection<
         signal: request.signal,
       })
       request.signal?.throwIfAborted()
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the provider page boundary; continuation is a string and only null means completion.
       if (!result || Array.isArray(result) || !Array.isArray(result.items) || !(result.nextCursor === null || typeof result.nextCursor === "string")) {
         throw new TypeError("[vitehub] Provider Collection load() must return { items, nextCursor: string | null }.")
       }
@@ -482,7 +488,9 @@ export function defineCollection<
       nextCursor = result.nextCursor
     }
     else {
+      // SAFETY: Without the provider discriminant, public overloads require an array-returning cursor loader.
       const result = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({
+        // SAFETY: The codec validates and transforms the cursor using the overload's cursor schema.
         cursor: await cursorCodec!.decode(request.cursor) as TCursorOutput | undefined,
         limit: limit + 1,
         query: request.query,
@@ -496,16 +504,21 @@ export function defineCollection<
     request.signal?.throwIfAborted()
     const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : [...pageItems]
     request.signal?.throwIfAborted()
+    // SAFETY: TItem is the transform result, or TSourceItem when no transform is configured.
     return { items: transformedItems as TItem[], nextCursor }
   }
 
+  // SAFETY: An omitted input starts as an empty query and still passes through parseQuery before loading.
   function query(input: TQueryInput = {} as TQueryInput, selected?: string[]): CollectionQueryBuilder<TItem> {
     function project(item: TItem): TItem {
+      // SAFETY: select() constrains keys to item fields; its return type exposes only those projected fields.
       return selected === undefined ? item : Object.fromEntries(selected.map(key => [key, (item as Record<string, unknown>)[key]])) as TItem
     }
     return {
       select(...keys) {
+        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- JavaScript callers must pass string field names at the select() API boundary.
         if (!keys.every(key => typeof key === "string")) throw new TypeError("[vitehub] Collection select() expects field names.")
+        // SAFETY: project() picks exactly these keys from each item before returning it.
         return query(input, keys) as CollectionQueryBuilder<Pick<TItem, typeof keys[number]>>
       },
       async page(options = {}) {
@@ -540,9 +553,11 @@ export function defineCollection<
     page,
     parseQuery,
     query(input) { return query(input) },
+    // SAFETY: An omitted query is schema-validated by query().all() before any loader invocation.
     all({ query: input = {} as TQueryInput, ...options } = {}) { return query(input).all(options) },
     async get(key, options = {}) {
       options.signal?.throwIfAborted()
+      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Direct reads require a nonempty string key before invoking the adapter.
       if (typeof key !== "string" || !key) throw new TypeError("[vitehub] Collection get() expects a nonempty string key.")
       if (!(definition.get instanceof Function)) throw new TypeError("[vitehub] Collection get() requires a get adapter.")
       const item = await definition.get(key, options)
@@ -550,6 +565,7 @@ export function defineCollection<
       if (item === null || item === undefined) return null
       const transformed = definition.transform ? await definition.transform(item) : item
       options.signal?.throwIfAborted()
+      // SAFETY: The configured transform determines TItem; overloads otherwise retain TSourceItem.
       return transformed as TItem
     },
     ...(definition.querySchema ? { querySchema: definition.querySchema } : {}),

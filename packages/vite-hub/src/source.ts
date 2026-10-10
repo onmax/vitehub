@@ -197,14 +197,24 @@ export function table<TTable extends TableShape>(
     querySchema?: undefined
   },
 ): CollectionSource<TTable["$inferSelect"], CollectionRequestQuery, KeysetCursor>
-export function table(input: unknown): CollectionSource<any, any, KeysetCursor> {
+export function table(input: unknown): unknown {
   // SAFETY: Public overloads constrain input to TableSourceOptions before this implementation runs.
   const options = input as TableSourceOptions<TableShape, StandardSchemaV1<unknown, object> | undefined>
   const rawTable: unknown = options.table
   // SAFETY: TableShape is the structural subset supplied by every supported Drizzle SQLite table.
   const databaseTable = rawTable as SQLiteTable
   // SAFETY: TableSourceOptions requires the Drizzle select entry point used below.
-  const database = options.db as { select(): any }
+  const database = options.db as {
+    select(): {
+      from(table: SQLiteTable): {
+        where(filter: SQL | undefined): {
+          orderBy(...order: SQL[]): {
+            limit(limit: number): PromiseLike<readonly Record<string, unknown>[]> | readonly Record<string, unknown>[]
+          }
+        }
+      }
+    }
+  }
   // SAFETY: TableSourceOptions constrains both order columns to this table's column union.
   const columns = [options.orderBy.column, options.orderBy.tieBreaker] as AnySQLiteColumn[]
   const keys = columns.map(column => columnKey(databaseTable, column))
@@ -222,9 +232,9 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
   const direction = options.orderBy.direction
   const order = columns.map(column => (direction === "asc" ? asc(column) : desc(column)))
   // SAFETY: Both the custom and default schemas return object-shaped Collection queries.
-  const querySchema = (options.querySchema ?? requestQuerySchema) as StandardSchemaV1<unknown, object>
+  const querySchema = (options.querySchema ?? requestQuerySchema) as StandardSchemaV1<object, object>
 
-  return {
+  const source: CollectionSource<TableShape["$inferSelect"], object, KeysetCursor> = {
     cursor: row => columns.map((column, index) => driverValue(column, row[keys[index]!])),
     cursorSchema: keysetCursorSchema(columns),
     defaultLimit: options.defaultLimit,
@@ -246,11 +256,12 @@ export function table(input: unknown): CollectionSource<any, any, KeysetCursor> 
     maxLimit: options.maxLimit,
     querySchema,
   }
+  return source
 }
 
 type AnyCollectionSource =
-  | { load: (...args: never[]) => unknown; cursor: (item: never) => CollectionCursorValue; cursorSchema: StandardSchemaV1<CollectionCursorValue, CollectionCursorValue>; pagination?: never; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
-  | { load: (...args: never[]) => unknown; pagination: "provider"; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
+  | { load: (...args: never[]) => Promise<readonly unknown[]>; cursor: (item: never) => CollectionCursorValue; cursorSchema: StandardSchemaV1<CollectionCursorValue, CollectionCursorValue>; pagination?: never; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
+  | { load: (...args: never[]) => Promise<{ items: readonly unknown[]; nextCursor: string | null }>; pagination: "provider"; querySchema?: StandardSchemaV1<unknown, unknown>; get?: (...args: never[]) => unknown; defaultLimit?: number; maxLimit?: number }
 type SourceItem<TSource extends AnyCollectionSource> =
   TSource extends { pagination: "provider"; load: (...args: never[]) => Promise<{ items: readonly (infer TItem)[] }> } ? TItem :
     TSource extends { cursor: (item: infer TItem) => CollectionCursorValue } ? TItem : never
