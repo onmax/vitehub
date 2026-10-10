@@ -13,6 +13,7 @@ it.each([
   "const options = {}; if (false) options.route = false; export const articles = defineCollection(load, options)",
   "const options = { route: false }; if (true) options.route = undefined; export const articles = defineCollection(load, options)",
   "function make(options = { route: false }) { return defineCollection(load, options) }; export const articles = make({})",
+  "const options = {}; function publicA() { options.route = undefined }; function publicB() { options.route = undefined }; function make() { dynamic ? publicA() : publicB(); return defineCollection(load, options) }; export const articles = make()",
   "const options: { route?: false } = { route: false }; options.route = undefined; export const articles = defineCollection(load, options)",
   "const { route } = { route: undefined }; export const articles = defineCollection(load, { route })",
   "const usePrivate = false; export const articles = usePrivate ? defineCollection(load, { route: false }) : defineCollection(load, {})",
@@ -72,6 +73,7 @@ it.each([
   "export { articles }; const articles: Collection<Row> = defineCollection(load, { route: false })",
   "export const articles =\n defineCollection(load, { route: false })",
   "function make() { function setRoute() { options.route = false }; setRoute(); return defineCollection(load, options) }; const options = {}; export const articles = make()",
+  "const options = {}; function privateA() { options.route = false }; function privateB() { options.route = false }; function make() { dynamic ? privateA() : privateB(); return defineCollection(load, options) }; export const articles = make()",
   "let enabled = true; const options = {}; if (enabled) { enabled = false; options.route = false }; export const articles = defineCollection(load, options)",
 ])("preserves nested and indirect route opt-outs in %s", async (source) => {
   const projectRoot = await mkdtemp(join(tmpdir(), "source-routes-"))
