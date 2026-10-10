@@ -382,16 +382,19 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const activeFunctions = new Set<AstNode>()
   const executedFunctions = new Set<AstNode>()
   const parameterValues = new Map<Binding, AstNode | undefined>()
+  let routeEffectState: boolean | undefined
   const snapshotExecution = (): {
     activeFunctions: Set<AstNode>
     executedFunctions: Set<AstNode>
     parameterValues: Map<Binding, AstNode | undefined>
     readPosition: number
+    routeEffectState: boolean | undefined
   } => ({
     activeFunctions: new Set(activeFunctions),
     executedFunctions: new Set(executedFunctions),
     parameterValues: new Map(parameterValues),
     readPosition,
+    routeEffectState,
   })
   const restoreExecution = (snapshot: ReturnType<typeof snapshotExecution>): void => {
     activeFunctions.clear()
@@ -401,6 +404,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     parameterValues.clear()
     for (const [binding, value] of snapshot.parameterValues) parameterValues.set(binding, value)
     readPosition = snapshot.readPosition
+    routeEffectState = snapshot.routeEffectState
   }
   let exported = moduleScope.bindings.get(exportName)
   for (const statement of parsed.program.body) {
@@ -540,6 +544,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       const key = write.node.left.computed ? staticString(write.node.left.property) : write.node.left.property?.name
       if (key === "route") route = routeValue(state === "known" && write.node.operator === "=" ? unwrap(write.node.right) : undefined)
     }
+    if (route.present) routeEffectState = route.value !== false
     return route
   }
   const findRoute = (node: AstNode | null | undefined, active = new Set<AstNode>()): boolean | undefined => {
@@ -554,18 +559,31 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       // isolated so a helper visited in the consequent cannot affect the
       // alternate (or subsequent route inspection).
       const branchSnapshot = snapshotExecution()
+      routeEffectState = undefined
       const consequent = findRoute(value.consequent, new Set(next))
       const consequentState = snapshotExecution()
+      const consequentEffect = consequentState.routeEffectState
       restoreExecution(branchSnapshot)
+      routeEffectState = undefined
       const alternate = findRoute(value.alternate, new Set(next))
       const alternateState = snapshotExecution()
+      const alternateEffect = alternateState.routeEffectState
       restoreExecution(branchSnapshot)
       // Effects that occur in both branches are guaranteed at runtime and
       // must remain visible to route inspection after the conditional.
       for (const fn of consequentState.executedFunctions) {
         if (alternateState.executedFunctions.has(fn)) executedFunctions.add(fn)
       }
-      return consequent !== undefined && consequent === alternate ? consequent : undefined
+      if (consequentEffect === false && alternateEffect === false) {
+        routeEffectState = false
+        return false
+      }
+      if (consequent !== undefined && consequent === alternate) return consequent
+      if (consequentEffect !== undefined && consequentEffect === alternateEffect) {
+        routeEffectState = consequentEffect
+        return consequentEffect
+      }
+      return undefined
     }
     if (value.type === "CallExpression") {
       const args = value.arguments ?? []
@@ -578,6 +596,12 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         const route = staticObjectRoute(args.length > 1 ? args[1] : args[0])
         readPosition = previousPosition
         return route?.value !== false
+      }
+      // Common transparent wrappers preserve the Collection value and its
+      // route metadata. Inspect their argument without importing application
+      // modules (which may have side effects during generation).
+      if (callee?.type === "MemberExpression" && !callee.computed && callee.object?.type === "Identifier" && callee.object.name === "Object" && callee.property?.name === "freeze") {
+        return findRoute(args[0], next)
       }
       const fn = unwrap(callee)
       if (!fn || !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(fn.type ?? "")) return undefined

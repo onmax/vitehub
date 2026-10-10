@@ -58,7 +58,7 @@ type QueryOutput<TSchema extends StandardSchemaV1<unknown, object> | undefined> 
 
 type QueryInput<TSchema extends StandardSchemaV1<unknown, object> | undefined> =
   TSchema extends StandardSchemaV1<infer TInput extends object, object>
-    ? CollectionQueryInput<TInput>
+    ? TInput
     : CollectionRequestQuery
 
 export interface TableSourceOptions<
