@@ -615,9 +615,24 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (value.type === "IfStatement") {
       const test = unwrap(value.test)
       if (test?.type === "Literal") return findRoute(test.value ? value.consequent : value.alternate, next)
+      const branchSnapshot = snapshotExecution()
+      routeEffectState = undefined
       const consequent = findRoute(value.consequent, new Set(next))
+      const consequentState = snapshotExecution()
+      const consequentEffect = consequentState.routeEffectState ?? branchRouteEffect(consequentState.executedFunctions)
+      restoreExecution(branchSnapshot)
+      routeEffectState = undefined
       const alternate = value.alternate ? findRoute(value.alternate, new Set(next)) : undefined
-      return consequent !== undefined && alternate !== undefined && consequent === alternate ? consequent : undefined
+      const alternateState = snapshotExecution()
+      const alternateEffect = alternateState.routeEffectState ?? branchRouteEffect(alternateState.executedFunctions)
+      restoreExecution(branchSnapshot)
+      if (consequentEffect === false && alternateEffect === false) routeEffectState = false
+      else if (consequentEffect !== undefined && consequentEffect === alternateEffect) routeEffectState = consequentEffect
+      return consequent !== undefined && alternate !== undefined && consequent === alternate
+        ? consequent
+        : consequentEffect !== undefined && consequentEffect === alternateEffect
+          ? consequentEffect
+          : undefined
     }
     if (value.type === "CallExpression") {
       const args = value.arguments ?? []
@@ -673,7 +688,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         if (statement.type === "ReturnStatement") return findRoute(statement.argument ?? statement.expression, next)
         if (statement.type === "IfStatement") {
           const result = findRoute(statement, next)
-          if (result !== undefined || hasReturn(statement)) return result
+          if (result !== undefined) return result
           continue
         }
         if (statement.type === "ExpressionStatement" && statement.expression) findRoute(statement.expression, next)
