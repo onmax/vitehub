@@ -612,6 +612,13 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       }
       return undefined
     }
+    if (value.type === "IfStatement") {
+      const test = unwrap(value.test)
+      if (test?.type === "Literal") return findRoute(test.value ? value.consequent : value.alternate, next)
+      const consequent = findRoute(value.consequent, new Set(next))
+      const alternate = value.alternate ? findRoute(value.alternate, new Set(next)) : undefined
+      return consequent !== undefined && alternate !== undefined && consequent === alternate ? consequent : undefined
+    }
     if (value.type === "CallExpression") {
       const args = value.arguments ?? []
       const callee = value.callee ?? value.expression
@@ -651,8 +658,24 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       return result
     }
     if (value.type === "BlockStatement") {
+      const hasReturn = (candidate: AstNode | null | undefined): boolean => {
+        if (!candidate) return false
+        if (candidate.type === "ReturnStatement") return true
+        for (const child of Object.values(candidate)) {
+          if (Array.isArray(child)) {
+            if (child.some(item => item && typeof item === "object" && hasReturn(item as AstNode))) return true
+          }
+          else if (child && typeof child === "object" && hasReturn(child as AstNode)) return true
+        }
+        return false
+      }
       for (const statement of Array.isArray(value.body) ? value.body : []) {
         if (statement.type === "ReturnStatement") return findRoute(statement.argument ?? statement.expression, next)
+        if (statement.type === "IfStatement") {
+          const result = findRoute(statement, next)
+          if (result !== undefined || hasReturn(statement)) return result
+          continue
+        }
         if (statement.type === "ExpressionStatement" && statement.expression) findRoute(statement.expression, next)
         if (statement.type === "VariableDeclaration") {
           for (const declaration of statement.declarations ?? []) if (declaration.init) findRoute(declaration.init, next)
@@ -663,6 +686,17 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       }
     }
     return undefined
+  }
+  // Module-scope calls execute before exported initializers and may mutate
+  // option objects consumed by the Collection. Replay those calls so their
+  // statically known route effects are visible without importing the module.
+  const exportStart = exported?.init?.start ?? Infinity
+  for (const statement of parsed.program.body) {
+    if ((statement.start ?? Infinity) >= exportStart) continue
+    if (statement.type === "ExpressionStatement" && statement.expression) findRoute(statement.expression as AstNode)
+    if (statement.type === "VariableDeclaration") {
+      for (const declaration of statement.declarations ?? []) if (declaration.init) findRoute(declaration.init as AstNode)
+    }
   }
   return findRoute(exported?.init) ?? true
 }

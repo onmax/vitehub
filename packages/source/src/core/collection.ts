@@ -311,7 +311,7 @@ export function defineCollection<
 >(
   load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
   options: ProviderCollectionOptions<TSourceItem> & { querySchema: TQuerySchema },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
+): Collection<unknown, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
 export function defineCollection<
   TSourceItem,
   TTransform extends CollectionTransform<TSourceItem>,
