@@ -563,6 +563,17 @@ export function defineCollection<
     }
   }
 
+  const get = definition.get instanceof Function ? async (key: string, options: CollectionReadOptions = {}) => {
+      options.signal?.throwIfAborted()
+      if (typeof key !== "string" || !key) throw new TypeError("[vitehub] Collection get() expects a nonempty string key.")
+      const item = await definition.get!(key, options)
+      options.signal?.throwIfAborted()
+      if (item === null || item === undefined) return null
+      const transformed = definition.transform ? await definition.transform(item) : item
+      options.signal?.throwIfAborted()
+      return transformed as TItem
+    } : undefined
+
   return {
     ...(authorize ? { authorize } : {}),
     ...(definition.route === false ? { route: false as const } : {}),
@@ -571,19 +582,7 @@ export function defineCollection<
     query(input) { return query(input) },
     // SAFETY: An omitted query is schema-validated by query().all() before any loader invocation.
     all({ query: input = {} as TQueryInput, ...options } = {}) { return query(input).all(options) },
-    async get(key, options = {}) {
-      options.signal?.throwIfAborted()
-      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Direct reads require a nonempty string key before invoking the adapter.
-      if (typeof key !== "string" || !key) throw new TypeError("[vitehub] Collection get() expects a nonempty string key.")
-      if (!(definition.get instanceof Function)) throw new TypeError("[vitehub] Collection get() requires a get adapter.")
-      const item = await definition.get(key, options)
-      options.signal?.throwIfAborted()
-      if (item === null || item === undefined) return null
-      const transformed = definition.transform ? await definition.transform(item) : item
-      options.signal?.throwIfAborted()
-      // SAFETY: The configured transform determines TItem; overloads otherwise retain TSourceItem.
-      return transformed as TItem
-    },
+    ...(get ? { get } : {}),
     ...(definition.querySchema ? { querySchema: definition.querySchema } : {}),
   }
 }

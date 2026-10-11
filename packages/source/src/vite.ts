@@ -449,6 +449,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       const value = unwrap(node.argument, new Set(seen))
       return value?.type === "Literal" ? { type: "Literal", value: !Boolean(value.value) } : node
     }
+    if (node?.type === "UnaryExpression" && node.operator === "void") return { type: "Literal", value: undefined }
     if (node && ["TSAsExpression", "TSSatisfiesExpression", "TSNonNullExpression", "ParenthesizedExpression"].includes(node.type ?? "")) return unwrap(node.expression, seen)
     if (node?.type === "MemberExpression") {
       const object = unwrap(node.object, seen)
@@ -689,6 +690,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         if (statement.type === "IfStatement") {
           const result = findRoute(statement, next)
           if (result !== undefined) return result
+          // An unresolved branch that can return a Collection means a later
+          // return is only conditionally reached. Do not select it as the
+          // exported value when the branch's route is unknown.
+          if (hasReturn(statement.consequent) || hasReturn(statement.alternate)) return undefined
           continue
         }
         if (statement.type === "ExpressionStatement" && statement.expression) findRoute(statement.expression, next)
