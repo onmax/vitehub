@@ -339,6 +339,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     }
     return undefined
   }
+  const indexedWrites: Write[] = []
   const indexWrites = (node: AstNode, fn?: AstNode, guards: Write["guards"] = []): void => {
     if (["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(node.type ?? "")) {
       fn = node
@@ -358,7 +359,11 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (node.type === "AssignmentExpression") {
       const target = node.left?.type === "MemberExpression" ? node.left.object : node.left
       const binding = target?.type === "Identifier" ? bindingFor(target) : undefined
-      if (binding) (binding.writes ??= []).push({ node, fn, guards })
+      if (binding) {
+        const write = { node, fn, guards }
+        ;(binding.writes ??= []).push(write)
+        indexedWrites.push(write)
+      }
     }
     for (const child of Object.values(node)) {
       if (Array.isArray(child)) {
@@ -547,6 +552,23 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     if (route.present) routeEffectState = route.value !== false
     return route
   }
+  const routeWritesFor = (functions: Set<AstNode>): Write[] => {
+    const writes: Write[] = []
+    for (const write of indexedWrites) if (write.fn && functions.has(write.fn)) {
+          const left = write.node.left
+          const key = left?.type === "MemberExpression"
+            ? (left.computed ? staticString(left.property) : left.property?.name)
+            : undefined
+      if (key === "route") writes.push(write)
+    }
+    return writes
+  }
+  const branchRouteEffect = (functions: Set<AstNode>): boolean | undefined => {
+    const writes = routeWritesFor(functions)
+    if (writes.some(write => write.node.right?.type === "Literal" && write.node.right.value === false)) return false
+    if (writes.some(write => write.node.right?.type === "Literal" && (write.node.right.value === true || write.node.right.value === undefined))) return true
+    return undefined
+  }
   const findRoute = (node: AstNode | null | undefined, active = new Set<AstNode>()): boolean | undefined => {
     const value = unwrap(node)
     if (!value || active.has(value)) return undefined
@@ -574,7 +596,12 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       for (const fn of consequentState.executedFunctions) {
         if (alternateState.executedFunctions.has(fn)) executedFunctions.add(fn)
       }
-      if (consequentEffect === false && alternateEffect === false) {
+      const consequentBranchEffect = consequentEffect ?? branchRouteEffect(consequentState.executedFunctions)
+      const alternateBranchEffect = alternateEffect ?? branchRouteEffect(alternateState.executedFunctions)
+      if (consequentBranchEffect === false && alternateBranchEffect === false) {
+        for (const fn of [...consequentState.executedFunctions, ...alternateState.executedFunctions]) {
+          if (routeWritesFor(new Set([fn])).length > 0) executedFunctions.add(fn)
+        }
         routeEffectState = false
         return false
       }
@@ -630,8 +657,9 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         if (statement.type === "VariableDeclaration") {
           for (const declaration of statement.declarations ?? []) if (declaration.init) findRoute(declaration.init, next)
         }
-        // Conditional control flow is not equivalent to the first syntactic return.
-        if (["IfStatement", "SwitchStatement", "TryStatement", "ForStatement", "WhileStatement"].includes(statement.type ?? "")) return undefined
+        // Non-returning control flow cannot itself supply the exported Collection.
+        // Continue scanning so an unconditional return that follows it is still
+        // inspected (the runtime reaches that return when the control flow ends).
       }
     }
     return undefined

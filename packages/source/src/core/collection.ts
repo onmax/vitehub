@@ -303,6 +303,15 @@ export function defineCollection<
     transform?: undefined
   },
 ): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
+// Also accept an exported ProviderCollectionOptions value whose transform is
+// optional; object-literal overloads above retain precise transformed items.
+export function defineCollection<
+  TSourceItem,
+  TQuerySchema extends StandardSchemaV1<unknown, object>,
+>(
+  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
+  options: ProviderCollectionOptions<TSourceItem> & { querySchema: TQuerySchema },
+): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
 export function defineCollection<
   TSourceItem,
   TTransform extends CollectionTransform<TSourceItem>,
@@ -336,6 +345,10 @@ export function defineCollection<
     transform: TTransform
   },
 ): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery>
+export function defineCollection<TSourceItem>(
+  load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
+  options: ProviderCollectionOptions<TSourceItem>,
+): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery>
 export function defineCollection<TSourceItem>(
   load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
   options: ProviderCollectionOptions<TSourceItem> & {
