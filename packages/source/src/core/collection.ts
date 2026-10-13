@@ -73,7 +73,9 @@ export interface CollectionQueryBuilder<TItem> {
 /** Minimal routed Collection shape accepted from generated structural modules. */
 export type AnyCollection = {
   page: (...args: never[]) => Promise<CollectionPage<unknown>>
-  parseQuery: (input: unknown) => Promise<unknown>
+  // `never` keeps this structural contract contravariant, so generated
+  // Collections may retain their concrete parser input type.
+  parseQuery: (input: never) => Promise<unknown>
   readonly route?: false
 }
 
