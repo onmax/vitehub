@@ -1093,6 +1093,9 @@ export class PullRequestInbox {
         if (result.verifiedPushHeads && (result.progress?.kind !== 'verified' || result.progress.evidence !== `push:${pinnedHead}`)) throw new Error('Published ancestry requires a verified push receipt')
         const pushed = new Set([pinnedHead, ...result.verifiedPushHeads ?? []])
         const published = new Set([claim.snapshot.pr?.head?.sha, ...pushed])
+        // Generation changes must not discard a pinned wait: feedback and terminal
+        // CI stay dirty via handled below, and the host evaluates them against the
+        // pass's saved evidence. Only the publication/head fence rejects the wait.
         // Synchronize can lag several successful pushes. Accept only this pass's
         // verified publication chain, and fence a different source push even
         // while the PR snapshot still exposes its original head.
