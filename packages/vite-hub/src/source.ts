@@ -268,7 +268,7 @@ type SourceItem<TSource extends AnyCollectionSource> =
 type SourceQuery<TSource extends AnyCollectionSource> =
   TSource extends { load: (options: infer TOptions) => unknown }
     ? TOptions extends { query: infer TQuery extends object } ? TQuery : never
-    : never
+    : CollectionRequestQuery
 type SourceQueryInput<TSource extends AnyCollectionSource> =
   TSource extends { querySchema?: StandardSchemaV1<infer TQueryInput extends object, object> } ? TQueryInput : SourceQuery<TSource>
 
@@ -279,18 +279,24 @@ type SourceSchemaConstraint<TSource extends AnyCollectionSource> = {
 }
 type SourceCursorConstraint<TSource extends AnyCollectionSource> =
   TSource extends { pagination: "provider" } ? unknown : { cursor: (item: SourceItem<TSource>) => CollectionCursorValue }
+type SourceLoaderConstraint<TSource extends AnyCollectionSource> =
+  TSource extends { pagination: "provider"; load: (options: infer TOptions) => unknown }
+    ? TOptions extends { cursor?: infer TCursor; limit: number; query: object; signal?: AbortSignal }
+      ? TCursor extends string | undefined ? unknown : never
+      : never
+    : unknown
 
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
     authorize?: AccessAuthorizeOption
     route?: false
-    source: TSource & SourceSchemaConstraint<NoInfer<TSource>> & SourceCursorConstraint<NoInfer<TSource>>
+    source: TSource & SourceSchemaConstraint<NoInfer<TSource>> & SourceCursorConstraint<NoInfer<TSource>> & SourceLoaderConstraint<NoInfer<TSource>>
     transform: TTransform
   }): Collection<Awaited<ReturnType<TTransform>>, SourceQuery<TSource>, SourceQueryInput<TSource>>
   <TSource extends AnyCollectionSource>(options: {
     authorize?: AccessAuthorizeOption
     route?: false
-    source: TSource & SourceSchemaConstraint<NoInfer<TSource>> & SourceCursorConstraint<NoInfer<TSource>>
+    source: TSource & SourceSchemaConstraint<NoInfer<TSource>> & SourceCursorConstraint<NoInfer<TSource>> & SourceLoaderConstraint<NoInfer<TSource>>
     transform?: undefined
   }): Collection<SourceItem<TSource>, SourceQuery<TSource>, SourceQueryInput<TSource>>
 }

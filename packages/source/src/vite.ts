@@ -635,6 +635,10 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
           ? consequentEffect
           : undefined
     }
+    if (value.type === "ObjectExpression") {
+      const route = staticObjectRoute(value)
+      return route?.value !== false
+    }
     if (value.type === "CallExpression") {
       const args = value.arguments ?? []
       const callee = value.callee ?? value.expression
