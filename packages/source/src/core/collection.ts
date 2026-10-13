@@ -70,10 +70,15 @@ export interface CollectionQueryBuilder<TItem> {
   all(options?: CollectionReadOptions & { limit?: number }): Promise<TItem[]>
 }
 
-export type AnyCollection = Collection<any, any, any>
+/** Minimal routed Collection shape accepted from generated structural modules. */
+export type AnyCollection = {
+  page: (...args: never[]) => Promise<CollectionPage<unknown>>
+  parseQuery: (input: unknown) => Promise<unknown>
+  readonly route?: false
+}
 
 export type CollectionItem<TCollection extends AnyCollection> =
-  TCollection extends Collection<infer TItem, any, any> ? TItem : never
+  TCollection extends { page: (...args: never[]) => Promise<CollectionPage<infer TItem>> } ? TItem : never
 
 type JSONOmitted = undefined | ((...args: any[]) => any) | symbol
 
@@ -155,7 +160,7 @@ export type CollectionQuery<TCollection extends AnyCollection> =
       : CollectionQueryInput<NonNullable<TQueryInput>>) extends infer T
       ? T extends object ? { [TKey in keyof T]: T[TKey] } : T
       : never
-    : never
+    : TCollection extends { parseQuery: (input: infer TInput) => Promise<unknown> } ? TInput : never
 
 export type CollectionLoader<TSourceItem, TQuery extends object, TCursor extends CollectionCursorValue> = (
   options: CollectionLoadOptions<TQuery, TCursor>,

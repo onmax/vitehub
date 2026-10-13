@@ -4,6 +4,7 @@ import { and, asc, desc, eq, getTableColumns, gt, lt, or } from "drizzle-orm"
 import type {
   Collection,
   CollectionCursorValue,
+  CollectionLoadOptions,
   CollectionLoader,
   CollectionQueryInput,
   CollectionRequestQuery,
@@ -267,7 +268,7 @@ type SourceItem<TSource extends AnyCollectionSource> =
     TSource extends { load: (...args: never[]) => Promise<readonly (infer TItem)[]> } ? TItem : never
 type SourceQuery<TSource extends AnyCollectionSource> =
   TSource extends { load: (options: infer TOptions) => unknown }
-    ? TOptions extends { query: infer TQuery extends object } ? TQuery : never
+    ? TOptions extends { query: infer TQuery extends object } ? TQuery : CollectionRequestQuery
     : CollectionRequestQuery
 type SourceQueryInput<TSource extends AnyCollectionSource> =
   TSource extends { querySchema?: StandardSchemaV1<infer TQueryInput extends object, object> } ? TQueryInput : SourceQuery<TSource>
@@ -281,10 +282,14 @@ type SourceCursorConstraint<TSource extends AnyCollectionSource> =
   TSource extends { pagination: "provider" } ? unknown : { cursor: (item: SourceItem<TSource>) => CollectionCursorValue }
 type SourceLoaderConstraint<TSource extends AnyCollectionSource> =
   TSource extends { pagination: "provider"; load: (options: infer TOptions) => unknown }
-    ? TOptions extends { cursor?: infer TCursor; limit: number; query: object; signal?: AbortSignal }
-      ? TCursor extends string | undefined ? unknown : never
+    ? CollectionLoadOptions<SourceQuery<TSource>, string> extends TOptions
+      ? unknown
       : never
-    : unknown
+    : TSource extends { load: (options: infer TOptions) => unknown }
+      ? CollectionLoadOptions<SourceQuery<TSource>, CollectionCursorValue> extends TOptions
+        ? unknown
+        : never
+      : unknown
 
 interface DefineSourceCollection {
   <TSource extends AnyCollectionSource, TTransform extends (item: NoInfer<SourceItem<TSource>>) => unknown>(options: {
