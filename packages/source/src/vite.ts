@@ -635,6 +635,16 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
           ? consequentEffect
           : undefined
     }
+    if (value.type === "ExpressionStatement") return findRoute(value.expression, next)
+    if (value.type === "VariableDeclaration") {
+      let result: boolean | undefined
+      for (const declaration of value.declarations ?? []) {
+        if (!declaration.init) continue
+        const candidate = findRoute(declaration.init, next)
+        if (candidate !== undefined) result = candidate
+      }
+      return result
+    }
     if (value.type === "ObjectExpression") {
       const route = staticObjectRoute(value)
       return route?.value !== false
@@ -717,10 +727,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const exportStart = exported?.init?.start ?? Infinity
   for (const statement of parsed.program.body) {
     if ((statement.start ?? Infinity) >= exportStart) continue
-    if (statement.type === "ExpressionStatement" && statement.expression) findRoute(statement.expression as AstNode)
-    if (statement.type === "VariableDeclaration") {
-      for (const declaration of statement.declarations ?? []) if (declaration.init) findRoute(declaration.init as AstNode)
-    }
+    findRoute(statement as AstNode)
   }
   return findRoute(exported?.init) ?? true
 }
