@@ -481,6 +481,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     // A completed helper may have used parameters or closed-over state that is
     // no longer available here. Its writes must not establish a public route.
     if (write.fn && !activeFunctions.has(write.fn)) {
+      if ((write.node.start ?? Infinity) >= readPosition) return "skip"
       if (!executedFunctions.has(write.fn)) return "skip"
       const right = unwrap(write.node.right)
       if (right?.type === "Literal" && (right.value === undefined || right.value === true || right.value === false)) return "known"
