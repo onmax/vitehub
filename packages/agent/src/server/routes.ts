@@ -4198,8 +4198,43 @@ interface ChatMessagePartOptions {
   rejectOversizedTextAttachments?: boolean
 }
 
+function isChatArrayBuffer(value: unknown): value is ArrayBuffer {
+  try {
+    const getter = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")?.get
+    if (!getter) return false
+    getter.call(value)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
+function isChatUint8Array(value: unknown): value is Uint8Array {
+  if (!ArrayBuffer.isView(value)) return false
+  try {
+    const getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag)?.get
+    return getter?.call(value) === "Uint8Array"
+  }
+  catch {
+    return false
+  }
+}
+
+function isChatBlob(value: unknown): value is Blob {
+  try {
+    const getter = Object.getOwnPropertyDescriptor(Blob.prototype, "size")?.get
+    if (!getter) return false
+    getter.call(value)
+    return true
+  }
+  catch {
+    return false
+  }
+}
+
 function imageAttachmentMediaType(attachment: Attachment): string | undefined {
-  if (attachment.data instanceof Blob && attachment.data.type.startsWith("image/")) return attachment.data.type
+  if (isChatBlob(attachment.data) && attachment.data.type.startsWith("image/")) return attachment.data.type
   for (const path of [attachment.name, attachment.url]) {
     const extension = path?.split(/[?#]/)[0]?.split(".").pop()?.toLowerCase()
     if (extension && imageAttachmentMimeTypes[extension]) return imageAttachmentMimeTypes[extension]
@@ -4217,7 +4252,7 @@ function isTextAttachment(attachment: Attachment): boolean {
 }
 
 function checkedTextAttachmentBytes(value: unknown, options: ChatMessagePartOptions = {}): Uint8Array | undefined {
-  const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : value instanceof Uint8Array ? value : undefined
+  const bytes = isChatArrayBuffer(value) ? new Uint8Array(value) : isChatUint8Array(value) ? value : undefined
   if (!bytes) return
   if (bytes.byteLength > chatTextAttachmentMaxBytes) {
     if (!options.rejectOversizedTextAttachments) return
@@ -4243,7 +4278,7 @@ async function textAttachmentBytes(attachment: Attachment, options: ChatMessageP
       return undefined
     }
   }
-  if (attachment.data instanceof Blob) {
+  if (isChatBlob(attachment.data)) {
     return checkedTextAttachmentBytes(await attachment.data.arrayBuffer(), options)
   }
   return checkedTextAttachmentBytes(attachment.data, options)
