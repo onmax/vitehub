@@ -611,8 +611,14 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   }
   const branchRouteEffect = (functions: Set<AstNode>): boolean | undefined => {
     const writes = routeWritesFor(functions)
-    if (writes.some(write => write.node.right?.type === "Literal" && write.node.right.value === false)) return false
-    if (writes.some(write => write.node.right?.type === "Literal" && (write.node.right.value === true || write.node.right.value === undefined))) return true
+    // Distinct helpers can establish the same route state. Compare their
+    // resolved writes rather than their AST identities so an unresolved
+    // conditional retains a guaranteed `route: false` effect.
+    const values = writes
+      .map(write => write.node.type === "UnaryExpression" ? true : unwrap(write.node.right))
+      .map(value => value === true ? true : value?.type === "Literal" ? value.value : undefined)
+    if (values.some(value => value === false)) return false
+    if (values.some(value => value === true || value === undefined)) return true
     return undefined
   }
   const findRoute = (node: AstNode | null | undefined, active = new Set<AstNode>()): boolean | undefined => {
