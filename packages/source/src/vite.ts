@@ -679,7 +679,16 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       const alternateState = snapshotExecution()
       const alternateEffect = alternateState.routeEffectState ?? branchRouteEffect(alternateState.executedFunctions)
       restoreExecution(branchSnapshot)
-      if (consequentEffect === false && alternateEffect === false) routeEffectState = false
+      if (consequentEffect === false && alternateEffect === false) {
+        // Both branches establish the same server-only route state, even when
+        // they call different helper functions. Preserve those route-relevant
+        // helpers after restoring the pre-branch execution snapshot so the
+        // later Collection options inspection can observe their writes.
+        for (const fn of [...consequentState.executedFunctions, ...alternateState.executedFunctions]) {
+          if (routeWritesFor(new Set([fn])).length > 0) executedFunctions.add(fn)
+        }
+        routeEffectState = false
+      }
       else if (consequentEffect !== undefined && consequentEffect === alternateEffect) routeEffectState = consequentEffect
       return consequent !== undefined && alternate !== undefined && consequent === alternate
         ? consequent
