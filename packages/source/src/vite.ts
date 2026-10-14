@@ -541,6 +541,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       for (const argument of node.arguments ?? []) {
         const current = staticObjectRoute(argument, new Set(seen))
         if (current?.present) merged = current
+        else merged = { present: true, value: false }
       }
       return merged
     }
@@ -771,6 +772,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const exportStart = exported?.init?.start ?? Infinity
   for (const statement of parsed.program.body) {
     if ((statement.start ?? Infinity) >= exportStart) continue
+    // Replay all executable module setup, including statically resolvable
+    // control-flow statements that can call route-mutating helpers.
     findRoute(statement as AstNode)
   }
   return findRoute(exported?.init) ?? true
