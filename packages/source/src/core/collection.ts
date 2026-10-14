@@ -570,7 +570,7 @@ export function defineCollection<
     }
   }
 
-  const get = definition.get instanceof Function ? async (key: string, options: CollectionReadOptions = {}) => {
+  const get = typeof definition.get === "function" ? async (key: string, options: CollectionReadOptions = {}) => {
       options.signal?.throwIfAborted()
       if (typeof key !== "string" || !key) throw new TypeError("[vitehub] Collection get() expects a nonempty string key.")
       const item = await definition.get!(key, options)

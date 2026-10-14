@@ -356,6 +356,15 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       return
     }
     if (["ForStatement", "ForInStatement", "ForOfStatement", "WhileStatement", "DoWhileStatement", "SwitchStatement", "TryStatement"].includes(node.type ?? "")) guards = [...guards, { test: undefined, truthy: true }]
+    if (node.type === "UnaryExpression" && node.operator === "delete" && node.argument?.type === "MemberExpression") {
+      const target = node.argument.object
+      const binding = target?.type === "Identifier" ? bindingFor(target) : undefined
+      if (binding) {
+        const write = { node, fn, guards }
+        ;(binding.writes ??= []).push(write)
+        indexedWrites.push(write)
+      }
+    }
     if (node.type === "AssignmentExpression") {
       const target = node.left?.type === "MemberExpression" ? node.left.object : node.left
       const binding = target?.type === "Identifier" ? bindingFor(target) : undefined
@@ -473,7 +482,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     // no longer available here. Its writes must not establish a public route.
     if (write.fn && !activeFunctions.has(write.fn)) {
       if (!executedFunctions.has(write.fn)) return "skip"
-      const right = write.node.right
+      const right = unwrap(write.node.right)
       if (right?.type === "Literal" && (right.value === undefined || right.value === true || right.value === false)) return "known"
       return "unknown"
     }
@@ -522,10 +531,19 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   type RouteState = { present: boolean, value?: boolean }
   const routeValue = (value: AstNode | undefined): RouteState => {
     if (value?.type === "Literal" && (value.value === true || value.value === false)) return { present: true, value: value.value }
+    if (value?.type === "Literal" && value.value === undefined) return { present: true, value: true }
     // An explicitly configured but unresolved route might be false. Do not expose it.
     return { present: true, value: value?.type === "Literal" ? true : false }
   }
   const staticObjectRoute = (node: AstNode | null | undefined, seen = new Set<Binding>()): RouteState | undefined => {
+    if (node?.type === "CallExpression" && node.callee?.type === "MemberExpression" && !node.callee.computed && node.callee.object?.type === "Identifier" && node.callee.object.name === "Object" && node.callee.property?.name === "assign") {
+      let merged: RouteState = { present: false }
+      for (const argument of node.arguments ?? []) {
+        const current = staticObjectRoute(argument, new Set(seen))
+        if (current?.present) merged = current
+      }
+      return merged
+    }
     const object = unwrap(node, seen)
     if (object?.type !== "ObjectExpression") return undefined
     let route: RouteState = { present: false }
@@ -548,7 +566,33 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       const state = writeState(write)
       if (write.node.left?.type !== "MemberExpression" || state === "skip") continue
       const key = write.node.left.computed ? staticString(write.node.left.property) : write.node.left.property?.name
-      if (key === "route") route = routeValue(state === "known" && write.node.operator === "=" ? unwrap(write.node.right) : undefined)
+      if (key === "route") {
+        if (write.node.type === "UnaryExpression") route = { present: true, value: true }
+        else route = routeValue(state === "known" && write.node.operator === "=" ? unwrap(write.node.right) : undefined)
+      }
+    }
+    if (node?.type === "Identifier") {
+      const init = bindingFor(node)?.init
+      if (init?.type === "Identifier") {
+        for (const write of bindingFor(init)?.writes ?? []) {
+          const state = writeState(write)
+          if (write.node.left?.type !== "MemberExpression" || state === "skip") continue
+          const key = write.node.left.computed ? staticString(write.node.left.property) : write.node.left.property?.name
+          if (key === "route") route = write.node.type === "UnaryExpression" ? { present: true, value: true } : routeValue(state === "known" ? unwrap(write.node.right) : undefined)
+        }
+      }
+    }
+    if (node?.type === "Identifier") {
+      const alias = unwrap(node)
+      if (alias && alias !== node && alias.type === "Identifier") {
+        for (const write of bindingFor(alias)?.writes ?? []) {
+          const state = writeState(write)
+          if (write.node.left?.type === "MemberExpression" && state !== "skip") {
+            const key = write.node.left.computed ? staticString(write.node.left.property) : write.node.left.property?.name
+            if (key === "route") route = write.node.type === "UnaryExpression" ? { present: true, value: true } : routeValue(state === "known" ? unwrap(write.node.right) : undefined)
+          }
+        }
+      }
     }
     if (route.present) routeEffectState = route.value !== false
     return route
