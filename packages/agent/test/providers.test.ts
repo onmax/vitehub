@@ -22337,6 +22337,102 @@ describe("server helpers", () => {
     expect(runs).toEqual([["remember BROWSER-HISTORY"], ["what marker did I ask you to remember?"]])
   })
 
+  it.each(["local bytes", "local buffer", "foreign bytes", "foreign buffer", "foreign subarray", "foreign prototype blob", "spoofed blob", "shadowed local bytes", "shadowed foreign bytes", "tagged local bytes", "tagged foreign bytes", "prototype-tagged foreign bytes", "throwing-tag foreign bytes"])("exports Channel history attachment %s", async (kind) => {
+    let data: unknown = kind === "local bytes"
+      ? new Uint8Array([1, 2, 3])
+      : kind === "local buffer"
+        ? new Uint8Array([1, 2, 3]).buffer
+        : kind === "foreign prototype blob"
+          ? runInNewContext(`
+            // Native Blob slots with a constructor and prototype created in this VM.
+            class RealmBlob {
+              constructor(parts, options) {
+                return Reflect.construct(NativeBlob, [parts, options], new.target)
+              }
+            }
+            new RealmBlob([new Uint8Array([1, 2, 3])], { type: "application/octet-stream" })
+          `, { NativeBlob: Blob })
+          : kind === "spoofed blob"
+            ? { [Symbol.toStringTag]: "Blob", size: 3, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }
+            : runInNewContext(kind === "foreign bytes"
+              ? "new Uint8Array([1, 2, 3])"
+              : kind === "foreign subarray"
+                ? "new Uint8Array([9, 1, 2, 3, 9]).subarray(1, 4)"
+                : "new Uint8Array([1, 2, 3]).buffer")
+    if (kind.startsWith("shadowed")) {
+      data = kind === "shadowed local bytes"
+        ? new Uint8Array([9, 1, 2, 3, 9]).subarray(1, 4)
+        : runInNewContext("new Uint8Array([9, 1, 2, 3, 9]).subarray(1, 4)")
+      Object.defineProperties(data, {
+        buffer: { value: new Uint8Array([8]).buffer },
+        byteOffset: { value: 0 },
+        byteLength: { value: 1 },
+      })
+    }
+    let tagReads = 0
+    if (kind.includes("tagged") || kind === "throwing-tag foreign bytes") {
+      data = kind === "tagged local bytes"
+        ? new Uint8Array([1, 2, 3])
+        : runInNewContext("new Uint8Array([9, 1, 2, 3, 9]).subarray(1, 4)")
+      const target = kind === "prototype-tagged foreign bytes" ? Object.getPrototypeOf(data) : data
+      Object.defineProperty(target, Symbol.toStringTag, kind === "throwing-tag foreign bytes"
+        ? { get() { tagReads++; throw new Error("Do not read the supplied tag") } }
+        : { value: "ProviderBytes" })
+    }
+    if (kind === "foreign prototype blob") {
+      expect(data).not.toBeInstanceOf(Blob)
+      expect(Object.getOwnPropertyDescriptor(Blob.prototype, "size")!.get!.call(data)).toBe(3)
+      const nativeBytes: ArrayBuffer = await Blob.prototype.arrayBuffer.call(data)
+      expect([...new Uint8Array(nativeBytes)]).toEqual([1, 2, 3])
+    }
+    const adapter = createTestChatAdapter({
+      historyMessages: [new Message({
+        attachments: [{
+          // SAFETY: The fixtures include foreign byte brands and a native-slot Blob with a VM-created prototype; the spoof deliberately lacks Blob slots.
+          data: data as never,
+          mimeType: "application/octet-stream",
+          name: "bytes.bin",
+          size: 3,
+          type: "file",
+        }],
+        author: { fullName: "Maxi", isBot: false, isMe: false, userId: "123", userName: "maxi" },
+        formatted: { children: [], type: "root" },
+        id: "20",
+        metadata: { dateSent: new Date("2026-08-15T00:00:00.000Z"), edited: false },
+        raw: {},
+        text: "attachment",
+        threadId: "telegram:456",
+      })],
+    })
+    const agent = defineAgent({
+      channels: {
+        // SAFETY: createTestChatAdapter implements the Channel adapter contract.
+        telegram: testTelegram(telegram, { adapter: () => adapter as never, webhooks: { secretHeader: "x-test-secret", secretToken: "history-secret" } }),
+      },
+      driver: { run: () => "saved" },
+      messages: { stream: false },
+    })
+    // SAFETY: The Agent Definition is valid for the internal webhook route.
+    const handler = createChannelWebhookRouteHandler(agent as never)
+    const response = await handler(new Request("https://example.com/api/_vitehub/agents/support/webhooks/telegram", {
+      body: JSON.stringify({ threadId: "telegram:456" }),
+      headers: { "content-type": "application/json", "x-test-secret": "history-secret", "x-vitehub-channel-history": "1" },
+      method: "POST",
+    }), "telegram")
+    expect(response.status).toBe(200)
+    expect(tagReads).toBe(0)
+    if (kind === "spoofed blob") {
+      const history = await response.json()
+      expect(history).toMatchObject({ messages: [{ attachments: [{ name: "bytes.bin", unavailable: true }] }] })
+      expect(history).toMatchObject({ messages: [{ attachments: [expect.not.objectContaining({ data: expect.anything() })] }] })
+    }
+    else {
+      await expect(response.json()).resolves.toMatchObject({
+        messages: [{ attachments: [{ data: "AQID", name: "bytes.bin" }], id: "20" }],
+      })
+    }
+  })
+
   it("exports authenticated Channel history with attachment data", async () => {
     const { defineChatCapability } = await import("../src/chat-trigger.ts")
     const { defineAgent } = await import("../src/index.ts")
