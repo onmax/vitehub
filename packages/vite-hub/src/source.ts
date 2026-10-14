@@ -17,7 +17,7 @@ import { viteHubErrorDiagnostics } from "./error-diagnostics.ts"
 
 export * from "@vite-hub/source"
 
-export interface CollectionSource<
+export interface CursorCollectionSource<
   TSourceItem,
   TQuery extends object,
   TCursorInput extends CollectionCursorValue,
@@ -32,6 +32,16 @@ export interface CollectionSource<
   get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
   querySchema?: StandardSchemaV1<TQueryInput, TQuery>
 }
+
+export type CollectionSource<
+  TSourceItem,
+  TQuery extends object,
+  TCursorInput extends CollectionCursorValue = CollectionCursorValue,
+  TCursorOutput extends CollectionCursorValue = TCursorInput,
+  TQueryInput extends object = TQuery,
+> =
+  | CursorCollectionSource<TSourceItem, TQuery, TCursorInput, TCursorOutput, TQueryInput>
+  | ProviderCollectionSource<TSourceItem, TQuery, TQueryInput>
 
 export interface ProviderCollectionSource<TSourceItem, TQuery extends object, TQueryInput extends object = TQuery> {
   pagination: "provider"
