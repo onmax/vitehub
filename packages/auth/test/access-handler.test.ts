@@ -326,7 +326,7 @@ describe("Auth access handlers", () => {
     }
   })
 
-  it("snapshots a serializable Response-shaped prototype without rereading its getters", async () => {
+  it("rejects a serializable Response-shaped prototype", async () => {
     const sourceBody = new Response("Policy rejected").body
     const headers = vi.fn()
       .mockReturnValueOnce(new Headers({ "x-policy": "reject" }))
@@ -347,16 +347,9 @@ describe("Auth access handlers", () => {
       access: { routes: [{ route: "/**", authorize: () => candidate }] },
     }))
 
-    const response = await handler(new Request("https://app.example/"))
-
-    expect(response).toBeInstanceOf(Response)
-    expect(response).not.toBe(candidate)
-    expect(response?.status).toBe(409)
-    expect(response?.statusText).toBe("Conflict")
-    expect(response?.headers.get("x-policy")).toBe("reject")
-    await expect(response?.text()).resolves.toBe("Policy rejected")
-    expect(headers).toHaveBeenCalledTimes(1)
-    expect(body).toHaveBeenCalledTimes(1)
+    await expect(handler(new Request("https://app.example/"))).resolves.toMatchObject({ status: 403 })
+    expect(headers).not.toHaveBeenCalled()
+    expect(body).not.toHaveBeenCalled()
   })
 
   it("preserves foreign status, body, and separate Set-Cookie headers", async () => {
@@ -376,6 +369,50 @@ describe("Auth access handlers", () => {
     expect(response?.headers.get("x-policy")).toBe("reject")
     expect(response?.headers.getSetCookie()).toEqual(["first=1", "second=2"])
     await expect(response?.text()).resolves.toBe("Policy rejected")
+  })
+
+  it("rejects foreign responses with combined Set-Cookie headers", async () => {
+    const foreign = new ForeignResponse("Policy rejected", {
+      status: 409,
+      headers: { "set-cookie": "first=1, second=2" },
+    })
+    Object.defineProperty(foreign.headers, "getSetCookie", { value: undefined })
+    const handler = createAuthAccessHandler([{ route: "/**", authorize: true }], defineAuth({
+      access: { routes: [{ route: "/**", authorize: () => foreign as never }] },
+    }))
+
+    await expect(handler(new Request("https://app.example/"))).resolves.toMatchObject({ status: 403 })
+  })
+
+  it("preserves one foreign Set-Cookie header without getSetCookie", async () => {
+    const foreign = new ForeignResponse("Policy rejected", {
+      status: 409,
+      headers: { "set-cookie": "session=one; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/" },
+    })
+    Object.defineProperty(foreign.headers, "getSetCookie", { value: undefined })
+    const handler = createAuthAccessHandler([{ route: "/**", authorize: true }], defineAuth({
+      access: { routes: [{ route: "/**", authorize: () => foreign as never }] },
+    }))
+
+    const response = await handler(new Request("https://app.example/"))
+
+    expect(response?.status).toBe(409)
+    expect(response?.headers.get("set-cookie")).toBe("session=one; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/")
+  })
+
+  it("preserves commas in a single cookie extension without getSetCookie", async () => {
+    const foreign = new ForeignResponse(null, {
+      status: 302,
+      headers: { "set-cookie": "session=one; Extension=alpha, beta=gamma" },
+    })
+    Object.defineProperty(foreign.headers, "getSetCookie", { value: undefined })
+
+    const handler = createAuthAccessHandler([{ route: "/**", authorize: true }], defineAuth({
+      access: { routes: [{ route: "/**", authorize: () => foreign as never }] },
+    }))
+    const response = await handler(new Request("https://app.example/"))
+
+    expect(response?.headers.get("set-cookie")).toBe("session=one; Extension=alpha, beta=gamma")
   })
 
   it("forwards cancellation to the foreign response body", async () => {
