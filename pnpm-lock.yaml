@@ -1704,6 +1704,9 @@ importers:
       ws:
         specifier: ^8.22.0
         version: 8.22.0
+      undici:
+        specifier: 7.30.0
+        version: 7.30.0
     devDependencies:
       '@types/node':
         specifier: catalog:tooling
