@@ -71,6 +71,7 @@ function validPath(value: unknown): value is string {
       || (index === 0 && /^vitehu~\d+$/.test(normalized))
     return traversal || reserved
   })
+
 }
 
 export function decodeWorkspaceChangePayload(decoder: decoding.Decoder): RealtimeWorkspaceChange | undefined {
