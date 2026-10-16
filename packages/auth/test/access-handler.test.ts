@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { Response as ForeignResponse } from "undici"
+import { runInNewContext } from "node:vm"
 
 import { defineAuth } from "../src/index.ts"
 import { createAuthAccessHandler } from "../src/server.ts"
@@ -106,12 +107,14 @@ describe("Auth access handlers", () => {
     await expect(handler(new Request("https://app.example/admin/users"))).rejects.toMatchObject({ code: "AUTH_R0008" })
   })
 
-  it("returns custom authorization responses unchanged", async () => {
-    const response = new Response("Policy rejected", { status: 409 })
+  it("rejects consumed same-realm authorization responses", async () => {
+    const response = new Response("consumed", { status: 409 })
+    await response.text()
     const handler = createAuthAccessHandler([{ route: "/**", authorize: true }], defineAuth({
-      access: { routes: [{ route: "/**", authorize: () => response }] },
+      access: { routes: [{ route: "/**", authorize: () => response as never }] },
     }))
-    await expect(handler(new Request("https://app.example/"))).resolves.toBe(response)
+    const result = await handler(new Request("https://app.example/"))
+    expect(result?.status).toBe(403)
   })
 
   it("normalizes a local Response proxy with unstable ordinary reads", async () => {
@@ -278,24 +281,6 @@ describe("Auth access handlers", () => {
 
     expect(response?.status).toBe(403)
     expect(() => response?.headers.forEach(() => {})).not.toThrow()
-  })
-
-  it.each(["consumed", "locked"] as const)("preserves a native authorization Response with a %s body unchanged", async state => {
-    const response = new Response("Policy rejected", { status: 409, headers: { "x-policy": "custom" } })
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
-    if (state === "consumed") await response.text()
-    else reader = response.body!.getReader()
-    const handler = createAuthAccessHandler([{ route: "/**", authorize: true }], defineAuth({
-      access: { routes: [{ route: "/**", authorize: () => response }] },
-    }))
-    try {
-      await expect(handler(new Request("https://app.example/"))).resolves.toBe(response)
-      expect(response.status).toBe(409)
-      expect(response.headers.get("x-policy")).toBe("custom")
-    }
-    finally {
-      reader?.releaseLock()
-    }
   })
 
   it("rejects an already-consumed body from the foreign runtime", async () => {

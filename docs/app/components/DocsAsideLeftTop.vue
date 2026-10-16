@@ -11,7 +11,7 @@ const sectionCategory = computed(() => {
   if (!category) return "Getting started";
   return category === currentSection.value?.title ? "" : category;
 });
-const isDocsIndex = computed(() => normalizeDocsPath(route.path) === "/docs");
+const isDocsIndex = computed(() => normalizeDocsPath(route.path) === normalizeDocsPath(sectionPath.value));
 </script>
 
 <template>
