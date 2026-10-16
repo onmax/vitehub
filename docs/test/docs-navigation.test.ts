@@ -63,7 +63,7 @@ describe("docs product navigation", () => {
       expect(titles[0], sectionId).toBe("Overview");
       expect(templateTitles, sectionId).toContain("Tutorial");
       expect(templateTitles, sectionId).toContain("Server API");
-      // Product-specific concepts can sit between the shared template pages.
+      // Product-specific concepts may sit between the ordered template pages.
       expect(templateTitles, sectionId).toEqual(template.filter(title => templateTitles.includes(title)));
       const lastTemplateIndex = Math.max(...templateTitles.map(title => titles.indexOf(title)));
       expect(titles.slice(lastTemplateIndex + 1).some(title => template.includes(title)), sectionId).toBe(false);
@@ -117,7 +117,7 @@ describe("docs product navigation", () => {
     }
 
     const kv = docsManifest.sections.find(candidate => candidate.id === "kv");
-    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null]);
+    expect(getDocsSidebarGroups(kv!).map(group => group.label)).toEqual([null, null, "Build", null]);
   });
 
   it("lists each topic once inside a section", () => {
