@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { validateGitHubInstallInputs } from "../src/server/github-install-inputs.ts";
-import { assertGitHubDependenciesCurrent, installGitHubPullRequestWorkspace, GitHubWorkspaceInstallError } from "../src/server/github-install.ts";
+import { assertGitHubDependenciesCurrent, hasCurrentGitHubDependencies, installGitHubPullRequestWorkspace, GitHubWorkspaceInstallError } from "../src/server/github-install.ts";
 
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -15,9 +15,9 @@ async function fixture() {
   await mkdir(join(root, ".git")); await mkdir(join(root, "bin"));
   await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6" }));
   await writeFile(join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n");
-  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/../args.txt"\nif [ -n "$GITHUB_APP_PRIVATE_KEY" ]; then exit 99; fi\nif [ "$COREPACK_ENV_FILE" != 0 ] || [ "$COREPACK_NPM_REGISTRY" != https://registry.npmjs.org ]; then exit 98; fi\nmkdir -p node_modules\n', { mode: 0o755 });
+  await writeFile(join(root, "bin", "corepack"), '#!/bin/sh\nprintf "%s\\n" "$@" > "$HOME/../args.txt"\nif [ -n "$VITEHUB_GITHUB_PRIVATE_KEY" ]; then exit 99; fi\nif [ "$COREPACK_ENV_FILE" != 0 ] || [ "$COREPACK_NPM_REGISTRY" != https://registry.npmjs.org ]; then exit 98; fi\nmkdir -p node_modules\n', { mode: 0o755 });
   vi.stubEnv("PATH", `${join(root, "bin")}:${process.env.PATH}`);
-  vi.stubEnv("GITHUB_APP_PRIVATE_KEY", "host-secret");
+  vi.stubEnv("VITEHUB_GITHUB_PRIVATE_KEY", "host-secret");
   return root;
 }
 it("classifies malformed installation inputs separately from host failures", async () => {
@@ -60,7 +60,7 @@ it("publishes cached runner output only through the validated snapshot", async (
   const root = await fixture();
   await installGitHubPullRequestWorkspace(root, undefined, async input => {
     expect(input.cwd).not.toBe(root);
-    expect(input.env.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
+    expect(input.env.VITEHUB_GITHUB_PRIVATE_KEY).toBeUndefined();
     expect(input.command).toContain("--ignore-scripts");
     await mkdir(join(input.cwd, "node_modules"));
     await writeFile(join(input.cwd, "node_modules", "cached.txt"), "isolated");
@@ -69,6 +69,26 @@ it("publishes cached runner output only through the validated snapshot", async (
   expect(await readFile(join(root, "node_modules", "cached.txt"), "utf8")).toBe("isolated");
   expect(JSON.parse(await readFile(join(root, ".git", "vitehub-install.json"), "utf8"))).toMatchObject({ status: "installed", scripts: false, cache: "hit" });
   await expect(assertGitHubDependenciesCurrent(root)).resolves.toBeUndefined();
+});
+
+it("recognizes an unchanged frozen install without running another package-manager pass", async () => {
+  const root = await fixture();
+  await installGitHubPullRequestWorkspace(root, undefined, async input => {
+    await mkdir(join(input.cwd, "node_modules"));
+  });
+  await expect(hasCurrentGitHubDependencies(root)).resolves.toBe(true);
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { changed: "1.0.0" } }));
+  await expect(hasCurrentGitHubDependencies(root)).resolves.toBe(false);
+});
+
+it("rejects a matching install record when package-manager outputs are damaged", async () => {
+  const root = await fixture();
+  await writeFile(join(root, "package.json"), JSON.stringify({ packageManager: "pnpm@10.34.6", dependencies: { example: "1.0.0" } }));
+  await installGitHubPullRequestWorkspace(root, undefined, async input => {
+    await mkdir(join(input.cwd, "node_modules"));
+  });
+  await rm(join(root, "node_modules"), { recursive: true, force: true });
+  await expect(hasCurrentGitHubDependencies(root)).resolves.toBe(false);
 });
 
 it("rejects changed live dependency inputs after a cached runner completes", async () => {

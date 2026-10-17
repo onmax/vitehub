@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 
 import { workspaceError } from "../core/errors.ts"
-import { contentStreamChunks, contentStreamToBytes, decodeFile, normalizeWorkspacePath, sha256 } from "../core/path.ts"
+import { contentStreamChunks, contentStreamToBytes, decodeFile, isWorkspaceBytes, normalizeWorkspacePath, sha256 } from "../core/path.ts"
 import { createSourceContext, normalizeWorkspaceSources, sourceMountContainsPath, sourceMountIntersectsPath } from "./config.ts"
 import { prepareWorkspaceSource } from "./preparation.ts"
 import { normalizeMetadataValue, normalizeSourceFileMetadata } from "./file-metadata.ts"
@@ -36,7 +36,7 @@ import type {
   WorkspaceSourceMaterializationStatus,
 } from "../core/types.ts"
 
-export interface LazyMaterializedMetadata {
+interface LazyMaterializedMetadata {
   source: string
   sourcePath: string
   materializedAt: string
@@ -169,8 +169,14 @@ export async function hasCurrentSourceSnapshot(store: WorkspaceStore, workspace:
 
 async function snapshotHasCurrentOwners(store: WorkspaceStore, workspace: string, source: ResolvedWorkspaceSource, meta: SourceSnapshotMetadata, activeSources: ResolvedWorkspaceSource[] = []) {
   if (Object.keys(meta.items || {}).length === 0 && meta.mountPath && (await store.stat(meta.mountPath))?.type !== "directory") return false
+  // A local Store's stat() computes a content digest for every file. A cache
+  // hit only needs the stored metadata in the common case, so list the mount
+  // once and keep the digest fallback for providers that omit metadata.
+  const listed = source.mountPath
+    ? new Map((await store.list(source.mountPath, { recursive: true })).map(entry => [entry.path, entry]))
+    : undefined
   for (const path of Object.keys(meta.items || {})) {
-    const stat = await store.stat(path)
+    const stat = listed?.get(path) ?? await store.stat(path)
     if (await materializedFileHasCurrentOwner(store, workspace, source.key, path, stat)) continue
     // Startup snapshots share the most recent write at overlapping paths.
     const owner = await readWorkspaceFileOwner(store, path)
@@ -251,7 +257,7 @@ function checkpointItems(items: Record<string, LazyMaterializedMetadata>) {
 }
 
 function contentSize(content: string | Uint8Array) {
-  return content instanceof Uint8Array ? content.byteLength : new TextEncoder().encode(content).byteLength
+  return isWorkspaceBytes(content) ? content.byteLength : new TextEncoder().encode(content).byteLength
 }
 
 function observableFileMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -340,8 +346,8 @@ function materializationPaths(options: WorkspaceMaterializeSourcesOptions | unde
 }
 
 function contentEquals(left: string | Uint8Array, right: string | Uint8Array) {
-  const leftBytes = left instanceof Uint8Array ? left : new TextEncoder().encode(left)
-  const rightBytes = right instanceof Uint8Array ? right : new TextEncoder().encode(right)
+  const leftBytes = isWorkspaceBytes(left) ? left : new TextEncoder().encode(left)
+  const rightBytes = isWorkspaceBytes(right) ? right : new TextEncoder().encode(right)
   return leftBytes.byteLength === rightBytes.byteLength && leftBytes.every((byte, index) => byte === rightBytes[index])
 }
 
@@ -555,7 +561,6 @@ async function reconcileRemovedStartupSourcesInternal(
 ) {
   const workspaceIndex = await readStartupIndex(store, startupWorkspacesMetaKey)
   const workspaces = new Set(Array.isArray(workspaceIndex)
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate persisted Workspace names at the untyped Store boundary.
     ? workspaceIndex.filter((name): name is string => typeof name === "string")
     : [])
   workspaces.add(workspace)
@@ -1395,7 +1400,7 @@ export async function searchMaterializedStore(store: WorkspaceStore, query: Work
     if (entry.type !== "file") continue
     const file = await store.readFile(entry.path)
     if (!file) continue
-    const text = file.content instanceof Uint8Array ? new TextDecoder().decode(file.content) : file.content
+    const text = isWorkspaceBytes(file.content) ? new TextDecoder().decode(file.content) : file.content
     result.push(...searchText(entry.path, text, { ...query, limit: limit - result.length }))
     if (result.length >= limit) break
   }

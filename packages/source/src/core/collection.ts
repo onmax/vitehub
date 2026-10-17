@@ -5,6 +5,7 @@ import { CollectionCursorError, createCollectionCursorCodec } from "./collection
 import { parseCollectionSchema } from "./schema.ts"
 
 export { CollectionCursorError } from "./collection-cursor.ts"
+export type { CollectionCursorErrorOptions, CollectionCursorErrorReason } from "./collection-cursor.ts"
 
 const defaultPageLimit = 50
 const defaultMaxLimit = 100
@@ -34,9 +35,22 @@ export interface CollectionPageOptions<TQuery extends object> {
   signal?: AbortSignal
 }
 
+/** One distinct value of a faceted field and how many matching items carry it. */
+export interface CollectionFacetValue {
+  count: number
+  value: string
+}
+
+/** Facet counts keyed by field path, computed over every item that matches the query. */
+export type CollectionFacets = Record<string, CollectionFacetValue[]>
+
 export interface CollectionPage<TItem> {
   items: TItem[]
   nextCursor: string | null
+  /** Number of items that match the query across every page, when the Collection can count them. */
+  total?: number
+  /** Facet counts over every item that matches the query, when the Collection declares facets. */
+  facets?: CollectionFacets
 }
 
 export interface Collection<
@@ -263,6 +277,15 @@ function resolveLimit(limit: number | undefined, defaultLimit: number, maxLimit:
 }
 
 export function defineCollection<
+  TSource extends AnyCollectionSource,
+  TTransform extends (item: NoInfer<SourceItemOf<TSource>>) => unknown,
+>(
+  options: SourceCollectionOptions<TSource> & { transform: TTransform },
+): Collection<Awaited<ReturnType<TTransform>>, SourceQueryOf<TSource>, SourceQueryInputOf<TSource>>
+export function defineCollection<TSource extends AnyCollectionSource>(
+  options: SourceCollectionOptions<TSource> & { transform?: undefined },
+): Collection<SourceItemOf<TSource>, SourceQueryOf<TSource>, SourceQueryInputOf<TSource>>
+export function defineCollection<
   TSourceItem,
   TQuerySchema extends StandardSchemaV1<unknown, object>,
   TTransform extends CollectionTransform<TSourceItem>,
@@ -472,7 +495,10 @@ export function defineCollection<
   }
   const cursorCodec = provider ? undefined : createCollectionCursorCodec(cursorDefinition.cursorSchema)
   const authorize = definition.authorize
-  if (authorize !== undefined && authorize !== true && !(authorize instanceof Function)) {
+  // Cross-realm functions do not pass an `instanceof Function` check.
+  // `typeof` accepts callbacks created by another JavaScript realm while
+  // still rejecting non-callable values at runtime.
+  if (authorize !== undefined && authorize !== true && typeof authorize !== "function") {
     throw sourceErrorDiagnostics.SOURCE_R0024({ message: "[vitehub] Collection authorize must be true or a function." })
   }
 
