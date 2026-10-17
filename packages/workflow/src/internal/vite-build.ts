@@ -628,8 +628,8 @@ interface GenerateProviderOutputsOptions {
 }
 
 interface WorkspaceDependencyRuntimeImports {
-  sandbox?: string
-  sandboxRuntimeState?: string
+  sandboxTask?: string
+  sandboxTaskRuntimeState?: string
   shellWorkspace?: string
 }
 
@@ -946,11 +946,11 @@ export function createWorkflowRegistryContents(
     ...(workspaceDependencyRuntimeImports
       ? [
           "setWorkspaceDependencyRuntimeLoaders({",
-          ...(workspaceDependencyRuntimeImports.sandbox
-            ? [`  sandbox: () => import(${JSON.stringify(workspaceDependencyRuntimeImports.sandbox)}),`]
+          ...(workspaceDependencyRuntimeImports.sandboxTask
+            ? [`  sandboxTask: () => import(${JSON.stringify(workspaceDependencyRuntimeImports.sandboxTask)}),`]
             : []),
-          ...(workspaceDependencyRuntimeImports.sandboxRuntimeState
-            ? [`  sandboxRuntimeState: () => import(${JSON.stringify(workspaceDependencyRuntimeImports.sandboxRuntimeState)}),`]
+          ...(workspaceDependencyRuntimeImports.sandboxTaskRuntimeState
+            ? [`  sandboxTaskRuntimeState: () => import(${JSON.stringify(workspaceDependencyRuntimeImports.sandboxTaskRuntimeState)}),`]
             : []),
           ...(workspaceDependencyRuntimeImports.shellWorkspace
             ? [`  shellWorkspace: () => import(${JSON.stringify(workspaceDependencyRuntimeImports.shellWorkspace)}),`]
