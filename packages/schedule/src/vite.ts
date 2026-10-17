@@ -18,6 +18,7 @@ import { discoverScheduleDefinitions, isServerScheduleDefinition } from "./disco
 import { inspectScheduleDefinitions } from "./inspect.ts"
 import { getVercelSchedulePath } from "./integrations/vercel.ts"
 import { generateProviderOutputsWithinLock, readDefinitionCrons, readRuntimeDefinitionCrons, schedulePackageName } from "./internal/provider-output.ts"
+import { renderScheduleRegistryModule } from "./internal/registry-module.ts"
 import { createScheduleTargetsContents, SCHEDULE_TARGETS_ID } from "./targets-module.ts"
 import { scheduleDevRuntimeRoute } from "./dev.ts"
 import { registerScheduleDevEndpoint } from "./vite-dev.ts"
@@ -53,7 +54,6 @@ const SCHEDULE_VITE_PLUGIN_NAME = "@vite-hub/schedule/vite"
 const SCHEDULE_REGISTRY_ID = "#vitehub/schedule/registry"
 const RESOLVED_SCHEDULE_REGISTRY_ID = "\0#vitehub/schedule/registry"
 const RESOLVED_SCHEDULE_TARGETS_ID = `\0${SCHEDULE_TARGETS_ID}`
-const registryImportAnchor = ".vitehub/schedule/registry.js"
 const generatedNitroSchedulePlugin = ".vitehub/nitro/schedule/plugin.ts"
 const generatedNitroProviderRegistry = ".vitehub/nitro/schedule/provider-registry.js"
 const generatedNitroRuntimeRegistry = ".vitehub/nitro/schedule/runtime-registry.js"
@@ -629,9 +629,7 @@ export function hubSchedule(options: ScheduleVitePluginOptions = {}): ScheduleVi
   }
 
   function createRegistryContents() {
-    const definitions = discoverRegistrySchedules()
-    const registryImport = projectRoot ? resolve(projectRoot, registryImportAnchor) : registryImportAnchor
-    return createRuntimeRegistryContents(registryImport, definitions)
+    return renderScheduleRegistryModule(discoverRegistrySchedules())
   }
 
   function createTargetsContents() {
