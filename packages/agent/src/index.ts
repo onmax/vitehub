@@ -38,7 +38,7 @@ import {
 } from "./delivery-effects.ts"
 
 export { defineFinishEffect } from "./delivery-effects.ts"
-import { createExecutionContext, createRuntimeContext, createTraceEventLog, deriveTraceRuns, getViteHubErrorShape, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError, traceEventsToOpenTelemetryLogRecords, traceEventsToOpenTelemetrySpans } from "@vite-hub/runtime"
+import { createExecutionBudget, createExecutionContext, createRuntimeContext, createTraceEventLog, deriveTraceRuns, getViteHubErrorShape, isTraceContentAttributeKey, normalizeRuntimeDiagnosticError, traceEventsToOpenTelemetryLogRecords, traceEventsToOpenTelemetrySpans } from "@vite-hub/runtime"
 import { isAmbiguousAgentWorkflowStartFailure } from "./internal/workflow-start.ts"
 import { agentTelemetryWorkspaceSources, getAgentTelemetryConfiguration, safeAgentTelemetryMetadata, setAgentTelemetryConfiguration } from "./internal/agent-telemetry.ts"
 import { getCloudflareEnv } from "@vite-hub/internal/runtime/cloudflare-env"
@@ -48,7 +48,7 @@ import { agentResultKind, agentStreamErrorSymbol, agentToolStreamDefaults, appen
 import { defineChatCapability, durableChatErrorFallbackTimeout, getAgentChatContext, getChatCapabilityOptions, isDurableChatErrorFallbackEffect, resolveChatMessageContextInstructions, resolveChatMessageRunMetadata, resolveDurableChatErrorFallbackIntents } from "./chat-trigger.ts"
 import { budget as budgetCapability } from "./capabilities/budget.ts"
 import { agentWorkflowExecutionContextKey } from "./internal/workflow-execution.ts"
-import { consumeParsedAgentWorkflowInput } from "./internal/workflow-parsed-input.ts"
+import { consumeParsedAgentWorkflowInput, transferParsedAgentWorkflowInput } from "./internal/workflow-parsed-input.ts"
 import { parsedAgentMessageMetaState, parseAgentMessageMeta, withParsedAgentMessageMeta } from "./internal/message-meta.ts"
 import type { ParsedAgentMessageMetaState } from "./internal/message-meta.ts"
 import {
@@ -3492,6 +3492,7 @@ type AgentInvocationContext<
   TRuntimeConfig extends AgentRuntimeConfig,
   CALL_OPTIONS,
 > = AgentRunContext<TRuntimeConfig, CALL_OPTIONS> & {
+  executionBudget?: ReturnType<typeof createExecutionBudget>
   activity?: ActiveAgentActivity
   channels?: AgentChannels<TRuntimeConfig>
   close: () => Promise<void>
@@ -3532,6 +3533,16 @@ type AgentInvocationContext<
   workspaceMaterializationPaths: readonly string[]
   workspaceMode: AgentCapabilityMode
   invocationJournal?: AgentInvocationJournal<TRuntimeConfig>
+}
+
+function executionBudgetHasConstraints(input: { executionBudget?: { deadlineAt?: number, maxInputBytes?: number, maxOutputBytes?: number, maxRetries?: number, maxToolCalls?: number }, timeout?: number }) {
+  const budget = input.executionBudget
+  return input.timeout !== undefined
+    || budget?.deadlineAt !== undefined
+    || budget?.maxInputBytes !== undefined
+    || budget?.maxOutputBytes !== undefined
+    || budget?.maxRetries !== undefined
+    || budget?.maxToolCalls !== undefined
 }
 
 function toAgentAdapterRunContext<
@@ -4434,6 +4445,7 @@ async function createAgentInvocationContext<
   invocationKind: "run" | "stream" = "run",
   invocationJournal?: AgentInvocationJournal<TRuntimeConfig>,
   invocationTools?: AgentToolSet,
+  executionBudget?: ReturnType<typeof createExecutionBudget>,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   const startedAt = Date.now()
   const replayHasContext = hasUnreplayableAgentInputContext(input.context)
@@ -4710,6 +4722,7 @@ async function createAgentInvocationContext<
     // SAFETY: Agent definition normalization establishes the asserted internal Agent contract.
     const preparingCapabilities = resolveAgentCapabilities(capabilityOptions, runtimeContext, input, workspace as never, workspaceMode, {
       context: invocationContext,
+      executionBudget,
       deferPreparation: Boolean(internalDefinition?.[baseAgentIntercept]),
       driverKind,
       driver: agentDriver,
@@ -4944,6 +4957,7 @@ async function createAgentInvocationContext<
       channels: definition?.channels,
       close: capabilities.close,
       context: invocationContext,
+      executionBudget,
       deliveryEffectIntents: capabilities.registries.deliveryEffectIntents,
       durableErrorFallbackTimeout: (() => {
         const options = getChatCapabilityOptions(definition?.capabilities || [])
@@ -5359,7 +5373,7 @@ function resultWithStreamedText(result: unknown, text: string): unknown {
   return { raw: result, text }
 }
 
-function toAgentRunResultWithInheritedProperties(result: unknown): AgentRunResult {
+function toAgentRunResultWithInheritedProperties(result: unknown, readInherited = true): AgentRunResult {
   if (!result || !hasRuntimeType(result, "object")) return toAgentRunResult(result)
   let normalized: AgentRunResult
   try {
@@ -5368,6 +5382,7 @@ function toAgentRunResultWithInheritedProperties(result: unknown): AgentRunResul
   catch {
     normalized = { raw: result }
   }
+  if (!readInherited) return normalized
   for (const key of ["artifacts", "finishReason", "text", "usage", "usageRecord", "warnings"] as const) {
     if (normalized[key] !== undefined) continue
     try {
@@ -5764,7 +5779,7 @@ async function resultWithStreamedTextAndUsage(
   if (hasRuntimeType(result, "object") && result !== null && (isAsyncIterable(result)
     || hasTraceableStreamResult(result)
     || ((streamedUsageRecord !== undefined || hasDeferredUsage) && isUIMessageStreamResult(result)))) {
-    const normalized = toAgentRunResultWithInheritedProperties(result)
+    const normalized = toAgentRunResultWithInheritedProperties(result, resolveUsage)
     const sourceUsageRecord = definedObjectPropertiesWithInherited(result, ["usageRecord"]).usageRecord
     const sourceUsageRecordProperties = mergedUsageRecords(sourceUsageRecord)
     const fallbackUsageRecordProperties = mergedUsageRecords(fallbackUsageRecord)
@@ -5950,6 +5965,13 @@ function withStreamedResult(
           ? event.usageRecord
           : attachedUsageRecord ?? usageRecordFromStreamChunk(chunk, result) ?? usageRecord
         yield chunk
+        // A normalized stream terminates after a fatal event. Preserve the
+        // public stream contract by closing the consumer-facing event stream
+        // with a finish marker without pulling any later source chunks.
+        if (event?.type === "error" && !event.recoverable) {
+          yield { type: "finish" }
+          return
+        }
       }
     })(),
   }
@@ -7067,9 +7089,10 @@ async function createAgentInvocationContextWithWorkflowFailureDelivery<
   kind: "run" | "stream",
   invocationJournal?: AgentInvocationJournal<TRuntimeConfig>,
   invocationTools?: AgentToolSet,
+  executionBudget?: ReturnType<typeof createExecutionBudget>,
 ): Promise<AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>> {
   try {
-    return await createAgentInvocationContext(definition, context, input, kind, invocationJournal, invocationTools)
+    return await createAgentInvocationContext(definition, context, input, kind, invocationJournal, invocationTools, executionBudget)
   }
   catch (error) {
     try {
@@ -7094,6 +7117,7 @@ async function executeAgentInvocationWithCapacityLease<
   preparedInvocation?: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS>,
   invocationJournal?: AgentInvocationJournal<TRuntimeConfig>,
   activity?: ActiveAgentActivity,
+  executionBudget?: ReturnType<typeof createExecutionBudget>,
 ): Promise<Response | AsyncIterable<StreamEvent> | unknown> {
   const customRun = hasCustomRun<TRuntimeConfig, CALL_OPTIONS>(agent)
   const definition = hasAgentDefinition(agent)
@@ -7101,7 +7125,7 @@ async function executeAgentInvocationWithCapacityLease<
     ? asUnknownBoundary(agent) as AgentDefinition<TRuntimeConfig, CALL_OPTIONS, any, any, TOutput>
     : undefined
   const invocation = preparedInvocation
-    ?? await createAgentInvocationContextWithWorkflowFailureDelivery(definition, context, input, options.kind, invocationJournal, options.tools)
+    ?? await createAgentInvocationContextWithWorkflowFailureDelivery(definition, context, input, options.kind, invocationJournal, options.tools, executionBudget)
   invocation.activity = activity
   const shouldHoldInvocationOutput = () => options.holdCapacity === true || shouldWrapInvocationOutput(invocation)
   const lifecycle = openAgentInvocationLifecycle<AgentInvocationFinishOutcome>(
@@ -8344,6 +8368,26 @@ async function executeAgentInvocation<
     }
     markAgentInvocationCallerAbortSignal(input, callerAbortSignal)
   }
+  const executionBudget = executionBudgetHasConstraints(input)
+    ? createExecutionBudget({
+      ...(input.executionBudget || {}),
+      // doctor-disable-next-line typescript/style/no-conditional-empty-object-spread -- Timeout is an optional compatibility input that tightens the shared budget.
+      ...(input.timeout !== undefined && input.executionBudget?.deadlineAt === undefined ? { deadlineAt: Date.now() + input.timeout } : {}),
+      signal: input.abortSignal,
+    })
+    : undefined
+  if (executionBudget) {
+    const callerAbortSignal = agentInvocationCallerAbortSignal(input)
+    const budgetedInput = {
+      ...input,
+      abortSignal: input.abortSignal
+        ? AbortSignal.any([input.abortSignal, executionBudget.signal])
+        : executionBudget.signal,
+    }
+    transferParsedAgentWorkflowInput(input, budgetedInput)
+    input = budgetedInput
+    markAgentInvocationCallerAbortSignal(input, callerAbortSignal)
+  }
   let preparedInvocation: AgentInvocationContext<TRuntimeConfig, CALL_OPTIONS> | undefined
   let release: (() => void) | undefined
   try {
@@ -8358,6 +8402,7 @@ async function executeAgentInvocation<
         options.kind,
         invocationJournal,
         options.tools,
+        executionBudget,
       )
     }
     if (preparedInvocation?.handledResponse) {
@@ -8365,7 +8410,7 @@ async function executeAgentInvocation<
       input.abortSignal?.throwIfAborted()
       if (invocationJournal && !invocationJournal.reusedTerminal && ((!runningPersisted && !invocationJournal.startsUnconfirmed()) || (runningPersisted && !invocationJournal.dispatchAllowed()))) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
-      return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
+      return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity, executionBudget)
     }
     release = definition
       ? await acquireAgentCapacity(definition, input.abortSignal)
@@ -8389,7 +8434,7 @@ async function executeAgentInvocation<
       if (invocationJournal && !invocationJournal.reusedTerminal && ((!runningPersisted && !invocationJournal.startsUnconfirmed()) || (runningPersisted && !invocationJournal.dispatchAllowed()))) throw new Error("Could not persist the Invocation running state.")
       await activity?.update("running")
       input.abortSignal?.throwIfAborted()
-      return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity)
+      return await executeAgentInvocationWithCapacityLease(agent, context, input, options, preparedInvocation, invocationJournal, activity, executionBudget)
     }
     catch (error) {
       const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
@@ -8422,7 +8467,7 @@ async function executeAgentInvocation<
           releaseOnce()
         }
       },
-    }, preparedInvocation, invocationJournal, activity)
+    }, preparedInvocation, invocationJournal, activity, executionBudget)
   }
   catch (error) {
     const status = invocationFailureWasCancelled(error, input.abortSignal) ? "cancelled" : "failed"
