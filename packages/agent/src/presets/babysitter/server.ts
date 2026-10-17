@@ -114,7 +114,7 @@ export function createBabysitterRuntime(options: BabysitterRuntimeOptions): Baby
   assertBabysitterAgent(baseAgent);
   const presetOptions = baseAgent.options;
   const filter = resolveBabysitterLifecycleFilter(presetOptions.filter, presetOptions.lifecycle);
-  const merge = resolveBabysitterMerge(presetOptions.merge, presetOptions.autoMerge);
+  const merge = resolveBabysitterMerge(presetOptions.merge);
   const github = options.github;
   const hostIdentity = github.identity()?.trim();
   const normalizedActivityAuthors = options.activityAuthors.map((author) => author.trim().toLowerCase());
@@ -1607,8 +1607,7 @@ function assertBabysitterAgent(agent: AgentInput): asserts agent is BabysitterAg
     !("options" in agent) ||
     !agent.options ||
     !hasRuntimeType(agent.options, "object") ||
-    !("autoMerge" in agent.options) ||
-    !hasRuntimeType(agent.options.autoMerge, "boolean") ||
+    !("merge" in agent.options) ||
     !("filter" in agent.options) ||
     !agent.options.filter ||
     !hasRuntimeType(agent.options.filter, "object") ||
