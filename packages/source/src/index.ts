@@ -29,6 +29,10 @@ export type {
   CollectionQuery,
   CollectionQueryInput,
   CollectionRequestQuery,
+  CollectionSource,
+  CursorCollectionSource,
+  ProviderCollectionSource,
+  ProviderCollectionPage,
   ProviderCollectionOptions,
   ProviderCollectionLoader,
 } from "./core/collection.ts"

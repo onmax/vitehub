@@ -44,6 +44,14 @@ export interface CollectionFacetValue {
 /** Facet counts keyed by field path, computed over every item that matches the query. */
 export type CollectionFacets = Record<string, CollectionFacetValue[]>
 
+function isCollectionFacets(value: unknown): value is CollectionFacets {
+  return Object(value) === value && !Array.isArray(value) && Object.values(Object(value)).every(entries =>
+    Array.isArray(entries) && entries.every(entry => Object(entry) === entry
+      && String(Reflect.get(entry, "value")) === Reflect.get(entry, "value")
+      && Number.isSafeInteger(Reflect.get(entry, "count"))
+      && Number(Reflect.get(entry, "count")) >= 0))
+}
+
 export interface CollectionPage<TItem> {
   items: TItem[]
   nextCursor: string | null
@@ -61,40 +69,27 @@ export interface Collection<
   readonly [collectionQueryInput]?: TQueryInput
   /** Access rule for the generated route. Omit it for a public Collection. */
   readonly authorize?: AccessAuthorizeOption
-  /** Disable generation of an HTTP endpoint. */
   readonly route?: false
+  readonly get?: (key: string, options?: { signal?: AbortSignal }) => Promise<TItem | null | undefined>
   page(options: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>>
   parseQuery(input: TQueryInput | CollectionRequestQuery): Promise<TQuery>
-  /** Read an item when the Collection was configured with a get adapter. */
-  get?: (key: string, options?: CollectionReadOptions) => Promise<TItem | null>
   query(input?: TQueryInput): CollectionQueryBuilder<TItem>
   all(options?: CollectionReadOptions & { query?: TQueryInput; limit?: number }): Promise<TItem[]>
   /** The query schema, when the Collection has one. Tools read it to describe accepted query keys. */
   readonly querySchema?: StandardSchemaV1<unknown, TQuery>
 }
 
-export interface CollectionReadOptions {
-  signal?: AbortSignal
-}
-
-
+export interface CollectionReadOptions { signal?: AbortSignal }
 export interface CollectionQueryBuilder<TItem> {
   select<TKey extends Extract<keyof TItem, string>>(...keys: TKey[]): CollectionQueryBuilder<Pick<TItem, TKey>>
   page(options?: CollectionReadOptions & { cursor?: string; limit?: number }): Promise<CollectionPage<TItem>>
   all(options?: CollectionReadOptions & { limit?: number }): Promise<TItem[]>
 }
 
-/** Minimal routed Collection shape accepted from generated structural modules. */
-export type AnyCollection = {
-  page: (...args: never[]) => Promise<CollectionPage<unknown>>
-  // `never` keeps this structural contract contravariant, so generated
-  // Collections may retain their concrete parser input type.
-  parseQuery: (input: never) => Promise<unknown>
-  readonly route?: false
-}
+export type AnyCollection = Collection<any, any, any>
 
 export type CollectionItem<TCollection extends AnyCollection> =
-  TCollection extends { page: (...args: never[]) => Promise<CollectionPage<infer TItem>> } ? TItem : never
+  TCollection extends Collection<infer TItem, any, any> ? TItem : never
 
 type JSONOmitted = undefined | ((...args: any[]) => any) | symbol
 
@@ -170,17 +165,26 @@ export type CollectionClientItem<TCollection extends AnyCollection> = JSONSerial
 >
 
 export type CollectionQuery<TCollection extends AnyCollection> =
-  TCollection extends { readonly [collectionQueryInput]?: infer TQueryInput }
-    ? (string extends keyof NonNullable<TQueryInput>
-      ? NonNullable<TQueryInput> extends CollectionRequestQuery ? NonNullable<TQueryInput> : never
-      : CollectionQueryInput<NonNullable<TQueryInput>>) extends infer T
-      ? T extends object ? { [TKey in keyof T]: T[TKey] } : T
-      : never
-    : TCollection extends { parseQuery: (input: infer TInput) => Promise<unknown> } ? TInput : never
+  TCollection extends Collection<any, any, infer TQueryInput> ? TQueryInput : never
 
 export type CollectionLoader<TSourceItem, TQuery extends object, TCursor extends CollectionCursorValue> = (
   options: CollectionLoadOptions<TQuery, TCursor>,
 ) => Promise<readonly TSourceItem[]>
+
+/** Result of a provider-paginated loader. `total` and `facets` reach the page unchanged. */
+export interface ProviderCollectionPage<TSourceItem> {
+  items: readonly TSourceItem[]
+  nextCursor: string | null
+  total?: number
+  facets?: CollectionFacets
+}
+
+export type ProviderCollectionLoader<TSourceItem, TQuery extends object> = (options: {
+  cursor?: string
+  limit: number
+  query: TQuery
+  signal?: AbortSignal
+}) => Promise<ProviderCollectionPage<TSourceItem>>
 
 type CollectionTransform<TSourceItem> = (item: NoInfer<TSourceItem>) => unknown
 
@@ -192,34 +196,89 @@ export interface CollectionOptions<
 > {
   /** `true` requires a signed-in Auth session. A callback also decides each request after sign-in. */
   authorize?: AccessAuthorizeOption
-  route?: false
-  get?: (key: string, options: CollectionReadOptions) => Promise<TSourceItem | null | undefined>
   cursor(item: NoInfer<TSourceItem>): Readonly<TCursorInput>
   cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
   defaultLimit?: number
   maxLimit?: number
   querySchema?: StandardSchemaV1<unknown, TQuery>
   transform?: CollectionTransform<TSourceItem>
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
+  route?: false
 }
 
-export interface ProviderCollectionOptions<TSourceItem> {
-  pagination: "provider"
-  route?: false
+export interface ProviderCollectionOptions<TSourceItem, TQuery extends object = CollectionRequestQuery, TItem = unknown> {
   authorize?: AccessAuthorizeOption
+  route?: false
+  pagination: "provider"
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
   defaultLimit?: number
   maxLimit?: number
-  get?: (key: string, options: CollectionReadOptions) => Promise<TSourceItem | null | undefined>
-  querySchema?: StandardSchemaV1<unknown, object>
-  transform?: CollectionTransform<TSourceItem>
+  querySchema?: StandardSchemaV1<unknown, TQuery>
+  transform?: (item: NoInfer<TSourceItem>) => Promise<TItem> | TItem
 }
 
-export type ProviderCollectionLoader<TSourceItem, TQuery extends object> = (
-  options: CollectionLoadOptions<TQuery, string>,
-) => Promise<{ items: readonly TSourceItem[]; nextCursor: string | null }>
+interface CollectionSourceBase<TSourceItem, TQueryInput extends object, TQuery extends object> {
+  get?: (key: string, options: { signal?: AbortSignal }) => Promise<TSourceItem | null | undefined>
+  defaultLimit?: number
+  maxLimit?: number
+  querySchema?: StandardSchemaV1<TQueryInput, TQuery>
+}
+
+/** A loader whose rows carry their own cursor. The Collection requests one extra row to detect the next page. */
+export interface CursorCollectionSource<
+  TSourceItem,
+  TQuery extends object,
+  TCursorInput extends CollectionCursorValue,
+  TCursorOutput extends CollectionCursorValue = TCursorInput,
+  TQueryInput extends object = TQuery,
+> extends CollectionSourceBase<TSourceItem, TQueryInput, TQuery> {
+  cursor(item: NoInfer<TSourceItem>): Readonly<TCursorInput>
+  cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
+  load: CollectionLoader<TSourceItem, TQuery, TCursorOutput>
+  pagination?: undefined
+}
+
+/** A loader that returns whole pages with its own opaque `nextCursor`, and optionally `total` and `facets`. */
+export interface ProviderCollectionSource<
+  TSourceItem,
+  TQuery extends object,
+  TQueryInput extends object = TQuery,
+> extends CollectionSourceBase<TSourceItem, TQueryInput, TQuery> {
+  load: ProviderCollectionLoader<TSourceItem, TQuery>
+  pagination: "provider"
+  cursor?: undefined
+  cursorSchema?: undefined
+}
+
+/** Where a Collection reads rows from: `array()`, `table()`, `workspaceFile()`, or your own object. */
+export type CollectionSource<
+  TSourceItem,
+  TQuery extends object,
+  TCursorInput extends CollectionCursorValue,
+  TCursorOutput extends CollectionCursorValue = TCursorInput,
+  TQueryInput extends object = TQuery,
+> = CursorCollectionSource<TSourceItem, TQuery, TCursorInput, TCursorOutput, TQueryInput>
+  | ProviderCollectionSource<TSourceItem, TQuery, TQueryInput>
+
+export type AnyCollectionSource = CollectionSource<any, any, any, any, any>
+
+type SourceItemOf<TSource extends AnyCollectionSource> =
+  TSource extends CollectionSource<infer TItem, any, any, any, any> ? TItem : never
+type SourceQueryOf<TSource extends AnyCollectionSource> =
+  TSource extends CollectionSource<any, infer TQuery, any, any, any> ? TQuery : never
+type SourceQueryInputOf<TSource extends AnyCollectionSource> =
+  TSource extends CollectionSource<any, any, any, any, infer TQueryInput> ? TQueryInput : never
+
+export interface SourceCollectionOptions<TSource extends AnyCollectionSource> {
+  /** `true` requires a signed-in Auth session. A callback also decides each request after sign-in. */
+  authorize?: AccessAuthorizeOption
+  route?: false
+  source: TSource
+}
 
 type CollectionDefinition<TSourceItem, TQuery extends object, TCursorInput extends CollectionCursorValue> = Omit<
   CollectionOptions<TSourceItem, TQuery, TCursorInput>,
-  "cursorSchema" | "querySchema" | "transform" | "pagination"
+  "cursorSchema" | "querySchema" | "transform"
 >
 
 type CursorInput<TSchema extends StandardSchemaV1> = [StandardSchemaV1.InferInput<TSchema>] extends [
@@ -287,67 +346,42 @@ export function defineCollection<TSource extends AnyCollectionSource>(
 ): Collection<SourceItemOf<TSource>, SourceQueryOf<TSource>, SourceQueryInputOf<TSource>>
 export function defineCollection<
   TSourceItem,
+  TCursorSchema extends StandardSchemaV1,
   TQuerySchema extends StandardSchemaV1<unknown, object>,
   TTransform extends CollectionTransform<TSourceItem>,
 >(
-  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
-  options: ProviderCollectionOptions<TSourceItem> & {
-    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
-    querySchema: TQuerySchema
-    transform: TTransform
-  },
-): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
-}
-export function defineCollection<
-  TSourceItem,
-  TQuerySchema extends StandardSchemaV1<unknown, object>,
->(
-  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
-  options: ProviderCollectionOptions<TSourceItem> & {
-    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
-    querySchema: TQuerySchema
-    transform?: undefined
-  },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
-}
-export function defineCollection<
-  TSourceItem,
-  TQuerySchema extends StandardSchemaV1<unknown, object>,
-  TTransform extends CollectionTransform<TSourceItem>,
->(
-  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
-  options: ProviderCollectionOptions<TSourceItem> & {
+  load: CollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorOutput<TCursorSchema>>,
+  options: CollectionDefinition<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>> & {
+    cursorSchema: TCursorSchema
     querySchema: TQuerySchema
     transform: TTransform
   },
 ): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
 export function defineCollection<
   TSourceItem,
+  TCursorSchema extends StandardSchemaV1,
   TQuerySchema extends StandardSchemaV1<unknown, object>,
 >(
-  load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
-  options: ProviderCollectionOptions<TSourceItem> & {
+  load: CollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorOutput<TCursorSchema>>,
+  options: CollectionDefinition<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>> & {
+    cursorSchema: TCursorSchema
     querySchema: TQuerySchema
     transform?: undefined
   },
 ): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
-// Also accept an exported ProviderCollectionOptions value whose transform is
-// optional; object-literal overloads above retain precise transformed items.
 export function defineCollection<
   TSourceItem,
   TQuerySchema extends StandardSchemaV1<unknown, object>,
+  TItem = TSourceItem,
 >(
   load: ProviderCollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>>,
-  options: ProviderCollectionOptions<TSourceItem> & { querySchema: TQuerySchema },
-): Collection<unknown, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
-export function defineCollection<
-  TSourceItem,
-  TTransform extends CollectionTransform<TSourceItem>,
->(
+  options: ProviderCollectionOptions<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, TItem> & {
+    querySchema: TQuerySchema
+  },
+): Collection<TItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
+export function defineCollection<TSourceItem, TTransform extends CollectionTransform<TSourceItem>>(
   load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
-  options: ProviderCollectionOptions<TSourceItem> & {
+  options: ProviderCollectionOptions<TSourceItem, CollectionRequestQuery, Awaited<ReturnType<TTransform>>> & {
     get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
     querySchema?: undefined
     transform: TTransform
@@ -355,108 +389,22 @@ export function defineCollection<
 ): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery> & {
   get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
 }
-export function defineCollection<TSourceItem>(
+export function defineCollection<TSourceItem, TItem = TSourceItem>(
   load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
-  options: ProviderCollectionOptions<TSourceItem> & {
-    get: NonNullable<ProviderCollectionOptions<TSourceItem>["get"]>
-    querySchema?: undefined
-    transform?: undefined
-  },
-): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
-}
+  options: ProviderCollectionOptions<TSourceItem, CollectionRequestQuery, TItem> & { querySchema?: undefined },
+): Collection<TItem, CollectionRequestQuery, CollectionRequestQuery>
 export function defineCollection<
   TSourceItem,
+  TCursorSchema extends StandardSchemaV1,
   TTransform extends CollectionTransform<TSourceItem>,
 >(
-  load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
-  options: ProviderCollectionOptions<TSourceItem> & {
+  load: CollectionLoader<TSourceItem, CollectionRequestQuery, CursorOutput<TCursorSchema>>,
+  options: CollectionDefinition<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>> & {
+    cursorSchema: TCursorSchema
     querySchema?: undefined
     transform: TTransform
   },
 ): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery>
-export function defineCollection<TSourceItem>(
-  load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
-  options: ProviderCollectionOptions<TSourceItem>,
-): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery>
-export function defineCollection<TSourceItem>(
-  load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,
-  options: ProviderCollectionOptions<TSourceItem> & {
-    querySchema?: undefined
-    transform?: undefined
-  },
-): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery>
-
-export function defineCollection<
-  TSourceItem,
-  TCursorSchema extends StandardSchemaV1,
-  TQuerySchema extends StandardSchemaV1<unknown, object>,
-  TTransform extends CollectionTransform<TSourceItem>,
->(
-  load: CollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorOutput<TCursorSchema>>,
-  options: CollectionDefinition<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>> & {
-    cursorSchema: TCursorSchema
-    querySchema: TQuerySchema
-    transform: TTransform
-  },
-): Collection<Awaited<ReturnType<TTransform>>, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
-}
-export function defineCollection<
-  TSourceItem,
-  TCursorSchema extends StandardSchemaV1,
-  TQuerySchema extends StandardSchemaV1<unknown, object>,
->(
-  load: CollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorOutput<TCursorSchema>>,
-  options: CollectionDefinition<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>> & {
-    get: NonNullable<CollectionOptions<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>>["get"]>
-    cursorSchema: TCursorSchema
-    querySchema: TQuerySchema
-    transform?: undefined
-  },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
-}
-export function defineCollection<
-  TSourceItem,
-  TCursorSchema extends StandardSchemaV1,
-  TQuerySchema extends StandardSchemaV1<unknown, object>,
->(
-  load: CollectionLoader<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorOutput<TCursorSchema>>,
-  options: CollectionDefinition<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, CursorInput<TCursorSchema>> & {
-    cursorSchema: TCursorSchema
-    querySchema: TQuerySchema
-    transform?: undefined
-  },
-): Collection<TSourceItem, StandardSchemaV1.InferOutput<TQuerySchema>, QueryInput<TQuerySchema>>
-export function defineCollection<
-  TSourceItem,
-  TCursorSchema extends StandardSchemaV1,
-  TTransform extends CollectionTransform<TSourceItem>,
->(
-  load: CollectionLoader<TSourceItem, CollectionRequestQuery, CursorOutput<TCursorSchema>>,
-  options: CollectionDefinition<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>> & {
-    cursorSchema: TCursorSchema
-    querySchema?: undefined
-    transform: TTransform
-  },
-): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
-}
-export function defineCollection<
-  TSourceItem,
-  TCursorSchema extends StandardSchemaV1,
->(
-  load: CollectionLoader<TSourceItem, CollectionRequestQuery, CursorOutput<TCursorSchema>>,
-  options: CollectionDefinition<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>> & {
-    get: NonNullable<CollectionOptions<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>>["get"]>
-    cursorSchema: TCursorSchema
-    querySchema?: undefined
-    transform?: undefined
-  },
-): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<TSourceItem | null>
-}
 export function defineCollection<TSourceItem, TCursorSchema extends StandardSchemaV1>(
   load: CollectionLoader<TSourceItem, CollectionRequestQuery, CursorOutput<TCursorSchema>>,
   options: CollectionDefinition<TSourceItem, CollectionRequestQuery, CursorInput<TCursorSchema>> & {
@@ -467,20 +415,27 @@ export function defineCollection<TSourceItem, TCursorSchema extends StandardSche
 ): Collection<TSourceItem, CollectionRequestQuery, CollectionRequestQuery>
 export function defineCollection<
   TSourceItem,
-  const TCursorInput extends CollectionCursorValue = CollectionCursorValue,
-  const TCursorOutput extends CollectionCursorValue = CollectionCursorValue,
-  const TQuery extends object = CollectionRequestQuery,
-  const TQueryInput extends object = TQuery,
+  const TCursorInput extends CollectionCursorValue,
+  const TCursorOutput extends CollectionCursorValue,
+  const TQuery extends object,
   TItem = TSourceItem,
 >(
-  load: ((options: CollectionLoadOptions<TQuery, TCursorOutput>) => Promise<readonly TSourceItem[]>)
-    | ((options: CollectionLoadOptions<TQuery, string>) => Promise<{ items: readonly TSourceItem[]; nextCursor: string | null }>),
-  definition: (CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> | ProviderCollectionOptions<TSourceItem>) & {
-    cursorSchema?: StandardSchemaV1
-    querySchema?: StandardSchemaV1<TQueryInput, TQuery>
+  input:
+    | CollectionLoader<TSourceItem, TQuery, TCursorOutput>
+    | ProviderCollectionLoader<TSourceItem, TQuery>
+    | (SourceCollectionOptions<CollectionSource<TSourceItem, TQuery, TCursorInput, TCursorOutput>> & {
+      transform?: (item: NoInfer<TSourceItem>) => Promise<TItem> | TItem
+    }),
+  options?: (CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> | ProviderCollectionOptions<TSourceItem, TQuery, TItem>) & {
     transform?: (item: NoInfer<TSourceItem>) => Promise<TItem> | TItem
   },
-): Collection<TItem, TQuery, TQueryInput> {
+): Collection<TItem, TQuery, object> {
+  const [load, definition] = typeof input === "function"
+    ? [input, options] as const
+    : sourceDefinition(input)
+  if (!definition) {
+    throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] defineCollection() requires a loader with options, or { source }." })
+  }
   const defaultLimit = definition.defaultLimit ?? defaultPageLimit
   const maxLimit = definition.maxLimit ?? defaultMaxLimit
   assertPositiveInteger(defaultLimit, "defaultLimit")
@@ -488,12 +443,8 @@ export function defineCollection<
   if (defaultLimit > maxLimit) {
     throw sourceErrorDiagnostics.SOURCE_R0008({ message: "[vitehub] Collection defaultLimit cannot exceed maxLimit." })
   }
-  const provider = "pagination" in definition && definition.pagination === "provider"
-  // SAFETY: Cursor overloads supply cursor metadata; only the non-provider branch uses this view.
-  const cursorDefinition = definition as CollectionOptions<TSourceItem, TQuery, TCursorInput, TCursorOutput> & {
-    cursorSchema: StandardSchemaV1<TCursorInput, TCursorOutput>
-  }
-  const cursorCodec = provider ? undefined : createCollectionCursorCodec(cursorDefinition.cursorSchema)
+  const cursorDefinition = "cursorSchema" in definition ? definition : undefined
+  const cursorCodec = cursorDefinition ? createCollectionCursorCodec(cursorDefinition.cursorSchema) : undefined
   const authorize = definition.authorize
   // Cross-realm functions do not pass an `instanceof Function` check.
   // `typeof` accepts callbacks created by another JavaScript realm while
@@ -502,120 +453,124 @@ export function defineCollection<
     throw sourceErrorDiagnostics.SOURCE_R0024({ message: "[vitehub] Collection authorize must be true or a function." })
   }
 
-  if (definition.route !== undefined && definition.route !== false) throw new TypeError("[vitehub] Collection route must be false or omitted.")
-
-  async function parseQuery(input: TQueryInput | CollectionRequestQuery): Promise<TQuery> {
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- This is the query boundary: reject null, primitives, and arrays before schema validation.
-    if (input === null || typeof input !== "object" || Array.isArray(input)) throw new TypeError("[vitehub] Collection query must be an object.")
-    if (definition.querySchema) return await parseCollectionSchema(definition.querySchema, input)
-    // SAFETY: Without a schema, overloads use the untransformed request-query contract.
-    return input as TQuery
-  }
-
-  async function page(request: CollectionPageOptions<TQuery>): Promise<CollectionPage<TItem>> {
-    request.signal?.throwIfAborted()
-    const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
-    // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Opaque provider cursors accept every string, including the empty string.
-    if (provider && request.cursor !== undefined && typeof request.cursor !== "string") throw new CollectionCursorError()
-    let pageItems: readonly TSourceItem[]
-    let nextCursor: string | null
-    if (provider) {
-      // SAFETY: The provider discriminant selects the matching loader overload.
-      const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({
-        cursor: request.cursor,
-        limit,
-        query: request.query,
-        signal: request.signal,
-      })
-      request.signal?.throwIfAborted()
-      // doctor-disable-next-line typescript/strict/no-runtime-typeof -- Validate the provider page boundary; continuation is a string and only null means completion.
-      if (!result || Array.isArray(result) || !Array.isArray(result.items) || !(result.nextCursor === null || typeof result.nextCursor === "string")) {
-        throw new TypeError("[vitehub] Provider Collection load() must return { items, nextCursor: string | null }.")
-      }
-      if (result.items.length > limit) throw new TypeError("[vitehub] Provider Collection returned more items than its requested limit.")
-      pageItems = result.items
-      nextCursor = result.nextCursor
-    }
-    else {
-      // SAFETY: Without the provider discriminant, public overloads require an array-returning cursor loader.
-      const result = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({
-        // SAFETY: The codec validates and transforms the cursor using the overload's cursor schema.
-        cursor: await cursorCodec!.decode(request.cursor) as TCursorOutput | undefined,
-        limit: limit + 1,
-        query: request.query,
-        signal: request.signal,
-      })
-      request.signal?.throwIfAborted()
-      if (!Array.isArray(result)) throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
-      pageItems = result.slice(0, limit)
-      nextCursor = result.length > limit && pageItems.length ? cursorCodec!.encode(cursorDefinition.cursor(pageItems[pageItems.length - 1]!)) : null
-    }
-    request.signal?.throwIfAborted()
-    const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : [...pageItems]
-    request.signal?.throwIfAborted()
-    // SAFETY: TItem is the transform result, or TSourceItem when no transform is configured.
-    return { items: transformedItems as TItem[], nextCursor }
-  }
-
-  // SAFETY: An omitted input starts as an empty query and still passes through parseQuery before loading.
-  function query(input: TQueryInput = {} as TQueryInput, selected?: string[]): CollectionQueryBuilder<TItem> {
-    function project(item: TItem): TItem {
-      // SAFETY: select() constrains keys to item fields; its return type exposes only those projected fields.
-      return selected === undefined ? item : Object.fromEntries(selected.map(key => [key, (item as Record<string, unknown>)[key]])) as TItem
-    }
-    return {
-      select(...keys) {
-        // doctor-disable-next-line typescript/strict/no-runtime-typeof -- JavaScript callers must pass string field names at the select() API boundary.
-        if (!keys.every(key => typeof key === "string")) throw new TypeError("[vitehub] Collection select() expects field names.")
-        // SAFETY: project() picks exactly these keys from each item before returning it.
-        return query(input, keys) as CollectionQueryBuilder<Pick<TItem, typeof keys[number]>>
-      },
-      async page(options = {}) {
-        options.signal?.throwIfAborted()
-        const result = await page({ ...options, query: await parseQuery(input) })
-        return { ...result, items: result.items.map(project) }
-      },
-      async all(options = {}) {
-        options.signal?.throwIfAborted()
-        const parsed = await parseQuery(input)
-        const cursors = new Set<string>()
-        const items: TItem[] = []
-        let cursor: string | undefined
-        do {
-          options.signal?.throwIfAborted()
-          const result = await page({ ...options, cursor, query: parsed })
-          for (const item of result.items) items.push(project(item))
-          cursor = result.nextCursor ?? undefined
-          if (cursor !== undefined) {
-            if (cursors.has(cursor)) throw new CollectionCursorError("[vitehub] Collection loader repeated a pagination cursor.")
-            cursors.add(cursor)
-          }
-        } while (cursor !== undefined)
-        return items
-      },
-    }
-  }
-
-  const get = typeof definition.get === "function" ? async (key: string, options: CollectionReadOptions = {}) => {
-      options.signal?.throwIfAborted()
-      if (typeof key !== "string" || !key) throw new TypeError("[vitehub] Collection get() expects a nonempty string key.")
-      const item = await definition.get!(key, options)
-      options.signal?.throwIfAborted()
-      if (item === null || item === undefined) return null
-      const transformed = definition.transform ? await definition.transform(item) : item
-      options.signal?.throwIfAborted()
-      return transformed as TItem
-    } : undefined
-
-  return {
+  const collection: Collection<TItem, TQuery, object> = {
     ...(authorize ? { authorize } : {}),
-    ...(definition.route === false ? { route: false as const } : {}),
-    page,
-    parseQuery,
-    query(input) { return query(input) },
-    // SAFETY: An omitted query is schema-validated by query().all() before any loader invocation.
-    all({ query: input = {} as TQueryInput, ...options } = {}) { return query(input).all(options) },
-    ...(get ? { get } : {}),
+    route: definition.route,
+    async page(request) {
+      const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
+      if (!cursorDefinition || !cursorCodec) {
+        // SAFETY: The provider overload pairs a provider definition with a provider loader.
+        const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({ cursor: request.cursor, limit, query: request.query, signal: request.signal })
+        if (!result || !Array.isArray(result.items) || (result.nextCursor !== null && !isProviderCursor(result.nextCursor))) {
+          throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Provider Collection load() must return items and nextCursor." })
+        }
+        const transformedItems = definition.transform ? await Promise.all(result.items.map(definition.transform)) : result.items
+        // SAFETY: Without transform the overload fixes TItem to TSourceItem; otherwise each item was transformed.
+        const items = transformedItems as TItem[]
+        const page: CollectionPage<TItem> = { items, nextCursor: result.nextCursor }
+        if (result.total !== undefined) {
+          if (!Number.isSafeInteger(result.total) || result.total < 0) {
+            throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Provider Collection total must be a non-negative integer." })
+          }
+          page.total = result.total
+        }
+        if (result.facets !== undefined) {
+          if (!isCollectionFacets(result.facets)) {
+            throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Provider Collection facets must map fields to { value, count } lists with non-negative integer counts." })
+          }
+          page.facets = result.facets
+        }
+        return page
+      }
+      // SAFETY: A cursor definition is paired with a cursor loader by the public overloads.
+      const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: await cursorCodec.decode(request.cursor), limit: limit + 1, query: request.query, signal: request.signal })
+      if (!Array.isArray(sourceItems)) {
+        throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
+      }
+      const hasMore = sourceItems.length > limit
+      const pageItems = sourceItems.slice(0, limit)
+      const nextCursor =
+        hasMore && pageItems.length
+          ? cursorCodec.encode(cursorDefinition.cursor(pageItems[pageItems.length - 1]!))
+          : null
+      const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : pageItems
+      // SAFETY: The overload without transform fixes TItem to TSourceItem; the other branch ran the typed transform.
+      const items = transformedItems as TItem[]
+      return {
+        items,
+        nextCursor,
+      }
+    },
+    async parseQuery(input) {
+      if (definition.querySchema) return await parseCollectionSchema(definition.querySchema, input)
+      // SAFETY: CollectionRequestQuery is the owned default contract when no custom query schema is supplied.
+      return input as TQuery
+    },
+    query(input = {} as object) {
+      const project = (item: TItem, keys?: string[]) => keys ? Object.fromEntries(keys.map(key => [key, (item as Record<string, unknown>)[key]])) as TItem : item
+      const build = (keys?: string[]): CollectionQueryBuilder<TItem> => ({
+        select(...selected) { return build(selected) },
+        async page(options = {}) {
+          const result = await collection.page({ ...options, query: input as TQuery })
+          return { ...result, items: result.items.map(item => project(item, keys)) }
+        },
+        async all(options = {}) {
+          const items: TItem[] = []
+          let cursor: string | undefined
+          const seen = new Set<string>()
+          do {
+            const result = await collection.page({ ...options, cursor, query: input as TQuery })
+            items.push(...result.items.map(item => project(item, keys)))
+            cursor = result.nextCursor ?? undefined
+            if (cursor !== undefined) {
+              if (seen.has(cursor)) throw new CollectionCursorError("[vitehub] Collection loader repeated a pagination cursor.")
+              seen.add(cursor)
+            }
+          } while (cursor !== undefined)
+          return items
+        },
+      })
+      return build()
+    },
+    async all(options = {}) { return this.query(options.query as object).all(options) },
     ...(definition.querySchema ? { querySchema: definition.querySchema } : {}),
   }
+  const get = definition.get
+  if (get) {
+    const lookup = async (key: string, options?: { signal?: AbortSignal }) => {
+      const item = await get(key, options ?? {})
+      if (item === null || item === undefined) return item
+      return definition.transform ? await definition.transform(item) : item
+    }
+    // SAFETY: The overload without transform fixes TItem to TSourceItem; otherwise lookup applies the typed transform.
+    Object.assign(collection, { get: lookup as NonNullable<Collection<TItem>["get"]> })
+  }
+  return collection
+}
+
+function sourceDefinition<TSourceItem, TQuery extends object, TCursorInput extends CollectionCursorValue, TCursorOutput extends CollectionCursorValue, TItem>(
+  input: SourceCollectionOptions<CollectionSource<TSourceItem, TQuery, TCursorInput, TCursorOutput>> & {
+    transform?: (item: NoInfer<TSourceItem>) => Promise<TItem> | TItem
+  },
+) {
+  const { authorize, route, source, transform } = input
+  if (Object(source) !== source || typeof source.load !== "function") {
+    throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] defineCollection({ source }) requires a Collection source with load()." })
+  }
+  const shared = {
+    authorize,
+    route,
+    get: source.get,
+    defaultLimit: source.defaultLimit,
+    maxLimit: source.maxLimit,
+    querySchema: source.querySchema,
+    transform,
+  }
+  return source.pagination === "provider"
+    ? [source.load, { ...shared, pagination: "provider" as const }] as const
+    : [source.load, { ...shared, cursor: source.cursor, cursorSchema: source.cursorSchema }] as const
+}
+
+function isProviderCursor(value: unknown): value is string {
+  return value === String(value)
 }
