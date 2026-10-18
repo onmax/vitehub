@@ -457,14 +457,17 @@ export function defineCollection<
     ...(authorize ? { authorize } : {}),
     route: definition.route,
     async page(request) {
+      request.signal?.throwIfAborted()
       const limit = resolveLimit(request.limit, defaultLimit, maxLimit)
       if (!cursorDefinition || !cursorCodec) {
         // SAFETY: The provider overload pairs a provider definition with a provider loader.
         const result = await (load as ProviderCollectionLoader<TSourceItem, TQuery>)({ cursor: request.cursor, limit, query: request.query, signal: request.signal })
+        request.signal?.throwIfAborted()
         if (!result || !Array.isArray(result.items) || (result.nextCursor !== null && !isProviderCursor(result.nextCursor))) {
           throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Provider Collection load() must return items and nextCursor." })
         }
         const transformedItems = definition.transform ? await Promise.all(result.items.map(definition.transform)) : result.items
+        request.signal?.throwIfAborted()
         // SAFETY: Without transform the overload fixes TItem to TSourceItem; otherwise each item was transformed.
         const items = transformedItems as TItem[]
         const page: CollectionPage<TItem> = { items, nextCursor: result.nextCursor }
@@ -484,6 +487,7 @@ export function defineCollection<
       }
       // SAFETY: A cursor definition is paired with a cursor loader by the public overloads.
       const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: await cursorCodec.decode(request.cursor), limit: limit + 1, query: request.query, signal: request.signal })
+      request.signal?.throwIfAborted()
       if (!Array.isArray(sourceItems)) {
         throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
       }
@@ -494,6 +498,7 @@ export function defineCollection<
           ? cursorCodec.encode(cursorDefinition.cursor(pageItems[pageItems.length - 1]!))
           : null
       const transformedItems = definition.transform ? await Promise.all(pageItems.map(definition.transform)) : pageItems
+      request.signal?.throwIfAborted()
       // SAFETY: The overload without transform fixes TItem to TSourceItem; the other branch ran the typed transform.
       const items = transformedItems as TItem[]
       return {
@@ -511,16 +516,19 @@ export function defineCollection<
       const build = (keys?: string[]): CollectionQueryBuilder<TItem> => ({
         select(...selected) { return build(selected) },
         async page(options = {}) {
-          const result = await collection.page({ ...options, query: input as TQuery })
+          const query = await collection.parseQuery(input as object)
+          const result = await collection.page({ ...options, query })
           return { ...result, items: result.items.map(item => project(item, keys)) }
         },
         async all(options = {}) {
           const items: TItem[] = []
+          const query = await collection.parseQuery(input as object)
           let cursor: string | undefined
           const seen = new Set<string>()
           do {
-            const result = await collection.page({ ...options, cursor, query: input as TQuery })
-            items.push(...result.items.map(item => project(item, keys)))
+            options.signal?.throwIfAborted()
+            const result = await collection.page({ ...options, cursor, query })
+            for (const item of result.items) items.push(project(item, keys))
             cursor = result.nextCursor ?? undefined
             if (cursor !== undefined) {
               if (seen.has(cursor)) throw new CollectionCursorError("[vitehub] Collection loader repeated a pagination cursor.")
