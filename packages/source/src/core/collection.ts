@@ -486,7 +486,9 @@ export function defineCollection<
         return page
       }
       // SAFETY: A cursor definition is paired with a cursor loader by the public overloads.
-      const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: await cursorCodec.decode(request.cursor), limit: limit + 1, query: request.query, signal: request.signal })
+      const decodedCursor = await cursorCodec.decode(request.cursor)
+      request.signal?.throwIfAborted()
+      const sourceItems = await (load as CollectionLoader<TSourceItem, TQuery, TCursorOutput>)({ cursor: decodedCursor, limit: limit + 1, query: request.query, signal: request.signal })
       request.signal?.throwIfAborted()
       if (!Array.isArray(sourceItems)) {
         throw sourceErrorDiagnostics.SOURCE_R0009({ message: "[vitehub] Collection load() must return an array." })
