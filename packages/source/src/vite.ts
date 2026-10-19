@@ -505,10 +505,11 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
   const writeState = (write: Write): "skip" | "known" | "unknown" => {
     if ((write.node.start ?? Infinity) >= readPosition) return "skip"
     const previousPosition = readPosition
-    readPosition = write.node.start ?? readPosition
     let state: "known" | "unknown" = "known"
     for (const guard of write.guards) {
-      readPosition = guard.test?.start ?? write.node.start ?? readPosition
+      // Guards are evaluated when the helper is called. Rewinding to the
+      // guarded assignment's lexical position can observe later mutations of
+      // closed-over state and disagree with runtime call-time ordering.
       const test = unwrap(guard.test)
       if (test?.type !== "Literal") state = "unknown"
       else if (Boolean(test.value) !== guard.truthy) {
@@ -758,6 +759,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       }
       const fn = unwrap(callee)
       if (!fn || !["ArrowFunctionExpression", "FunctionExpression", "FunctionDeclaration"].includes(fn.type ?? "")) return undefined
+      const previousPosition = readPosition
+      readPosition = value.start ?? readPosition
       const previousValues = new Map(parameterValues)
       for (const [index, param] of (fn.params ?? []).entries()) {
         const binding = bindingFor(param.type === "AssignmentPattern" ? param.left! : param)
@@ -771,9 +774,28 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       activeFunctions.add(fn)
       executedFunctions.add(fn)
       const result = findRoute(Array.isArray(fn.body) ? undefined : fn.body, next)
+      // A helper may receive an options object and write through its parameter
+      // alias (for example, hide(options) { options.route = false }). Replay
+      // those member writes onto the bound argument so later inspection of the
+      // caller's object sees the same route effect.
+      for (const [index, param] of (fn.params ?? []).entries()) {
+        const parameter = bindingFor(param.type === "AssignmentPattern" ? param.left! : param)
+        const argument = args[index]
+        const target = argument?.type === "Identifier" ? bindingFor(argument) : undefined
+        if (!parameter || !target) continue
+        for (const write of parameter.writes ?? []) {
+          if (write.node.left?.type !== "MemberExpression") continue
+          const key = write.node.left.computed ? staticString(write.node.left.property) : write.node.left.property?.name
+          if (key !== "route") continue
+          const replay = { ...write, fn: undefined }
+          ;(target.writes ??= []).push(replay)
+          indexedWrites.push(replay)
+        }
+      }
       activeFunctions.delete(fn)
       parameterValues.clear()
       for (const [binding, argument] of previousValues) parameterValues.set(binding, argument)
+      readPosition = previousPosition
       return result
     }
     if (value.type === "BlockStatement") {
