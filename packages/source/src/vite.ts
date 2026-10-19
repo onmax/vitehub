@@ -754,7 +754,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       // Common transparent wrappers preserve the Collection value and its
       // route metadata. Inspect their argument without importing application
       // modules (which may have side effects during generation).
-      if (callee?.type === "MemberExpression" && !callee.computed && callee.object?.type === "Identifier" && callee.object.name === "Object" && callee.property?.name === "freeze") {
+      if (callee?.type === "MemberExpression" && !callee.computed && callee.object?.type === "Identifier" && callee.object.name === "Object" && ["freeze", "seal", "preventExtensions"].includes(callee.property?.name ?? "")) {
         return findRoute(args[0], next)
       }
       const fn = unwrap(callee)

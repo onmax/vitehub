@@ -518,11 +518,13 @@ export function defineCollection<
       const build = (keys?: string[]): CollectionQueryBuilder<TItem> => ({
         select(...selected) { return build(selected) },
         async page(options = {}) {
+          options.signal?.throwIfAborted()
           const query = await collection.parseQuery(input as object)
           const result = await collection.page({ ...options, query })
           return { ...result, items: result.items.map(item => project(item, keys)) }
         },
         async all(options = {}) {
+          options.signal?.throwIfAborted()
           const items: TItem[] = []
           const query = await collection.parseQuery(input as object)
           let cursor: string | undefined
