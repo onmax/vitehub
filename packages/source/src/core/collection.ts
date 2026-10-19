@@ -387,7 +387,7 @@ export function defineCollection<TSourceItem, TTransform extends CollectionTrans
     transform: TTransform
   },
 ): Collection<Awaited<ReturnType<TTransform>>, CollectionRequestQuery, CollectionRequestQuery> & {
-  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null>
+  get: (key: string, options?: CollectionReadOptions) => Promise<Awaited<ReturnType<TTransform>> | null | undefined>
 }
 export function defineCollection<TSourceItem, TItem = TSourceItem>(
   load: ProviderCollectionLoader<TSourceItem, CollectionRequestQuery>,

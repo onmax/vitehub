@@ -579,7 +579,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         const spreadRoute = staticObjectRoute(property.argument, new Set(seen))
         // An unresolved spread may overwrite route at runtime. Keep the
         // route decision conservative unless a later explicit property wins.
-        if (spreadRoute?.present) route = spreadRoute
+        if (spreadRoute !== undefined) route = spreadRoute
         else route = { present: true, value: false }
         continue
       }
