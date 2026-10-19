@@ -503,15 +503,6 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
     return node ?? undefined
   }
   const writeState = (write: Write): "skip" | "known" | "unknown" => {
-    // A completed helper may have used parameters or closed-over state that is
-    // no longer available here. Its writes must not establish a public route.
-    if (write.fn && !activeFunctions.has(write.fn)) {
-      if ((write.node.start ?? Infinity) >= readPosition) return "skip"
-      if (!executedFunctions.has(write.fn)) return "skip"
-      const right = unwrap(write.node.right)
-      if (right?.type === "Literal" && (right.value === undefined || right.value === true || right.value === false)) return "known"
-      return "unknown"
-    }
     if ((write.node.start ?? Infinity) >= readPosition) return "skip"
     const previousPosition = readPosition
     readPosition = write.node.start ?? readPosition
@@ -524,6 +515,18 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         readPosition = previousPosition
         return "skip"
       }
+    }
+    // Completed helper writes are usable only when the helper executed and
+    // all guards on the write were proven to run.
+    if (write.fn && !activeFunctions.has(write.fn)) {
+      if (!executedFunctions.has(write.fn)) {
+        readPosition = previousPosition
+        return "skip"
+      }
+      const right = unwrap(write.node.right)
+      readPosition = previousPosition
+      if (right?.type === "Literal" && (right.value === undefined || right.value === true || right.value === false)) return "known"
+      return "unknown"
     }
     readPosition = previousPosition
     return state
@@ -567,7 +570,7 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
       for (const argument of node.arguments ?? []) {
         const current = staticObjectRoute(argument, new Set(seen))
         if (current?.present) merged = current
-        else merged = { present: true, value: false }
+        else if (current === undefined) merged = { present: true, value: false }
       }
       return merged
     }
@@ -579,8 +582,8 @@ function collectionRouteEnabled(file: string, source: string, exportName: string
         const spreadRoute = staticObjectRoute(property.argument, new Set(seen))
         // An unresolved spread may overwrite route at runtime. Keep the
         // route decision conservative unless a later explicit property wins.
-        if (spreadRoute !== undefined) route = spreadRoute
-        else route = { present: true, value: false }
+        if (spreadRoute?.present) route = spreadRoute
+        else if (spreadRoute === undefined) route = { present: true, value: false }
         continue
       }
       const keyName = property.computed ? staticString(property.key) : property.key?.name ?? property.key?.value
