@@ -542,7 +542,7 @@ export function defineCollection<
       })
       return build()
     },
-    async all(options = {}) { return this.query(options.query as object).all(options) },
+    async all(options = {}) { return collection.query(options.query as object).all(options) },
     ...(definition.querySchema ? { querySchema: definition.querySchema } : {}),
   }
   const get = definition.get
